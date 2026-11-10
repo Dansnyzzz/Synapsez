@@ -439,6 +439,295 @@ section('a reply says where it went');
   await page.evaluate(() => document.querySelector('dialog[open]')?.close());
 }
 
+/* ── Used in this session, and the uploads window ──────────────────
+ *
+ * Owner, 2026-11-09, screenshots 2, 8 and 9: a row per message that brought
+ * files, above Outputs; pressing it opens that message's files, the list on the
+ * left and the chosen one drawn on the right by the viewer's own code.
+ */
+
+/** Screenshots to compare with the owner's, when asked for: `UPLOADS_SHOTS=<dir>`. */
+const uploadsShot = async (name) => {
+  if (!process.env.UPLOADS_SHOTS) return;
+  fs.mkdirSync(process.env.UPLOADS_SHOTS, { recursive: true });
+  await page.screenshot({ path: path.join(process.env.UPLOADS_SHOTS, `${name}.png`) }).catch((err) => realLog(`  (no screenshot: ${err.message})`));
+};
+const until = async (test, ms = 10000) => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (await test()) return true;
+    await page.waitForTimeout(80);
+  }
+  return false;
+};
+const { tinyPdf } = await import('./lib/pdf.mjs');
+const { saveGenerated } = await import('../server/attachments.js');
+/** What the side panel's sections say, top to bottom. */
+const railNow = () =>
+  page.evaluate(() => ({
+    sections: [...document.querySelectorAll('#rail-extra .railsec')].map((s) => /** @type {HTMLElement} */ (s).dataset.rail),
+    heading: document.querySelector('#rail-extra [data-rail="uploads"] .railsec__title')?.textContent || '',
+    rows: [...document.querySelectorAll('#rail-extra [data-uploads]')].map((row) => ({
+      label: row.querySelector('.railrow__label')?.textContent || '',
+      first: row.querySelector('.railrow__first')?.textContent || '',
+      more: row.querySelector('.railrow__more')?.textContent || '',
+      name: row.getAttribute('aria-label') || '',
+      popup: row.getAttribute('aria-haspopup'),
+    })),
+  }));
+/** What the uploads window shows, in one object. */
+const modalNow = () =>
+  page.evaluate(() => {
+    const dialog = /** @type {HTMLDialogElement} */ (document.getElementById('uploads'));
+    const body = document.getElementById('uploads-body');
+    const items = [...document.querySelectorAll('#uploads-list [role="option"]')];
+    const link = /** @type {HTMLAnchorElement} */ (document.getElementById('uploads-download'));
+    return {
+      open: dialog.open,
+      title: document.getElementById('uploads-title').textContent,
+      items: items.map((o) => `${o.querySelector('.upv__fname')?.textContent}|${o.querySelector('.upv__badge')?.textContent}`),
+      icons: items.map((o) => o.querySelector('.upv__icon svg') ? 1 : 0).join(''),
+      selected: items.findIndex((o) => o.getAttribute('aria-selected') === 'true'),
+      lit: items.findIndex((o) => o.classList.contains('is-chosen')),
+      tabStops: items.filter((o) => o.tabIndex === 0).length,
+      focus: items.indexOf(/** @type {any} */ (document.activeElement)),
+      activeId: document.activeElement?.id || '',
+      name: document.getElementById('uploads-name').textContent,
+      type: document.getElementById('uploads-type').textContent,
+      href: link.getAttribute('href') || '',
+      saveAs: link.getAttribute('download') || '',
+      kind: body.dataset.kind || '',
+      image: !!body.querySelector('.viewer__image img'),
+      frame: body.querySelector('iframe.viewer__frame')?.getAttribute('src') || '',
+      cells: body.querySelectorAll('.xlv__cell').length,
+      fx: body.querySelector('.xlv__fx')?.textContent || '',
+      columns: [...body.querySelectorAll('.xlv__col')].slice(0, 2).map((n) => n.textContent).join(''),
+      sheetTabs: [...body.querySelectorAll('.xlv__tab')].map((n) => n.textContent),
+    };
+  });
+
+/** The files of the conversation below, as stored. */
+const sent = {};
+
+section('Used in this session: a row per message that brought files, above Outputs');
+{
+  const shot = await page.screenshot({ type: 'png', clip: { x: 0, y: 0, width: 640, height: 400 } });
+  for (const [key, name, data, mime] of [
+    ['png', '1793889515185_image.png', shot.toString('base64'), 'image/png'],
+    ['xlsx', 'KMT BC KQTH UPKH NL-2026.xlsx', Buffer.from(workbookFixture()).toString('base64'), ''],
+    ['pdf', 'Hợp đồng.pdf', tinyPdf('A contract, one page'), 'application/pdf'],
+    ['paste', 'pasted.txt', Buffer.from('Words somebody pasted, not a file they chose.').toString('base64'), 'text/plain'],
+    ['docx', 'Kiến trúc.docx', Buffer.from(docx).toString('base64'), ''],
+  ]) {
+    sent[key] = await saveUpload(me.id, { name, mime, data });
+  }
+  const meta = (row) => ({ id: row.id, name: row.name, kind: row.kind, mime: row.mime, bytes: row.bytes });
+  await store.createChat(me.id, { id: 'c-uploads', title: 'Uploads', model: 'auto' });
+  await store.appendMessage(me.id, 'c-uploads', { id: 'up-u1', role: 'user', text: 'read these', attachments: [meta(sent.png), meta(sent.xlsx), meta(sent.pdf), meta(sent.paste)] });
+  await store.appendMessage(me.id, 'c-uploads', { id: 'up-a1', role: 'assistant', text: 'Read.' });
+  await store.appendMessage(me.id, 'c-uploads', { id: 'up-u2', role: 'user', text: 'and this', attachments: [meta(sent.docx)] });
+  await store.appendMessage(me.id, 'c-uploads', { id: 'up-a2', role: 'assistant', text: 'Read too.' });
+  await saveGenerated(me.id, { name: 'tom-tat.md', mime: 'text/markdown', data: Buffer.from('# Tóm tắt\n').toString('base64'), chatId: 'c-uploads' });
+
+  await page.evaluate(() => document.getElementById('viewer-close')?.click());
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#model-chip');
+  await page.waitForTimeout(800);
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  await page.click('.chat-row[data-chat="c-uploads"] .chat-item');
+  await page.waitForTimeout(600);
+  if (!(await page.evaluate(() => document.getElementById('app').classList.contains('is-detail')))) await page.click('#detail-toggle');
+  await until(async () => (await railNow()).rows.length === 2);
+  // The panel slides open; measure it once it has stopped moving.
+  let width = -1;
+  await until(async () => {
+    const now = await page.evaluate(() => Math.round(document.getElementById('detail').getBoundingClientRect().width));
+    const settled = now > 280 && now === width;
+    width = now;
+    return settled;
+  });
+
+  const rail = await railNow();
+  check('"Used in this session" heads it', rail.heading === 'Used in this session', rail.heading);
+  check('  above Outputs', rail.sections.indexOf('uploads') === 0 && rail.sections.indexOf('outputs') === 1, rail.sections.join());
+  check('one row per message that brought files', rail.rows.length === 2, String(rail.rows.length));
+  check('"Uploads", the first name and "+2" — a paste is not counted', rail.rows[0].label === 'Uploads' && rail.rows[0].first === '1793889515185_image.png' && rail.rows[0].more === '+2', JSON.stringify(rail.rows[0]));
+  check('a message with one file has no "+"', rail.rows[1].first === 'Kiến trúc.docx' && rail.rows[1].more === '', JSON.stringify(rail.rows[1]));
+  check('a screen reader hears every name, and that it opens a window', /1793889515185_image\.png, KMT BC KQTH UPKH NL-2026\.xlsx, Hợp đồng\.pdf$/.test(rail.rows[0].name) && rail.rows[0].popup === 'dialog', rail.rows[0].name);
+  const cut = await page.evaluate(() => {
+    const first = /** @type {HTMLElement} */ (document.querySelector('#rail-extra [data-uploads="0"] .railrow__first'));
+    const row = /** @type {HTMLElement} */ (document.querySelector('#rail-extra [data-uploads="0"]'));
+    const style = getComputedStyle(first);
+    return { ellipsis: style.textOverflow === 'ellipsis' && style.whiteSpace === 'nowrap', oneLine: row.getBoundingClientRect().height < 44, inside: row.getBoundingClientRect().right <= document.getElementById('detail').getBoundingClientRect().right + 1 };
+  });
+  check('  on one line, the name cut to fit', cut.ellipsis && cut.oneLine && cut.inside, JSON.stringify(cut));
+  await uploadsShot('1-rail');
+}
+
+section('the uploads window: the list, the chosen file drawn by the viewer');
+{
+  await page.click('#rail-extra [data-uploads="0"]');
+  await until(async () => (await modalNow()).image);
+  let m = await modalNow();
+  check('it opens', m.open, JSON.stringify(m).slice(0, 200));
+  check('"Uploaded files" over the list', m.title === 'Uploaded files', m.title);
+  check('that message\'s files, each with its type', m.items.join() === '1793889515185_image|PNG,KMT BC KQTH UPKH NL-2026|XLSX,Hợp đồng|PDF', m.items.join());
+  check('  each with its mark', m.icons === '111', m.icons);
+  check('the first chosen, lit, and focused', m.selected === 0 && m.lit === 0 && m.focus === 0 && m.tabStops === 1, JSON.stringify({ s: m.selected, l: m.lit, f: m.focus, t: m.tabStops }));
+  check('its name and type in the bar', m.name === '1793889515185_image' && m.type === 'PNG', `${m.name} ${m.type}`);
+  check('the download is a link to that file, under its own name', m.href === `/api/attachments/${encodeURIComponent(sent.png.id)}?download=1` && m.saveAs === '1793889515185_image.png', `${m.href} ${m.saveAs}`);
+  const picture = await page.evaluate(async () => {
+    const img = /** @type {HTMLImageElement} */ (document.querySelector('#uploads-body .viewer__image img'));
+    if (!img.complete) await new Promise((r) => { img.onload = img.onerror = r; setTimeout(r, 5000); });
+    const box = img.getBoundingClientRect();
+    const pane = document.getElementById('uploads-body').getBoundingClientRect();
+    return { w: img.naturalWidth, dx: Math.abs(box.left + box.width / 2 - (pane.left + pane.width / 2)), dy: Math.abs(box.top + box.height / 2 - (pane.top + pane.height / 2)), fits: box.width <= pane.width && box.height <= pane.height };
+  });
+  check('a picture, drawn and centred in its pane', m.kind === 'image' && picture.w === 640 && picture.dx < 3 && picture.dy < 3 && picture.fits, JSON.stringify(picture));
+  const downloaded = await page.evaluate(async (href) => (await fetch(href)).headers.get('content-disposition') || '', m.href);
+  check('  and the link gives the file back to save', /attachment/i.test(downloaded), downloaded);
+  await uploadsShot('2-picture');
+
+  await page.keyboard.press('ArrowDown');
+  await until(async () => (await modalNow()).cells > 0, 15000);
+  m = await modalNow();
+  check('↓ moves to the workbook, and focus with it', m.selected === 1 && m.focus === 1 && m.tabStops === 1, JSON.stringify({ s: m.selected, f: m.focus }));
+  check('  the download follows', m.href === `/api/attachments/${encodeURIComponent(sent.xlsx.id)}?download=1` && m.saveAs === 'KMT BC KQTH UPKH NL-2026.xlsx', `${m.href} ${m.saveAs}`);
+  check('  drawn as a workbook: letters, the fx bar, its sheets along the bottom', m.kind === 'sheets' && m.columns === 'AB' && m.fx === 'fx' && m.sheetTabs.join() === 'Báo cáo,Sheet thứ hai', JSON.stringify({ k: m.kind, c: m.columns, fx: m.fx, tabs: m.sheetTabs }));
+  check('  its name and type in the bar', m.name === 'KMT BC KQTH UPKH NL-2026' && m.type === 'XLSX', `${m.name} ${m.type}`);
+  await uploadsShot('3-workbook');
+
+  await page.keyboard.press('ArrowDown');
+  await until(async () => !!(await modalNow()).frame);
+  m = await modalNow();
+  check('↓ again: the PDF, in the browser\'s reader', m.selected === 2 && m.kind === 'pdf' && m.frame.startsWith(`/api/attachments/${encodeURIComponent(sent.pdf.id)}?v=`), JSON.stringify({ s: m.selected, k: m.kind, f: m.frame }));
+  await page.keyboard.press('ArrowDown');
+  check('↓ at the end stays at the end', (await modalNow()).selected === 2);
+  await page.keyboard.press('Home');
+  await until(async () => (await modalNow()).image);
+  check('Home goes to the first', (await modalNow()).selected === 0 && (await modalNow()).focus === 0);
+  await page.keyboard.press('End');
+  await until(async () => !!(await modalNow()).frame);
+  check('End to the last', (await modalNow()).selected === 2);
+  await page.keyboard.press('ArrowUp');
+  await until(async () => (await modalNow()).cells > 0, 15000);
+  check('↑ back one', (await modalNow()).selected === 1);
+  await page.click('#uploads-list [data-index="0"]');
+  await until(async () => (await modalNow()).image);
+  m = await modalNow();
+  check('a press chooses too', m.selected === 0 && m.kind === 'image', `${m.selected} ${m.kind}`);
+
+  // Tab goes round inside the window and never out to the page behind it.
+  await page.focus('#uploads-close');
+  await page.keyboard.press('Tab');
+  const afterClose = (await modalNow()).activeId;
+  await page.keyboard.press('Tab');
+  const wrapped = await modalNow();
+  await page.keyboard.press('Shift+Tab');
+  const back = (await modalNow()).activeId;
+  check('Tab from ✕ reaches the file', afterClose === 'uploads-body', afterClose);
+  check('  and from there back round to the list', wrapped.focus === 0, JSON.stringify({ f: wrapped.focus, id: wrapped.activeId }));
+  check('  Shift+Tab goes the other way round', back === 'uploads-body', back);
+  const inside = await page.evaluate(() => document.getElementById('uploads').contains(document.activeElement));
+  check('  focus never left the window', inside);
+
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(200);
+  const closed = await page.evaluate(() => ({ open: /** @type {HTMLDialogElement} */ (document.getElementById('uploads')).open, row: /** @type {HTMLElement} */ (document.activeElement)?.dataset?.uploads ?? null, body: document.getElementById('uploads-body').childElementCount }));
+  check('Esc closes it', !closed.open);
+  check('  focus is back on the row that opened it', closed.row === '0', String(closed.row));
+  check('  and what it drew is taken down', closed.body === 0, String(closed.body));
+
+  await page.click('#rail-extra [data-uploads="1"]');
+  await until(async () => (await modalNow()).open && (await modalNow()).kind === 'document', 15000);
+  m = await modalNow();
+  check('the second row opens its own message\'s file', m.items.join() === 'Kiến trúc|DOCX' && m.kind === 'document', `${m.items} ${m.kind}`);
+  await page.click('#uploads-close');
+  await page.waitForTimeout(200);
+  const shut = await page.evaluate(() => ({ open: /** @type {HTMLDialogElement} */ (document.getElementById('uploads')).open, row: /** @type {HTMLElement} */ (document.activeElement)?.dataset?.uploads ?? null }));
+  check('✕ closes it, and focus goes back to that row', !shut.open && shut.row === '1', JSON.stringify(shut));
+}
+
+section('the uploads window on a phone, in dark, and in Vietnamese');
+{
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+  await page.click('#rail-extra [data-uploads="0"]');
+  await until(async () => (await modalNow()).image);
+  await uploadsShot('4-picture-dark');
+  await page.click('#uploads-list [data-index="1"]');
+  await until(async () => (await modalNow()).cells > 0, 15000);
+  await uploadsShot('5-workbook-dark');
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => /** @type {HTMLElement} */ (document.querySelector('#rail-extra [data-uploads="0"]')).click());
+  await until(async () => (await modalNow()).image);
+  const phone = await page.evaluate(() => {
+    const dialog = document.getElementById('uploads').getBoundingClientRect();
+    const side = document.querySelector('.upv__side').getBoundingClientRect();
+    const main = document.querySelector('.upv__main').getBoundingClientRect();
+    const close = document.getElementById('uploads-close').getBoundingClientRect();
+    const img = document.querySelector('#uploads-body .viewer__image img').getBoundingClientRect();
+    return {
+      full: Math.round(dialog.width) === window.innerWidth && Math.round(dialog.height) === window.innerHeight,
+      stacked: side.bottom <= main.top + 1,
+      close: close.top >= 0 && close.right <= window.innerWidth && close.width >= 32,
+      picture: img.width > 0 && img.right <= window.innerWidth,
+      sideways: document.documentElement.scrollWidth - window.innerWidth,
+    };
+  });
+  check('a phone: the whole screen, the list over the file', phone.full && phone.stacked, JSON.stringify(phone));
+  check('  ✕ in reach, the picture inside, nothing sideways', phone.close && phone.picture && phone.sideways <= 0, JSON.stringify(phone));
+  await uploadsShot('6-phone');
+  await page.keyboard.press('Escape');
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.waitForTimeout(300);
+
+  await page.evaluate(() => document.getElementById('account-button')?.click());
+  await page.waitForTimeout(150);
+  await page.click('.plusmenu--account [data-row="settings"]');
+  await page.waitForSelector('#settings[open]');
+  await page.evaluate(() => /** @type {HTMLInputElement} */ (document.querySelector('#language input[value="vi"]')).click());
+  await page.waitForTimeout(300);
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  await until(async () => (await railNow()).heading === 'Đã dùng trong phiên này');
+  const vi = await railNow();
+  check('"Đã dùng trong phiên này", "Tệp đã tải lên"', vi.heading === 'Đã dùng trong phiên này' && vi.rows[0]?.label === 'Tệp đã tải lên', JSON.stringify({ h: vi.heading, l: vi.rows[0]?.label }));
+  await page.click('#rail-extra [data-uploads="0"]');
+  await until(async () => (await modalNow()).image);
+  check('  and the window\'s list is "Tệp đã tải lên"', (await modalNow()).title === 'Tệp đã tải lên', (await modalNow()).title);
+  await uploadsShot('7-vietnamese');
+  await page.keyboard.press('Escape');
+  await page.click('#account-button');
+  await page.waitForTimeout(150);
+  await page.click('.plusmenu--account [data-row="settings"]');
+  await page.waitForSelector('#settings[open]');
+  await page.evaluate(() => /** @type {HTMLInputElement} */ (document.querySelector('#language input[value="en"]')).click());
+  await page.waitForTimeout(300);
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+}
+
+section('a file sent from this tab is listed at once, and once');
+{
+  await page.setInputFiles('#file-input', { name: 'just-sent.png', mimeType: 'image/png', buffer: await page.screenshot({ type: 'png', clip: { x: 0, y: 0, width: 200, height: 120 } }) });
+  await until(async () => page.evaluate(() => !!document.querySelector('#attachments .stage') && !document.querySelector('#attachments .is-uploading')));
+  await page.fill('#input', 'one more');
+  await page.keyboard.press('Enter');
+  await until(async () => (await railNow()).rows.length === 3);
+  let rail = await railNow();
+  check('a third row, before any reload', rail.rows.length === 3 && rail.rows[2].first === 'just-sent.png' && rail.rows[2].more === '', JSON.stringify(rail.rows[2] || null));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#model-chip');
+  await page.waitForTimeout(800);
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  await page.click('.chat-row[data-chat="c-uploads"] .chat-item');
+  await until(async () => (await railNow()).rows.length >= 3);
+  rail = await railNow();
+  check('  and after a reload, still once', rail.rows.length === 3 && rail.rows[2].first === 'just-sent.png', rail.rows.map((r) => r.first).join());
+}
+
 section('the composer takes any file, and says what the model will do with sound');
 {
   const accept = await page.evaluate(() => document.getElementById('file-input').getAttribute('accept'));

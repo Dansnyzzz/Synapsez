@@ -383,7 +383,6 @@ export const vi = {
 
   /* ── máy tính mà trợ lý thao tác ─────────────────────────────────── */
 
-  'chat.planCount': '{done}/{total}',
 
   // Tin nhắn gõ trong lúc trợ lý còn đang chạy, chờ phía trên khung soạn cho
   // đến khi bước hiện tại xong.
@@ -470,6 +469,10 @@ export const vi = {
   'cite.unseenPage': 'Trợ lý không tìm hay mở trang này trong cuộc trò chuyện — hãy tự kiểm tra trước khi tin.',
   'chat.edit': 'Sửa',
   'chat.continue': 'Tiếp tục',
+  'rail.used': 'Đã dùng trong phiên này',
+  'rail.uploads': 'Tệp đã tải lên',
+  'rail.uploadsOpen': 'Tệp đã tải lên: {names}',
+  'uploads.title': 'Tệp đã tải lên',
   'rail.outputs': 'Sản phẩm',
   'rail.context': 'Ngữ cảnh',
   'rail.sources': 'Tài liệu dự án',
@@ -1525,6 +1528,10 @@ export const vi = {
   'detail.progress': 'Tiến trình',
   'detail.close': 'Đóng bảng',
   'detail.empty': 'Khi trợ lý lên kế hoạch cho một việc nhiều bước, các bước sẽ hiện ở đây và được đánh dấu khi làm xong.',
+  'progress.stepOf': 'Bước {step} trên {total}',
+  'progress.earlier': '{n} bước trước đó',
+  'progress.earlierOne': '1 bước trước đó',
+  'progress.hideEarlier': 'Ẩn bước trước đó',
   'screen.forward': 'Tiến tới',
   'screen.reload': 'Tải lại',
   'screen.alt': 'Màn hình trợ lý đang nhìn',

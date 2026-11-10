@@ -150,6 +150,10 @@ export const en = {
   'cite.unseenPage': 'The assistant did not search for or open this page in the conversation — check it before relying on it.',
   'chat.edit': 'Edit',
   'chat.continue': 'Continue',
+  'rail.used': 'Used in this session',
+  'rail.uploads': 'Uploads',
+  'rail.uploadsOpen': 'Uploaded files: {names}',
+  'uploads.title': 'Uploaded files',
   'rail.outputs': 'Outputs',
   'rail.context': 'Context',
   'rail.sources': 'Project files',
@@ -964,7 +968,6 @@ export const en = {
 
   /* ── which computer the assistant works on ────────────────────────── */
 
-  'chat.planCount': '{done} of {total}',
 
   // A message typed while the assistant is still working, waiting above the
   // composer until the current step finishes.
@@ -1539,6 +1542,10 @@ export const en = {
   'detail.progress': 'Progress',
   'detail.close': 'Close panel',
   'detail.empty': 'When the assistant plans a multi-step job, the steps appear here and tick off as it works.',
+  'progress.stepOf': 'Step {step} of {total}',
+  'progress.earlier': '{n} earlier steps',
+  'progress.earlierOne': '1 earlier step',
+  'progress.hideEarlier': 'Hide earlier steps',
   'screen.forward': 'Forward',
   'screen.reload': 'Reload',
   'screen.alt': 'What the assistant is looking at',

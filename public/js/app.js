@@ -33,6 +33,8 @@ import { t, applyI18n, adoptLanguage, setLanguage, currentLanguage, LANGUAGES, l
 import { createOnboarding } from './onboarding.js';
 import { humanSize, localMoment, localTimes } from './format.js';
 import { normalisePlan, planItemHtml } from './plan.js';
+import { planWindow, samePlan } from './plan-window.js';
+import { createUploadsView } from './uploads-view.js';
 import { createAttachments } from './attachments.js';
 import { openPlusMenu, closePlus } from './plus-menu.js';
 import { openAccountMenu, paintAccount, shortcutFor, renderShortcuts } from './account-menu.js';
@@ -99,15 +101,19 @@ const viewer = createViewer({
   },
 });
 
+/** One message's files, in a window of their own. See uploads-view.js. */
+const uploadsView = createUploadsView();
+
 /**
- * What this conversation made and what it is working from, under the plan in
- * the side panel. See rail.js.
+ * What this conversation was given, what it made and what it is working from,
+ * under the plan in the side panel. See rail.js.
  */
 const rail = createRail({
   api,
   openFile: (file) => viewer.open(file),
   openSettings: (tab) => openSettings(tab),
   openPane: (title, html) => openToolPane(title, html),
+  openUploads: (files, returnTo) => uploadsView.open(files, returnTo),
 });
 
 /**
@@ -2239,6 +2245,7 @@ function clearConversationView() {
   state.liveTools = [];
   state.sentFiles = [];
   state.sentTexts = [];
+  state.sentUploads = [];
   closeToolPane();
   renderContext(null);
   renderFilesChip();
@@ -2250,7 +2257,7 @@ function clearConversationView() {
   // The composer may still be showing the last one's queue.
   renderQueue();
   renderUsage({ input: 0, output: 0, cost: 0, priced: false });
-  renderProgress([]);
+  renderProgress([], { fresh: true });
   resetDetailAutoOpen();
   $('messages').innerHTML = '';
   $('status-host').innerHTML = '';
@@ -2371,6 +2378,7 @@ async function openChat(id, { restoring = false } = {}) {
   state.liveTools = [];
   state.sentFiles = [];
   state.sentTexts = [];
+  state.sentUploads = [];
   closeToolPane();
   renderFilesChip();
   renderRail();
@@ -2485,7 +2493,7 @@ async function openChat(id, { restoring = false } = {}) {
     .reverse()
     .flatMap((m) => m.toolCalls || [])
     .find((c) => c.name === 'update_plan');
-  renderProgress(lastPlan?.input?.steps || []);
+  renderProgress(lastPlan?.input?.steps || [], { fresh: true });
   renderContext(context);
   // The token line describes the turn that just ran, and no turn has run in
   // this conversation yet — the previous chat's number is not this one's.
@@ -2743,6 +2751,23 @@ function settleAttachments(node, previews, ids) {
     URL.revokeObjectURL(file.preview);
     file.preview = null;
   }
+}
+
+/**
+ * The files a message just took, for "Used in this session" in the side panel —
+ * the transcript it is drawn from only holds them after a reload. Only for the
+ * conversation on screen: the panel is about that one.
+ *
+ * @param {string} chatId  where the message went
+ * @param {string | undefined} messageId  so the stored copy is not counted twice
+ * @param {{ name: string, mime?: string }[]} previews  in the same order as `ids`
+ * @param {string[]} ids
+ */
+function noteUploads(chatId, messageId, previews, ids) {
+  if (!ids.length || state.chatId !== chatId) return;
+  const files = ids.map((id, i) => ({ id, name: previews[i]?.name || '', mime: previews[i]?.mime || '' }));
+  state.sentUploads = [...(state.sentUploads || []), { messageId: messageId || null, files }];
+  renderRail();
 }
 
 function noteFile(file) {
@@ -3324,6 +3349,10 @@ function beginEdit(message, text) {
     } catch {
       if (here()) state.transcript = (state.transcript || []).slice(0, Math.max(0, state.transcript.findIndex((m) => m.id === id) + 1));
     }
+    // The files this tab sent are in what was just read. If the read failed,
+    // some may have gone with the turns the edit took away, and listing a gone
+    // turn's files is worse than missing a row until the next reload.
+    if (here()) state.sentUploads = [];
     if (here()) renderRail();
 
     await stream(undefined, undefined, { chatId });
@@ -3466,6 +3495,7 @@ $('composer').addEventListener('submit', async (event) => {
     const { message } = await api.sendMessage(chatId, text, ids, intent, skills);
     reached = true;
     if (message?.id) node.dataset.messageId = message.id;
+    noteUploads(chatId, message?.id, sending, ids);
     settleAttachments(node, sending, ids);
     await refreshChats();
     if (here()) $('chat-title').textContent = state.chats.find((c) => c.id === chatId)?.title || t('chat.untitled');
@@ -3630,6 +3660,7 @@ async function deliver(item, { interrupting = false, run = null, chatId = null }
     // Stamped after the fact: the id only exists once the server has it, and
     // without it the bubble has nothing to edit.
     if (message?.id) node.dataset.messageId = message.id;
+    noteUploads(target, message?.id, item.files || [], item.ids || []);
     settleAttachments(node, item.files || [], item.ids || []);
     if (interrupting && (!run || onScreen(run))) toast(t('status.queued'));
     return true;
@@ -5024,6 +5055,10 @@ async function changeLanguage(language) {
   // `applyI18n` also put the jump button's idle label back, which is wrong
   // while an answer is coming; this says the one that applies.
   paintJump();
+  // The plan's "Step 2 of 7" and its fold button, and the side panel's
+  // sections, are built from script too.
+  paintProgress();
+  renderRail();
   /**
    * And the sidebar, whose headings are built from script too.
    *
@@ -7748,37 +7783,33 @@ function resetDetailAutoOpen() {
   detailShownForRun = false;
 }
 
+/** The plan on screen, normalised — kept so the fold button can redraw it. */
+let progressItems = [];
+/** The person pressed "N earlier steps": every step shows until they fold it again. */
+let progressOpen = false;
+
 /**
  * Show the plan beside the conversation as it is worked through.
  *
  * The same steps still appear inline in the transcript, because that is the
  * record of what happened; this is the live view of where things stand, which
  * is a different question and wants to stay put rather than scroll away.
+ *
+ * @param {any} steps
+ * @param {{ fresh?: boolean }} [options]  `fresh`: another conversation's plan,
+ *   which starts folded whatever the last one was doing.
  */
-function renderProgress(steps) {
-  const list = $('progress-steps');
+function renderProgress(steps, { fresh = false } = {}) {
   // Normalised here as well as on the server: after a reload the steps come
   // from the call's raw arguments, and a model that marked four steps in
   // progress drew four highlighted rows where the live view had shown one.
   const items = normalisePlan(steps);
+  // Opened earlier steps stay open while the same plan ticks over; a new plan starts folded.
+  if (fresh || !samePlan(progressItems, items)) progressOpen = false;
+  progressItems = items;
 
   $('progress-empty').hidden = items.length > 0;
-
-  // This rail rewrites itself as the work moves and said nothing to a screen
-  // reader. Announced politely so the current step is read when it changes
-  // without cutting across whatever is already being spoken.
-  list.setAttribute('aria-live', 'polite');
-
-  // The step being worked on carries its detail, so the rail says what "Read
-  // chapter 2" actually involves; the rest keep it for the tooltip.
-  list.innerHTML = items.map((s) => planItemHtml(s, { withDetail: s.status === 'in_progress' })).join('');
-
-  const done = items.filter((s) => s.status === 'done').length;
-  // Was `${done} of ${items.length}`, which put an English "of" in the middle of
-  // a Vietnamese interface. The separator belongs to the language, not the code.
-  $('progress-count').textContent = items.length
-    ? t('chat.planCount', { done, total: items.length })
-    : '';
+  paintProgress();
 
   // A plan is the assistant saying "this will take a while" — worth showing
   // without being asked, but only the first time, so closing it stays closed.
@@ -7787,6 +7818,49 @@ function renderProgress(steps) {
     setDetail(true);
   }
 }
+
+const FOLD_CHEVRON =
+  '<svg class="pfold__chev" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>';
+
+/**
+ * Draw the plan as Claude's panel does (owner, 2026-11-09): a line down the marks
+ * so it is plain where the run is, the step it is on, the two before it and what
+ * is still to come; earlier steps behind "N earlier steps". Which steps show is
+ * plan-window.js's to decide.
+ */
+function paintProgress() {
+  const items = progressItems;
+  const list = $('progress-steps');
+  const view = planWindow(items, progressOpen);
+
+  // This rail rewrites itself as the work moves and said nothing to a screen
+  // reader. Announced politely so the current step is read when it changes
+  // without cutting across whatever is already being spoken.
+  list.setAttribute('aria-live', 'polite');
+
+  // The step being worked on carries its detail, so the rail says what "Read
+  // chapter 2" actually involves; the rest keep it for the tooltip.
+  list.innerHTML = items
+    .slice(view.start)
+    .map((s) => planItemHtml(s, { withDetail: s.status === 'in_progress' }))
+    .join('');
+
+  const fold = $('progress-fold');
+  fold.hidden = !view.earlier;
+  fold.setAttribute('aria-expanded', String(progressOpen));
+  fold.innerHTML = progressOpen
+    ? `<span>${escapeHtml(t('progress.hideEarlier'))}</span>${FOLD_CHEVRON}`
+    : `<span>${escapeHtml(t(view.earlier === 1 ? 'progress.earlierOne' : 'progress.earlier', { n: view.earlier }))}</span>`;
+
+  // "Step 2 of 7": where the run is, as Claude says it. Was "1/7" — the steps
+  // done, which read as the step being worked on and was one behind it.
+  $('progress-count').textContent = items.length ? t('progress.stepOf', { step: view.current + 1, total: items.length }) : '';
+}
+
+$('progress-fold').addEventListener('click', () => {
+  progressOpen = !progressOpen;
+  paintProgress();
+});
 
 function openSidebar() {
   $('app').classList.add('is-open');
