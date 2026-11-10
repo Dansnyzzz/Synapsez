@@ -147,7 +147,7 @@ export function mountUsage(host, { team }) {
   let by = /** @type {'bot' | 'model'} */ ('bot');
   let turn = 0;
   const botOf = (id) => team?.bots.find((b) => b.id === id) || null;
-  const inkFor = (id, i) => (by === 'bot' ? inkOf(botOf(id)?.avatar) : MODEL_INKS[i % MODEL_INKS.length]);
+  const inkFor = (id, i) => (by === 'bot' ? inkOf(botOf(id)) : MODEL_INKS[i % MODEL_INKS.length]);
   const rangeName = (id) => t(`bots.u.r.${id}`);
 
   host.innerHTML = `<div class="usage__seg botuse__ranges" role="tablist" aria-label="${escapeHtml(t('bots.u.range'))}">
@@ -208,7 +208,7 @@ export function mountUsage(host, { team }) {
     const botRows = s.bots
       .map(([id, n]) => {
         const b = botOf(id);
-        return `<li class="botuse__row">${faceHtml(b?.avatar || '', 28)}<span class="botuse__label"><span>${escapeHtml(b?.name || t('bots.deletedBot'))}</span>${b?.role ? `<span class="botuse__sub">${escapeHtml(b.role)}</span>` : ''}<span class="botuse__bar"><span style="width:${share(n)}%;background:${inkOf(b?.avatar)}"></span></span></span><span class="botuse__num">${escapeHtml(compactCount(n))}<span class="botuse__sub">${share(n)}%</span></span></li>`;
+        return `<li class="botuse__row">${faceHtml(b || '', 28)}<span class="botuse__label"><span>${escapeHtml(b?.name || t('bots.deletedBot'))}</span>${b?.role ? `<span class="botuse__sub">${escapeHtml(b.role)}</span>` : ''}<span class="botuse__bar"><span style="width:${share(n)}%;background:${inkOf(b?.avatar)}"></span></span></span><span class="botuse__num">${escapeHtml(compactCount(n))}<span class="botuse__sub">${share(n)}%</span></span></li>`;
       })
       .join('');
     const modelRows = s.models

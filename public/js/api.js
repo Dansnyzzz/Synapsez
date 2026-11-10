@@ -535,11 +535,12 @@ export async function readEvents(res, onEvent) {
 }
 
 /** Write in a group chat and follow its round (server/routes/bots.js). */
-export async function runGroup({ groupId, text, runId, signal, onEvent }) {
+export async function runGroup({ groupId, text, runId, model = undefined, signal, onEvent }) {
   const res = await fetch(`/api/bot-groups/${encodeURIComponent(groupId)}/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Language': currentLanguage() },
-    body: JSON.stringify({ text, runId }),
+    // `model`: the header chip's, which every member answers on (owner, 2026-11-10).
+    body: JSON.stringify({ text, runId, ...(model ? { model } : {}) }),
     signal,
   });
   await readEvents(res, onEvent);
