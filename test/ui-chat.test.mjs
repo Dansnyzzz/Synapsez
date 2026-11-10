@@ -1284,6 +1284,256 @@ section('an answer reads from the question\'s step, with no bubble beside it');
   check('a skipped question says so, the same way', /skipped the question/.test(out.skipped.said) && !/Carry on with your own/.test(out.skipped.said), out.skipped.said.slice(-60));
 }
 
+/* ── the plan, as Claude's Progress panel draws it ──────────────────
+ *
+ * Owner, 2026-11-09, screenshots 2 to 7: a line down the list instead of a blue
+ * band, the step it is on with at most two before it and what is to come, the
+ * rest behind "N earlier steps", the last two once it is done, and "Step 2 of 7"
+ * in the heading. Driven by a stand-in model that sends one plan update per
+ * step, each held back until the panel has been looked at, so every state is
+ * seen while the run is really live.
+ */
+
+const http = await import('node:http');
+const { setApiKey, setPrefs } = await import('../server/settings.js');
+/** Screenshots to compare with the owner's, when asked for: `PROGRESS_SHOTS=<dir>`. */
+const progressShot = async (name) => {
+  if (!process.env.PROGRESS_SHOTS) return;
+  fs.mkdirSync(process.env.PROGRESS_SHOTS, { recursive: true });
+  await page.screenshot({ path: path.join(process.env.PROGRESS_SHOTS, `${name}.png`) }).catch((err) => realLog(`  (no screenshot: ${err.message})`));
+};
+const until = async (test, ms = 10000) => {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (await test()) return true;
+    await page.waitForTimeout(60);
+  }
+  return false;
+};
+
+const SIX = ['Read the brief', 'Gather the numbers', 'Check the sources', 'Draft the summary', 'Review the draft', 'Send it'];
+const STATUS = { d: 'done', r: 'in_progress', p: 'pending' };
+const planOf = (states) =>
+  SIX.map((title, i) => ({ title, status: STATUS[states[i]], ...(states[i] === 'r' ? { detail: `Now: ${title.toLowerCase()}.` } : {}) }));
+/** One plan update per step of the run, then the answer. */
+const SCRIPT = ['rppppp', 'dddrpp', 'ddddrp', 'dddddr', 'dddddd'];
+const arrived = [];
+const held = [];
+const planner = http.createServer((req, res) => {
+  let raw = '';
+  req.on('data', (chunk) => (raw += chunk));
+  req.on('end', async () => {
+    const body = JSON.parse(raw || '{}');
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    const say = (chunk) => res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+    const finish = (reason) => {
+      say({ choices: [{ delta: {}, finish_reason: reason }], usage: { prompt_tokens: 60, completion_tokens: 12 } });
+      res.write('data: [DONE]\n\n');
+      res.end();
+    };
+    // Anything that is not a step of the run (no tools offered) is answered and not counted.
+    if (!Array.isArray(body.tools) || !body.tools.length) {
+      say({ choices: [{ delta: { content: 'ok' } }] });
+      return finish('stop');
+    }
+    const i = arrived.length;
+    arrived.push(true);
+    if (i > 0) await new Promise((resolve) => (held[i] = resolve));
+    if (i < SCRIPT.length) {
+      say({ choices: [{ delta: { tool_calls: [{ index: 0, id: `plan-${i}`, type: 'function', function: { name: 'update_plan', arguments: JSON.stringify({ steps: planOf(SCRIPT[i]) }) } }] } }] });
+      return finish('tool_calls');
+    }
+    say({ choices: [{ delta: { content: 'All six steps are done.' } }] });
+    return finish('stop');
+  });
+});
+await new Promise((r) => planner.listen(0, '127.0.0.1', r));
+process.env.OPENAI_BASE_URL = `http://127.0.0.1:${/** @type {any} */ (planner.address()).port}/v1`;
+await setApiKey(me.id, 'openai', 'sk-test-planner-key');
+await setPrefs(me.id, { language: 'en', onboarded: true, toolPolicy: 'auto', qualityGate: false, defaultModel: 'openai/planner' });
+await reload();
+
+/** What the Progress panel shows, in one object. */
+const progress = () =>
+  page.evaluate(() => {
+    const list = document.getElementById('progress-steps');
+    const items = [...list.querySelectorAll('li')];
+    const fold = document.getElementById('progress-fold');
+    const active = list.querySelector('.is-active');
+    const line = (node) => {
+      const after = getComputedStyle(node, '::after');
+      return after.content !== 'none' && after.content !== 'normal' && after.width === '2px' && after.backgroundColor !== 'rgba(0, 0, 0, 0)';
+    };
+    return {
+      titles: items.map((li) => li.querySelector('.pstep__title')?.textContent || ''),
+      states: items.map((li) => (li.classList.contains('is-done') ? 'd' : li.classList.contains('is-active') ? 'r' : 'p')).join(''),
+      count: document.getElementById('progress-count').textContent,
+      fold: fold.hidden ? null : fold.textContent.trim(),
+      expanded: fold.getAttribute('aria-expanded'),
+      chevron: !!fold.querySelector('svg'),
+      foldTag: fold.tagName,
+      foldLine: !fold.hidden && line(fold),
+      current: items.filter((li) => li.getAttribute('aria-current') === 'step').map((li) => li.querySelector('.pstep__title')?.textContent),
+      detail: active?.querySelector('.pstep__detail')?.textContent || '',
+      activeBackground: active ? getComputedStyle(active).backgroundColor : null,
+      activeWeight: active ? getComputedStyle(active).fontWeight : null,
+      activeColour: active ? getComputedStyle(active).color : null,
+      textColour: getComputedStyle(document.body).color,
+      lines: items.map(line),
+      live: list.classList.contains('is-live'),
+      turning: active ? getComputedStyle(active.querySelector('.pmark--active')).animationName : null,
+      lastTick: !!items.at(-1)?.querySelector('.pmark--done'),
+    };
+  });
+const pressFold = async () => {
+  await page.click('#progress-fold');
+  await page.waitForTimeout(120);
+};
+
+section('Progress: the step it is on, a line down the list, no blue band');
+{
+  // The sections above answer every run with "no model in this test"; this one has a model.
+  await page.unroute('**/run');
+  // From the home screen: the sections above leave a project's page or a paste behind.
+  await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#model-chip');
+  await page.waitForTimeout(900);
+  await closeDialogs();
+  await page.evaluate(() => document.getElementById('new-chat')?.click());
+  await page.waitForTimeout(300);
+  await page.fill('#input', 'Write me the summary, in six steps');
+  await page.keyboard.press('Enter');
+  const first = await until(async () => arrived.length >= 2 && (await progress()).count === 'Step 1 of 6');
+  let p = await progress();
+  const seen = first ? '' : JSON.stringify({ arrived: arrived.length, count: p.count, url: page.url(), chip: await page.textContent('#model-chip'), view: await view(), toasts: await toastSaid() }).slice(0, 600);
+  check('the first update draws the plan, live', first && p.live, seen);
+  check('"Step 1 of 6" beside the title', p.count === 'Step 1 of 6', p.count);
+  check('nothing done yet: every step, no button', p.titles.length === 6 && p.fold === null, `${p.titles.length} ${p.fold}`);
+  await progressShot('1-first-step');
+
+  held[1]();
+  await until(async () => (await progress()).count === 'Step 4 of 6');
+  p = await progress();
+  check('"1 earlier step", singular, over the two before the current step (screenshot 2)', p.fold === '1 earlier step', String(p.fold));
+  check('  it is a real button, folded', p.foldTag === 'BUTTON' && p.expanded === 'false', `${p.foldTag} ${p.expanded}`);
+  check('  shown: the two finished, the current, and what is to come (screenshot 4)', p.states === 'ddrpp' && p.titles[0] === 'Gather the numbers', `${p.states} ${p.titles[0]}`);
+  check('the current step is marked for a screen reader', p.current.join() === 'Draft the summary', p.current.join());
+  check('its ring turns while the run is live', p.turning === 'spin', p.turning);
+  check('no blue band behind it any more', p.activeBackground === 'rgba(0, 0, 0, 0)', p.activeBackground);
+  check('  its words still bold and in the text colour', Number(p.activeWeight) >= 500 && p.activeColour === p.textColour, `${p.activeWeight} ${p.activeColour} vs ${p.textColour}`);
+  check('  and what it involves still under it', p.detail === 'Now: draft the summary.', p.detail);
+  check('a line runs from the button down every step but the last', p.foldLine && p.lines.slice(0, -1).every(Boolean) && p.lines.at(-1) === false, `${p.foldLine} ${p.lines}`);
+  await progressShot('2-one-earlier');
+
+  held[2]();
+  await until(async () => (await progress()).count === 'Step 5 of 6');
+  p = await progress();
+  check('"2 earlier steps" as the run moves on', p.fold === '2 earlier steps' && p.states === 'ddrp' && p.titles[0] === 'Check the sources', `${p.fold} ${p.states} ${p.titles[0]}`);
+
+  await pressFold();
+  p = await progress();
+  check('pressed, every step shows (screenshot 5)', p.titles.length === 6 && p.states === 'ddddrp', p.states);
+  check('  and the button says "Hide earlier steps" with its chevron', p.fold === 'Hide earlier steps' && p.chevron && p.expanded === 'true', `${p.fold} ${p.chevron} ${p.expanded}`);
+  check('  focus stays on it', await page.evaluate(() => document.activeElement?.id === 'progress-fold'));
+  await progressShot('3-expanded');
+  if (process.env.PROGRESS_SHOTS) {
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+    await progressShot('3-expanded-dark');
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+  }
+
+  held[3]();
+  await until(async () => (await progress()).count === 'Step 6 of 6');
+  p = await progress();
+  check('on the last step it stays open, as it was left', p.titles.length === 6 && p.fold === 'Hide earlier steps' && p.states === 'dddddr', `${p.fold} ${p.states}`);
+  await pressFold();
+  p = await progress();
+  check('folded again: the recent three, "3 earlier steps"', p.fold === '3 earlier steps' && p.states === 'ddr' && p.expanded === 'false', `${p.fold} ${p.states}`);
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(120);
+  check('the keyboard opens it too', (await progress()).fold === 'Hide earlier steps');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(120);
+
+  held[4]();
+  await until(async () => (await progress()).states === 'dd');
+  p = await progress();
+  check('finished: only the last two, "4 earlier steps" (screenshot 6)', p.fold === '4 earlier steps' && p.titles.join() === 'Review the draft,Send it', `${p.fold} ${p.titles}`);
+  check('  the last one ticked', p.lastTick);
+  check('  and no step is "current" any more', p.current.length === 0, p.current.join());
+  check('  the heading at the end', p.count === 'Step 6 of 6', p.count);
+
+  held[5]();
+  await until(async () => !(await progress()).live);
+  p = await progress();
+  check('the run ends and the plan stays as it was', !p.live && p.states === 'dd' && p.fold === '4 earlier steps', `${p.live} ${p.states}`);
+  await progressShot('4-finished');
+  await pressFold();
+  p = await progress();
+  check('pressed, the whole process (screenshot 7)', p.titles.length === 6 && p.states === 'dddddd' && p.fold === 'Hide earlier steps', `${p.states} ${p.fold}`);
+  await progressShot('5-finished-expanded');
+  await pressFold();
+}
+
+section('Progress: in Vietnamese, and after a reload');
+{
+  await page.click('#account-button');
+  await page.waitForTimeout(150);
+  await page.click('.plusmenu--account [data-row="settings"]');
+  await page.waitForSelector('#settings[open]');
+  await page.evaluate(() => /** @type {HTMLInputElement} */ (document.querySelector('#language input[value="vi"]')).click());
+  await page.waitForTimeout(300);
+  await closeDialogs();
+  let p = await progress();
+  check('"Bước 6 trên 6"', p.count === 'Bước 6 trên 6', p.count);
+  check('"4 bước trước đó"', p.fold === '4 bước trước đó', String(p.fold));
+  await pressFold();
+  p = await progress();
+  check('"Ẩn bước trước đó" once pressed', p.fold === 'Ẩn bước trước đó', String(p.fold));
+  await progressShot('6-vietnamese');
+  await pressFold();
+
+  // A reload rebuilds the plan from what was stored, folded the same way.
+  await reload();
+  const chatId = (await store.listChats(me.id)).find((c) => /six steps/i.test(c.title || ''))?.id;
+  if (chatId) await page.click(`.chat-row[data-chat="${chatId}"] .chat-item`);
+  await until(async () => (await progress()).count === 'Bước 6 trên 6');
+  p = await progress();
+  check('reopened: still the last two, still folded', p.states === 'dd' && p.fold === '4 bước trước đó', `${p.states} ${p.fold}`);
+
+  await page.click('#account-button');
+  await page.waitForTimeout(150);
+  await page.click('.plusmenu--account [data-row="settings"]');
+  await page.waitForSelector('#settings[open]');
+  await page.evaluate(() => /** @type {HTMLInputElement} */ (document.querySelector('#language input[value="en"]')).click());
+  await page.waitForTimeout(300);
+  await closeDialogs();
+  check('and back in English', (await progress()).count === 'Step 6 of 6');
+}
+
+section('Progress: reduced motion keeps the ring still');
+{
+  const steps = await page.evaluate(async () => {
+    const { planItemHtml } = await import('/js/plan.js');
+    return planItemHtml({ title: 'Turning', status: 'in_progress' });
+  });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const still = await page.evaluate((html) => {
+    const list = document.getElementById('progress-steps');
+    const before = list.innerHTML;
+    const live = list.classList.contains('is-live');
+    list.innerHTML = html;
+    list.classList.add('is-live');
+    const name = getComputedStyle(list.querySelector('.pmark--active')).animationName;
+    list.innerHTML = before;
+    list.classList.toggle('is-live', live);
+    return name;
+  }, steps);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  check('no turning for someone who asked for less motion', still === 'none', still);
+}
+planner.close();
+
 /* ── done ───────────────────────────────────────────────────────── */
 
 await browser.close();

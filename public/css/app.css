@@ -1567,6 +1567,7 @@ textarea {
 }
 .progress:empty { display: none; }
 .progress li {
+  position: relative;
   display: flex;
   gap: 10px;
   align-items: flex-start;
@@ -1577,13 +1578,70 @@ textarea {
 }
 .progress .is-done { color: var(--text-faint); }
 .progress .is-done .pstep__title { text-decoration: line-through; }
-/* A tint rather than a fill: an opaque row on a translucent panel reads as a
-   sticker somebody put on the glass. */
+/* The step being worked on is told by its turning ring, its words and the line
+   leading to it — no longer by a blue band behind it (owner, 2026-11-09). */
 .progress .is-active {
-  background: var(--info-bg);
   color: var(--text);
   font-weight: 500;
 }
+
+/*
+ * The line down the marks, after Claude's (owner, 2026-11-09, screenshot 2): it
+ * runs from the fold button through every step, so where the run is reads at a
+ * glance. Drawn as one piece per step, from just under its mark to just over the
+ * next one, because a line behind the marks would show through their open rings,
+ * and the panel is glass, so nothing can paint over it. The part already walked
+ * is drawn firmer than the part still to come.
+ *
+ * The mark is 16px, 8px in from the row and 8px down (7px padding, 1px margin),
+ * so its middle is 16px in and the line, 2px wide, starts at 15px.
+ */
+.ptrack { --pline-done: color-mix(in srgb, var(--text-faint) 70%, transparent); --pline-todo: color-mix(in srgb, var(--text-faint) 32%, transparent); }
+.progress li:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 27px;
+  bottom: -5px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--pline-todo);
+}
+.progress li.is-done:not(:last-child)::after { background: var(--pline-done); }
+
+/* "3 earlier steps" / "Hide earlier steps ⌄": its words where the steps' words
+   start, the line passing beside them on down to the first step shown. */
+.pfold {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 8px 4px 34px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.pfold[hidden] { display: none; }
+.pfold::after {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 6px;
+  bottom: -5px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--pline-done);
+}
+.pfold:hover { color: var(--text-dim); }
+.pfold:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pfold__chev { flex: none; }
 
 /* ── one step: its mark, its title, and what it involves ───────── */
 
@@ -9098,7 +9156,7 @@ h3.spane__label:focus-visible { outline: 2px solid var(--accent); outline-offset
    was pushed down to the bottom of the column under them, cramped and easy to
    miss. The task pane already hid them; this matches it. */
 .app.is-filepane .detail__head,
-.app.is-filepane .detail__body > .progress,
+.app.is-filepane .detail__body > .ptrack,
 .app.is-filepane .detail__body > .hint,
 .app.is-filepane .detail__body > .screen,
 .app.is-filepane .detail__body > .rail-extra { display: none; }
@@ -9106,7 +9164,7 @@ h3.spane__label:focus-visible { outline: 2px solid var(--accent); outline-offset
 
 /* A scheduled task takes the rail the same way a file does. */
 .app.is-taskpane .detail__head,
-.app.is-taskpane .detail__body > .progress,
+.app.is-taskpane .detail__body > .ptrack,
 .app.is-taskpane .detail__body > .hint,
 .app.is-taskpane .detail__body > .screen,
 .app.is-taskpane .detail__body > .rail-extra { display: none; }
@@ -10099,6 +10157,116 @@ label.btn:has(+ input[type='file']:focus-visible) {
   color: var(--text-dim);
 }
 .railrow__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* "Used in this session": a paperclip, "Uploads", the first name cut to fit and
+   "+N" — one line, as Claude has it (owner, 2026-11-09). */
+.railrow--uploads { gap: 8px; }
+.railrow--uploads:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.railrow__clip { display: inline-grid; place-items: center; flex: none; width: 22px; color: var(--text-dim); }
+.railrow__label { flex: none; color: var(--text-dim); }
+.railrow__first { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); font-size: 12.5px; }
+.railrow__more { flex: none; color: var(--text-faint); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+
+/* ── The files one message brought (uploads-view.js) ───────────────────
+   After Claude's "Uploaded files" (owner, 2026-11-09, screenshots 8 and 9): the
+   message's files down the left on a lighter ground, the chosen one lit; on the
+   right its name and type, download and close, and the viewer's own drawing of
+   it filling what is left. Only the direction changes from `.sheet`, so a closed
+   one is still hidden by `.sheet:not([open])`. */
+.sheet.upv {
+  flex-direction: row;
+  width: min(1400px, calc(100vw - 48px));
+  height: min(86dvh, 920px);
+  max-height: none;
+  /* Centred at every width above a phone's, so rounded all round — not the
+     bottom sheet `.sheet` turns into below 900px. */
+  border-radius: 18px;
+}
+.upv__side {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 clamp(240px, 34%, 440px);
+  min-height: 0;
+  border-right: 1px solid var(--line-soft);
+  background: var(--tint);
+}
+.upv__title { flex: none; margin: 0; padding: 20px 22px 14px; font-size: 16px; font-weight: 600; }
+.upv__list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 10px 12px; }
+.upv__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  color: var(--text);
+  cursor: pointer;
+}
+/* A hairline between rows, none on either side of the lit one. */
+.upv__item + .upv__item::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 14px;
+  right: 14px;
+  border-top: 1px solid var(--line-soft);
+}
+.upv__item.is-chosen::before,
+.upv__item.is-chosen + .upv__item::before { display: none; }
+.upv__item:hover { background: var(--tint); }
+.upv__item.is-chosen { background: var(--tint-2); }
+.upv__item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.upv__icon { display: inline-grid; place-items: center; flex: none; color: var(--text-dim); }
+.upv__fname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14.5px; }
+.upv__badge,
+.upv__type { flex: none; color: var(--text-faint); font-size: 12px; letter-spacing: 0.03em; }
+.upv__main { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.upv__bar { display: flex; align-items: center; gap: 4px; flex: none; padding: 12px 12px 10px 22px; }
+.upv__ident { display: flex; align-items: baseline; gap: 10px; flex: 1; min-width: 0; }
+.upv__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.upv__btn {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.upv__btn:hover { background: var(--tint-2); color: var(--text); }
+.upv__btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.upv__body { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; }
+.upv__body:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* The viewer's drawings were sized for the side panel; here they fill the window. */
+.upv__body > .viewer__image { flex: 1; min-height: 0; padding: 24px; }
+.upv__body > .viewer__image img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.upv__body > .viewer__frame { flex: 1; height: auto; min-height: 0; }
+.upv__body > .xlv-host { flex: 1; height: auto; min-height: 0; }
+.upv__body > .viewer__media { flex: 1; }
+.upv__body > .viewer__loading,
+.upv__body > .viewer__empty { margin: auto; }
+
+/* A phone: the window is the screen, the list over the file, ✕ in the corner. */
+@media (max-width: 640px) {
+  .sheet.upv {
+    flex-direction: column;
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+  .upv__side { flex: none; max-height: 34dvh; border-right: 0; border-bottom: 1px solid var(--line-soft); }
+  .upv__title { padding: 14px 64px 8px 16px; }
+  .upv__list { padding: 0 6px 8px; }
+  .upv__bar { padding: 8px 8px 6px 16px; }
+  #uploads-close { position: absolute; top: 6px; right: 8px; }
+  .upv__body > .viewer__image { padding: 12px; }
+}
 .railgrp + .railgrp { margin-top: 10px; }
 .railgrp__name { padding: 2px 8px 6px; color: var(--text-faint); font-size: 12.5px; }
 .railchips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 6px; }
