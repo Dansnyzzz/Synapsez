@@ -401,5 +401,37 @@ section('7a yahoo.js: chart, statements, crumb');
   check('news: headline, publisher and link only', headlines.length === 1 && headlines[0].url === 'https://example.com/fpt-ai' && !('summary' in headlines[0]));
 }
 
+const vndirect = await import('../server/finance/sources/vndirect.js');
+
+section('7b vndirect.js: thousand ₫ in, ₫ out; raw and adjusted side by side');
+{
+  await fresh();
+  const fetchImpl = serve([
+    ['stock_prices', 'vndirect-stock-prices.json'],
+    ['dchart', 'dchart.json'],
+    ['ratios/latest', 'vndirect-ratios.json'],
+  ]);
+  const ctx = { fetchImpl };
+  const q = await vndirect.quote('fpt', ctx);
+  check('the newest row, multiplied to ₫: 50.9 → 50,900', q.price === 50_900 && q.reference === 51_000 && q.ceiling === 54_500 && q.floor === 47_450, JSON.stringify(q));
+  check('  the board from the row itself; the time in Hanoi', q.board === 'HOSE' && q.asOf === '2026-11-10T07:46:08.000Z' && q.delay === 'delayed');
+  check('  volume in shares, not multiplied', q.volume === 7_268_500);
+  const asked = fetchImpl.calls.at(-1).url;
+  check('  one row asked for, by code — no crawl', /q=code:FPT&size=2/.test(asked), asked);
+  const raw = await vndirect.history('FPT', { from: '2026-09-01', to: '2026-11-10', adjusted: false }, ctx);
+  const adj = await vndirect.history('FPT', { from: '2026-09-01', to: '2026-11-10', adjusted: true }, ctx);
+  const day = (h) => h.bars.find((b) => b.t === '2026-09-18');
+  check('before the 10% bonus issue, raw and adjusted differ: 71,700 raw, 65,182 adjusted', day(raw).c === 71_700 && day(adj).c === 65_182, `${day(raw).c} / ${day(adj).c}`);
+  check('  and the volume is the same in both — it is never adjusted', day(raw).v === day(adj).v && day(raw).v === 15_500_700);
+  check('  oldest first, and said which it is', raw.bars[0].t < raw.bars.at(-1).t && raw.adjusted === false && adj.adjusted === true);
+  check('  at most 250 rows in one call', /size=250/.test(fetchImpl.calls.at(-1).url));
+  const long = await refusal(vndirect.history('FPT', { from: '2020-01-01', to: '2026-11-10' }, ctx));
+  check('a period needing more than 250 daily rows is passed on, not crawled', long instanceof http.SourceError && /250/.test(long.message));
+  const bars = await vndirect.dchart('FPT', '1d', '2026-11-01', '2026-11-10', ctx);
+  check('dchart: thousand ₫ to ₫ as well, dated in Hanoi', bars.bars.at(-1).c === 50_900 && bars.bars.at(-1).t === '2026-11-10' && bars.adjusted, JSON.stringify(bars.bars.at(-1)));
+  const r = await vndirect.ratios('FPT', ctx);
+  check('ratios: only market cap (51003), the one item whose meaning is known', r.items.length === 1 && r.items[0].key === 'marketCap' && r.items[0].value === 96_172_110_048_000);
+}
+
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll finance checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);
