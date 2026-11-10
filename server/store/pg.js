@@ -251,8 +251,10 @@ export function splitStatements(sql) {
  *      usage_events.bot_id — the Bot page
  *  43  bots.hue — a creature two bots share, told apart by its colour;
  *      scheduled_tasks.bot_id — a bot's own scheduled tasks; incognito chats with a bot
+ *  45  finance_cache — market data shared across accounts (server/finance/cache.js).
+ *      44 is spec A's, built beside this one; 45 does not depend on it
  */
-export const SCHEMA_VERSION = 43;
+export const SCHEMA_VERSION = 45;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -5199,6 +5201,45 @@ export function createPgStore(connectionString) {
     /** Housekeeping, so the table cannot grow without bound. */
     async pruneRateLimits() {
       await q('DELETE FROM rate_limits WHERE expires_at < NOW() - INTERVAL \'1 day\'');
+    },
+
+    // ── market data (schema 45) ─────────────────────────────────────
+    //
+    // Public prices and figures, one row per `source|kind|symbol|params`, shared
+    // by every account: nothing in a row is about a person (server/finance/cache.js).
+
+    /**
+     * A cached answer, expired or not — the caller decides what stale means.
+     *
+     * @returns {Promise<{ value: any, fetched_at: string, expires_at: string | null } | null>}
+     */
+    async financeGet(key) {
+      const rows = await q('SELECT value, fetched_at, expires_at FROM finance_cache WHERE key = $1', [String(key)]);
+      const row = rows[0];
+      if (!row) return null;
+      return {
+        value: typeof row.value === 'string' ? JSON.parse(row.value) : row.value,
+        fetched_at: new Date(row.fetched_at).toISOString(),
+        expires_at: row.expires_at ? new Date(row.expires_at).toISOString() : null,
+      };
+    },
+    /** Keep an answer until `expiresAt`, or for good when it is null. */
+    async financePut(key, value, expiresAt) {
+      await q(
+        `INSERT INTO finance_cache (key, value, fetched_at, expires_at) VALUES ($1, $2::jsonb, NOW(), $3::timestamptz)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, fetched_at = NOW(), expires_at = EXCLUDED.expires_at`,
+        [String(key), toJson(value), expiresAt ? new Date(expiresAt).toISOString() : null],
+      );
+    },
+    /** What expired over a day ago, and what was kept for good past 400 days. Returns how many went. */
+    async financeSweep() {
+      const rows = await q(
+        `DELETE FROM finance_cache
+          WHERE expires_at < NOW() - INTERVAL '1 day'
+             OR (expires_at IS NULL AND fetched_at < NOW() - INTERVAL '400 days')
+        RETURNING key`,
+      );
+      return rows.length;
     },
 
     // ── worker tokens ───────────────────────────────────────────────

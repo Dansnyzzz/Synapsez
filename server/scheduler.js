@@ -808,6 +808,8 @@ export async function sweep() {
     // whole month of them before every single turn.
     store.pruneUsageEvents(),
     store.pruneOutcomes(),
+    // Market data expired over a day ago, and bars kept for good past 400 days (schema 45).
+    store.financeSweep(),
     // An event's theme came out: tell whoever has not been told, a batch or two a sweep (owner, 2026-11-08).
     sweepEventMail({ store }),
     // A task whose invocation was killed mid-run is stopped for a person rather

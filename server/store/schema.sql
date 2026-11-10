@@ -1266,3 +1266,17 @@ CREATE INDEX IF NOT EXISTS scheduled_bot_idx ON scheduled_tasks (user_id, bot_id
 -- incognito ones out.
 DROP INDEX IF EXISTS chats_bot_room_idx;
 CREATE UNIQUE INDEX IF NOT EXISTS chats_bot_room_idx ON chats (bot_id, COALESCE(bot_group_id, '')) WHERE bot_id IS NOT NULL AND NOT incognito;
+
+-- 45 (owner, 2026-11-10): market data shared by every account and instance, so a
+-- price asked twice is fetched once. Only the fields the tool returns are kept:
+-- public prices and figures, never anything about a person. `expires_at` NULL is a
+-- row kept for good (a closed day's raw bar, a past day's rate); the sweep drops
+-- those after 400 days, and any row expired more than a day ago (server/finance/cache.js).
+-- Stands alone: nothing here depends on another table, or on version 44.
+CREATE TABLE IF NOT EXISTS finance_cache (
+  key        TEXT PRIMARY KEY,
+  value      JSONB NOT NULL,
+  fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS finance_cache_expires_idx ON finance_cache (expires_at);

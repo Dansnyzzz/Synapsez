@@ -229,7 +229,8 @@ section('schema.sql and SCHEMA_VERSION move together');
   // 42: bots, bot_groups, bot_group_members, bot_memory, chats.bot_id/.bot_group_id,
   // usage_events.bot_id — the Bot page.
   // 43: bots.hue, scheduled_tasks.bot_id, and incognito chats with a bot left out of one-chat-per-bot.
-  const STAMPED = { version: 43, fingerprint: '3767e790b157fe66' };
+  // 45: finance_cache — market data shared across accounts (44 is spec A's, built beside it).
+  const STAMPED = { version: 45, fingerprint: '62a5c05f5175be10' };
 
   check(
     'the recorded version matches the code',
@@ -299,6 +300,17 @@ section('shared skills reach a database from 40, and every skill there stays pri
   check('opening it adds what sharing needs', (await tableExists('skill_adds')) && (await columnExists('skills', 'shared_at')) && (await columnExists('skills', 'hidden_at')) && (await columnExists('skills', 'scan')));
   const old = (await driver.query(`SELECT shared_at, hidden_at FROM skills WHERE id = 'sk-old'`))[0];
   check('  and a skill made before it is not shared by the upgrade', old && old.shared_at === null && old.hidden_at === null, JSON.stringify(old));
+}
+
+section('the market data cache reaches a database from 43, whether or not 44 came first (schema 45)');
+{
+  await driver.query('DROP TABLE IF EXISTS finance_cache');
+  await driver.query(`UPDATE settings SET value = '43'::jsonb WHERE key = 'schema_version'`);
+  check('it really is gone first', !(await tableExists('finance_cache')), 'otherwise this proves nothing');
+  await createPgStore(driver).init();
+  check('opening it adds the table', (await tableExists('finance_cache')) && (await columnExists('finance_cache', 'expires_at')));
+  const stamp = await driver.query("SELECT value FROM settings WHERE key = 'schema_version'");
+  check('  and stamps it 45', Number(stamp[0]?.value) === 45, String(stamp[0]?.value));
 }
 
 section('and the stamp is what decides');
