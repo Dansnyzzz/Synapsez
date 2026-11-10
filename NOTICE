@@ -1,0 +1,36 @@
+Synapsez — third-party notices for the app's own code
+
+Notices for the built-in skills are in server/skills/THIRD_PARTY_NOTICES.md, and for
+the mascot art in public/assets/mascot/NOTICE.txt. This file covers the rest.
+
+────────────────────────────────────────────────────────────────────────────────
+
+The Bot page (public/js/bots.js, bots-settings.js, bots-usage.js, bot-mentions.js,
+bot-avatar.js; server/bots/; server/routes/bots.js)
+
+  Source:   DS Bot, https://github.com/Fei2411/DS-Bot
+            Copyright its contributors.
+  Licence:  Apache License 2.0, https://www.apache.org/licenses/LICENSE-2.0
+
+  What was taken: design, not code or art. The Bot page follows DS Bot's
+  published design — a main bot ("Chief", Chief of Staff) that creates the other
+  bots and the group chats when asked; group chats with an admin that answers a
+  message calling nobody and hands work on with "@Name"; a member called that way
+  doing the work in its own context for that group and posting back, the bot that
+  asked then answering what came back; one shared reading of "@Name" for the
+  server and the page (longest name first; an address or a code span is no call);
+  a bot's own memory and a group memory read only in that group, as data and not
+  as instructions; a details panel (model, instructions, memory, usage) and a
+  settings page with usage by time, by bot and by model; "Thought it through" for
+  a turn's reasoning.
+
+  What was not taken: none of DS Bot's source code, prompts, wording or artwork.
+  Every line of the Bot page is written for this app, and a bot's face is one of
+  Synapsez's own pixel creatures (public/js/mascots/), not one of DS Bot's
+  characters. Where this app departs from DS Bot — a hard ceiling on hand-offs per
+  message, one streamed request per group round, entries in a database rather than
+  Markdown files, no per-bot browser — is said in server/bots/rounds.js and
+  server/bots/memory.js.
+
+  This is a modified work in the sense of the licence's section 4 only so far as a
+  design can be one; it is not DS Bot and is not endorsed by its authors.

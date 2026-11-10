@@ -36,6 +36,8 @@ internet ever connects inward to your machine.
 | **Your documents** | Point it at a folder and it reads the lot — text, Markdown, code, PDFs, Word, Excel, PowerPoint — then finds the right passage by meaning, not by keyword. Files never leave except as the passages themselves. |
 | **Quick launcher** | A hotkey anywhere on the desktop opens one box. Type the thought, press Enter, and the app takes it from there. |
 | **Skills** | Teach a procedure once; it is offered back in every future conversation. |
+| **Bot** | A team of long-lived bots, each with a name, a role, one of the app's pixel creatures, its own model, instructions you write and a memory of its own. Chief, the main bot, sets the team up when you ask it to — it creates bots and group chats. In a group chat the admin answers first and hands work to others with `@Name`; the member posts its result and the admin answers what came back (at most six hand-offs per message; one Stop stops them all). Bot settings shows usage by time, by bot and by model. |
+| **Automations** | Scheduled tasks and workflows, on one page with two tabs (the rail's clock). |
 | **Scheduled tasks** | Daily or weekly work that runs unattended, into a conversation you read later. |
 | **Workflows** | Several steps in order, run unattended, where each step sees what the last produced. It keeps its position: a run cut off at step three carries on at step three rather than sending the same email twice — and a step that was interrupted mid-flight is never repeated automatically, because nothing can tell you whether it had already happened. The shelf names the step that stopped and why. |
 | **Sub-agents** | Fan a job out to several read-only agents at once and gather the answers. |

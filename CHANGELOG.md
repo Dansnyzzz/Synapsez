@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — Automations, and a real Bot
+
+**Automations** (`public/js/automations.js`, `public/js/automation-status.js`, `server/routes/automations.js`). The Workflows + Scheduled page that was called Bot for a day is Automations (Tự động hoá), under the alarm clock. Addresses are `#automations/<tab>[/<id>]`; old `#bot/workflows…` and `#bot/scheduled…` links land on the same tab and item. The summary route is `/api/automations/summary`. Nothing else changed.
+
+**Bot** (`public/js/bots.js`, `bots-settings.js`, `bots-usage.js`, `bot-mentions.js`, `bot-avatar.js`; `server/bots/`; `server/routes/bots.js`), modelled on DS Bot's design (NOTICE). Every account gets Chief, Chief of Staff; asked, it creates bots and group chats with its own tools. A bot runs on its own model with its role, your instructions and its memory in the prompt (memory as background, never orders), and keeps its memory with `remember` / `forget`. Group chats: the admin answers a message that calls nobody; `@Name` (with a picker) calls a bot straight; a bot's `@Name` hands work on, the member works in its own context for that group and posts back, and the asker answers what came back. Six hand-offs per message at most; one Stop stops every member. Group memory is the group's. Details panel (model, instructions, memory, usage) and Bot settings (Bots, Group chats, Usage by time, bot and model; links to Connectors, Automations and Feedback). Schema 42: `bots`, `bot_groups`, `bot_group_members`, `bot_memory`, `chats.bot_id` / `bot_group_id`, `usage_events.bot_id`.
+
 ## 2026-11-09 — The Bot page, a creature for every title, the aurora week, a disk that tidies itself
 
 **Bot** (`public/js/bot.js`, `public/js/bot-status.js`, `server/routes/bot.js`). Workflows and scheduled tasks are one sidebar item with two tabs, from a study of Fei2411/DS-Bot. Every row says its state in words; the rail counts what needs you; Run now and Stop on the row; a workflow keeps its last ten runs and takes permissions and a project (schema 40); a resumed step is told to check what it already did.
