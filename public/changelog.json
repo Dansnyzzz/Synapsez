@@ -1,6 +1,46 @@
 {
   "entries": [
     {
+      "version": "1.18.0",
+      "date": "2026-11-10",
+      "new": {
+        "vi": [
+          "Chat với bot giờ là khung chat chính: tin nhắn hiện ngay, suy nghĩ hiện theo thời gian thực, gửi được tệp, dùng các chế độ và ẩn danh như ở trang chủ, nhìn thấy theme phía sau.",
+          "Mỗi bot có việc theo lịch riêng, chỉ hiện ở mục Bot và chạy trong chat của chính bot đó.",
+          "Bot tự ghi nhớ khi thấy cần, không cần bạn nhắc."
+        ],
+        "en": [
+          "A bot's chat is the home chat now: what you write shows at once, thinking streams as it comes, files go with a message, and the modes and incognito work as at home, with the theme behind it.",
+          "Each bot has scheduled tasks of its own, shown only on the Bot page and run in that bot's chat.",
+          "Bots save to their memory on their own when it is worth keeping."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Chế độ Lập kế hoạch luôn tự lập kế hoạch, không cần bạn nói \"tạo kế hoạch\".",
+          "Mọi bot dùng mô hình chọn ở thanh trên; linh vật đã có bot khác dùng sẽ mang màu riêng, Chief luôn là cá voi vũ trụ.",
+          "Kỹ năng mới tự chia sẻ lên Khám phá, trừ khi bạn tắt.",
+          "Khối Suy luận mở và đóng mượt, mũi tên nằm giữa."
+        ],
+        "en": [
+          "Plan mode always makes a plan, without being told \"make a plan\".",
+          "Every bot answers on the model in the top bar; a creature another bot wears comes in its own colour, and Chief is always the cosmic whale.",
+          "New skills share themselves to Discover unless you turn it off.",
+          "The reasoning block opens and closes smoothly, its arrow in the middle."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Bot mới không bao giờ tự ghi nhớ được vì chưa được dặn khi bộ nhớ còn trống.",
+          "Ô tải ở bảng chi tiết của bot là vòng xoay thay vì dấu \"…\"."
+        ],
+        "en": [
+          "A new bot never saved to its memory, never having been told it could while it was empty.",
+          "The Bot page's details load with a ring rather than a row of dots."
+        ]
+      }
+    },
+    {
       "version": "1.17.0",
       "date": "2026-11-10",
       "new": {
