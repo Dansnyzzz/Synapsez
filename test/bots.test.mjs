@@ -366,7 +366,10 @@ section('[PASS] keeps a member quiet');
   const q = await alice.call('POST', '/api/bots', { name: 'Quiet', role: 'q' });
   const g = await alice.call('POST', '/api/bot-groups', { name: 'Hush', members: [q.body.bot.id] });
   const round = await alice.stream(`/api/bot-groups/${g.body.group.id}/run`, { text: 'anyone?' });
-  check('nothing is posted for a pass', round.events.filter((e) => e.event === 'post').length === 1);
+  const posts = round.events.filter((e) => e.event === 'post').map((e) => e.data.message);
+  check('nothing the bot says is posted for a pass', posts.filter((m) => !m.notice).length === 1);
+  // Owner, 2026-11-10: a round never ends in silence — the admin passing alone is said.
+  check('  and the group is told nobody answered', posts.some((m) => m.notice === 'nobody'), posts.map((m) => m.notice || m.role).join());
 }
 
 section('Stop ends every member\'s turn in a round');

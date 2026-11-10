@@ -167,5 +167,225 @@ section('a conversation keeps the memory it began with');
   check('  and only its own account writes it', (await store.getChat(uid, own.id)).memory_snapshot === '## Your memory, Chief\n- one');
 }
 
+/* ── Task 2: a round in segments ───────────────────────────────── */
+
+const { runGroupRound, MAX_SEGMENTS } = await import('../server/bots/rounds.js');
+
+const quiet = await store.createBot(uid, { id: id(), name: 'Quiet', role: 'Listens', avatar: 'frog' });
+const room = await store.createBotGroup(uid, { id: id(), name: 'Room', adminBotId: chief.id, members: [chief.id, writer.id, quiet.id] });
+const nameOfChat = async (chatId) => {
+  const chat = await store.getChat(uid, chatId);
+  const bot = chat?.bot_id ? await store.getBot(uid, chat.bot_id) : null;
+  return bot?.name || '?';
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * The agent loop, scripted: `plan[name]` answers for that bot — a string is its reply,
+ * a function gets `{ call, prompt, chatId, deadlineAt, modelId }` and returns a reply,
+ * `{ cut: true }` (stopped mid-step at the deadline), `{ throws }` or `{ wait, then }`.
+ */
+function fakeAgent(plan) {
+  const calls = [];
+  const run = async ({ chatId, emit, signal, deadlineAt, modelId, turnOrigin }) => {
+    const name = await nameOfChat(chatId);
+    const history = await store.listMessages(uid, chatId);
+    const prompt = [...history].reverse().find((m) => m.role === 'user')?.text || '';
+    const call = { name, prompt, chatId, deadlineAt, modelId, turnOrigin, users: history.filter((m) => m.role === 'user').length };
+    calls.push(call);
+    let step = plan[name];
+    if (typeof step === 'function') step = await step(call);
+    if (step && typeof step === 'object' && step.wait) {
+      await sleep(step.wait);
+      step = step.then;
+    }
+    if (signal?.aborted) return;
+    if (step && step.throws) throw new Error(step.throws);
+    if (step && step.cut) {
+      await store.appendMessage(uid, chatId, { id: id(), role: 'assistant', text: '', toolCalls: [{ id: id(), name: 'web_search', input: { query: 'x' } }] });
+      emit('error', { message: 'The request ran out of time.' });
+      return;
+    }
+    await store.appendMessage(uid, chatId, { id: id(), role: 'assistant', text: String(step ?? '[PASS]') });
+  };
+  return { run, calls };
+}
+const roundOf = async (options) => {
+  const events = [];
+  const result = await runGroupRound({ user, groupId: room.id, emit: (event, data) => events.push({ event, data }), signal: new AbortController().signal, ...options });
+  const posts = events.filter((e) => e.event === 'post').map((e) => e.data.message);
+  return { result, events, posts };
+};
+const cleanRoom = async () => {
+  await store.resetConversation(uid, { groupId: room.id });
+  await store.setGroupModel(uid, room.id, null);
+};
+
+section('a round never ends in silence');
+{
+  await cleanRoom();
+  const agent = fakeAgent({
+    Chief: ({ prompt }) => (/What you handed on/.test(prompt) ? 'Nobody had anything; I will take it.' : '@Writer @Quiet your views?'),
+    Writer: '[PASS]',
+    Quiet: { throws: 'provider down' },
+  });
+  const { posts } = await roundOf({ text: 'Thoughts?', runAgent: agent.run });
+  const report = agent.calls.filter((c) => c.name === 'Chief')[1];
+  check('the asker gets its turn back when every member passed or failed', !!report, agent.calls.map((c) => c.name).join());
+  check('  told who gave no answer and who could not answer', /Writer/.test(report?.prompt || '') && /gave no answer/i.test(report?.prompt || '') && /Quiet/.test(report?.prompt || '') && /could not answer/i.test(report?.prompt || ''), (report?.prompt || '').slice(-400));
+  check('  and its answer is posted', posts.some((m) => /take it/.test(m.text || '')));
+  const seen = (await store.getBotGroup(uid, room.id)).seen;
+  const quietSeen = Number(seen[quiet.id]);
+  check('a member whose turn failed has not "read" the lines it was shown', quietSeen === -1, JSON.stringify(seen));
+  check('  one that answered (even with a pass) has', Number(seen[writer.id]) > -1);
+}
+
+section('the admin passing alone is said');
+{
+  await cleanRoom();
+  const agent = fakeAgent({ Chief: '[PASS]' });
+  const { posts } = await roundOf({ text: 'Anyone?', runAgent: agent.run });
+  check('a notice says nobody answered and how to call someone', posts.some((m) => m.notice === 'nobody'), posts.map((m) => m.notice || m.role).join());
+}
+
+section('out of time: the round is saved and carried on, not dropped');
+{
+  await cleanRoom();
+  const chained = [];
+  const agent = fakeAgent({ Chief: ({ prompt }) => (/What you handed on/.test(prompt) ? 'Here is the draft.' : { wait: 250, then: '@Writer draft it' }), Writer: 'Draft: tea.' });
+  const first = await roundOf({ text: 'Write me a post', runAgent: agent.run, deadlineAt: Date.now() + 400, floorMs: 300, chain: (u, g) => chained.push([u, g]), model: 'openai/plain' });
+  const saved = (await store.getBotGroup(uid, room.id)).pending;
+  check('the segment stops for time with work left', first.result.stopReason === 'time' && first.result.pending === true, JSON.stringify(first.result));
+  check('  what is left is saved, for the next segment', saved?.reason === 'time' && saved.queue?.[0]?.botId === writer.id && saved.queue[0].by === chief.id, JSON.stringify(saved));
+  check('  and the next one is asked for, once', chained.length === 1 && chained[0][0] === uid && chained[0][1] === room.id, JSON.stringify(chained));
+  check('  with no "out of time" notice to the person', !first.posts.some((m) => m.notice === 'time'));
+  const second = await roundOf({ resume: true, runAgent: agent.run });
+  check('the next segment does what was left: Writer, then Chief reading it', second.posts.map((m) => m.text).join(' | ') === 'Draft: tea. | Here is the draft.', second.posts.map((m) => m.text).join(' | '));
+  check('  and the round is over', (await store.getBotGroup(uid, room.id)).pending === null && second.result.stopReason === 'end_turn');
+  check('  on the model the person had', agent.calls.at(-1).modelId === 'openai/plain', agent.calls.at(-1).modelId);
+}
+
+section('a member cut off mid-step carries on, not starts again');
+{
+  await cleanRoom();
+  let tries = 0;
+  const agent = fakeAgent({
+    Chief: ({ prompt }) => (/What you handed on/.test(prompt) ? 'Got it.' : '@Writer research it'),
+    Writer: () => (tries++ === 0 ? { wait: 150, then: { cut: true } } : 'Found three sources.'),
+  });
+  await roundOf({ text: 'Research tea', runAgent: agent.run, deadlineAt: Date.now() + 200, floorMs: 100, chain: () => {} });
+  const saved = (await store.getBotGroup(uid, room.id)).pending;
+  check('its turn is kept as unfinished', saved?.queue?.[0]?.botId === writer.id && saved.queue[0].resume === true, JSON.stringify(saved?.queue));
+  const before = agent.calls.filter((c) => c.name === 'Writer').at(-1).users;
+  const next = await roundOf({ resume: true, runAgent: agent.run });
+  const again = agent.calls.filter((c) => c.name === 'Writer').at(-1);
+  check('the next segment runs it on without a second prompt', again.users === before, `${before} → ${again.users}`);
+  check('  its answer reaches the group, and Chief reads it', next.posts.map((m) => m.text).join(' | ') === 'Found three sources. | Got it.', next.posts.map((m) => m.text).join(' | '));
+}
+
+section('a segment that was killed is picked up where it was');
+{
+  await cleanRoom();
+  const log = await store.botChat(uid, { groupId: room.id, title: room.name });
+  await store.appendMessage(uid, log.id, { id: id(), role: 'user', text: 'Plan the week' });
+  await store.setGroupPending(uid, room.id, { messageId: null, queue: [{ botId: writer.id, by: chief.id, report: null }], handoffs: 1, segments: 1, reason: 'running', owed: {}, working: [{ bot: writer.id, tool: 'web_search' }], lastSeq: 0, at: new Date().toISOString() });
+  const agent = fakeAgent({ Writer: 'Monday: draft.', Chief: 'Week planned.' });
+  const res = await roundOf({ resume: true, runAgent: agent.run });
+  check('the queue it left runs, and the asker answers', res.posts.map((m) => m.text).join(' | ') === 'Monday: draft. | Week planned.', res.posts.map((m) => m.text).join(' | '));
+}
+
+section(`at most ${MAX_SEGMENTS} segments, then the person decides`);
+{
+  await cleanRoom();
+  await store.setGroupPending(uid, room.id, { queue: [{ botId: writer.id, by: chief.id, report: null }], handoffs: 1, segments: MAX_SEGMENTS, reason: 'time', owed: {}, working: [], lastSeq: 0, at: new Date().toISOString() });
+  const agent = fakeAgent({ Writer: 'x' });
+  const res = await roundOf({ resume: true, runAgent: agent.run });
+  const saved = (await store.getBotGroup(uid, room.id)).pending;
+  check('no turn runs past the cap', agent.calls.length === 0);
+  check('  a notice offers Continue', res.posts.some((m) => m.notice === 'segments'));
+  check('  and the queue waits for the person', saved?.reason === 'segments' && saved.queue.length === 1);
+  const pressed = await roundOf({ resume: true, fresh: true, runAgent: agent.run });
+  check('Continue runs it with a fresh allowance', pressed.posts.some((m) => m.text === 'x') && agent.calls[0]?.name === 'Writer' && pressed.result.handoffs >= 1, JSON.stringify(pressed.result));
+}
+
+section('the hand-off ceiling waits for Continue');
+{
+  await cleanRoom();
+  const agent = fakeAgent({ Chief: '@Writer go', Writer: '@Chief back to you' });
+  const res = await roundOf({ text: 'loop', runAgent: agent.run });
+  const saved = (await store.getBotGroup(uid, room.id)).pending;
+  check('it stops at the ceiling and says so once', res.result.stopReason === 'handoff_ceiling' && res.posts.filter((m) => m.notice === 'ceiling').length === 1);
+  check('  keeping what it did not start, for Continue', saved?.reason === 'ceiling' && saved.queue.length > 0, JSON.stringify(saved));
+  const words = await roundOf({ text: 'tiếp tục', runAgent: agent.run });
+  check('"tiếp tục" carries on that queue rather than starting over at the admin', words.posts.find((m) => m.role === 'user')?.text === 'tiếp tục' && agent.calls.slice(-1)[0].name !== undefined && words.result.handoffs > 0, JSON.stringify(words.result));
+  await roundOf({ text: 'something else', runAgent: fakeAgent({ Chief: 'ok' }).run });
+  check('any other message clears what was waiting', (await store.getBotGroup(uid, room.id)).pending === null);
+}
+
+section('the person writes while the group works');
+{
+  await cleanRoom();
+  const log = await store.botChat(uid, { groupId: room.id, title: room.name });
+  const agent = fakeAgent({
+    Chief: async ({ prompt }) => {
+      if (/What you handed on/.test(prompt)) return 'Both done.';
+      if (!/also/.test(prompt)) await store.appendMessage(uid, log.id, { id: id(), role: 'user', text: '@Writer also add a title' });
+      return 'Working on it.';
+    },
+    Writer: 'Title: Tea Time.',
+  });
+  const res = await roundOf({ text: 'Start the post', runAgent: agent.run });
+  check('a line written mid-round is answered in the same round', res.posts.some((m) => m.text === 'Title: Tea Time.'), res.posts.map((m) => m.text).join(' | '));
+  check('  by whom it calls, not counted as a hand-off', res.result.handoffs === 0, JSON.stringify(res.result));
+}
+
+section('the model the chip has now, every batch');
+{
+  await cleanRoom();
+  const agent = fakeAgent({
+    Chief: async ({ prompt }) => {
+      if (/What you handed on/.test(prompt)) return 'ok';
+      await store.setGroupModel(uid, room.id, 'openai/newer');
+      return '@Writer go';
+    },
+    Writer: 'done',
+  });
+  await roundOf({ text: 'go', runAgent: agent.run, model: 'openai/plain' });
+  check('the first batch on the chip it was sent with', agent.calls[0].modelId === 'openai/plain');
+  check('  a change while it works is the model of the next batch', agent.calls[1].modelId === 'openai/newer', agent.calls.map((c) => c.modelId).join());
+}
+
+section('what a bot makes in a group is in the group');
+{
+  await cleanRoom();
+  const agent = fakeAgent({
+    Chief: '@Writer make the doc',
+    Writer: async ({ chatId }) => {
+      await store.createAttachment(uid, { id: id(), name: 'Plan.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', kind: 'document', bytes: 12, data: 'eA==', origin: 'generated', chatId });
+      return '';
+    },
+  });
+  const res = await roundOf({ text: 'Make the plan document', runAgent: agent.run });
+  const post = res.posts.find((m) => m.bot === writer.id);
+  check('the file it made rides on its group post', post?.files?.length === 1 && post.files[0].name === 'Plan.docx', JSON.stringify(post));
+  check('  even when it said nothing', !!post && String(post.text || '').length > 0);
+}
+
+section('who is working, while the round runs');
+{
+  await cleanRoom();
+  let mid = null;
+  const agent = fakeAgent({
+    Chief: ({ prompt }) => (/What you handed on/.test(prompt) ? 'ok' : '@Writer go'),
+    Writer: async () => {
+      mid = (await store.getBotGroup(uid, room.id)).pending;
+      return 'done';
+    },
+  });
+  await roundOf({ text: 'go', runAgent: agent.run });
+  check('pending says the round is running and who is at work', mid?.reason === 'running' && mid.working?.some((w) => w.bot === writer.id), JSON.stringify(mid));
+  check('  and is cleared at the end', (await store.getBotGroup(uid, room.id)).pending === null);
+}
+
 console.log(failures === 0 ? '\n\x1b[32mAll bot core checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

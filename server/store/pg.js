@@ -2115,6 +2115,23 @@ export function createPgStore(connectionString) {
       );
       return rows[0];
     },
+    /**
+     * The files the assistant made or rewrote in one conversation since `since` —
+     * what a bot's turn in a group produced, so its post there can carry them.
+     * Names and sizes only, never the bytes.
+     */
+    async listMadeFiles(userId, chatId, since) {
+      return q(
+        `SELECT a.id, a.name, a.mime, a.bytes
+           FROM attachments a
+          WHERE a.user_id = $1 AND a.chat_id = $2 AND a.origin = 'generated'
+            AND (a.created_at >= $3::timestamptz
+                 OR EXISTS (SELECT 1 FROM attachment_versions v WHERE v.attachment_id = a.id AND v.created_at >= $3::timestamptz))
+          ORDER BY a.created_at, a.id
+          LIMIT 20`,
+        [userId, String(chatId ?? ''), since instanceof Date ? since.toISOString() : String(since)],
+      );
+    },
     /** The small picture of one attachment, or null — never the file itself. */
     async getAttachmentThumb(userId, id) {
       const rows = await q('SELECT thumb FROM attachments WHERE user_id = $1 AND id = $2', [userId, id]);
