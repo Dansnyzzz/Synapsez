@@ -203,5 +203,78 @@ section('chains.js: the table, and only the sources it names');
   check('and none of them is one the owner ruled out', ![...named].some((s) => never.test(s)));
 }
 
+/* ── the cache ────────────────────────────────────────────────────── */
+
+const cache = await import('../server/finance/cache.js');
+
+section('cache.js: asked twice, fetched once — for every account and instance');
+{
+  cache.__resetCache();
+  let loads = 0;
+  const load = async () => {
+    loads += 1;
+    return { price: 100 + loads };
+  };
+  const a = await cache.cached('test|quote|A|', 60_000, load);
+  const b = await cache.cached('test|quote|A|', 60_000, load);
+  check('the second ask does not call the source', loads === 1 && a.price === 101 && b.price === 101, `${loads} loads`);
+  cache.__resetCache();
+  const c = await cache.cached('test|quote|A|', 60_000, load);
+  check('  another instance (empty memory) reads it from the database', loads === 1 && c.price === 101, `${loads} loads`);
+  const later = Date.now() + 120_000;
+  const d = await cache.cached('test|quote|A|', 60_000, load, { now: later });
+  check('expired: the source is asked again', loads === 2 && d.price === 102, `${loads} loads`);
+  const [x, y] = await Promise.all([cache.cached('test|quote|B|', 60_000, load), cache.cached('test|quote|B|', 60_000, load)]);
+  check('two asks at the same moment share one call', loads === 3 && x.price === y.price, `${loads} loads`);
+  await cache.cached('test|bar|A|2026-09-18', Infinity, async () => ({ c: 71700 }));
+  check('a bar kept for good is stored with no expiry', (await store.financeGet('test|bar|A|2026-09-18'))?.expires_at === null);
+  const realGet = store.financeGet;
+  store.financeGet = async () => {
+    throw new Error('database away');
+  };
+  cache.__resetCache();
+  const e = await cache.cached('test|quote|C|', 60_000, load);
+  store.financeGet = realGet;
+  check('a database that fails is not a failed answer — the source is asked', e.price === 104, JSON.stringify(e));
+  const stale = await cache.cached('test|quote|A|', 60_000, load, { now: later, valid: () => false });
+  check('an entry its caller says is no longer valid is fetched again', stale.price === 105);
+  check('peek reads without fetching', (await cache.peek('test|quote|A|'))?.value?.price === 105 && (await cache.peek('test|never|x|')) === null);
+  await memory.query('DELETE FROM finance_cache');
+  cache.__resetCache();
+}
+
+section('cache.js: how long each kind of answer is kept (spec §4)');
+{
+  const H = 3_600_000;
+  // Friday 13 November 2026, 16:00 in Hanoi (09:00 UTC); Monday's open is 09:00 ICT = 02:00 UTC.
+  const friday = new Date('2026-11-13T09:00:00Z');
+  const toMonday = cache.ttlFor('quote', { market: 'vn', session: 'closed', now: friday });
+  check('a VN quote after Friday\'s close lasts until Monday 09:00 ICT', friday.getTime() + toMonday === Date.parse('2026-11-16T02:00:00Z'), new Date(friday.getTime() + toMonday).toISOString());
+  const early = new Date('2026-11-10T01:00:00Z'); // 08:00 ICT on a Tuesday
+  check('  before Tuesday\'s open, until 09:00 that morning', early.getTime() + cache.ttlFor('quote', { market: 'vn', session: 'pre', now: early }) === Date.parse('2026-11-10T02:00:00Z'));
+  const lunch = new Date('2026-11-10T05:00:00Z'); // 12:00 ICT
+  check('  over the lunch break, until 13:00', lunch.getTime() + cache.ttlFor('quote', { market: 'vn', session: 'break', now: lunch }) === Date.parse('2026-11-10T06:00:00Z'));
+  check('in session: 45 s in Vietnam, 20 s in the US', cache.ttlFor('quote', { market: 'vn', session: 'continuous', now: lunch }) === 45_000 && cache.ttlFor('quote', { market: 'us', now: new Date('2026-11-10T15:00:00Z') }) === 20_000);
+  // Saturday 14 Nov 2026 12:00 New York (EST, UTC-5) → Monday 16 Nov 09:30 EST = 14:30 UTC.
+  const sat = new Date('2026-11-14T17:00:00Z');
+  check('  a US quote on Saturday lasts until Monday 09:30 New York', sat.getTime() + cache.ttlFor('quote', { market: 'us', now: sat }) === Date.parse('2026-11-16T14:30:00Z'));
+  // And in summer time (EDT, UTC-4): Saturday 11 July 2026 → Monday 13 July 09:30 EDT = 13:30 UTC.
+  const summer = new Date('2026-07-11T17:00:00Z');
+  check('  in summer time too', summer.getTime() + cache.ttlFor('quote', { market: 'us', now: summer }) === Date.parse('2026-07-13T13:30:00Z'));
+  check('intraday bars: 2 minutes', cache.ttlFor('intraday', {}) === 120_000);
+  check('a closed day\'s raw bars: kept for good', cache.ttlFor('history', { closedDay: true, adjusted: false, market: 'vn', now: lunch }) === Infinity);
+  check('  adjusted bars: until the next open, when an ex-date would rewrite them', lunch.getTime() + cache.ttlFor('history', { closedDay: true, adjusted: true, market: 'vn', now: lunch }) === Date.parse('2026-11-11T02:00:00Z'));
+  check('statements and ratios a day, events 8 hours, news 10 minutes', cache.ttlFor('statements', {}) === 24 * H && cache.ttlFor('ratios', {}) === 24 * H && cache.ttlFor('events', {}) === 8 * H && cache.ttlFor('news', {}) === 600_000);
+  check('Vietcombank\'s rates 5 minutes (its own rule), other rates an hour, a past day\'s for good', cache.ttlFor('fx', { source: 'vietcombank' }) === 300_000 && cache.ttlFor('fx', { source: 'frankfurter' }) === H && cache.ttlFor('fx', { source: 'frankfurter', past: true }) === Infinity);
+  check('gold 5 minutes; macro, listings and the SEC ticker map a day; the Yahoo crumb 6 hours', cache.ttlFor('gold', {}) === 300_000 && cache.ttlFor('macro', {}) === 24 * H && cache.ttlFor('listings', {}) === 24 * H && cache.ttlFor('sec-tickers', {}) === 24 * H && cache.ttlFor('crumb', {}) === 6 * H);
+  check('nothing from CoinGecko is kept past 24 hours (its terms, 6.1)', cache.ttlFor('profile', { source: 'coingecko' }) <= 24 * H && cache.ttlFor('history', { source: 'coingecko', closedDay: true, adjusted: false }) <= 24 * H);
+
+  const cachedAt = Date.parse('2026-09-18T10:00:00Z');
+  const bonus = [{ code: 'ISS', exDate: '2026-09-21' }];
+  check('an adjusted series fetched before an ex-date that has since passed is no longer valid', cache.adjustedStillValid(cachedAt, bonus, Date.parse('2026-09-22T03:00:00Z')) === false);
+  check('  one fetched after it still is', cache.adjustedStillValid(Date.parse('2026-09-21T09:00:00Z'), bonus, Date.parse('2026-09-22T03:00:00Z')) === true);
+  check('  and an ex-date still to come changes nothing yet', cache.adjustedStillValid(cachedAt, bonus, Date.parse('2026-09-19T03:00:00Z')) === true);
+}
+
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll finance checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);
