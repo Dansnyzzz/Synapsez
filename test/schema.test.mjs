@@ -226,7 +226,9 @@ section('schema.sql and SCHEMA_VERSION move together');
   // 35: feedback.message_id / issue / answer — feedback on one answer.
   // 40: workflows.policy/project_id, top_ups, event_mail.
   // 41: skills.shared_at/hidden_at/scan, skill_adds — skills shared to Discover.
-  const STAMPED = { version: 41, fingerprint: 'f31e753eba5c3ea8' };
+  // 42: bots, bot_groups, bot_group_members, bot_memory, chats.bot_id/.bot_group_id,
+  // usage_events.bot_id — the Bot page.
+  const STAMPED = { version: 42, fingerprint: 'a87fdd61356c62f7' };
 
   check(
     'the recorded version matches the code',

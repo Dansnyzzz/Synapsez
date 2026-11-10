@@ -185,7 +185,7 @@ export function mountWorkflowRoutes(api, { wrap, body }) {
    * this whole feature exists to avoid. What does not fit in the budget is left
    * durably at its cursor for the next nudge.
    */
-  // Stopping a run in progress is in routes/bot.js, beside a task's: the Bot
+  // Stopping a run in progress is in routes/automations.js, beside a task's: the Automations
   // page's one Stop button, kept together so the two behave alike.
   api.post(
     '/workflows/:id/run',

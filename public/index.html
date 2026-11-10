@@ -293,18 +293,33 @@
                tasks (one instruction on a clock), one page with the two as tabs
                (owner, 2026-11-08). The badge counts what failed, waits for the
                person, or is overdue; the button's own name says it too, because
-               in the folded rail the label is not drawn. -->
-          <button class="rail__item" id="open-bot" type="button" title="Bot" data-i18n-title="nav.bot">
+               in the folded rail the label is not drawn. Called "Bot" for a day;
+               "Automations" since 2026-11-09, under the alarm clock the Scheduled
+               item wore, because a Bot is its own item below. -->
+          <button class="rail__item" id="open-automations" type="button" title="Automations" data-i18n-title="nav.automations">
             <span class="rail__glyph">
-              <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3.5" y="6.5" width="13" height="10" rx="3.2" />
-                <path d="M10 6.5V3.9M2 10.6v2.6M18 10.6v2.6M8 14.2h4" />
-                <circle cx="10" cy="3" r="1" />
-                <circle cx="7.6" cy="11" r="0.9" fill="currentColor" stroke="none" />
-                <circle cx="12.4" cy="11" r="0.9" fill="currentColor" stroke="none" />
+              <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+                <circle cx="10" cy="10.6" r="6.4" />
+                <path d="M10 7.2v3.6l2.3 1.4M7.6 2.6 5.2 4.2M12.4 2.6l2.4 1.6" />
               </svg>
-              <span class="rail__badge" id="bot-badge" role="img" hidden></span>
+              <span class="rail__badge" id="auto-badge" role="img" hidden></span>
             </span>
+            <span class="rail__label" data-i18n="nav.automations">Automations</span>
+          </button>
+
+          <!-- Bots: long-lived helpers with a name, a role, a creature and a memory
+               of their own, led by Chief, who sets the team up when asked; group
+               chats where an admin hands work on with @mentions (bots.js, owner
+               2026-11-09). The robot the merged Workflows + Scheduled item wore for
+               a day, which belongs here. -->
+          <button class="rail__item" id="open-bots" type="button" title="Bot" data-i18n-title="nav.bot">
+            <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3.5" y="6.5" width="13" height="10" rx="3.2" />
+              <path d="M10 6.5V3.9M2 10.6v2.6M18 10.6v2.6M8 14.2h4" />
+              <circle cx="10" cy="3" r="1" />
+              <circle cx="7.6" cy="11" r="0.9" fill="currentColor" stroke="none" />
+              <circle cx="12.4" cy="11" r="0.9" fill="currentColor" stroke="none" />
+            </svg>
             <span class="rail__label" data-i18n="nav.bot">Bot</span>
           </button>
 
@@ -442,18 +457,23 @@
               <div class="page__menu" id="page-new-menu" role="menu" hidden></div>
             </div>
           </header>
-          <!-- Said once, above the Bot page's tabs: whether work on a clock runs
+          <!-- Said once, above the Automations page's tabs: whether work on a clock runs
                with the web closed (pages.js `cloudNoticeHtml`). -->
           <div class="page__notice" id="page-notice" hidden></div>
-          <!-- The Bot page's two halves. Labels carry counts, and a dot (said in
+          <!-- The Automations page's two halves. Labels carry counts, and a dot (said in
                words too) marks a tab holding something that needs the person. -->
-          <div class="usage__seg bot__tabs" id="bot-tabs" role="tablist" aria-label="What the bot runs" data-i18n-aria-label="bot.tabs" hidden>
-            <button type="button" role="tab" id="bot-tab-workflows" data-bot-tab="workflows" aria-selected="true" aria-controls="page-body" tabindex="0"><span data-i18n="nav.workflows">Workflows</span><span data-bot-count></span><span class="bot__dot" aria-hidden="true" hidden></span><span class="sr-only" data-bot-needs></span></button>
-            <button type="button" role="tab" id="bot-tab-scheduled" data-bot-tab="scheduled" aria-selected="false" aria-controls="page-body" tabindex="-1"><span data-i18n="nav.scheduled">Scheduled</span><span data-bot-count></span><span class="bot__dot" aria-hidden="true" hidden></span><span class="sr-only" data-bot-needs></span></button>
+          <div class="usage__seg auto__tabs" id="auto-tabs" role="tablist" aria-label="What runs on its own" data-i18n-aria-label="auto.tabs" hidden>
+            <button type="button" role="tab" id="auto-tab-workflows" data-auto-tab="workflows" aria-selected="true" aria-controls="page-body" tabindex="0"><span data-i18n="nav.workflows">Workflows</span><span data-auto-count></span><span class="auto__dot" aria-hidden="true" hidden></span><span class="sr-only" data-auto-needs></span></button>
+            <button type="button" role="tab" id="auto-tab-scheduled" data-auto-tab="scheduled" aria-selected="false" aria-controls="page-body" tabindex="-1"><span data-i18n="nav.scheduled">Scheduled</span><span data-auto-count></span><span class="auto__dot" aria-hidden="true" hidden></span><span class="sr-only" data-auto-needs></span></button>
           </div>
           <p class="page__lede" id="page-lede" hidden></p>
           <div class="page__body" id="page-body"></div>
         </section>
+
+        <!-- ── The Bot page ──────────────────────────────────────────────
+             The person's bots and group chats on the left, the open one in the
+             middle, its details on the right (bots.js draws all of it). -->
+        <section class="botpage" id="bot-page" hidden></section>
 
         <!-- ── One project, opened ────────────────────────────────────────
              Its own page rather than a row on the shelf, because a project is

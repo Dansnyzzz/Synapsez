@@ -25,6 +25,7 @@
  */
 import { readArguments } from './validate.js';
 import { canonicalInput } from '../../public/js/tool-aliases.js';
+import { BOT_TOOL_NAMES, botToolRisk } from '../bots/tools.js';
 import { THEME_NAMES as OFFICE_THEMES } from '../office/theme.js';
 
 /**
@@ -3103,6 +3104,13 @@ export function assessRisk(name, rawInput = {}) {
   if (String(name || '').startsWith('mcp__')) return 'sensitive';
 
   const tool = TOOLS_BY_NAME[name];
+  /*
+   * A bot's own tools (server/bots/tools.js): reading the team is safe; making or
+   * changing a bot, a group or a memory entry stays inside the account's own team,
+   * like writing a note, so it is ordinary. They are never in the catalogue, so
+   * they are named here rather than falling to the unknown-tool answer below.
+   */
+  if (!tool && BOT_TOOL_NAMES.has(name)) return botToolRisk(name);
   if (!tool) return 'sensitive';
   const input = asWillRun(tool, rawInput);
   // Before `readOnly`: a read of a URL is also a write of that URL to its host.

@@ -1,8 +1,8 @@
 import { api } from './api.js';
 import { t } from './i18n.js';
 import { escapeHtml } from './markdown.js';
-import { workflowState, sortByState } from './bot-status.js';
-import { pillsHtml, moreButtonHtml, openRowMenu } from './bot.js';
+import { workflowState, sortByState } from './automation-status.js';
+import { pillsHtml, moreButtonHtml, openRowMenu } from './automations.js';
 
 /**
  * The Workflows shelf.
@@ -35,7 +35,7 @@ const STEP_MARK = {
   done: '●',
   failed: '✕',
   unknown: '?',
-  // Stopped by the person from the Bot page or the conversation (2026-11-08).
+  // Stopped by the person from the Automations page or the conversation (2026-11-08).
   stopped: '■',
 };
 
@@ -142,7 +142,7 @@ export function workflowsView({
     get orders() {
       return [
         // What needs the person first, then what is running, then by next run.
-        { id: 'status', label: t('bot.order.status') },
+        { id: 'status', label: t('auto.order.status') },
         { id: 'recent', label: t('wf.order.recent') },
         { id: 'name', label: t('wf.order.name') },
       ];
@@ -208,7 +208,7 @@ export function workflowsView({
           const now = workflowState(wf);
           const id = escapeHtml(wf.id);
           return `
-        <div class="wf botrow${wf.enabled ? '' : ' wf--off'}" data-row="${id}">
+        <div class="wf autorow${wf.enabled ? '' : ' wf--off'}" data-row="${id}">
           <div class="wf__head">
             <div>
               <div class="wf__name">${escapeHtml(wf.title)}</div>
@@ -222,7 +222,7 @@ export function workflowsView({
               ${run?.chat_id ? `<button class="task__act" type="button" data-open="${escapeHtml(run.chat_id)}">${escapeHtml(t('wf.openResult'))}</button>` : ''}
               ${
                 now.run === 'running'
-                  ? `<button class="task__act task__act--stop" type="button" data-stop="${id}">${escapeHtml(t('bot.stop'))}</button>`
+                  ? `<button class="task__act task__act--stop" type="button" data-stop="${id}">${escapeHtml(t('auto.stop'))}</button>`
                   : `<button class="task__act" type="button" data-run="${id}">${escapeHtml(t('pages.tasks.runNow'))}</button>`
               }
               ${
@@ -279,7 +279,7 @@ export function workflowsView({
             remove: async () => {
               try {
                 await api.deleteWorkflow(id);
-                toast(t('bot.deleted'));
+                toast(t('auto.deleted'));
               } catch (err) {
                 toast(err.message, 'error');
               }
@@ -301,7 +301,7 @@ export function workflowsView({
         button.addEventListener('click', () => {
           button.disabled = true;
           const running = api.runWorkflow(button.dataset.run);
-          toast(t('bot.started'));
+          toast(t('auto.started'));
           const peek = setTimeout(() => {
             reload();
             onRunStarted();
@@ -323,7 +323,7 @@ export function workflowsView({
           button.disabled = true;
           try {
             const { stopped } = await api.stopWorkflow(button.dataset.stop);
-            toast(t(stopped ? 'bot.stopped' : 'bot.notRunning'), stopped ? 'ok' : undefined);
+            toast(t(stopped ? 'auto.stopped' : 'auto.notRunning'), stopped ? 'ok' : undefined);
           } catch (err) {
             toast(err.message, 'error');
           }

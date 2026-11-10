@@ -125,7 +125,8 @@ import { mountYourDataRoutes } from './routes/yourData.js';
 import { cloudBrowserState, cloudBrowserInput, closeCloudBrowser } from './cloudBrowser/index.js';
 import { EFFORTS, DATA_POLICY_REFUSED as DATA_POLICY } from './providers/openaiCompatible.js';
 import { mountWorkflowRoutes } from './routes/workflows.js';
-import { mountBotRoutes } from './routes/bot.js';
+import { mountAutomationRoutes } from './routes/automations.js';
+import { mountBotRoutes } from './routes/bots.js';
 import { mountConnectorRoutes } from './routes/connectors.js';
 import { translateErrors, translateEvent, languageOf, translateMessage } from './i18n/index.js';
 import { approximateLocation } from './whereabouts.js';
@@ -2303,8 +2304,10 @@ export function createApp() {
 
   // Lifted into server/routes/workflows.js.
   mountWorkflowRoutes(api, { wrap, body });
-  // The Bot page: what needs the person, and Stop for both kinds.
-  mountBotRoutes(api, { wrap });
+  // The Automations page: what needs the person, and Stop for both kinds.
+  mountAutomationRoutes(api, { wrap });
+  // The Bot page: bots, group chats and their rounds, memory, usage by bot (routes/bots.js).
+  mountBotRoutes(api, { wrap, origin: (req) => rememberOrigin(req) });
   mountConnectorRoutes(api, { wrap });
   mountMcpRoutes(api, { wrap, body });
 
@@ -2364,8 +2367,13 @@ export function createApp() {
       // Checked before the lock, so somebody else's conversation reads as
       // missing rather than as busy — "already running" would be a small,
       // needless confirmation that it exists.
-      if (!(await store.getChat(req.user.id, chatId))) {
+      const target = await store.getChat(req.user.id, chatId);
+      if (!target) {
         return res.status(404).json({ error: 'Chat not found' });
+      }
+      // A group's conversations run only in its round (routes/bots.js), which posts what each member says.
+      if (target.bot_group_id) {
+        return res.status(409).json({ error: 'Send this in the group chat on the Bot page.', code: 'group_chat' });
       }
 
       // A stop a moment ago: what that run had goes in the transcript before this reads it.

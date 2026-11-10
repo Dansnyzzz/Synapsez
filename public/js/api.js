@@ -222,11 +222,29 @@ export const api = {
   // Held open while steps run — the response is what keeps a serverless instance
   // alive long enough to finish one honestly.
   runWorkflow: (id) => request('POST', `/api/workflows/${id}/run`),
-  // The Bot page (server/routes/bot.js): Stop for a run in progress, either kind,
+  // The Automations page (server/routes/automations.js): Stop for a run in progress, either kind,
   // and the counts its tabs and the rail's badge show.
   stopWorkflow: (id) => request('POST', `/api/workflows/${encodeURIComponent(id)}/stop`),
   stopTask: (id) => request('POST', `/api/tasks/${encodeURIComponent(id)}/stop`),
-  botSummary: () => request('GET', '/api/bot/summary'),
+  autoSummary: () => request('GET', '/api/automations/summary'),
+
+  // The Bot page (server/routes/bots.js): the team, each bot's and group's chat,
+  // memory, a group's round (streamed, `runGroup` below) and usage by bot.
+  bots: () => request('GET', '/api/bots'),
+  createBot: (bot) => request('POST', '/api/bots', bot),
+  updateBot: (id, patch) => request('PATCH', `/api/bots/${encodeURIComponent(id)}`, patch),
+  deleteBot: (id) => request('DELETE', `/api/bots/${encodeURIComponent(id)}`),
+  botChat: (id) => request('GET', `/api/bots/${encodeURIComponent(id)}/chat`),
+  /** `kind` is 'bots' or 'bot-groups'. */
+  botMemory: (kind, id) => request('GET', `/api/${kind}/${encodeURIComponent(id)}/memory`),
+  addBotMemory: (kind, id, text) => request('POST', `/api/${kind}/${encodeURIComponent(id)}/memory`, { text }),
+  deleteBotMemory: (kind, id, entry) => request('DELETE', `/api/${kind}/${encodeURIComponent(id)}/memory/${encodeURIComponent(entry)}`),
+  createGroup: (group) => request('POST', '/api/bot-groups', group),
+  updateGroup: (id, patch) => request('PATCH', `/api/bot-groups/${encodeURIComponent(id)}`, patch),
+  deleteGroup: (id) => request('DELETE', `/api/bot-groups/${encodeURIComponent(id)}`),
+  groupChat: (id) => request('GET', `/api/bot-groups/${encodeURIComponent(id)}/chat`),
+  stopGroup: (id) => request('POST', `/api/bot-groups/${encodeURIComponent(id)}/stop`),
+  botUsage: ({ from, to, unit }) => request('GET', `/api/bots/usage?${new URLSearchParams({ from, to, unit, tz: localZone() })}`),
 
   connectors: () => request('GET', '/api/connectors'),
   // Skills: upload (scan first, keep when asked) and the Create a skill draft (owner, 2026-11-01).
@@ -468,6 +486,73 @@ export async function localDeviceId() {
   }
   if (localDevice) sessionStorage.setItem('ai-remote-local-device', localDevice);
   return localDevice;
+}
+
+/**
+ * The events of a streamed response, each handed to `onEvent` as it arrives.
+ * Shared by the Bot page's two runs (a bot's own chat, a group's round).
+ *
+ * @param {Response} res @param {(event: string, data: any) => void} onEvent
+ */
+export async function readEvents(res, onEvent) {
+  if (res.status === 401) {
+    location.reload();
+    throw new Error(t('session.expired'));
+  }
+  if (!res.ok || !res.body) {
+    const detail = await res.json().catch(() => ({}));
+    const err = /** @type {Error & { code?: string, status?: number }} */ (new Error(detail.error || t('api.streamFailed', { status: res.status })));
+    err.code = detail.code;
+    err.status = res.status;
+    throw err;
+  }
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += value;
+    let split;
+    while ((split = buffer.indexOf('\n\n')) !== -1) {
+      const frame = buffer.slice(0, split);
+      buffer = buffer.slice(split + 2);
+      let event = 'message';
+      const data = [];
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('event:')) event = line.slice(6).trim();
+        else if (line.startsWith('data:')) data.push(line.slice(5).trim());
+      }
+      if (!data.length) continue;
+      try {
+        onEvent(event, JSON.parse(data.join('\n')));
+      } catch {
+        /* a frame that does not parse is skipped, as the conversation's own reader does */
+      }
+    }
+  }
+}
+
+/** Write in a group chat and follow its round (server/routes/bots.js). */
+export async function runGroup({ groupId, text, runId, signal, onEvent }) {
+  const res = await fetch(`/api/bot-groups/${encodeURIComponent(groupId)}/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Language': currentLanguage() },
+    body: JSON.stringify({ text, runId }),
+    signal,
+  });
+  await readEvents(res, onEvent);
+}
+
+/** Run a bot's own chat, which is an ordinary conversation of this app (server/agent.js reads whose it is). */
+export async function runBotChat({ chatId, runId, signal, onEvent, decision = undefined }) {
+  const res = await fetch(`/api/chats/${encodeURIComponent(chatId)}/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Language': currentLanguage() },
+    // `decision`: the person's Allow or Deny for the calls a step stopped on, with their ids.
+    body: JSON.stringify({ runId, ...(decision || {}) }),
+    signal,
+  });
+  await readEvents(res, onEvent);
 }
 
 export async function runAgent({ chatId, model, handoff, decision, decisionFor, answers, runId, signal, handlers }) {

@@ -10,8 +10,8 @@ import { toast, scheduleCard } from './render.js';
 import { humanSize, counted, cronParts } from './format.js';
 import { WEEK, LIMITS } from './schedule-grammar.js';
 import { latestWins } from './serial.js';
-import { taskState, sortByState } from './bot-status.js';
-import { isBotTab, rememberBotTab, setBotHash, clearBotHash, pillsHtml, moreButtonHtml, openRowMenu, paintBotTabs, whenText } from './bot.js';
+import { taskState, sortByState } from './automation-status.js';
+import { isAutoTab, rememberAutoTab, setAutoHash, clearAutoHash, pillsHtml, moreButtonHtml, openRowMenu, paintAutoTabs, whenText } from './automations.js';
 import { rovingKeys } from './roving.js';
 
 /** How long the Repeat menu must sit on a choice before it is saved (UX-005). */
@@ -115,15 +115,15 @@ export function createPages({
   onChatsChanged = () => {},
   /** One was deleted, which may be the conversation open behind this shelf. */
   onChatDeleted = (_id) => {},
-  /** The Bot page counted what needs the person; the rail's badge shows the same. */
-  onBotSummary = (_summary) => {},
+  /** The Automations page counted what needs the person; the rail's badge shows the same. */
+  onAutoSummary = (_summary) => {},
 }) {
   const page = $('page');
   const title = $('page-title');
   const lede = $('page-lede');
   const body = $('page-body');
-  /** The Bot page's two tabs, and the one notice above them (owner, 2026-11-08). */
-  const botTabs = $('bot-tabs');
+  /** The Automations page's two tabs, and the one notice above them (owner, 2026-11-08). */
+  const autoTabs = $('auto-tabs');
   const notice = $('page-notice');
   const search = $('page-search');
   const sortPill = $('page-sort');
@@ -138,10 +138,10 @@ export function createPages({
   /** How the current shelf is ordered or filtered. */
   let order = 'updated';
   /**
-   * Each Bot tab keeps its own search and order while the page is in use, so
+   * Each Automations tab keeps its own search and order while the page is in use, so
    * going to the other tab and back finds it as it was left.
    */
-  const botMemory = { workflows: { query: '', order: null }, scheduled: { query: '', order: null } };
+  const autoMemory = { workflows: { query: '', order: null }, scheduled: { query: '', order: null } };
   /** Which shelf is showing, for the one function that shadows the name. */
   const shelfShown = () => showing;
   /** The Scheduled tab's one timer while a task runs (see its `wire`); it dies with the tab. */
@@ -258,14 +258,14 @@ export function createPages({
 
   function renderTools() {
     const view = views[showing];
-    // Both halves of the Bot page carry the page's name; the tab says which half.
-    const bot = isBotTab(showing);
-    title.textContent = bot ? t('bot.title') : view.title;
-    botTabs.hidden = !bot;
-    if (bot) {
-      paintBotTabs(botTabs, lastSummary, showing);
+    // Both halves of the Automations page carry the page's name; the tab says which half.
+    const auto = isAutoTab(showing);
+    title.textContent = auto ? t('auto.title') : view.title;
+    autoTabs.hidden = !auto;
+    if (auto) {
+      paintAutoTabs(autoTabs, lastSummary, showing);
       body.setAttribute('role', 'tabpanel');
-      body.setAttribute('aria-labelledby', `bot-tab-${showing}`);
+      body.setAttribute('aria-labelledby', `auto-tab-${showing}`);
     } else {
       body.removeAttribute('role');
       body.removeAttribute('aria-labelledby');
@@ -330,7 +330,7 @@ export function createPages({
 
   /** Counted on every load, so a tab left mid-load is not drawn over the one chosen after it. */
   let loadTurn = 0;
-  /** The Bot page's last counts, kept so a tab switch does not blank them while it loads. */
+  /** The Automations page's last counts, kept so a tab switch does not blank them while it loads. */
   let lastSummary = null;
 
   /**
@@ -348,15 +348,15 @@ export function createPages({
         view.load(),
         view.cloud ? api.heartbeat().catch(() => null) : null,
         // The other tab's count and whether it holds something for the person.
-        isBotTab(which) ? api.botSummary().catch(() => null) : null,
+        isAutoTab(which) ? api.autoSummary().catch(() => null) : null,
       ]);
       if (turn !== loadTurn || showing !== which) return;
       items = loaded;
       if (view.cloud) heartbeat = beat;
       if (summary) {
         lastSummary = summary;
-        paintBotTabs(botTabs, summary, which);
-        onBotSummary(summary);
+        paintAutoTabs(autoTabs, summary, which);
+        onAutoSummary(summary);
       }
       await draw();
     } catch (err) {
@@ -673,7 +673,7 @@ export function createPages({
     cloud: true,
     orders: [
       // What needs the person first, then what is running, then by next run.
-      { id: 'status', get label() { return t('bot.order.status'); } },
+      { id: 'status', get label() { return t('auto.order.status'); } },
       { id: 'next', get label() { return t('pages.order.next'); } },
       { id: 'name', get label() { return t('pages.order.name'); } },
     ],
@@ -715,9 +715,9 @@ export function createPages({
           .map((task) => {
             const now = taskState(task);
             const id = escapeHtml(task.id);
-            // When it runs next is the pill's to say (the Bot page's "Next: …").
+            // When it runs next is the pill's to say (the Automations page's "Next: …").
             return `
-        <div class="task botrow${task.enabled ? '' : ' task--off'}" data-row="${id}">
+        <div class="task autorow${task.enabled ? '' : ' task--off'}" data-row="${id}">
           <span class="task__dot"></span>
           <div class="task__body">
             <div class="task__name">${escapeHtml(task.title)}</div>
@@ -743,7 +743,7 @@ export function createPages({
           }
           ${
             now.run === 'running'
-              ? `<button class="task__act task__act--stop" type="button" data-stop="${id}">${escapeHtml(t('bot.stop'))}</button>`
+              ? `<button class="task__act task__act--stop" type="button" data-stop="${id}">${escapeHtml(t('auto.stop'))}</button>`
               : `<button class="task__act" type="button" data-run="${id}">${escapeHtml(t('pages.tasks.runNow'))}</button>`
           }
           ${
@@ -792,7 +792,7 @@ export function createPages({
             remove: async () => {
               try {
                 await api.deleteTask(id);
-                toast(t('bot.deleted'));
+                toast(t('auto.deleted'));
                 onTasksChanged();
               } catch (err) {
                 toast(err.message, 'error');
@@ -813,7 +813,7 @@ export function createPages({
         button.addEventListener('click', () => {
           button.disabled = true;
           const running = api.runTask(button.dataset.run);
-          toast(t('bot.started'));
+          toast(t('auto.started'));
           const peek = setTimeout(() => {
             again();
             onRunStarted();
@@ -834,7 +834,7 @@ export function createPages({
           button.disabled = true;
           try {
             const { stopped } = await api.stopTask(button.dataset.stop);
-            toast(t(stopped ? 'bot.stopped' : 'bot.notRunning'), stopped ? 'ok' : undefined);
+            toast(t(stopped ? 'auto.stopped' : 'auto.notRunning'), stopped ? 'ok' : undefined);
           } catch (err) {
             toast(err.message, 'error');
           }
@@ -1304,12 +1304,12 @@ export function createPages({
     $('page-search-open').hidden = true;
     // A list still loading is not drawn over this page.
     loadTurn += 1;
-    // One task on its own page is not one of the Bot page's tabs.
-    botTabs.hidden = true;
+    // One task on its own page is not one of the Automations page's tabs.
+    autoTabs.hidden = true;
     notice.hidden = true;
     body.removeAttribute('role');
     body.removeAttribute('aria-labelledby');
-    clearBotHash();
+    clearAutoHash();
 
     drawTask(body, task, project, {
       withEdit: true,
@@ -1455,7 +1455,7 @@ export function createPages({
                 `<label class="spane__row">
                    <span>${escapeHtml(t('proj.one'))}</span>
                    <select data-s="projectId">
-                     ${option('', t('bot.noProject'), !row.project_id)}
+                     ${option('', t('auto.noProject'), !row.project_id)}
                      ${(extra.projects || [])
                        .map((p) => option(p.id, p.name, p.id === row.project_id))
                        .join('')}
@@ -1557,7 +1557,7 @@ export function createPages({
           <div class="spane__status" data-s="status" role="status" aria-live="polite"></div>
         </div>
 
-        <h3 class="spane__label" data-s="history" tabindex="-1">${escapeHtml(t('bot.history'))}</h3>
+        <h3 class="spane__label" data-s="history" tabindex="-1">${escapeHtml(t('auto.history'))}</h3>
         ${historyHtml(kind, row, extra.runs || [])}
       </div>`;
   }
@@ -1571,17 +1571,17 @@ export function createPages({
     const RUN_PILL = { running: 'running', done: 'done', failed: 'failed', needs_attention: 'needs', cancelled: 'stopped' };
     const item = ({ status, pill, when, reached, chatId }) => `
       <li class="spane__run">
-        <span class="botpill botpill--${pill}">${escapeHtml(status)}</span>
+        <span class="autopill autopill--${pill}">${escapeHtml(status)}</span>
         <span class="spane__runwhen">${escapeHtml(when)}${reached ? ` · ${escapeHtml(reached)}` : ''}</span>
         ${
           chatId
-            ? `<button class="taskpage__project" type="button" data-run-chat="${escapeHtml(chatId)}">${escapeHtml(t('bot.historyOpen'))}</button>`
+            ? `<button class="taskpage__project" type="button" data-run-chat="${escapeHtml(chatId)}">${escapeHtml(t('auto.historyOpen'))}</button>`
             : ''
         }
       </li>`;
 
     if (kind === 'workflow') {
-      if (!runs.length) return `<p class="hint">${escapeHtml(t('bot.historyNone'))}</p>`;
+      if (!runs.length) return `<p class="hint">${escapeHtml(t('auto.historyNone'))}</p>`;
       const total = Array.isArray(row.steps) ? row.steps.length : 0;
       return `<ol class="spane__history">${runs
         .map((run) => {
@@ -1592,17 +1592,17 @@ export function createPages({
             status: RUN_PILL[run.status] ? t(`wf.run.${run.status}`) : String(run.status || ''),
             pill: RUN_PILL[run.status] || 'paused',
             when: whenText(run.started_at, row.tz),
-            reached: steps ? t('bot.historyStep', { step, steps }) : '',
+            reached: steps ? t('auto.historyStep', { step, steps }) : '',
             chatId: run.chat_id,
           });
         })
         .join('')}</ol>`;
     }
 
-    if (!row.last_run_at) return `<p class="hint">${escapeHtml(t('bot.historyNone'))}</p>`;
+    if (!row.last_run_at) return `<p class="hint">${escapeHtml(t('auto.historyNone'))}</p>`;
     const state = taskState(row);
     const pill = state.run || 'done';
-    const said = { running: 'bot.pill.runningNow', needs: 'bot.pill.needs', failed: 'bot.pill.failed', stopped: 'bot.pill.stopped', done: 'wf.run.done' }[pill];
+    const said = { running: 'auto.pill.runningNow', needs: 'auto.pill.needs', failed: 'auto.pill.failed', stopped: 'auto.pill.stopped', done: 'wf.run.done' }[pill];
     return `<ol class="spane__history">${item({
       status: t(said),
       pill,
@@ -1610,7 +1610,7 @@ export function createPages({
       // The words the run ended with, which say more than a pill can.
       reached: row.last_status && pill !== 'done' ? String(row.last_status).slice(0, 160) : '',
       chatId: row.last_chat,
-    })}</ol><p class="hint">${escapeHtml(t('bot.historyLastOnly'))}</p>`;
+    })}</ol><p class="hint">${escapeHtml(t('auto.historyLastOnly'))}</p>`;
   }
 
   async function fetchSchedule(kind, id) {
@@ -1777,10 +1777,10 @@ export function createPages({
     refreshCards(kind, row);
     pane.hidden = false;
     onPaneOpen();
-    // On the Bot page, the address says which item is open beside its tab.
+    // On the Automations page, the address says which item is open beside its tab.
     // (`showing` is shadowed in this function by the panel's own view.)
     const shelf = shelfShown();
-    if (isBotTab(shelf) && !page.hidden && (kind === 'workflow') === (shelf === 'workflows')) setBotHash(shelf, row.id);
+    if (isAutoTab(shelf) && !page.hidden && (kind === 'workflow') === (shelf === 'workflows')) setAutoHash(shelf, row.id);
     if (history) {
       const heading = /** @type {HTMLElement | null} */ (view.querySelector('[data-s="history"]'));
       heading?.scrollIntoView({ block: 'start' });
@@ -2071,18 +2071,18 @@ export function createPages({
     $('taskpane').hidden = true;
     $('taskpane-body').replaceChildren();
     onPaneClose();
-    if (isBotTab(showing) && !page.hidden) setBotHash(showing);
+    if (isAutoTab(showing) && !page.hidden) setAutoHash(showing);
   }
 
   $('taskpane-close').addEventListener('click', closeTaskPane);
 
   /**
-   * Leaving the Bot page closes the workflow or task open beside its list. The rail holds
+   * Leaving the Automations page closes the workflow or task open beside its list. The rail holds
    * one thing at a time, and left open it hid what the next page or conversation put
    * there: a conversation's cloud browser screen did not show at all (2026-11-09). The
-   * page is hidden first, so closing it does not write the Bot page's address back.
+   * page is hidden first, so closing it does not write the Automations page's address back.
    */
-  function leaveBotPane() {
+  function leaveAutoPane() {
     if ($('taskpane').hidden) return;
     const wasHidden = page.hidden;
     page.hidden = true;
@@ -2111,11 +2111,11 @@ export function createPages({
     // A shelf may have left something running — a poll, a timer. Switching
     // between shelves has to end it, or it outlives the page it belongs to.
     if (showing && showing !== which) views[showing]?.onHide?.();
-    if (isBotTab(showing) && !isBotTab(which)) leaveBotPane();
-    // The Bot tab being left keeps its search and order for when it is back.
-    if (isBotTab(showing)) botMemory[showing] = { query, order };
+    if (isAutoTab(showing) && !isAutoTab(which)) leaveAutoPane();
+    // The Automations tab being left keeps its search and order for when it is back.
+    if (isAutoTab(showing)) autoMemory[showing] = { query, order };
     showing = which;
-    const kept = isBotTab(which) ? botMemory[which] : null;
+    const kept = isAutoTab(which) ? autoMemory[which] : null;
     const orders = views[which].orders || [];
     query = kept?.query || '';
     order = kept?.order && orders.some((o) => o.id === kept.order) ? kept.order : orders[0]?.id || 'all';
@@ -2132,26 +2132,26 @@ export function createPages({
     // Restored, because `showTask` hides them for a page that has one item.
     newButton.hidden = false;
     $('page-search-open').hidden = !!query;
-    if (isBotTab(which)) {
-      rememberBotTab(which);
-      setBotHash(which);
+    if (isAutoTab(which)) {
+      rememberAutoTab(which);
+      setAutoHash(which);
     } else {
-      clearBotHash();
+      clearAutoHash();
     }
     renderTools();
     await load();
   }
 
   /**
-   * The Bot page's tabs: a press, or the arrows, Home and End once one has
+   * The Automations page's tabs: a press, or the arrows, Home and End once one has
    * focus (`rovingKeys` clicks the tab it moves to and keeps focus on it).
    */
-  botTabs.addEventListener('click', (event) => {
-    const tab = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-bot-tab]'));
-    if (!tab || tab.dataset.botTab === showing) return;
-    showShelf(tab.dataset.botTab);
+  autoTabs.addEventListener('click', (event) => {
+    const tab = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-auto-tab]'));
+    if (!tab || tab.dataset.autoTab === showing) return;
+    showShelf(tab.dataset.autoTab);
   });
-  rovingKeys(botTabs, '[role="tab"]');
+  rovingKeys(autoTabs, '[role="tab"]');
 
   return {
     /** Called once at boot so the notice can say where tasks actually run. */
@@ -2164,25 +2164,25 @@ export function createPages({
     /** Back to the conversation. */
     hide() {
       if (showing) views[showing]?.onHide?.();
-      if (isBotTab(showing)) leaveBotPane();
-      if (isBotTab(showing)) botMemory[showing] = { query, order };
+      if (isAutoTab(showing)) leaveAutoPane();
+      if (isAutoTab(showing)) autoMemory[showing] = { query, order };
       showing = null;
       page.hidden = true;
       $('thread').hidden = false;
       $('dock').hidden = false;
       closeMenus();
-      clearBotHash();
+      clearAutoHash();
     },
 
     /**
-     * The Bot page at a tab, and an item of it open beside the list — what a
-     * `#bot/…` address asks for (see bot.js `readBotHash`).
+     * The Automations page at a tab, and an item of it open beside the list — what a
+     * `#automations/…` address asks for (see automations.js `readAutoHash`).
      *
      * @param {string} tab @param {string | null} [id]
      */
-    async showBot(tab, id = null) {
+    async showAutomations(tab, id = null) {
       await showShelf(tab);
-      if (id) await showScheduleInPane(tab === 'workflows' ? 'workflow' : 'task', id, { after: () => (isBotTab(showing) ? load({ quiet: true }) : null) });
+      if (id) await showScheduleInPane(tab === 'workflows' ? 'workflow' : 'task', id, { after: () => (isAutoTab(showing) ? load({ quiet: true }) : null) });
     },
 
     showing: () => showing,

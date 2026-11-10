@@ -5,6 +5,7 @@ import { getPrefs } from '../settings.js';
 import { TOOLS_BY_NAME, returnsExternalContent, externalSource } from './definitions.js';
 import { CLOUD_IMPLEMENTATIONS } from './cloud.js';
 import { isMcpTool, callMcpTool, splitMcpName } from '../mcp/registry.js';
+import { BOT_TOOL_NAMES, runBotTool } from '../bots/tools.js';
 import { keepSheets, keepStepShot } from '../attachments.js';
 import { see } from '../vision.js';
 import { groundedImage } from '../imageGround.js';
@@ -477,6 +478,13 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
       return { isError: true, content: `${name} failed: ${safeError(err) || String(err)}` };
     }
   }
+
+  /**
+   * A bot's own tools (server/bots/tools.js) — offered only in a bot's
+   * conversation, so not in the static catalogue either. They read whose
+   * conversation this is themselves; the arguments never say which bot is asking.
+   */
+  if (BOT_TOOL_NAMES.has(name) && !TOOLS_BY_NAME[name]) return runBotTool({ userId, chatId, name, input: input || {} });
 
   const def = TOOLS_BY_NAME[name];
   if (!def) return { isError: true, content: `Unknown tool "${name}".` };

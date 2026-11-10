@@ -1,10 +1,10 @@
 import { getStore } from '../store/index.js';
 import { stopTask } from '../scheduler.js';
 import { stopWorkflow, withLastRun } from '../workflows.js';
-import { taskState, workflowState, tally } from '../../public/js/bot-status.js';
+import { taskState, workflowState, tally } from '../../public/js/automation-status.js';
 
 /**
- * The Bot page's own routes: what needs the person, and Stop.
+ * The Automations page's own routes: what needs the person, and Stop.
  *
  * Workflows and scheduled tasks are one page with two tabs (owner, 2026-11-08),
  * and these are the two things that page asks of both kinds at once. Session
@@ -16,17 +16,17 @@ import { taskState, workflowState, tally } from '../../public/js/bot-status.js';
  * @param {import('express').Router} api  the authenticated router
  * @param {{ wrap: Function }} ctx
  */
-export function mountBotRoutes(api, { wrap }) {
+export function mountAutomationRoutes(api, { wrap }) {
   /**
    * How many of each there are, and how many need the person.
    *
    * Read by the rail's badge and the tab labels. Two indexed, account-scoped
    * queries — the same two the tabs load — counted with the rule the rows are
-   * drawn with (public/js/bot-status.js), so the badge cannot say "2" over a
+   * drawn with (public/js/automation-status.js), so the badge cannot say "2" over a
    * page that shows one.
    */
   api.get(
-    '/bot/summary',
+    '/automations/summary',
     wrap(async (req, res) => {
       const store = getStore();
       const [tasks, workflows] = await Promise.all([store.listTasks(req.user.id), store.listWorkflowsWithLastRun(req.user.id)]);
