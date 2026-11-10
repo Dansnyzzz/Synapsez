@@ -1,6 +1,50 @@
 {
   "entries": [
     {
+      "version": "1.17.0",
+      "date": "2026-11-10",
+      "new": {
+        "vi": [
+          "Mục Bot mới, theo DS Bot: Chief (Chánh văn phòng) tạo bot và nhóm chat khi bạn nhờ; mỗi bot có mô hình, vai trò, hướng dẫn và ghi nhớ riêng; trong nhóm, quản trị viên trả lời và giao việc bằng @Tên; xem mức dùng theo bot và theo mô hình.",
+          "Chuỗi việc và việc chạy theo giờ chuyển sang mục Tự động hoá (biểu tượng đồng hồ).",
+          "Chia sẻ kỹ năng lên Khám phá cho mọi người cùng dùng, mới nhất trước; người thêm luôn nhận bản mới nhất của tác giả. Kỹ năng mặc định của Synapsez không còn hiện ra nhưng vẫn hoạt động.",
+          "Mục \"Đã dùng trong phiên này\" trên bảng bên phải: mỗi tin nhắn có tệp là một dòng, bấm vào mở cửa sổ Tệp đã tải lên có xem trước."
+        ],
+        "en": [
+          "A new Bot page, after DS Bot: Chief (Chief of Staff) makes bots and group chats when asked; each bot has its own model, role, instructions and memory; in a group the admin answers and hands work on with @Name; usage by bot and by model.",
+          "Workflows and scheduled tasks moved to Automations (the clock).",
+          "Share a skill to Discover for everyone to use, newest first; whoever added it always has the author's latest. Synapsez's own skills are no longer listed, and still work.",
+          "\"Used in this session\" in the right panel: a row per message that brought files, opening an Uploaded files window with previews."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Tiến trình là một đường dọc thay vì dải nền xanh; khi đang chạy chỉ hiện các bước gần nhất, các bước trước gói trong nút \"N bước trước đó\"; tiêu đề ghi \"Bước x trên y\".",
+          "Đăng ký cần nhập mã 6 số gửi tới email; người lạ đoán mật khẩu từ nhiều nơi không còn khoá được bạn.",
+          "Giá mô hình là giá gốc của nhà cung cấp, không cộng thêm.",
+          "Quản trị viên có thể kiểm tra độ an toàn của địa chỉ trang (DNSSEC, HTTPS, HSTS, CAA, email) ở Cài đặt → Hệ thống."
+        ],
+        "en": [
+          "Progress is a line rather than a blue band; while it runs, only the latest steps show and earlier ones fold behind \"N earlier steps\"; the header reads \"Step x of y\".",
+          "Signing up asks for a 6-digit code sent to the email; strangers guessing your password from many places can no longer lock you out.",
+          "Model prices are the providers' own, nothing added.",
+          "Administrators can check how safe the site's address is (DNSSEC, HTTPS, HSTS, CAA, email) in Settings → System."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Theme chưa ra mắt không còn mở được trước ngày ra mắt bằng cách đoán đường dẫn.",
+          "Máy tính đám mây lại dọn thư mục tải về sau một tuần, không bao giờ xoá tệp mà thẻ trong chat còn trỏ tới.",
+          "Thao tác theme của quản trị viên được ghi vào nhật ký bảo mật."
+        ],
+        "en": [
+          "An event theme can no longer be opened before it comes out by guessing its address.",
+          "The cloud computer tidies its downloads again after a week, never a file a card in a conversation points at.",
+          "An administrator's theme actions reach their security record."
+        ]
+      }
+    },
+    {
       "version": "1.16.0",
       "date": "2026-11-09",
       "new": {
