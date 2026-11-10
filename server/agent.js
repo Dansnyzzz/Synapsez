@@ -918,7 +918,9 @@ export function outboundRefusal(call, policy, sent) {
 
 /** The memory tools that write — what a page would use to plant a standing instruction. */
 // `remember` is a bot's own memory (server/bots/tools.js): planted the same way, so held the same way.
-const MEMORY_WRITES = new Set(['memory_write', 'memory_append', 'memory_edit', 'remember']);
+// So are a bot's instructions, which every later turn of that bot follows as the person's own words:
+// Chief making or changing a bot after reading a page asks first.
+const MEMORY_WRITES = new Set(['memory_write', 'memory_append', 'memory_edit', 'remember', 'create_bot', 'update_bot']);
 
 /** Why such a write asks, said in the approval prompt (HAR-005). */
 export const READ_OUTSIDE_REASON =
@@ -1698,6 +1700,8 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   const withheldHere = () => {
     const out = withheldTools({ chat, prefs });
     if (persona) for (const name of MEMORY_WRITE_TOOLS) out.add(name);
+    // The Bot page draws no question cards yet: a bot asks in words (an Allow / Deny card it does draw).
+    if (persona) out.add('ask_options');
     return out;
   };
   let withhold = withheldHere();

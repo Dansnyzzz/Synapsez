@@ -5,6 +5,7 @@ import { getPrefs } from '../settings.js';
 import { validZone } from '../util/zone.js';
 import { abortHere, holdRun, settledAfterStop, watchLease } from '../liveRuns.js';
 import { log } from '../util/trace.js';
+import { clientError } from '../util/clientError.js';
 import { BotError, CREATURES, LIMITS, HANDOFF_CEILING, botView, groupView, createBot, createGroup, ensureChief, updateBot, updateGroup } from '../bots/team.js';
 import { listMemory, remember } from '../bots/memory.js';
 import { runGroupRound } from '../bots/rounds.js';
@@ -29,7 +30,8 @@ import { runGroupRound } from '../bots/rounds.js';
 export function mountBotRoutes(api, { wrap, origin = () => null }) {
   /** A BotError's own status and words; anything else is the app's to log. */
   const fail = (res, err) => {
-    if (err instanceof BotError) return res.status(err.status).json({ error: err.message, code: err.code });
+    // A BotError's sentence is the route's own refusal; `clientError` passes it on and blanks anything else.
+    if (err instanceof BotError) return res.status(err.status).json({ error: clientError(err), code: err.code });
     throw err;
   };
   const running = (row) => !!row?.run_lock_at && new Date(row.run_lock_at).getTime() > Date.now() - RUN_LEASE_STALE_MS;
@@ -256,7 +258,7 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
         emit('done', result);
       } catch (err) {
         log.error('group round failed', err);
-        emit('error', { message: err instanceof BotError ? err.message : 'The group could not answer. Try again in a moment.' });
+        emit('error', { message: err instanceof BotError ? clientError(err) : 'The group could not answer. Try again in a moment.' });
         emit('done', { stopReason: 'error' });
       } finally {
         lease.stop();

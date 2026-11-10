@@ -292,6 +292,10 @@ section('a bot that is not Chief cannot make bots, and keeps its own memory');
   const secret = await alice.call('POST', `/api/bots/${writer.id}/memory`, { text: 'my key is sk-abcdefghijklmnopqrstuvwxyz0123456789' });
   check('a key is never kept in memory', secret.status === 400, secret.text);
   check('bot tools are graded: reading safe, changing ordinary', assessRisk('list_bots', {}) === 'safe' && assessRisk('create_bot', {}) === 'ordinary' && assessRisk('nonexistent_tool', {}) === 'sensitive');
+  const { needsApproval } = await import('../server/agent.js');
+  const planting = [{ id: 'a', name: 'update_bot', input: {} }, { id: 'b', name: 'create_bot', input: {} }, { id: 'c', name: 'remember', input: {} }, { id: 'd', name: 'list_bots', input: {} }];
+  check('after reading a page, writing a bot\'s instructions or memory asks first', needsApproval(planting, 'guarded', { readOutside: true }).map((c) => c.name).join() === 'update_bot,create_bot,remember');
+  check('  and runs unasked when nothing was read from outside', needsApproval(planting, 'guarded', { readOutside: false }).length === 0);
 }
 
 let blog;
