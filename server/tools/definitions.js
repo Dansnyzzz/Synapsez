@@ -1680,17 +1680,26 @@ export const TOOLS = [
     name: 'market_data',
     scope: 'cloud',
     readOnly: true,
+    // One tool for every finance question (spec D, 2026-11-10): fourteen kinds over
+    // server/finance, which labels each answer with its source, delay and unit.
     description:
-      'Live crypto, stock, index and commodity prices. Crypto (BTC, ETH…) with 24h change; US tickers, Vietnamese stocks (FPT, VNM with market "vn"), ' +
-      'VNINDEX, VN30, S&P500, Dow, Nasdaq, Nikkei, gold, oil. Quotes can be delayed; never present them as trading advice.',
+      'Market data from free, labelled sources: quotes, history, statements, ratios, profile, events, news, funds, options, FX, gold, macro and a US screen. ' +
+      'Vietnam (HOSE, HNX, UPCoM: the board is found for you), US, global, crypto. Prices may be delayed. Cite the source line each result gives; never present figures as advice. For a picture, call chart with the rows.',
     parameters: {
       type: 'object',
       properties: {
-        requests: { type: 'array', items: { type: 'object' }, description: 'Crypto and stocks together, up to 6, each with the fields below. Everything for this step goes in one call.' },
-        kind: { type: 'string', enum: ['crypto', 'stock'] },
-        symbols: { type: 'array', items: { type: 'string' }, description: 'Up to 12, e.g. ["BTC","ETH"] or ["FPT","VNINDEX","gold"].' },
-        vs: { type: 'string', description: 'crypto: a second currency besides USD; defaults to VND.' },
-        market: { type: 'string', description: 'stock: "vn" to read bare three-letter codes as HOSE listings.' },
+        requests: { type: 'array', items: { type: 'object' }, description: 'Up to 6 of the objects below, answered together. Everything for this step goes in one call.' },
+        kind: { type: 'string', enum: ['quote', 'history', 'intraday', 'statements', 'ratios', 'profile', 'events', 'news', 'fund', 'options', 'fx', 'gold', 'macro', 'screen'] },
+        symbols: { type: 'array', items: { type: 'string' }, description: 'Up to 12 for quote and fx, else 1: FPT, VNINDEX, AAPL, ^GSPC, BTC; fx a currency (USD) or pair (EUR/USD); macro a country (VN).' },
+        market: { type: 'string', enum: ['vn', 'us', 'global', 'crypto'] },
+        period: { type: 'string', description: 'history: 5d|1mo|3mo|6mo|1y|5y|max; statements: year|quarter.' },
+        from: { type: 'string', description: 'history: YYYY-MM-DD, instead of period.' },
+        to: { type: 'string', description: 'history: YYYY-MM-DD.' },
+        interval: { type: 'string', enum: ['1m', '5m', '15m', '30m', '1h'], description: 'intraday.' },
+        statement: { type: 'string', enum: ['income', 'balance', 'cashflow'] },
+        adjusted: { type: 'boolean', description: 'history: adjusted for dividends and issues (default) or raw.' },
+        vs: { type: 'string', description: 'crypto and fx: the second currency, VND by default.' },
+        indicator: { type: 'string', description: 'macro: gdp, cpi, unemployment, rate, 10y, or a World Bank or FRED code; screen: revenue, net income, assets…' },
       },
     },
   },
@@ -2975,6 +2984,9 @@ const EXTERNAL_OUTPUT = new Set([
   'cloud_browser',
   // Place names and opening hours from OpenStreetMap, which anyone can edit.
   'place_lookup',
+  // Market data: headlines, company summaries and event titles come from brokers,
+  // exchanges and publishers. The app's own guidance travels after it, in `note`.
+  'market_data',
   // Whatever a program on the cloud computer printed. It has the whole internet
   // (see sandbox.js), so `curl` of a stranger's page lands here as readily as
   // the output of a calculation — it was the one shell left unwrapped (SEC-035).

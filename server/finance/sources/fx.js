@@ -23,7 +23,6 @@ import * as yahoo from './yahoo.js';
 export const ATTRIBUTION = {
   ecb: 'Source: ECB statistics.',
   erapi: 'Rates By Exchange Rate API: https://www.exchangerate-api.com',
-  frankfurter: 'Frankfurter (frankfurter.dev), reference rates',
 };
 
 const ccy = (code) => {
