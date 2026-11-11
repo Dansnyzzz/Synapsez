@@ -12307,6 +12307,8 @@ html[data-scene] .gate { background: var(--bg); }
 .botline--bot .msg__body { line-height: 1.6; overflow-wrap: anywhere; }
 .botline--bot .msg__body > :first-child { margin-top: 0; }
 .botline--bot .msg__body > :last-child { margin-bottom: 0; }
+.botline--ask .msg__body { padding-left: 12px; border-left: 3px solid var(--accent); }
+.botline__asks { color: var(--accent); font-size: 12.5px; font-weight: 500; }
 .botline__files { display: grid; gap: 8px; width: min(520px, 100%); margin-top: 8px; }
 /* At work: the small ring the working line has, where the dot was, saying so on hover. */
 .botbusy.spinner { flex: none; width: 13px; height: 13px; }

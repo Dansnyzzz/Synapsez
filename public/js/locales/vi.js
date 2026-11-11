@@ -151,6 +151,7 @@ export const vi = {
   'bots.workingNow': '{name} đang làm…',
   'bots.busyNow': 'Đang làm…',
   'bots.continue': 'Tiếp tục',
+  'bots.asksYou': 'hỏi bạn',
   'bots.g.notice': 'Ghi chú nhóm',
   'bots.g.noticeHint': 'Mọi thành viên đọc nó ở mỗi lượt — quy tắc chung của nhóm. Tối đa 2.000 ký tự.',
   'bots.g.noticePlaceholder': 'vd. Viết tiếng Việt; ghi nguồn ở cuối.',

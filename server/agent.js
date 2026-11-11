@@ -1757,8 +1757,9 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
   const withheldHere = () => {
     const out = withheldTools({ chat, prefs });
     if (persona) for (const name of MEMORY_WRITE_TOOLS) out.add(name);
-    // The Bot page draws no question cards yet: a bot asks in words (an Allow / Deny card it does draw).
-    if (persona) out.add('ask_options');
+    // A bot's own chat is the home chat, which draws question cards (owner, 2026-11-10); in a
+    // group nobody is there to press one — a member asks with ask_person instead.
+    if (persona && chat.bot_group_id) out.add('ask_options');
     return out;
   };
   let withhold = withheldHere();

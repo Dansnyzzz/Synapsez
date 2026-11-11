@@ -284,8 +284,9 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     if (message.role === 'user') return `<div class="msg msg--user botline" data-line="${key}"><div class="bubble">${escapeHtml(message.text || '')}</div>${files}${actions}</div>`;
     const bot = botOf(message.bot);
     const admin = adminOf(group) === message.bot;
-    return `<div class="msg msg--assistant botline botline--bot" data-line="${key}" style="--ink:${inkOf(bot)}">
-      <p class="botline__who">${faceHtml(bot || '', 22, 'botmsg__face')}<span class="botmsg__name">${escapeHtml(bot?.name || t('bots.deletedBot'))}</span>${admin ? `<span class="bottag">${escapeHtml(t('bots.admin'))}</span>` : ''}</p>
+    // A question a member asked the person (ask_person): marked as one (owner, 2026-11-10).
+    return `<div class="msg msg--assistant botline botline--bot${message.ask ? ' botline--ask' : ''}" data-line="${key}" style="--ink:${inkOf(bot)}">
+      <p class="botline__who">${faceHtml(bot || '', 22, 'botmsg__face')}<span class="botmsg__name">${escapeHtml(bot?.name || t('bots.deletedBot'))}</span>${admin ? `<span class="bottag">${escapeHtml(t('bots.admin'))}</span>` : ''}${message.ask ? `<span class="botline__asks">${escapeHtml(t('bots.asksYou'))}</span>` : ''}</p>
       <div class="msg__body prose" data-md>${renderMarkdown(message.text || '')}</div>
       ${files}${actions}
     </div>`;

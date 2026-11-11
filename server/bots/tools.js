@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { getStore } from '../store/index.js';
 import { RUN_LEASE_STALE_MS } from '../store/pg.js';
 import { BotError, CREATURES, LIMITS, createBot, createGroup, updateBot, updateGroup, adminOf } from './team.js';
@@ -94,6 +95,15 @@ const DEFS = {
         scope: { type: 'string', enum: ['own', 'group'], description: 'In a group: "group" (the default) or "own"' },
       },
       required: ['text'],
+    },
+  },
+  ask_person: {
+    description:
+      "In a group chat only: ask the user one short question when you cannot go on without their answer. It is posted in the group as a question; end your turn with [PASS] right after, and the user's answer comes to you. In your own chat, ask in words or with ask_options instead.",
+    parameters: {
+      type: 'object',
+      properties: { question: { type: 'string', description: "One short question, in the user's language" } },
+      required: ['question'],
     },
   },
   forget: {
@@ -246,6 +256,17 @@ export async function runBotTool({ userId, chatId, name, input = {}, turnId = nu
         const where = scope.groupId ? "the group's memory" : 'your memory';
         if (!saved) return { isError: false, content: `That is already in ${where}.` };
         return { isError: false, content: entries.length > 1 ? `Saved to ${where}, as ${entries.length} entries (one a sentence group).` : `Saved to ${where}.` };
+      }
+      case 'ask_person': {
+        // A question in the group, for the person (owner, 2026-11-10; dsh-superagent's "one
+        // question, asked where the person wrote"): their next plain line goes to this bot.
+        if (!groupId) return { isError: true, content: 'ask_person works only in a group chat. In your own chat, ask in words or with ask_options.' };
+        const question = String(input.question ?? '').normalize('NFC').replace(/\s+/g, ' ').trim().slice(0, 500);
+        if (!question) return { isError: true, content: 'Say the question.' };
+        const group = await store.getBotGroup(userId, groupId);
+        const log = await store.botChat(userId, { groupId, title: group?.name || 'Group' });
+        await store.appendMessage(userId, log.id, { id: crypto.randomUUID(), role: 'assistant', bot: self.id, text: question, ask: true });
+        return { isError: false, content: "Your question is in the group. End your turn now with [PASS]: the user's answer comes to you." };
       }
       case 'forget': {
         const scope = groupId && input.scope !== 'own' ? { groupId } : { botId: self.id };

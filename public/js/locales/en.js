@@ -143,6 +143,7 @@ export const en = {
   'bots.workingNow': '{name} is working…',
   'bots.busyNow': 'Working…',
   'bots.continue': 'Continue',
+  'bots.asksYou': 'asks you',
   'bots.g.notice': 'Group notice',
   'bots.g.noticeHint': 'Every member reads it at every turn — the group\'s standing rules. At most 2,000 characters.',
   'bots.g.noticePlaceholder': 'e.g. Write in British English; sources at the end.',

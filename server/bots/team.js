@@ -234,7 +234,7 @@ export async function updateBot(userId, id, input) {
  * the account's. The admin is one of the members — the one asked for, or the first.
  *
  * @param {string} userId
- * @param {{ name: unknown, members: unknown, admin?: unknown }} input  member and admin ids
+ * @param {{ name: unknown, members: unknown, admin?: unknown, notice?: unknown }} input  member and admin ids; `notice`, the group's standing note
  */
 export async function createGroup(userId, input) {
   const store = getStore();

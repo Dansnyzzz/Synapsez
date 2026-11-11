@@ -77,7 +77,7 @@ function lineOf(message, nameOf, adminId) {
   if (message.notice) return `(${text})`;
   if (message.role === 'user') return `User: ${text}`;
   const name = nameOf(message.bot) || 'A bot that has been deleted';
-  return `${name}${message.bot === adminId ? ' (admin)' : ''}: ${text}`;
+  return `${name}${message.bot === adminId ? ' (admin)' : ''}${message.ask ? ' (asking the user)' : ''}: ${text}`;
 }
 
 /**
@@ -201,6 +201,23 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
   };
   const notice = (kind, words, params = {}) => post({ role: 'assistant', notice: kind, text: words, params });
 
+  /*
+   * A question a member asked the person (`ask_person`) that nothing they wrote has answered
+   * yet: their plain line answers it, so it goes to that member first, not the admin.
+   */
+  let asker = null;
+  if (said && !resume) {
+    const history = await store.listMessages(userId, log.id);
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+      const m = history[i];
+      if (m.role === 'user' && !m.notice) break;
+      if (m.ask && m.bot && members.some((b) => b.id === m.bot)) {
+        asker = m.bot;
+        break;
+      }
+    }
+  }
+
   /** The person's line this segment wrote itself: already in the queue, not news to the scan. */
   let ownLine = null;
   if (said) {
@@ -213,7 +230,13 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
       state.messageId = line?.id || null;
       const named = mentionedBots(said, members);
       const admin = adminOf(group);
-      state.queue = (named.length ? named.map((b) => b.id) : admin ? [admin] : []).map((botId) => ({ botId, by: null, report: null, person: named.length ? 'named' : 'admin' }));
+      state.queue = named.length
+        ? named.map((b) => ({ botId: b.id, by: null, report: null, person: 'named' }))
+        : asker
+          ? [{ botId: asker, by: null, report: null, person: 'answer' }]
+          : admin
+            ? [{ botId: admin, by: null, report: null, person: 'admin' }]
+            : [];
     }
   }
   if (!resume && model) await store.setGroupModel(userId, groupId, model);
@@ -239,6 +262,7 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
     if (item.report) parts.push(reportWhy(item.report, nameOf));
     if (!parts.length) {
       if (item.person === 'named') parts.push(`The user called you with @${self.name}. Answer them.`);
+      else if (item.person === 'answer') parts.push("You asked the user a question in the group; their answer is the newest line. Carry on with it.");
       else if (item.person === 'admin') parts.push('The user wrote to the group and you are its admin: answer, or hand the work to the member who should do it with @Name.');
       else parts.push('Carry on.');
     }

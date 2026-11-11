@@ -530,6 +530,26 @@ section('bots keep quiet: no thanks between them, and no promise without the wor
   check('  and the work, not the promise, is posted', r2.posts.some((m) => m.text === 'Draft: Ten things about tea.') && !r2.posts.some((m) => /I'll draft/.test(m.text || '')), r2.posts.map((m) => m.text).join(' | '));
 }
 
+/* ── Task 9: a bot asks the person in a group ──────────────────── */
+
+section("a bot asks the person in a group, and the person's next line goes to it");
+{
+  await cleanRoom();
+  const memberChat = (await store.botChat(uid, { botId: writer.id, groupId: room.id, title: 'Writer · Room' })).id;
+  const asked = await runBotTool({ userId: uid, chatId: memberChat, name: 'ask_person', input: { question: 'British or American spelling?' }, turnOrigin: 'handoff' });
+  const log = await store.botChat(uid, { groupId: room.id, title: room.name });
+  const posted = (await store.listMessages(uid, log.id)).find((m) => m.ask);
+  check('the question is posted in the group, as a question', !asked.isError && posted?.bot === writer.id && posted.text === 'British or American spelling?', JSON.stringify({ asked, posted }));
+  const own = (await store.botChat(uid, { botId: writer.id, title: 'Writer' })).id;
+  check('  ask_person is for a group only', (await runBotTool({ userId: uid, chatId: own, name: 'ask_person', input: { question: 'x' } })).isError);
+  const agent = fakeAgent({ Writer: 'British it is.', Chief: 'should not answer this' });
+  const res = await roundOf({ text: 'British please', runAgent: agent.run });
+  check("the person's plain answer goes to the bot that asked, not the admin", agent.calls[0]?.name === 'Writer' && res.posts.some((m) => m.text === 'British it is.'), agent.calls.map((c) => c.name).join());
+  const next = fakeAgent({ Chief: 'Admin here.' });
+  await roundOf({ text: 'Something else now', runAgent: next.run });
+  check('  once answered, a plain line goes to the admin again', next.calls[0]?.name === 'Chief', next.calls.map((c) => c.name).join());
+}
+
 /* ── Task 3: carrying on in another invocation ─────────────────── */
 
 const { continueGroup, resumeGroupRounds } = await import('../server/bots/continue.js');

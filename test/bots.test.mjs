@@ -595,6 +595,21 @@ section('a round that waits, joins, carries on and is watched (owner, 2026-11-10
   void pong;
 }
 
+section('a bot asks with question cards in its own chat, never in a group (2026-11-10)');
+{
+  const asker = (await alice.call('POST', '/api/bots', { name: 'Asker', role: 'a' })).body.bot;
+  const own = (await alice.call('GET', `/api/bots/${asker.id}/chat`)).body;
+  await alice.call('POST', `/api/chats/${own.chatId}/messages`, { text: 'hello there' });
+  await alice.stream(`/api/chats/${own.chatId}/run`, {});
+  const inOwn = asked.filter((a) => a.who === 'asker').at(-1);
+  check('its own chat offers ask_options: the home chat draws the card', inOwn?.tools.includes('ask_options'), JSON.stringify(inOwn?.tools?.filter((n) => /ask/.test(n))));
+  const room = (await alice.call('POST', '/api/bot-groups', { name: 'Ask Room', members: [asker.id] })).body.group;
+  await alice.stream(`/api/bot-groups/${room.id}/run`, { text: 'anyone?' });
+  const inGroup = asked.filter((a) => a.who === 'asker').at(-1);
+  check('  a group turn does not (nobody is there to press it)', !inGroup?.tools.includes('ask_options'));
+  check('  it has ask_person there instead', inGroup?.tools.includes('ask_person'), JSON.stringify(inGroup?.tools?.filter((n) => /ask/.test(n))));
+}
+
 section('a turn that is stopped takes back what it saved (owner, 2026-11-10)');
 {
   const saver = (await alice.call('POST', '/api/bots', { name: 'Saver', role: 's' })).body.bot;
