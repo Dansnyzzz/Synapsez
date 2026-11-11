@@ -655,5 +655,31 @@ section('7h gold.js: SJC per lượng, and the world price per ounce');
   check('world gold from GC=F in USD per ounce; silver missing is not a failure', world.length === 1 && world[0].price === 4_012.5 && world[0].unit === 'USD/oz', JSON.stringify(world.map((w) => w.symbol)));
 }
 
+const macro = await import('../server/finance/sources/macro.js');
+
+section('7i macro.js: World Bank, FRED only with its key and its notice, NSO said plainly');
+{
+  await fresh();
+  const fetchImpl = serve([
+    ['api.worldbank.org', 'worldbank.json'],
+    ['api.stlouisfed.org', { observations: [{ date: '2026-10-01', value: '4.33' }, { date: '2026-09-01', value: '.' }, { date: '2026-08-01', value: '4.33' }] }],
+    ['pxweb.nso.gov.vn', 'nso.json'],
+  ]);
+  const ctx = { fetchImpl };
+  const gdp = await macro.worldBank('VN', 'gdp', 3, ctx);
+  check('Vietnam\'s GDP growth: 8.02% in 2025, newest first, as a percentage', gdp.points[0].date === '2025' && Math.abs(gdp.points[0].value - 8.0188) < 0.001 && gdp.unit === '%' && gdp.country === 'Viet Nam', JSON.stringify(gdp.points[0]));
+  check('  credited CC BY 4.0', gdp.attribution[0].includes('CC BY 4.0'));
+  check('  asked for non-empty years by the indicator\'s code', /indicator\/NY\.GDP\.MKTP\.KD\.ZG\?format=json&mrnev=3/.test(fetchImpl.calls[0].url), fetchImpl.calls[0].url);
+  check('plain words map to each source\'s code; a code is taken as it is', macro.indicatorFor('worldbank', 'inflation').id === 'FP.CPI.TOTL.ZG' && macro.indicatorFor('fred', 'rate').id === 'FEDFUNDS' && macro.indicatorFor('fred', 'DGS10').id === 'DGS10' && macro.indicatorFor('worldbank', 'SP.POP.TOTL').id === 'SP.POP.TOTL');
+  const noKey = await refusal(macro.fred('rate', 3, ctx));
+  check('FRED without FRED_API_KEY is not asked, and says what to set', noKey instanceof http.SourceError && /FRED_API_KEY/.test(noKey.message) && !fetchImpl.calls.some((c) => c.url.includes('stlouisfed')));
+  process.env.FRED_API_KEY = 'fred-test-key';
+  const fed = await macro.fred('rate', 3, ctx);
+  check('with it: observations, a missing one ("." ) dropped, and the FRED notice', fed.points.length === 2 && fed.points[0].value === 4.33 && /not endorsed or certified by the Federal Reserve Bank of St\. Louis/.test(fed.attribution[0]), JSON.stringify(fed.points));
+  delete process.env.FRED_API_KEY;
+  const nso = await refusal(macro.nso('cpi', ctx));
+  check('NSO: a figure needs a POST, which is said, with the databases it has', nso instanceof http.SourceError && /POST/.test(nso.message) && /Công nghiệp/.test(nso.message), nso?.message);
+}
+
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll finance checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);
