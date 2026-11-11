@@ -24,7 +24,6 @@ export const ATTRIBUTION = {
   ecb: 'Source: ECB statistics.',
   erapi: 'Rates By Exchange Rate API: https://www.exchangerate-api.com',
   frankfurter: 'Frankfurter (frankfurter.dev), reference rates',
-  vietcombank: 'Vietcombank posted rates',
 };
 
 const ccy = (code) => {
@@ -138,7 +137,8 @@ export async function fromSource(source, base, quotes, date = null, ctx = {}) {
   const b = ccy(base);
   const q = quotes.map(ccy).filter((c) => c !== b);
   if (!q.length) throw new SourceError(source, 'Name a second currency.');
-  if (source === 'vietcombank') return { rates: await read(b, q, date, ctx), source, attribution: [ATTRIBUTION.vietcombank] };
+  // Vietcombank is named as the source on every line; it asks for no other credit.
+  if (source === 'vietcombank') return { rates: await read(b, q, date, ctx), source, attribution: [] };
   const rows = await cached(`${source}|fx|${b}|${q.join(',')}|${date || 'latest'}`, ttlFor('fx', { source, past: past(date) }), () => read(b, q, date, ctx));
   return { rates: rows, source, attribution: ATTRIBUTION[source] ? [ATTRIBUTION[source]] : [] };
 }

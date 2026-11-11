@@ -694,5 +694,112 @@ section('7j fmarket.js: a fund by its kept id, and plainly not when it has none'
   check('a fund not in the kept list is said plainly, and nothing is asked', unknown instanceof http.SourceError && /POST/.test(unknown.message) && /VESAF/.test(unknown.message) && fetchImpl.calls.length === 1, unknown?.message);
 }
 
+/* ── the tool's answer ────────────────────────────────────────────── */
+
+const { marketData } = await import('../server/finance/index.js');
+
+/** Every recorded answer at once, so a chain can be run end to end. */
+const everything = (extra = []) =>
+  serve([
+    ...extra,
+    ['stock_prices', (url) => (/code:ACV/.test(url) ? { status: 200, body: { data: [{ code: 'ACV', date: '2026-11-10', time: '14:59:59', floor: 'UPCOM', basicPrice: 39.2, ceilingPrice: 45.0, floorPrice: 33.4, open: 39.5, high: 40.2, low: 39.3, close: 40.0, average: 39.8, adOpen: 39.5, adHigh: 40.2, adLow: 39.3, adClose: 40.0, nmVolume: 812_300, nmValue: 3.2e10, change: 0.5, pctChange: 1.27 }] } } : /code:FPT/.test(url) ? 'vndirect-stock-prices.json' : { status: 200, body: { data: [] } })],
+    ['dchart', 'dchart.json'],
+    ['/stocks/FPT/data_day', 'kbs-day.json'],
+    ['/stocks/SHS/data_day', { symbol: 'SHS', data_day: [{ t: '2026-11-10 07:00', o: 18000, h: 18300, l: 17900, c: 18200, v: 9_100_000 }, { t: '2026-11-09 07:00', o: 17800, h: 18100, l: 17700, c: 18000, v: 8_000_000 }] }],
+    ['/index/VNINDEX/data_day', 'kbs-index-day.json'],
+    ['finance-info', 'kbs-finance.json'],
+    ['company/details', 'vietcap-details.json'],
+    ['financial-statement/metrics', 'vietcap-metrics.json'],
+    ['financial-statement?section', 'vietcap-statement.json'],
+    ['statistics-financial', 'vietcap-ratio.json'],
+    ['/v1/events', 'vietcap-events.json'],
+    ['getByGroup?group=HOSE', ['FPT', 'VNM'].map((symbol) => ({ symbol }))],
+    ['getByGroup?group=HNX', [{ symbol: 'SHS' }]],
+    ['getByGroup?group=UPCOM', [{ symbol: 'ACV' }]],
+    ['/chart/FPT.VN', 'yahoo-chart-fpt.json'],
+    ['/chart/AAPL', 'yahoo-chart-aapl.json'],
+    ['/chart/', { status: 404, body: fixture('yahoo-notfound.json') }],
+    ['fundamentals-timeseries', 'yahoo-timeseries.json'],
+    ['simple/price', 'coingecko-simple.json'],
+    ['company_tickers.json', 'sec-tickers.json'],
+    ['companyfacts', 'sec-companyfacts.json'],
+    ['sjc.com.vn', 'sjc.json'],
+    ['vietcombank.com.vn', 'vietcombank.json'],
+    ['api.frankfurter.dev', 'frankfurter.json'],
+    ['api.worldbank.org', 'worldbank.json'],
+  ]);
+const NOW = new Date('2026-11-10T07:50:00Z'); // Tuesday, 14:50 in Hanoi
+
+section('index.js + format.js: a Vietnamese quote says everything easy to get wrong');
+{
+  await fresh();
+  const fetchImpl = everything();
+  const r = await marketData({ kind: 'quote', market: 'vn', symbols: ['FPT'] }, { now: NOW, fetchImpl });
+  const head = r.content.split('\n')[0];
+  check('one header line: price in ₫, reference, ceiling, floor, session, time, delay, source, disclaimer', /^FPT · HOSE · 50\.900 ₫ \(-0,20 %\) · tham chiếu 51\.000 · trần 54\.500 · sàn 47\.450 · giao dịch thỏa thuận · 10\/11 14:46 ICT · có thể trễ · nguồn VNDIRECT/.test(head) && /chỉ để tham khảo, không phải khuyến nghị đầu tư/.test(r.content), head);
+  check('the app\'s own guidance goes in the note, not the data', /card/i.test(r.note) && /reference/i.test(r.note) && !/card/i.test(r.content), r.note);
+  check('a market card: title, rows, session, source, disclaimer', r.widget?.kind === 'market' && r.widget.title === 'FPT · HOSE' && r.widget.rows.length >= 3 && r.widget.session === 'putthrough' && r.widget.source === 'VNDIRECT' && /không phải khuyến nghị/.test(r.widget.disclaimer), JSON.stringify(r.widget).slice(0, 200));
+  check('  its rows are numbers in ₫ the browser formats', r.widget.rows.find((x) => x.key === 'price')?.value === 50_900 && r.widget.rows.find((x) => x.key === 'reference')?.value === 51_000);
+
+  const acv = await marketData({ kind: 'quote', market: 'vn', symbols: ['ACV'] }, { now: NOW, fetchImpl });
+  check('UPCoM: the change is against the reference (39,200), and the result says what that reference is', /ACV · UPCOM · 40\.000 ₫ \(\+2,04 %\)/.test(acv.content) && /bình quân/.test(acv.content), acv.content.split('\n').slice(0, 2).join(' | '));
+  const ato = await marketData({ kind: 'quote', market: 'vn', symbols: ['FPT'] }, { now: new Date('2026-11-10T02:05:00Z'), fetchImpl });
+  check('HOSE 09:05: an auction indication, said so', /ATO/.test(ato.content) && /chưa phải giá khớp|dự kiến/.test(ato.content), ato.content.split('\n')[0]);
+  const asked = fetchImpl.calls.map((c) => c.url);
+  check('nothing about the person left the server — only the code', asked.every((u) => !/@|user|account/i.test(u)));
+}
+
+section('index.js: a chain falls through, and says so');
+{
+  await fresh();
+  const fetchImpl = everything([['stock_prices', { status: 503, body: 'down' }]]);
+  const r = await marketData({ kind: 'quote', market: 'vn', symbols: ['SHS'] }, { now: NOW, fetchImpl });
+  check('VNDirect down: KBS answers an HNX code (never Yahoo)', /^SHS · HNX · 18\.200 ₫/.test(r.content) && /nguồn KBS/.test(r.content) && !fetchImpl.calls.some((c) => c.url.includes('yahoo')), r.content.split('\n')[0]);
+  check('  and the text names both: who failed, who answered', /VNDIRECT/.test(r.content) && /503/.test(r.content), r.content);
+  await fresh();
+  const dead = serve([['', { status: 503, body: 'down' }]]);
+  const batch = await marketData({ requests: [{ kind: 'quote', market: 'vn', symbols: ['FPT'] }, { kind: 'crypto', symbols: ['btc'] }] }, { now: NOW, fetchImpl: everything([['stock_prices', { status: 503, body: 'x' }], ['kbsec', { status: 503, body: 'x' }], ['yahoo', { status: 503, body: 'x' }]]) });
+  check('a whole chain failing is one "temporarily unavailable" line; the batch still answers the rest', /FPT: tạm thời không lấy được/.test(batch.content) && /BTC/.test(batch.content) && /74,779/.test(batch.content), batch.content.slice(0, 300));
+  const alone = await marketData({ kind: 'quote', market: 'us', symbols: ['AAPL'] }, { now: NOW, fetchImpl: dead });
+  check('  alone, it is still an answer that says what failed, not an error', /temporarily unavailable/.test(alone.content) && /Yahoo Finance/.test(alone.content), alone.content);
+}
+
+section('index.js: history, statements, the legacy call, and attribution');
+{
+  await fresh();
+  const fetchImpl = everything();
+  const h = await marketData({ kind: 'history', market: 'vn', symbols: ['FPT'], period: '3mo' }, { now: NOW, fetchImpl });
+  check('history: a summary line and the rows', /thay đổi/.test(h.content) && h.content.split('\n').filter((l) => /^2026-\d\d-\d\d,/.test(l)).length === 5, h.content);
+  check('  adjusted, and says volumes are not', /đã điều chỉnh/.test(h.content) && /không điều chỉnh/.test(h.content));
+  check('  a card with a sparkline series', h.widget?.series?.length === 5 && h.widget.series[0].c > 0);
+  const many = await marketData({ kind: 'history', market: 'us', symbols: ['AAPL'], period: '1y' }, { now: NOW, fetchImpl: everything([['/chart/AAPL', (() => { const c = fixture('yahoo-chart-aapl.json'); const r0 = c.chart.result[0]; const n = 60; r0.timestamp = Array.from({ length: n }, (_, i) => 1789000000 + i * 86_400); r0.indicators.quote[0] = Object.fromEntries(['open', 'high', 'low', 'close', 'volume'].map((k) => [k, Array.from({ length: n }, (_, i) => 300 + i)])); r0.indicators.adjclose[0].adjclose = Array.from({ length: n }, (_, i) => 300 + i); return c; })()]]) });
+  check('  at most 30 rows, and how many more there were', many.content.split('\n').filter((l) => /^\d{4}-\d\d-\d\d,/.test(l)).length === 30 && /30 earlier rows/.test(many.content), many.content.split('\n').slice(0, 3).join(' | '));
+  const st = await marketData({ kind: 'statements', market: 'vn', symbols: ['FPT'], statement: 'income', period: 'year' }, { now: NOW, fetchImpl });
+  const header = st.content.split('\n').find((l) => /^kỳ,|^period,/.test(l)) || '';
+  check('statements: at most 4 periods, the unit and period said', header.split(',').length === 5 && /tỷ ₫/.test(st.content) && /năm/.test(st.content), header);
+  await fresh(); // the statement above is in the shared cache, as it should be — start again to make Vietcap fail
+  const kbsSt = await marketData({ kind: 'statements', market: 'vn', symbols: ['FPT'], statement: 'income' }, { now: NOW, fetchImpl: everything([['financial-statement', { status: 503, body: 'x' }]]) });
+  check('  from KBS: audited and consolidated said, and that Vietcap failed', /kiểm toán/i.test(kbsSt.content) && /hợp nhất/i.test(kbsSt.content) && /Vietcap/.test(kbsSt.content), kbsSt.content.split('\n').slice(0, 3).join(' | '));
+  const coin = await marketData({ kind: 'crypto', symbols: ['btc'] }, { now: NOW, fetchImpl });
+  check('the legacy { kind: "crypto" } still works', /BTC/.test(coin.content) && /74,779/.test(coin.content), coin.content.split('\n')[0]);
+  check('  and CoinGecko is credited in the text and the card', /Powered by CoinGecko/.test(coin.content) && coin.widget?.attribution?.includes('Powered by CoinGecko'));
+  const legacy = await marketData({ kind: 'stock', symbols: ['AAPL'] }, { now: NOW, fetchImpl });
+  check('  and { kind: "stock" } is a quote, in English outside Vietnam', /^AAPL · NasdaqGS · 350\.69 USD/.test(legacy.content) && /for reference only, not investment advice/.test(legacy.content), legacy.content.split('\n')[0]);
+  const vnindex = await marketData({ kind: 'stock', symbols: ['VNINDEX'] }, { now: NOW, fetchImpl });
+  check('  VNINDEX alone is read as Vietnam\'s index, in points', /VNINDEX/.test(vnindex.content) && /điểm/.test(vnindex.content), vnindex.content.split('\n')[0]);
+  const sjc = await marketData({ kind: 'gold' }, { now: NOW, fetchImpl });
+  check('gold: SJC per lượng with its card', /137\.900\.000/.test(sjc.content) && /lượng/.test(sjc.content) && sjc.widget?.kind === 'market', sjc.content.split('\n')[0]);
+  const rate = await marketData({ kind: 'fx', symbols: ['USD'], vs: 'VND' }, { now: NOW, fetchImpl });
+  check('fx: Vietcombank\'s posted rates for USD in ₫', /25\.350/.test(rate.content) && /Vietcombank/.test(rate.content), rate.content.split('\n')[0]);
+  const gdp = await marketData({ kind: 'macro', market: 'vn', indicator: 'gdp' }, { now: NOW, fetchImpl });
+  check('macro: World Bank, credited', /8,02/.test(gdp.content) && /CC BY 4\.0/.test(gdp.content), gdp.content.split('\n')[0]);
+  const bad = await refusal(marketData({ kind: 'horoscope', symbols: ['FPT'] }, { now: NOW, fetchImpl }));
+  check('an unknown kind is refused, naming the kinds there are', bad && /quote/.test(bad.message) && /statements/.test(bad.message), bad?.message);
+  const noSymbol = await refusal(marketData({ kind: 'quote', market: 'vn' }, { now: NOW, fetchImpl }));
+  check('a quote with no symbol is refused, with examples', noSymbol && /symbol/i.test(noSymbol.message));
+  const seven = await marketData({ requests: Array.from({ length: 7 }, () => ({ kind: 'crypto', symbols: ['btc'] })) }, { now: NOW, fetchImpl });
+  check('a batch answers six at most, and says so', /1 more were not asked/.test(seven.content));
+}
+
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll finance checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);
