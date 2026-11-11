@@ -78,9 +78,18 @@ section('vercel.json');
     fn?.includeFiles,
   );
 
+  // Every /api path reaches the function — but the Singapore relay, a function of its own (owner, 2026-11-11).
+  const apiRewrite = conf.rewrites?.find((r) => r.destination === '/api/index.js' && /^\/api\//.test(r.source));
+  const reaches = (path) => !!apiRewrite && new RegExp(`^${apiRewrite.source.replace(/\(\.\*\)$/, '(.*)')}$`).test(path);
   check(
     'every /api path reaches the function',
-    conf.rewrites?.some((r) => r.source === '/api/(.*)' && r.destination === '/api/index.js'),
+    reaches('/api/bootstrap') && reaches('/api/hooks/abc') && reaches('/api/finance-sin1x') && reaches('/api/finance-sin1/extra'),
+    apiRewrite?.source,
+  );
+  check('  except the Singapore relay, which is its own function', !reaches('/api/finance-sin1'));
+  check(
+    'the relay runs in sin1, briefly; the app stays in the project\'s region',
+    JSON.stringify(conf.functions?.['api/finance-sin1.js']?.regions) === '["sin1"]' && conf.functions['api/finance-sin1.js'].maxDuration <= 60 && !conf.functions['api/index.js']?.regions,
   );
 
   /*

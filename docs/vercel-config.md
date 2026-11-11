@@ -43,6 +43,26 @@ Only Pro and Enterprise can change the default, and only from the dashboard
 produced a build warning in exchange for asking for half of what was already
 allocated.
 
+## `functions."api/finance-sin1.js"`: Vietcap from Singapore
+
+`regions: ["sin1"]`, `maxDuration: 30`. Vietcap answers a bare 400 to US addresses
+and 200 from Singapore (the probe of 2026-11-11,
+`docs/research/2026-11-10-finance-probe-iad1.md`), and Vietnamese financial
+statements and index lists come only from Vietcap. So one small function runs in
+Singapore and asks Vietcap for the app's functions in iad1
+(`server/finance/relay.js`). It is not a proxy: only the deployment's own functions
+call it, with `CRON_SECRET`; only GET to Vietcap's two API addresses; no redirects
+followed; at most 4 MB in 15 s. Without `CRON_SECRET`, or without an https
+`PUBLIC_URL` (or `VERCEL_URL`), the app does not use it and Vietcap stays off on
+Vercel.
+
+The rewrite that sends every `/api` path to `api/index.js` leaves this one path
+out: `/api/((?!finance-sin1$).*)`.
+
+Hobby's region limit ("single region") is not documented as counting per
+deployment or per function; a preview deployment of this change is how it was
+checked before it reached production.
+
 ## `crons`
 
 ### Both entries run on the free plan

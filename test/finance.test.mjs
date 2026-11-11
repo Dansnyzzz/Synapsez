@@ -167,6 +167,57 @@ section('sources that turn away servers are off there unless asked for (probe, 2
   }
 }
 
+section('Vietcap from Singapore: a relay only the deployment can use, only for Vietcap (owner, 2026-11-11)');
+{
+  const relay = await import('../server/finance/relay.js');
+  check('it asks only Vietcap\'s two API addresses, over https', relay.relayAllowed('https://iq.vietcap.com.vn/api/iq-insight-service/v1/company/FPT/financial-statement?section=INCOME_STATEMENT') && relay.relayAllowed('https://trading.vietcap.com.vn/api/price/symbols/getByGroup?group=VN30'));
+  check('  never anywhere else', ['https://example.com/api/x', 'http://trading.vietcap.com.vn/api/x', 'https://trading.vietcap.com.vn/other', 'https://trading.vietcap.com.vn:8443/api/x', 'https://user:pw@trading.vietcap.com.vn/api/x', 'https://trading.vietcap.com.vn.evil.test/api/x', 'https://iq.vietcap.com.vn/api/iq-insight-service/../../admin'].every((u) => !relay.relayAllowed(u)));
+  const asked = [];
+  const upstream = async (url, init) => {
+    asked.push({ url, init });
+    return { status: 200, headers: new Map([['content-type', 'application/json']]), arrayBuffer: async () => Buffer.from('{"ok":1}') };
+  };
+  const good = 'https://trading.vietcap.com.vn/api/price/symbols/getByGroup?group=VN30';
+  const noKey = await relay.relayAnswer({ method: 'GET', url: good, authorization: 'Bearer wrong', secret: 's3cret', fetchImpl: upstream });
+  const post = await relay.relayAnswer({ method: 'POST', url: good, authorization: 'Bearer s3cret', secret: 's3cret', fetchImpl: upstream });
+  const elsewhere = await relay.relayAnswer({ method: 'GET', url: 'https://example.com/api/x', authorization: 'Bearer s3cret', secret: 's3cret', fetchImpl: upstream });
+  const unset = await relay.relayAnswer({ method: 'GET', url: good, authorization: 'Bearer ', secret: '', fetchImpl: upstream });
+  check('without the deployment\'s secret, nothing is asked', noKey.status === 401 && unset.status === 401 && asked.length === 0);
+  check('  GET only, and only the listed addresses', post.status === 405 && elsewhere.status === 403 && asked.length === 0);
+  check('  what the relay refuses says it is the relay\'s', [noKey, post, elsewhere].every((a) => a.headers['x-finance-relay'] === 'refused'));
+  const passed = await relay.relayAnswer({ method: 'GET', url: good, authorization: 'Bearer s3cret', ua: 'Synapsez/1 (test)', secret: 's3cret', fetchImpl: upstream });
+  check('with it, Vietcap\'s answer comes back as it was, marked passed, no redirects followed', passed.status === 200 && passed.body.toString() === '{"ok":1}' && passed.headers['x-finance-relay'] === 'passed' && asked[0].init.redirect === 'error' && asked[0].init.headers['User-Agent'] === 'Synapsez/1 (test)');
+
+  const keep = { VERCEL: process.env.VERCEL, VERCEL_REGION: process.env.VERCEL_REGION, CRON_SECRET: process.env.CRON_SECRET, PUBLIC_URL: process.env.PUBLIC_URL };
+  process.env.VERCEL = '1';
+  process.env.VERCEL_REGION = 'iad1';
+  process.env.PUBLIC_URL = 'https://app.example';
+  delete process.env.CRON_SECRET;
+  check('on Vercel in iad1 with no secret, there is no relay and Vietcap stays off', relay.relayFor('vietcap') === null && !http.enabled('vietcap'));
+  process.env.CRON_SECRET = 'deploy-secret';
+  check('  with one, Vietcap goes through the relay and is on', relay.relayFor('vietcap')?.endpoint === 'https://app.example/api/finance-sin1' && http.enabled('vietcap'));
+  check('  only Vietcap: KBS and SJC do not', relay.relayFor('kbs') === null && relay.relayFor('sjc') === null && !http.enabled('sjc'));
+  http.__resetHttp();
+  const via = [];
+  const relayed = async (url, init) => {
+    via.push({ url, init });
+    return { status: 200, ok: true, headers: { get: (k) => ({ 'x-finance-relay': 'passed', 'content-type': 'application/json' })[k.toLowerCase()] ?? null }, json: async () => ({ data: 1 }), text: async () => '{"data":1}', clone() { return this; } };
+  };
+  const got = await http.getJson('vietcap', 'https://trading.vietcap.com.vn/api/price/symbols/getByGroup?group=VN30', { fetchImpl: relayed });
+  check('a Vietcap request is sent to the relay with the secret, the address in the query', got?.data === 1 && via[0].url === `https://app.example/api/finance-sin1?url=${encodeURIComponent('https://trading.vietcap.com.vn/api/price/symbols/getByGroup?group=VN30')}` && via[0].init.headers.Authorization === 'Bearer deploy-secret');
+  http.__resetHttp();
+  const relayNo = async () => ({ status: 401, ok: false, headers: { get: (k) => (k.toLowerCase() === 'x-finance-relay' ? 'refused' : null) }, json: async () => ({}), text: async () => '', clone() { return this; } });
+  const no = await refusal(http.getJson('vietcap', 'https://trading.vietcap.com.vn/api/x', { fetchImpl: relayNo }));
+  check('  the relay refusing is not Vietcap refusing: no standing aside', no instanceof http.SourceError && !no.standAside && !http.standingAside('vietcap'), no?.message);
+  process.env.VERCEL_REGION = 'sin1';
+  check('a function already in Singapore asks Vietcap itself', relay.relayFor('vietcap') === null && http.enabled('vietcap'));
+  for (const [k, v] of Object.entries(keep)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  http.__resetHttp();
+}
+
 section('http.js: switched off, standing aside, or over a ceiling means no call at all');
 {
   http.__resetHttp();
