@@ -1,6 +1,28 @@
 # Changelog
 
-## Unreleased — Finance tools: Vietnam first, global through free sources
+## 2026-11-11 — Group work that finishes, a Bot page like the home chat, finance tools (1.20.0)
+
+**A group's work finishes** (`server/bots/rounds.js`, `server/bots/continue.js`; schema 44). The owner's three researching bots were cut off at 300 seconds with Chief's answer and its document still to come, and nothing picked them up. A round now runs in segments over the group's `pending`, written after every batch: a segment short of time asks this deployment for the next one once it has let the group go; one that was killed is found by the heartbeat. A member cut off mid-step carries on rather than starting over. At most eight segments a message, then Continue; the hand-off ceiling waits for Continue too ("tiếp tục" works). What the person writes while the group works is answered in that round; changing the model chip moves the next batch to it; Stop lets go of what was waiting.
+
+**A round never ends in silence.** The bot that handed work on always gets its turn back, told who answered, who passed and who failed; an admin passing alone is said. A member's lines count as read only once its turn went well. Files a member makes ride on its post in the group. Bots keep quiet — no thanks between them, no promise without the work — and a group can carry a notice every member reads at every turn. `list_bots` says who is at work and where. "@Name" reads the same on the server and the page.
+
+**Only a person reshapes the team.** Every turn knows who started it (the person, a hand-off, a scheduled task); making bots and groups, changing another bot or a bot's own instructions run only for the person. In a group, another bot's words need a yes before they become a save that outlives the group.
+
+**The Bot page looks and moves like the home chat.** Group lines in the home chat's own look over the theme; the working ring turns evenly (every streamed word used to make it again); a round running elsewhere is followed live, and leaving the page leaves it running; the running mark says what it is. The details panel slides; Reset asks once more and deletes the conversation, keeping the memory; Manage opens memory where it is, its arrow turning. Fixed on the way: the @ picker shut itself a moment after opening a group (found under load).
+
+**Memory that keeps up** (`server/bots/memory.js`, `server/bots/review.js`). A note longer than an entry is cut at its sentence ends instead of refused; text is stored composed, and searchable without its marks. Edit in place, pin (a person's pin is theirs), `recall` over everything beyond what a prompt holds (up to 200 entries a bot), and a forget that Undo brings back. A turn that is stopped takes back what it saved. Every 20 turns (40, or off) a review on the free model adds what a bot missed and corrects what changed, never touching what the person wrote or pinned.
+
+**Bots ask**: question cards in a bot's own chat; in a group, `ask_person`, whose answer goes back to the bot that asked.
+
+**A failed step says so**, for every tool: "Couldn't save to memory", never "Saved to memory" in red.
+
+**Suggested models changed**: when an administrator changes them, everyone is told once — at the next visit, or within the twenty-second poll — with "Use it" and "Later".
+
+**A test keeps what bots are told true to the code** (`test/model-surface.test.mjs`): tools they are told about exist, limits they are told are the code's, and their prompts stay within a measured size.
+
+Designs from the studies of OpenBot (ideas only), DS Bot and dsh-superagent (MIT) — NOTICE.
+
+### Finance tools: Vietnam first, global through free sources
 
 **One tool, fourteen kinds** (`server/finance/`). `market_data` answers quotes, history, intraday bars, statements, ratios, company profiles, corporate actions, news, funds, options, exchange rates, gold, economic series and a US screen, for Vietnam (HOSE, HNX and UPCoM — the board is found, not guessed), the US, global markets and crypto, up to six requests in one call. Its schema is 447 tokens and stays deferred until a turn asks for it. The older `{ kind: 'crypto' | 'stock' }` still works.
 

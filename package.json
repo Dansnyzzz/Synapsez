@@ -1,6 +1,6 @@
 {
   "name": "ai-remote",
-  "version": "1.19.0",
+  "version": "1.20.0",
   "private": true,
   "type": "module",
   "description": "Synapsez — a self-hosted, multi-provider agentic AI workspace you can drive from any device.",
@@ -72,7 +72,7 @@
     "test:http": "node test/http.test.mjs",
     "test:devices": "node test/devices.test.mjs",
     "test:deploy": "node test/deploy.test.mjs",
-    "test:ui": "node test/ui.test.mjs && node test/ui-chat.test.mjs && node test/ui-round.test.mjs && node test/ui-themes.test.mjs && node test/ui-stop.test.mjs && node test/ui-usage-guide.test.mjs && node test/ui-files.test.mjs && node test/ui-bots.test.mjs && node test/ui-suggest.test.mjs",
+    "test:ui": "node test/ui.test.mjs && node test/ui-chat.test.mjs && node test/ui-round.test.mjs && node test/ui-themes.test.mjs && node test/ui-stop.test.mjs && node test/ui-usage-guide.test.mjs && node test/ui-files.test.mjs && node test/ui-bots.test.mjs && node test/ui-suggest.test.mjs && node test/ui-market.test.mjs",
     "test:ui-chat": "node test/ui-chat.test.mjs",
     "test:ui-stop": "node test/ui-stop.test.mjs",
     "test:ui-bots": "node test/ui-bots.test.mjs",
@@ -119,7 +119,8 @@
     "test:bots-core": "node test/bots-core.test.mjs",
     "test:suggest-notice": "node test/suggest-notice.test.mjs",
     "test:ui-suggest": "node test/ui-suggest.test.mjs",
-    "test:model-surface": "node test/model-surface.test.mjs"
+    "test:model-surface": "node test/model-surface.test.mjs",
+    "test:ui-market": "node test/ui-market.test.mjs"
   },
   "engines": {
     "node": ">=20"
