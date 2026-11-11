@@ -104,3 +104,27 @@ wants, and it is only the Hobby frequency rule that stops it.
 Both endpoints are behind `requireCron` and need `CRON_SECRET`. They are public
 URLs otherwise, and `run-tasks` does real work. `test/deploy.test.mjs` checks
 that a missing secret and a wrong secret both get a 401.
+
+## Environment for market data (`server/finance`)
+
+`market_data` works with none of these set. They are set in the Vercel dashboard
+(Settings → Environment Variables), never in a committed file.
+
+| Variable | What it does | Without it |
+| --- | --- | --- |
+| `SEC_USER_AGENT` | The User-Agent SEC EDGAR is asked with, as SEC requires: `Synapsez <contact email>` — the owner's real contact. **Required for US statements, filings and the US screen.** | SEC is never asked; US statements fall through to Yahoo, and the answer says "SEC needs SEC_USER_AGENT". |
+| `COINGECKO_DEMO_KEY` | CoinGecko's free Demo key (no card): 100 calls a minute of this deployment's own, sent as `x-cg-demo-api-key`. | Keyless CoinGecko, rate-limited by the server's address and shared with every other tenant on it. |
+| `FRED_API_KEY` | FRED's free key: US rates, inflation, unemployment, GDP. | US macro falls through to the World Bank (annual). |
+| `FIN_SOURCE_<NAME>=off` | Switches one source off everywhere, at once, without a deploy. `<NAME>` is one of `YAHOO, VNDIRECT, KBS, VIETCAP, SEC, COINGECKO, FRANKFURTER, ECB, ERAPI, VIETCOMBANK, SJC, WORLDBANK, FRED, NSO, FMARKET`. Use it if a source objects, or keeps refusing. | Every source is on. |
+
+The pooled ceilings (`server/freeTier.js`) can be set too, each a number:
+`COINGECKO_FREE_MONTHLY` (9,500), `COINGECKO_FREE_MINUTE` (90), `YAHOO_FREE_DAILY`
+(5,000), `VNDIRECT_FREE_DAILY`, `KBS_FREE_DAILY`, `VIETCAP_FREE_DAILY` (3,000 each),
+`SEC_FREE_DAILY` (20,000), `FRED_FREE_MINUTE` (100). They show on the admin Free
+allowances page.
+
+Before relying on a source in production, run `npm run finance:probe` where
+Vercel Sandbox credentials are set (rule 3: a source is probed from a server
+address before it is built on). Its result is recorded in
+`docs/research/2026-11-10-finance-probe-iad1.md`; at the time of building it had
+not been run.
