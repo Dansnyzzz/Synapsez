@@ -29,7 +29,7 @@ const db = await PGlite.create();
 const sql = { query: async (text, params = []) => (await db.query(text, params)).rows };
 const store = await initStore({ driver: sql });
 store.query = (text, params) => sql.query(text, params);
-const { CHAT_LIMIT, keepNewest, sweepChatLimit, unlimited } = await import('../server/chatLimit.js');
+const { CHAT_LIMIT, PIN_LIMIT, keepNewest, sweepChatLimit, unlimited } = await import('../server/chatLimit.js');
 
 const id = () => crypto.randomUUID();
 const person = (role = 'user') => store.createUser({ id: id(), role, name: role, email: `${id()}@limit.test`, passwordHash: 'x' });
@@ -90,11 +90,11 @@ section(`an account keeps its ${CHAT_LIMIT} newest conversations`);
   const goneFile = await file(user.id, { chatId: third });
   const removed = await keepNewest(user, store);
   const left = new Set((await store.query('SELECT id FROM chats WHERE user_id = $1', [user.id])).map((r) => r.id));
-  // The pinned one counts toward the twenty, so the newest nineteen stay beside it.
-  check('the oldest past the limit are deleted', removed === 4 && [third, fourth, fifth, sixth].every((c) => !left.has(c)), `removed ${removed}`);
+  // The pinned one is not counted, so the newest twenty unpinned all stay beside it.
+  check('the oldest past the limit are deleted', removed === 3 && [third, fourth, fifth].every((c) => !left.has(c)) && left.has(sixth), `removed ${removed}`);
   check('  a pinned one stays, however old', left.has(oldest));
   check('  and one at work right now', left.has(second));
-  check('  the newest nineteen stay beside the pinned one — twenty — and the one at work besides', ids.slice(6).every((c) => left.has(c)) && left.size === CHAT_LIMIT + 1, String(left.size));
+  check('  the newest twenty stay, with the pinned one and the one at work besides', ids.slice(5).every((c) => left.has(c)) && left.size === CHAT_LIMIT + 2, String(left.size));
   check('  what went took its files; what stayed kept them', (await count('attachments', 'id = $1', [goneFile.id])) === 0 && (await count('attachments', 'id = $1', [keptFile.id])) === 1);
   check('nothing more to delete when it is already at the limit', (await keepNewest(user.id, store)) === 0);
   const [fresh] = await chats(user.id, 1);
@@ -102,18 +102,39 @@ section(`an account keeps its ${CHAT_LIMIT} newest conversations`);
   check('a new conversation pushes the oldest unpinned one out, by last use', (await keepNewest(user, store)) === 1 && !!(await store.getChat(user.id, fresh)));
 }
 
-section('with twenty pinned, the conversation just begun is never the one deleted');
+section('pinned conversations are never deleted, and never counted');
 {
   const user = await person();
   const pinned = await chats(user.id, CHAT_LIMIT + 1);
   for (const c of pinned) await store.updateChat(user.id, c, { pinned: true });
-  const [first] = await chats(user.id, 1);
-  await store.touchChat(user.id, first);
-  check('the new one stays, and every pinned one', (await keepNewest(user, store)) === 0 && !!(await store.getChat(user.id, first)));
-  check('  an account whose extra conversations are all pinned is not listed for the sweep', !(await store.accountsOverChats(CHAT_LIMIT)).includes(user.id));
+  const loose = await chats(user.id, CHAT_LIMIT);
+  check('twenty-one pinned and twenty unpinned: nothing goes, nothing listed', (await keepNewest(user, store)) === 0 && !(await store.accountsOverChats(CHAT_LIMIT)).includes(user.id));
   const [next] = await chats(user.id, 1);
   await store.touchChat(user.id, next);
-  check('the next one replaces it', (await keepNewest(user, store)) === 1 && !(await store.getChat(user.id, first)) && !!(await store.getChat(user.id, next)));
+  const removed = await keepNewest(user, store);
+  const left = new Set((await store.query('SELECT id FROM chats WHERE user_id = $1', [user.id])).map((r) => r.id));
+  check('the next one pushes out the oldest unpinned, never a pinned one', removed === 1 && !left.has(loose[0]) && left.has(next) && pinned.every((c) => left.has(c)), `removed ${removed}, left ${left.size}`);
+  check('  pins are counted for their own limit, home and projects alike', (await store.countPinnedChats(user.id)) === CHAT_LIMIT + 1);
+}
+
+section('each project keeps its own twenty');
+{
+  const user = await person();
+  const project = await store.createProject(user.id, { id: id(), name: 'Thesis' });
+  const inside = await chats(user.id, CHAT_LIMIT, { projectId: project.id });
+  const outside = await chats(user.id, CHAT_LIMIT);
+  check('twenty in a project and twenty outside: nothing goes', (await keepNewest(user, store)) === 0 && !(await store.accountsOverChats(CHAT_LIMIT)).includes(user.id));
+  const [more] = await chats(user.id, 1, { projectId: project.id });
+  await store.touchChat(user.id, more);
+  const removed = await keepNewest(user, store);
+  const left = new Set((await store.query('SELECT id FROM chats WHERE user_id = $1', [user.id])).map((r) => r.id));
+  check("a twenty-first in the project pushes out the project's oldest, not a loose one", removed === 1 && !left.has(inside[0]) && left.has(more) && outside.every((c) => left.has(c)), `removed ${removed}`);
+  await chats(user.id, 1);
+  check('the sweep finds an account over in one place', (await store.accountsOverChats(CHAT_LIMIT)).includes(user.id));
+  await sweepChatLimit(store);
+  const loose = await count('chats', 'user_id = $1 AND project_id IS NULL', [user.id]);
+  const theirs = await count('chats', 'user_id = $1 AND project_id = $2', [user.id, project.id]);
+  check('  and brings that place down to twenty, the project untouched', loose === CHAT_LIMIT && theirs === CHAT_LIMIT,`${loose} outside, ${theirs} inside`);
 }
 
 section('what the limit does not count');
@@ -228,6 +249,17 @@ section('starting a conversation says how many old ones went');
     const hidden = await member('POST', '/api/chats', { incognito: true });
     check('  an incognito one deletes nothing', hidden.status === 201 && hidden.body.removed === 0 && (await count('chats', 'user_id = $1 AND NOT incognito', [memberId])) === CHAT_LIMIT);
 
+    // Pins are never deleted by the limit, so their number is (chatLimit.js PIN_LIMIT).
+    const mine = (await store.query('SELECT id FROM chats WHERE user_id = $1 AND NOT incognito ORDER BY updated_at DESC', [memberId])).map((r) => r.id);
+    const pinCodes = [];
+    for (const c of mine.slice(0, PIN_LIMIT)) pinCodes.push((await member('PATCH', `/api/chats/${c}`, { pinned: true })).status);
+    check(`${PIN_LIMIT} pins are taken`, pinCodes.every((s) => s === 200), pinCodes.join(','));
+    const refused = await member('PATCH', `/api/chats/${mine[PIN_LIMIT]}`, { pinned: true });
+    check(`  a pin past ${PIN_LIMIT} is refused, in words that name the limit`, refused.status === 409 && new RegExp(String(PIN_LIMIT)).test(refused.body?.error || ''), JSON.stringify(refused.body));
+    check('  pinning one already pinned is not refused', (await member('PATCH', `/api/chats/${mine[0]}`, { pinned: true })).status === 200);
+    await member('PATCH', `/api/chats/${mine[0]}`, { pinned: false });
+    check('  unpinning one makes room', (await member('PATCH', `/api/chats/${mine[PIN_LIMIT]}`, { pinned: true })).status === 200);
+
     const boss = jar();
     await boss('POST', '/api/register', { name: 'Boss', email: 'boss@limit.test', password: 'a-long-enough-password' });
     const bossId = (await boss('GET', '/api/bootstrap')).body.user.id;
@@ -235,6 +267,10 @@ section('starting a conversation says how many old ones went');
     await chats(bossId, CHAT_LIMIT + 2);
     const theirs = await boss('POST', '/api/chats', {});
     check('an administrator\'s twenty-third deletes nothing', theirs.status === 201 && theirs.body.removed === 0 && (await count('chats', 'user_id = $1', [bossId])) === CHAT_LIMIT + 3, JSON.stringify(theirs.body));
+    const bossChats = (await store.query('SELECT id FROM chats WHERE user_id = $1', [bossId])).map((r) => r.id);
+    const bossCodes = [];
+    for (const c of bossChats.slice(0, PIN_LIMIT + 2)) bossCodes.push((await boss('PATCH', `/api/chats/${c}`, { pinned: true })).status);
+    check('  and pins as many as they like', bossCodes.every((s) => s === 200), bossCodes.join(','));
   } finally {
     server.close();
   }

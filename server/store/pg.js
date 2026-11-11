@@ -1864,43 +1864,53 @@ export function createPgStore(connectionString) {
       return gone.length;
     },
     /**
-     * Keep the `keep` newest conversations of the home chat and delete the rest (owner,
-     * 2026-11-11: twenty, for everyone but administrators — the caller decides who).
-     * Newest by when each was last used. Never one at work, nor a pinned one: those stay,
-     * and count. The newest unpinned one always stays — with twenty pinned, the
-     * conversation just begun would otherwise be deleted as it was made. A bot's or a
-     * group's conversations are the Bot page's, not counted here.
+     * Keep the `keep` newest unpinned conversations in each place — outside projects, and
+     * in each project on its own — and delete the rest (owner, 2026-11-11: twenty, for
+     * everyone but administrators; the caller decides who). Newest by when each was last
+     * used. A pinned one is never deleted and never counted: pinning is the person saying
+     * "keep this", and is capped instead (`countPinnedChats`, PIN_LIMIT). One at work
+     * stays. A project's conversations are its own work and do not make room for loose
+     * ones, nor the reverse. A bot's or a group's conversations are the Bot page's.
      *
      * @returns {Promise<number>} how many went
      */
     async pruneChatsOver(userId, keep = 20, { staleMs = RUN_LEASE_STALE_MS } = {}) {
       const rows = await q(
-        `SELECT id, pinned, run_lock_by, run_lock_at FROM chats
-          WHERE user_id = $1 AND bot_id IS NULL AND bot_group_id IS NULL AND NOT incognito
-          ORDER BY updated_at DESC, created_at DESC, id`,
-        [userId],
+        `SELECT id, run_lock_by, run_lock_at FROM (
+           SELECT id, run_lock_by, run_lock_at,
+                  ROW_NUMBER() OVER (PARTITION BY project_id ORDER BY updated_at DESC, created_at DESC, id) AS nth
+             FROM chats
+            WHERE user_id = $1 AND bot_id IS NULL AND bot_group_id IS NULL AND NOT incognito AND NOT pinned
+         ) ranked
+         WHERE nth > $2`,
+        [userId, Math.max(1, Math.floor(Number(keep) || 0))],
       );
-      const unpinned = rows.filter((r) => !r.pinned);
-      const room = Math.max(Math.floor(Number(keep) || 0) - (rows.length - unpinned.length), 1);
       const busy = (r) => r.run_lock_by && r.run_lock_at && Date.now() - new Date(r.run_lock_at).getTime() < staleMs;
-      return this.purgeChats(userId, unpinned.slice(room).filter((r) => !busy(r)).map((r) => r.id));
+      return this.purgeChats(userId, rows.filter((r) => !busy(r)).map((r) => r.id));
     },
     /**
-     * Accounts with home conversations `pruneChatsOver` would delete — over `keep`, and
-     * not only pinned ones past it — for the sweep that brings each down. An account
-     * whose extra conversations are all pinned is never listed, so it cannot take a
-     * place in the batch hour after hour. Administrators are never listed.
+     * Accounts with a place — outside projects, or one project — holding more than `keep`
+     * unpinned conversations, for the sweep that brings each down. Administrators are
+     * never listed.
      */
     async accountsOverChats(keep = 20, limit = 200) {
       const rows = await q(
-        `SELECT c.user_id FROM chats c JOIN users u ON u.id = c.user_id
-          WHERE c.bot_id IS NULL AND c.bot_group_id IS NULL AND NOT c.incognito AND u.role <> 'admin'
-          GROUP BY c.user_id
-         HAVING SUM(CASE WHEN c.pinned THEN 0 ELSE 1 END) > GREATEST($1::int - SUM(CASE WHEN c.pinned THEN 1 ELSE 0 END), 1)
+        `SELECT DISTINCT c.user_id FROM chats c JOIN users u ON u.id = c.user_id
+          WHERE c.bot_id IS NULL AND c.bot_group_id IS NULL AND NOT c.incognito AND NOT c.pinned AND u.role <> 'admin'
+          GROUP BY c.user_id, c.project_id
+         HAVING COUNT(*) > $1
           LIMIT $2`,
         [keep, limit],
       );
       return rows.map((r) => r.user_id);
+    },
+    /** How many conversations this account has pinned — home and projects, not a bot's. */
+    async countPinnedChats(userId) {
+      const rows = await q(
+        'SELECT COUNT(*)::int AS n FROM chats WHERE user_id = $1 AND pinned AND bot_id IS NULL AND bot_group_id IS NULL',
+        [userId],
+      );
+      return Number(rows[0]?.n ?? 0);
     },
     /**
      * Rows a conversation left behind that nothing points at any more — from before every

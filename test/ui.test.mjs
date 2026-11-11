@@ -8193,7 +8193,8 @@ section('the sidebar stays a list you can glance at');
         await post(`/api/chats/${made.chat.id}/messages`, { text: `filler ${i}` });
       }
       const listed = await fetch('/api/chats').then((r) => r.json());
-      return { removed, held: (listed.chats || []).filter((c) => !c.project_id && !c.bot_id && !c.bot_group_id).length };
+      // Twenty unpinned outside projects; pinned ones are kept besides (server/chatLimit.js).
+      return { removed, held: (listed.chats || []).filter((c) => !c.project_id && !c.bot_id && !c.bot_group_id && !c.pinned).length };
     }, n);
 
   // A member's account keeps its twenty newest (owner, 2026-11-11; server/chatLimit.js).

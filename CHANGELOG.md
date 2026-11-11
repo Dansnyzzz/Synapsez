@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-11 — Twenty in each place, pins not counted (1.23.1)
+
+**The limit is twenty in each place, not twenty in all** (`server/chatLimit.js`). Outside projects an account keeps its 20 most recently used unpinned conversations, and each project keeps its own 20 — a project's conversations are organised work and loose questions no longer push them out. A pinned conversation is never deleted and no longer counts toward the 20; instead an account may pin up to 10 (`PIN_LIMIT`; pins already past it stay, a new one is refused: "You can pin up to 10 conversations. Unpin one first."). Administrators have no limit on either. Why: an average ChatGPT user sends about 26 messages a week at about 6 prompts a conversation — 4 to 5 conversations a week, so twenty is about a month — and with pins counted, someone with 15 pinned kept only 5; ChatGPT caps pins (at three) and caps no project's conversations. Privacy notice privacy-2026-11-11-2.
+
 ## 2026-11-11 — What you delete is gone, twenty conversations, and the owner's screenshots (1.23.0)
 
 **What a person deletes, the database deletes** (`purgeChats` in `server/store/pg.js`). Every path that deletes conversations — one, a bot's, a group's, the expired, the oldest past the limit — goes through one function that also deletes what carried the conversation's id without a foreign key: its files and their renderings, its deep research, the worker jobs it sent (their arguments and output), and the transcript copy sent with feedback (the feedback stays). Deleting a bot or a group used to take its conversations' messages and leave their files and jobs; a made file deleted from the panel left its drawing. The hourly sweep removes jobs and research left over from before. A memory entry a bot was told to forget is deleted for good ten minutes on (it was thirty days; the page's Undo lasts seconds).
