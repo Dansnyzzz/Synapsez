@@ -6,11 +6,29 @@ import { validZone } from '../util/zone.js';
 import { abortHere, holdRun, settledAfterStop, watchLease } from '../liveRuns.js';
 import { log } from '../util/trace.js';
 import { clientError } from '../util/clientError.js';
-import { BotError, CREATURES, LIMITS, HANDOFF_CEILING, botView, groupView, createBot, createGroup, distinctFaces, ensureChief, removeBot, updateBot, updateGroup } from '../bots/team.js';
+import { BotError, CREATURES, LIMITS, HANDOFF_CEILING, botView, groupView, createBot, createGroup, distinctFaces, duplicateBot, ensureChief, removeBot, updateBot, updateGroup } from '../bots/team.js';
+import { exportTeam, importTeam } from '../bots/porting.js';
+import { needsApproval } from '../agent.js';
+import { taskState } from '../../public/js/automation-status.js';
 import { listMemory, pin, remember, undoForget } from '../bots/memory.js';
 import { runGroupRound, RESUMABLE } from '../bots/rounds.js';
 import { chainNext } from '../bots/continue.js';
-import { parseSchedule } from '../scheduler.js';
+import { nextRunOf, parseSchedule } from '../scheduler.js';
+
+/**
+ * A bot that was paused is resumed: the runs it missed are let go, and each of its tasks
+ * goes on from its next time after now (spec B.5) rather than all at once.
+ *
+ * @param {string} userId @param {string} botId
+ */
+async function skipPausedRuns(userId, botId) {
+  const store = getStore();
+  const now = Date.now();
+  for (const task of await store.listTasks(userId, { botId })) {
+    if (!task.enabled || !task.next_run_at || new Date(task.next_run_at).getTime() > now) continue;
+    await store.updateTask(userId, task.id, { nextRunAt: nextRunOf(task) });
+  }
+}
 
 /**
  * The Bot page's routes (owner, 2026-11-09): the team, each bot's and group's
@@ -57,14 +75,14 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       res.json({
         bots: bots.map((b) => {
           const p = last('bot_id', b.id);
-          return { ...botView(b), last: preview(p), at: p?.updated_at || b.updated_at, running: running(p) };
+          return { ...botView(b), last: preview(p), at: p?.updated_at || b.updated_at, running: running(p), unread: !!p?.unread };
         }),
         groups: groups.map((g) => {
           const p = last('bot_group_id', g.id);
           // A round between two segments is still running; who is at work names the row's line.
           const between = !!g.pending && RESUMABLE.includes(g.pending.reason);
           const busy = running(p) || between;
-          return { ...groupView(g), last: preview(p), at: p?.updated_at || g.updated_at, running: busy, working: busy ? (g.pending?.working || []).map((w) => w.bot) : [] };
+          return { ...groupView(g), last: preview(p), at: p?.updated_at || g.updated_at, running: busy, working: busy ? (g.pending?.working || []).map((w) => w.bot) : [], unread: !!p?.unread };
         }),
         creatures: CREATURES,
         limits: { ...LIMITS, handoffs: HANDOFF_CEILING },
@@ -89,8 +107,112 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
     wrap(async (req, res) => {
       const b = req.body || {};
       try {
-        const bot = await updateBot(req.user.id, req.params.id, { name: b.name, role: b.role, instructions: b.instructions, avatar: b.avatar, reviewEvery: b.reviewEvery });
+        const before = b.paused === false ? await getStore().getBot(req.user.id, req.params.id) : null;
+        const bot = await updateBot(req.user.id, req.params.id, { name: b.name, role: b.role, instructions: b.instructions, avatar: b.avatar, reviewEvery: b.reviewEvery, hue: b.hue, pinned: b.pinned, paused: b.paused });
+        // Resumed: the runs it missed while paused are let go, and its tasks go on from now (spec B.5).
+        if (before?.paused_at) await skipPausedRuns(req.user.id, bot.id).catch((err) => log.warn('a resumed bot kept its missed runs', { err: err?.message }));
         res.json({ bot: botView(bot) });
+      } catch (err) {
+        fail(res, err);
+      }
+    }),
+  );
+
+  /**
+   * What waits for the person (spec B.2), one row each: a bot's question or a step that
+   * needs their yes in its own chat, a group's question to them, a round stopped at the
+   * hand-off ceiling or after its long run (Continue), a scheduled run that failed or
+   * stopped for a yes. Healthy is an empty list.
+   */
+  api.get(
+    '/bots/attention',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const [seen, groups, tasks, prefs] = await Promise.all([store.botAttention(req.user.id), store.listBotGroups(req.user.id), store.listTeamTasks(req.user.id), getPrefs(req.user.id).catch(() => ({}))]);
+      const items = [];
+      const waitingChats = new Set();
+      for (const w of seen.waiting) {
+        const calls = Array.isArray(w.tool_calls) ? w.tool_calls : [];
+        const asking = calls.find((c) => c?.name === 'ask_options');
+        const held = w.held && typeof w.held === 'object' ? Object.keys(w.held) : [];
+        if (asking) {
+          const q = asking.input?.questions?.[0]?.question || asking.input?.question || '';
+          items.push({ kind: 'question', bot: w.bot_id, chatId: w.chat_id, text: String(q).slice(0, 200) });
+        } else if (needsApproval(calls, prefs.toolPolicy).length || held.length) {
+          items.push({ kind: 'approval', bot: w.bot_id, chatId: w.chat_id, text: calls.map((c) => c?.name).filter(Boolean).join(', ').slice(0, 200) });
+        } else continue;
+        waitingChats.add(w.chat_id);
+      }
+      for (const a of seen.asks) items.push({ kind: 'question', group: a.group_id, bot: a.bot, text: String(a.text || '').slice(0, 200) });
+      for (const g of groups) if (g.pending && ['ceiling', 'segments'].includes(g.pending.reason)) items.push({ kind: 'ceiling', group: g.id });
+      for (const t of tasks) {
+        const state = taskState(t);
+        // A run stopped for a yes is the waiting step above, when its chat says so already.
+        if (!state.attention || !['failed', 'needs'].includes(state.run || '') || (t.last_chat && waitingChats.has(t.last_chat))) continue;
+        items.push({ kind: 'failed', taskId: t.id, bot: t.bot_id || null, group: t.bot_group_id || null, chatId: t.last_chat || null, text: t.title, reason: String(t.last_status || '').replace(/^(failed|error|stopped):\s*/, '').slice(0, 300) });
+      }
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.json({ items });
+    }),
+  );
+
+  /** The person has read a bot's own chat, or a group's, to its end: its unread mark goes (spec B.3). */
+  api.post(
+    '/bots/:id/read',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const bot = await store.getBot(req.user.id, req.params.id);
+      if (!bot) return res.status(404).json({ error: 'No such bot.' });
+      const chat = await store.botChat(req.user.id, { botId: bot.id, title: bot.name });
+      res.json({ ok: !!chat && (await store.markChatRead(req.user.id, chat.id)) });
+    }),
+  );
+  api.post(
+    '/bot-groups/:id/read',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const group = await store.getBotGroup(req.user.id, req.params.id);
+      if (!group) return res.status(404).json({ error: 'No such group chat.' });
+      const chat = await store.botChat(req.user.id, { groupId: group.id, title: group.name });
+      res.json({ ok: !!chat && (await store.markChatRead(req.user.id, chat.id)) });
+    }),
+  );
+
+  /** A copy of a bot, its memory with it, its tasks paused (spec B.5). */
+  api.post(
+    '/bots/:id/duplicate',
+    wrap(async (req, res) => {
+      try {
+        const prefs = await getPrefs(req.user.id).catch(() => ({}));
+        const made = await duplicateBot(req.user.id, req.params.id, prefs.language === 'vi' ? 'vi' : 'en');
+        res.status(201).json({ bot: botView(made.bot), memory: made.memory, tasks: made.tasks });
+      } catch (err) {
+        fail(res, err);
+      }
+    }),
+  );
+
+  /** The team as a file, `synapsez-bots/1` (spec B.5): no conversations, no keys. */
+  api.get(
+    '/bots/export',
+    wrap(async (req, res) => {
+      const file = await exportTeam(req.user.id);
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.setHeader('Content-Disposition', `attachment; filename="synapsez-bots-${new Date().toISOString().slice(0, 10)}.json"`);
+      res.json(file);
+    }),
+  );
+
+  /**
+   * A team file in (spec B.5): `dry` says what it would add; otherwise each bot and group
+   * is added whole or not at all, and the answer says which, with what was refused.
+   */
+  api.post(
+    '/bots/import',
+    wrap(async (req, res) => {
+      try {
+        const result = await importTeam(req.user.id, req.body?.data, { apply: req.body?.dry !== true });
+        res.status(req.body?.dry === true ? 200 : 201).json(result);
       } catch (err) {
         fail(res, err);
       }
@@ -263,7 +385,7 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
     wrap(async (req, res) => {
       const b = req.body || {};
       try {
-        const group = await updateGroup(req.user.id, req.params.id, { name: b.name, members: b.members, admin: b.admin, notice: b.notice });
+        const group = await updateGroup(req.user.id, req.params.id, { name: b.name, members: b.members, admin: b.admin, notice: b.notice, pinned: b.pinned });
         res.json({ group: groupView(group) });
       } catch (err) {
         fail(res, err);
