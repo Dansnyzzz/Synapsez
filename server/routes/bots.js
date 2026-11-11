@@ -143,9 +143,20 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       } catch (err) {
         return res.status(400).json({ error: clientError(err) });
       }
-      const task = await store.createTask(req.user.id, { id: crypto.randomUUID(), title, prompt, model: null, cron: when.cron, nextRunAt: when.nextRunAt, tz, botId: bot.id });
+      const task = await store.createTask(req.user.id, { id: crypto.randomUUID(), title, prompt, model: null, cron: when.cron, nextRunAt: when.nextRunAt, tz, botId: bot.id, missed: req.body?.missed });
       if (!task) return res.status(404).json({ error: 'No such bot.' });
       res.status(201).json({ task });
+    }),
+  );
+
+  /** A group's own scheduled tasks (spec B.4): each run is a round, shown in the group's details only. */
+  api.get(
+    '/bot-groups/:id/tasks',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const group = await store.getBotGroup(req.user.id, req.params.id);
+      if (!group) return res.status(404).json({ error: 'No such group chat.' });
+      res.json({ tasks: await store.listTasks(req.user.id, { groupId: group.id }) });
     }),
   );
 

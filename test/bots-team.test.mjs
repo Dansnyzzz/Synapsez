@@ -82,7 +82,7 @@ section('pins, pause and their columns');
 section('a paused bot\'s tasks wait; a group can own a task');
 {
   const past = new Date(Date.now() - 60_000).toISOString();
-  const botTask = await store.createTask(uid, { id: id(), title: 'Scout feed', prompt: 'Check the feed', cron: '{"kind":"daily","time":"08:00"}', nextRunAt: past, botId: scout.id });
+  const botTask = await store.createTask(uid, { id: id(), title: 'Scout feed', prompt: 'Check the feed', cron: '08:00', nextRunAt: past, botId: scout.id });
   await store.updateBot(uid, scout.id, { pausedAt: new Date().toISOString() });
   let claimed = await store.claimDueTask(new Date().toISOString(), uid);
   check('a paused bot\'s due task is not claimed', claimed?.id !== botTask.id, claimed?.id || 'none');
@@ -242,6 +242,95 @@ section('a paused member sits the round out; how each went is kept');
   check('  the bot that called it hears it is paused, and stops calling it', agent.calls.filter((c) => c.name === 'Writer').length === 2, agent.calls.map((c) => c.name).join());
   check('whom the message called and how each went, as it went', states.includes('W:called') && states.includes('W:working') && states.some((s) => s.startsWith('W:answered')) && states.some((s) => /S:paused/.test(s)), states.join(' | '));
   await store.updateBot(uid, scout.id, { pausedAt: null });
+}
+
+/* ── Task 2: scheduled runs that keep quiet, fail, skip, or are a group's ── */
+
+const scheduler = await import('../server/scheduler.js');
+const { runControlResult, RUN_CONTROL_TOOLS } = await import('../server/tools/runControl.js');
+const { taskState, TASK_QUIET, TASK_SKIPPED } = await import('../public/js/automation-status.js');
+
+section('a run can say it has nothing new, or that it failed');
+{
+  check('the two tools are offered only to scheduled runs, and change nothing', RUN_CONTROL_TOOLS.map((t) => t.name).join() === 'no_update,run_failed' && RUN_CONTROL_TOOLS.every((t) => t.readOnly));
+  const quiet = runControlResult({ name: 'no_update', input: {} });
+  check('no_update says the run is quiet', quiet.outcome.kind === 'quiet');
+  const failed = runControlResult({ name: 'run_failed', input: { reason: `The feed asks for a sign-in. key=sk-${'a'.repeat(40)} ${'x'.repeat(400)}` } });
+  check('run_failed keeps a reason of at most 300 characters, with no key in it', failed.outcome.kind === 'failed' && failed.outcome.reason.length <= 300 && !/sk-a{20}/.test(failed.outcome.reason), failed.outcome.reason.slice(0, 80));
+  check('a failed status reads as failed in Automations and the Bot page', taskState({ enabled: true, last_status: 'failed: The feed asks for a sign-in.' }).run === 'failed');
+  check('  a quiet one and a skipped one as fine', taskState({ enabled: true, last_status: TASK_QUIET }).run === null && taskState({ enabled: true, last_status: TASK_SKIPPED }).run === null);
+
+  const own = await store.botChat(uid, { botId: writer.id, title: 'Writer' });
+  await store.markChatRead(uid, own.id);
+  const before = (await store.botPreviews(uid)).find((p) => p.chat_id === own.id);
+  const scripted = (reply, call) => async ({ chatId, emit, runControl }) => {
+    check(`  the run is offered them (${call || 'none'})`, runControl === true);
+    if (call) emit('run_outcome', runControlResult({ name: call, input: { reason: 'The feed is down.' } }).outcome);
+    await store.appendMessage(uid, chatId, { id: id(), role: 'assistant', text: reply });
+    emit('done', { stopReason: 'end_turn' });
+  };
+  const due = new Date(Date.now() - 60_000).toISOString();
+  let task = await store.createTask(uid, { id: id(), title: 'Feed', prompt: 'Check the feed; report only what is new.', cron: '08:00', nextRunAt: due, botId: writer.id });
+  scheduler.__agent.use(scripted('Checked the feed: nothing new.', 'no_update'));
+  let ran = await scheduler.runDueTasks({ userId: uid, limit: 1 });
+  check('a quiet run is a success that says so', ran[0]?.status === TASK_QUIET && (await store.getTask(uid, task.id)).last_status === TASK_QUIET, JSON.stringify(ran));
+  const after = (await store.botPreviews(uid)).find((p) => p.chat_id === own.id);
+  check('  it leaves no unread mark and the preview as it was', after.unread === false && after.text === before.text, `${after.text} / ${before.text}`);
+  const lines = await store.listMessages(uid, own.id);
+  check('  its prompt and its answer fold away', lines.slice(-2).every((m) => m.quiet === true));
+
+  await store.updateTask(uid, task.id, { nextRunAt: due });
+  scheduler.__agent.use(scripted('Could not check the feed.', 'run_failed'));
+  ran = await scheduler.runDueTasks({ userId: uid, limit: 1 });
+  check('a failed run is recorded with its reason', ran[0]?.status === 'failed: The feed is down.', ran[0]?.status);
+  scheduler.__agent.use(scripted('Three new posts.', null));
+  await store.updateTask(uid, task.id, { nextRunAt: due });
+  ran = await scheduler.runDueTasks({ userId: uid, limit: 1 });
+  check('  — ok, and news', ran[0]?.status === 'ok' && (await store.botPreviews(uid)).find((p) => p.chat_id === own.id).unread === true);
+
+  section('a missed run is run once, or let go');
+  const late = new Date(Date.now() - 2 * 3600_000).toISOString();
+  await store.updateTask(uid, task.id, { nextRunAt: late, missed: 'skip' });
+  let calls = 0;
+  scheduler.__agent.use(async ({ chatId, emit }) => {
+    calls += 1;
+    await store.appendMessage(uid, chatId, { id: id(), role: 'assistant', text: 'Ran.' });
+    emit('done', { stopReason: 'end_turn' });
+  });
+  ran = await scheduler.runDueTasks({ userId: uid, limit: 1 });
+  task = await store.getTask(uid, task.id);
+  check('two hours late, a task that skips lets it go', ran[0]?.status === TASK_SKIPPED && calls === 0 && new Date(task.next_run_at).getTime() > Date.now(), JSON.stringify(ran));
+  await store.updateTask(uid, task.id, { nextRunAt: late, missed: 'once' });
+  ran = await scheduler.runDueTasks({ userId: uid, limit: 1 });
+  check('  one that runs once runs it now', ran[0]?.status === 'ok' && calls === 1);
+  await store.updateTask(uid, task.id, { nextRunAt: new Date(Date.now() - 5 * 60_000).toISOString(), missed: 'skip' });
+  ran = await scheduler.runDueTasks({ userId: uid, limit: 1 });
+  check('  a few minutes late is not missed', ran[0]?.status === 'ok' && calls === 2);
+  check('the grace is half an hour', scheduler.MISSED_GRACE_MS === 30 * 60_000);
+  await store.deleteTask(uid, task.id);
+  scheduler.__agent.use(null);
+}
+
+section('a group\'s task runs a round from its prompt');
+{
+  const due = new Date(Date.now() - 60_000).toISOString();
+  const task = await store.createTask(uid, { id: id(), title: 'Weekly review', prompt: 'Review the week, @Scout first', cron: 'mon 09:00', nextRunAt: due, botGroupId: group.id });
+  const agent = fakeAgent({ Scout: 'Reviewed: all good.' });
+  scheduler.__agent.use(agent.run);
+  const ran = await scheduler.runDueTasks({ userId: uid, limit: 1 });
+  scheduler.__agent.use(null);
+  check('the round ran, for the member the prompt named', ran[0]?.status === 'ok' && agent.calls.length === 1 && agent.calls[0].name === 'Scout', JSON.stringify(ran));
+  check('  its turn is the task\'s, not the person\'s', agent.calls[0].turnOrigin === 'task' && /scheduled task for this group/.test(agent.calls[0].prompt), agent.calls[0].turnOrigin);
+  const log = await store.botChat(uid, { groupId: group.id, title: 'Desk' });
+  const lines = await store.listMessages(uid, log.id);
+  check('  the prompt is in the group as a task\'s line, then the answer', lines.some((m) => m.role === 'user' && m.origin === 'task' && /Review the week/.test(m.text)) && lines.at(-1).bot === scout.id);
+  check('  the task points at the group\'s log', (await store.getTask(uid, task.id)).last_chat === log.id);
+  await store.setGroupPending(uid, group.id, { reason: 'running', queue: [], at: new Date().toISOString() });
+  await store.updateTask(uid, task.id, { nextRunAt: due });
+  const busy = await scheduler.runDueTasks({ userId: uid, limit: 1 });
+  check('while the group is at work, the run says so instead', /^stopped: the group was at work/.test(busy[0]?.status || ''), busy[0]?.status);
+  await store.setGroupPending(uid, group.id, null);
+  await store.deleteTask(uid, task.id);
 }
 
 console.log(failures ? `\n\x1b[31m${failures} failed\x1b[0m` : '\n\x1b[32mall passed\x1b[0m');

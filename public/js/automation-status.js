@@ -15,6 +15,12 @@
 /** What a task's last status says once the person stopped it (scheduler.js `stopTask`). */
 export const TASK_STOPPED = 'stopped by you';
 
+/** A run that checked and had nothing new to say (`no_update`, spec B.4): a success. */
+export const TASK_QUIET = 'ok: nothing new';
+
+/** A run the cron missed, let go because the task skips missed runs (spec B.4). */
+export const TASK_SKIPPED = 'skipped: missed';
+
 /**
  * How long past its time a run may be before it counts as overdue. The local
  * scheduler looks once a minute and a deployment's pinger every few, so a run
@@ -73,7 +79,7 @@ export function taskState(task, now = Date.now()) {
     task.run_state === 'running' ? 'running'
     : task.run_state === 'needs_attention' || /^stopped: waiting for an approval/.test(said) ? 'needs'
     : said === TASK_STOPPED ? 'stopped'
-    : /^(error:|stopped)/.test(said) ? 'failed'
+    : /^(error:|stopped|failed:)/.test(said) ? 'failed'
     : null;
   return finish(run, planOf(task, run, now), { next: task.next_run_at || null });
 }

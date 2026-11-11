@@ -89,7 +89,7 @@ const DEFS = {
   post_to_group: {
     mainOnly: true,
     description:
-      "Main bot only, from your own chat. Write a message to one of the user's group chats for them: the group starts on it at once, the user watches it there, and you get one line here when it is done. Use it when the user asks you to give a group work; @Name in the message calls that member, otherwise the group's admin answers. Tell the user it has started; do not wait for it.",
+      "Main bot only, from your own chat: give one of the user's group chats work, for them. It starts at once (@Name calls that member, else the admin answers); the user watches it there and you get a line here when it is done.",
     parameters: {
       type: 'object',
       properties: {

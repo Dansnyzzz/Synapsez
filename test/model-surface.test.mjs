@@ -92,7 +92,8 @@ section('a limit a description states is the one the code keeps');
 section('each role stays within its size');
 {
   // Measured 2026-11-11 with nothing saved, plus a margin. Raise on purpose, not by accident.
-  const BUDGET = { chief: 8800, member: 5750, 'member in a group': 6250 };
+  // Chief 8800 → 9400 on purpose (spec B): post_to_group and the interview rule, measured 9216.
+  const BUDGET = { chief: 9400, member: 5750, 'member in a group': 6250 };
   for (const [role, { bot, chat }] of Object.entries(roles)) {
     const persona = await botPersona(user.id, chat);
     const size = persona.intro.length + persona.section.length + JSON.stringify(botTools(bot).map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }))).length;

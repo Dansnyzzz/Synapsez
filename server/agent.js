@@ -42,6 +42,7 @@ import { splitChecks } from '../public/js/check-notes.js';
 import { checkAnswer, checkFigures, textsIn } from './qualityGate.js';
 import { batchSegments, createStepGuard, skippedAfterFailure } from './stepOrder.js';
 import { lookAfterWriting, maskedPicturesNote, withLookedPictures, MAX_LOOKS_PER_TURN } from './fileLook.js';
+import { RUN_CONTROL_NAMES, RUN_CONTROL_TOOLS, runControlResult } from './tools/runControl.js';
 
 /** What this deployment can do beyond the account's own keys — see `needsHost`. */
 const hostCapabilities = () => (sandboxConfigured() ? ['sandbox'] : []);
@@ -1302,6 +1303,13 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         };
       }
       emit('tool_call', { id: call.id, name: call.name, input: call.input });
+      // A scheduled run saying it has nothing new, or that it failed (spec B.4): answered
+      // here, and told to the scheduler, which reads `run_outcome` (server/scheduler.js).
+      if (RUN_CONTROL_NAMES.has(call.name)) {
+        const { outcome, content } = runControlResult(call);
+        emit('run_outcome', outcome);
+        return { toolCallId: call.id, name: call.name, content, isError: false, ms: Date.now() - started };
+      }
       // A sub-agent, a research run or a page read by a model, started from a
       // conversation that holds Google data, keeps to where that may go.
       const running = withGoogleData(googleData, () => executeTool({
@@ -1594,7 +1602,7 @@ export async function runAgent(options) {
  *   test with no network — see `compact()` and `runParallel` for the same seam.
  *   Defaults to the real `streamCompletion`.
  */
-async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, answers, handoff = false, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion, deadlineAt = Infinity, turnId = null, turnOrigin: originGiven = null, turnInfo = null }) {
+async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, answers, handoff = false, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion, deadlineAt = Infinity, turnId = null, turnOrigin: originGiven = null, turnInfo = null, runControl = false }) {
   const store = getStore();
   // This turn's deadline on this function, handed to every model call (HAR-015).
   // A group round runs several turns in one function's life, and hands each the time that is left (bots/rounds.js).
@@ -1771,6 +1779,8 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
     if (persona && chat.bot_group_id) out.add('ask_options');
     // Chief writes to a group from its own chat (spec B.1); inside a group it just replies.
     if (persona && chat.bot_group_id) out.add('post_to_group');
+    // A question for the person in a group (ask_person) has no place in a bot's own chat.
+    if (persona && !chat.bot_group_id) out.add('ask_person');
     return out;
   };
   let withhold = withheldHere();
@@ -1903,7 +1913,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
     // The cloud computer, only where this deployment can start one.
     hosted: hostCapabilities(),
     // Tools from outside this repository, already in the same shape.
-    extra: [...mcp.tools, ...ownTools],
+    extra: [...mcp.tools, ...ownTools, ...(runControl ? RUN_CONTROL_TOOLS : [])],
     withhold,
     // "Tools already loaded" in the + menu: nothing held back behind load_tools —
     // except on a run nobody is watching, which preloads nothing on purpose
@@ -1955,7 +1965,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
           .map(([provider]) => provider),
         context: 0,
         hosted: hostCapabilities(),
-        extra: [...mcp.tools, ...ownTools],
+        extra: [...mcp.tools, ...ownTools, ...(runControl ? RUN_CONTROL_TOOLS : [])],
         withhold,
       }).map((t) => t.name),
     );
@@ -2471,7 +2481,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
             if (priced.source === 'estimate') totals.estimated = true;
           }
           turnTokens += tokens;
-          await recordUsage(userId, { chatId, model: entry.id, usage: done.usage, costUsd: priced?.usd || 0, role: 'turn' }).catch((err) =>
+          await recordUsage(userId, { chatId, model: entry.id, usage: done.usage, costUsd: priced?.usd || 0, role: 'turn', origin: turnOrigin }).catch((err) =>
             log.error('usage not recorded', err, { role: 'turn', model: entry.id }),
           );
         }

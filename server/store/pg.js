@@ -4075,7 +4075,8 @@ export function createPgStore(connectionString) {
                               OR lease_until <= NOW())
                        ORDER BY next_run_at LIMIT 1
                        FOR UPDATE SKIP LOCKED)
-      RETURNING *`,
+      -- When it was due, before the hour above: how late a run is decides a missed one (schema 46).
+      RETURNING *, next_run_at - INTERVAL '1 hour' AS due_at`,
         [now, userId, String(leaseMs)],
       );
       return rows[0] ?? null;
@@ -4909,6 +4910,20 @@ export function createPgStore(connectionString) {
             AND ((c.bot_id IS NOT NULL AND c.bot_group_id IS NULL) OR (c.bot_id IS NULL AND c.bot_group_id IS NOT NULL))`,
         [userId],
       );
+    },
+    /**
+     * A scheduled run that had nothing to say (`no_update`, spec B.4): its lines after
+     * `afterSeq` — the prompt and the answer — fold away and are neither news nor the preview.
+     */
+    async markMessagesQuiet(userId, chatId, afterSeq) {
+      const rows = await q(
+        `UPDATE messages m SET content = m.content || '{"quiet": true}'::jsonb
+           FROM chats c
+          WHERE c.id = m.chat_id AND c.user_id = $1 AND m.chat_id = $2 AND m.seq > $3 AND m.role IN ('user', 'assistant')
+        RETURNING m.id`,
+        [userId, String(chatId ?? ''), Number(afterSeq)],
+      );
+      return rows.length;
     },
     /** The person has read a conversation to its end (the Bot page's unread mark, schema 46). */
     async markChatRead(userId, chatId) {

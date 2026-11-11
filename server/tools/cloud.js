@@ -2102,10 +2102,11 @@ const CARD_SHOWN =
  * server's, so it stated a time that was not the one that would fire — which is
  * worse than saying nothing, because it looks like it has been checked.
  */
-async function scheduleTaskTool({ title, prompt, when, repeat = true, confirmed }, { userId, chatId = null }) {
+async function scheduleTaskTool({ title, prompt, when, repeat = true, confirmed, missed }, { userId, chatId = null }) {
   const store = getStore();
-  // Scheduled from a bot's chat, it is that bot's (owner, 2026-11-10): run as it, listed only on the Bot page.
-  const botId = await botOfChat(userId, chatId);
+  // Scheduled from a bot's chat, it is that bot's (owner, 2026-11-10): run as it, listed only on the Bot page;
+  // from a group chat, the group's (spec B.4): its run is a round.
+  const { botId, groupId } = await ownerOfChat(userId, chatId);
 
   /*
    * Already set up? Then say so rather than setting it up twice.
@@ -2115,7 +2116,7 @@ async function scheduleTaskTool({ title, prompt, when, repeat = true, confirmed 
    * asked, which is why the message above tells it so in those words.
    */
   if (!confirmed) {
-    const clash = findDuplicate(await store.listTasks(userId, { botId }), title, (task) => task.title);
+    const clash = findDuplicate(await store.listTasks(userId, { botId, groupId }), title, (task) => task.title);
     if (clash) {
       const when_ = clash.cron ? `repeats ${clash.cron}` : 'runs once';
       const next = clash.next_run_at ? new Date(clash.next_run_at).toISOString() : 'unknown';
@@ -2150,6 +2151,8 @@ async function scheduleTaskTool({ title, prompt, when, repeat = true, confirmed 
     nextRunAt,
     tz,
     botId,
+    botGroupId: groupId,
+    missed: missed === 'skip' ? 'skip' : 'once',
   });
 
   const at = new Date(task.next_run_at).toLocaleString('en-GB', tz ? { timeZone: tz } : undefined);
@@ -2164,7 +2167,7 @@ async function scheduleTaskTool({ title, prompt, when, repeat = true, confirmed 
 
 async function listTasksTool(_input, { userId, chatId = null }) {
   // A bot lists its own tasks; any other conversation, the account's.
-  const tasks = await getStore().listTasks(userId, { botId: await botOfChat(userId, chatId) });
+  const tasks = await getStore().listTasks(userId, await ownerOfChat(userId, chatId));
   if (!tasks.length) return 'Nothing is scheduled on this account.';
 
   return [
@@ -2187,11 +2190,12 @@ async function listTasksTool(_input, { userId, chatId = null }) {
   ].join('\n');
 }
 
-/** The bot whose chat a tool was called from, or null for any other conversation. */
-async function botOfChat(userId, chatId) {
-  if (!chatId) return null;
+/** Whose tasks a conversation's are: a bot's own chat's, its bot's; a group's, the group's; else the account's. */
+async function ownerOfChat(userId, chatId) {
+  if (!chatId) return { botId: null, groupId: null };
   const chat = await getStore().getChat(userId, chatId).catch(() => null);
-  return chat?.bot_id || null;
+  if (chat?.bot_group_id) return { botId: null, groupId: chat.bot_group_id };
+  return { botId: chat?.bot_id || null, groupId: null };
 }
 
 async function cancelTaskTool({ id }, { userId }) {
