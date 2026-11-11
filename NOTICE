@@ -28,9 +28,59 @@ bot-avatar.js; server/bots/; server/routes/bots.js)
   Every line of the Bot page is written for this app, and a bot's face is one of
   Synapsez's own pixel creatures (public/js/mascots/), not one of DS Bot's
   characters. Where this app departs from DS Bot — a hard ceiling on hand-offs per
-  message, one streamed request per group round, entries in a database rather than
-  Markdown files, no per-bot browser — is said in server/bots/rounds.js and
-  server/bots/memory.js.
+  message, a round run in segments that a later invocation carries on, entries in a
+  database rather than Markdown files, no per-bot browser — is said in
+  server/bots/rounds.js and server/bots/memory.js.
 
   This is a modified work in the sense of the licence's section 4 only so far as a
   design can be one; it is not DS Bot and is not endorsed by its authors.
+
+────────────────────────────────────────────────────────────────────────────────
+
+The Bot page's rules for how bots speak in a group, the question a bot asks the
+person in a group, and the test that keeps what a model is told true to the code
+(server/bots/prompt.js, server/bots/rounds.js, server/bots/tools.js,
+test/model-surface.test.mjs)
+
+  Source:   dsh-superagent prototype, https://github.com/deepseek-ai/dsh-superagent-prototype
+  Licence:  MIT
+
+  What was taken: ideas, written again in this app's own words and code — speak
+  only when it helps and report results rather than plans (its communication
+  rules); one short question to the person, asked where they wrote, whose answer
+  goes back to the one who asked; a test that fails when a prompt names a tool the
+  role does not have or states a limit the code does not keep. It is a research
+  prototype, not an official DeepSeek product, and this app is not endorsed by its
+  authors.
+
+  MIT License — Copyright (c) 2026 DeepSeek Harness Team
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+────────────────────────────────────────────────────────────────────────────────
+
+Ideas from OpenBot (https://github.com/nightly-labs/openbot), PolyForm
+Noncommercial 1.0.0
+
+  Behaviour only, observed from its documentation: only a person's own message
+  reshapes the team; what a stopped turn saved to memory is taken back; a memory
+  review now and then on a cheap model; recall over memory beyond what fits in a
+  prompt; a pending piece of work a later run carries on. No code, prompt, tool
+  description or interface text of OpenBot is used — its licence does not allow
+  that in a commercial product — and this app is not endorsed by its authors.
