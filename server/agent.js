@@ -582,6 +582,21 @@ function withIntentNotes(messages) {
 }
 
 /**
+ * What the reasoning level asks, in words (owner, 2026-11-11: low has to answer faster and
+ * still be exact). The wire carries the level where a model takes one (openaiCompatible.js
+ * reasoningParams); this carries it to every model, a switch-only one included, without
+ * touching the cached prefix — it rides on the newest message like a run's note.
+ *
+ * @param {string | undefined} effort
+ */
+export function effortNote(effort) {
+  if (effort === 'low') return '(Reasoning level: low. Answer fast: think briefly, take the most direct path and only the steps the task needs — but stay exact, and check what you are unsure of rather than guess.)';
+  if (effort === 'medium') return '(Reasoning level: medium. Think as much as the task needs and no more; stay exact.)';
+  if (effort === 'xhigh' || effort === 'max') return '(Reasoning level: max. Think thoroughly: weigh the alternatives, verify the key facts and figures, and check your work before you answer.)';
+  return '';
+}
+
+/**
  * A scheduled run's note about itself (scheduler.js `scheduledRunNote`), on the
  * request that started it. Only sent, never stored, so each run carries its
  * own day and the ones before it are left as they were.
@@ -1155,6 +1170,24 @@ export function answersTheseCalls(toolCalls, decisionFor) {
 }
 
 /**
+ * A started write whose second run cannot do it twice (owner, 2026-11-11: an `update_file`
+ * cut off mid-way was refused on resume, a red "Rewrote" for nothing). Find-and-replace
+ * edits are that: an edit already made no longer finds its text and fails, saying so; one
+ * not made yet is made. Unless an edit's new text holds its old text, which would match
+ * again and apply twice.
+ */
+function safeToRepeat(call) {
+  if (call?.name !== 'update_file') return false;
+  const edits = Array.isArray(call.input?.edits) ? call.input.edits : null;
+  if (!edits?.length || call.input?.cells || call.input?.content) return false;
+  return edits.every((e) => {
+    const find = String(e?.find ?? e?.old ?? '');
+    const replace = String(e?.replace ?? e?.new ?? '');
+    return find.length > 0 && !replace.includes(find);
+  });
+}
+
+/**
  * Which outstanding calls a resume may run, and what to say about the rest.
  *
  * A resume finds an assistant turn with tool calls and no results, and it used
@@ -1182,7 +1215,7 @@ export function resumableCalls(toolCalls, startedIds = []) {
   const skipped = [];
   for (const call of toolCalls || []) {
     const readOnly = TOOLS_BY_NAME[call.name]?.readOnly === true;
-    if (started.has(String(call.id)) && !readOnly) {
+    if (started.has(String(call.id)) && !readOnly && !safeToRepeat(call)) {
       skipped.push({
         toolCallId: call.id,
         name: call.name,
@@ -1338,6 +1371,8 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         turnId,
         // Who started the turn: some tools run only for the person (server/bots/tools.js).
         turnOrigin,
+        // When this function's run ends: a long step stops before it, rather than being killed mid-way.
+        deadline,
       }));
       // Remembered before it is awaited, so a duplicate in the same batch waits
       // for this run instead of starting a second one. A failure is not kept:
@@ -2313,9 +2348,13 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
       }
       // Where the plan stands rides on the tool results — see progress.js.
       const tracked = withProgressNotes(
-        unattended
-          ? withRunNote(activeTranscript(normaliseOrder(messages)), runNote)
-          : withSkillNotes(withIntentNotes(withoutBareThoughts(activeTranscript(normaliseOrder(messages)))), picked),
+        // The reasoning level in words, on every turn (effortNote).
+        withRunNote(
+          unattended
+            ? withRunNote(activeTranscript(normaliseOrder(messages)), runNote)
+            : withSkillNotes(withIntentNotes(withoutBareThoughts(activeTranscript(normaliseOrder(messages)))), picked),
+          effortNote(prefs.effort),
+        ),
       );
       const grounded = withLookedPictures(withProjectSources(
         // The progress gate sends the model back with its own note, in place of

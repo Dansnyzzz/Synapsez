@@ -14,7 +14,7 @@ import { sniffPicture } from '../util/picture.js';
 import { cloudBrowser } from '../cloudBrowser/index.js';
 import { shareFile } from '../routes/share.js';
 import { see } from '../vision.js';
-import { lookableFormat } from '../office/look.js';
+import { drawingProblem, lookableFormat } from '../office/look.js';
 import { drawAndKeep, pictureNote } from '../fileLook.js';
 import { groundedImage } from '../imageGround.js';
 import { calculate } from './calc.js';
@@ -2842,7 +2842,8 @@ async function lookAtOffice({ bytes, name, pages, ask, source, userId, chatId = 
   } catch (err) {
     throw new Error(`${name} could not be drawn: ${String(err?.message || err).slice(0, 200)}. Read its text instead.`);
   }
-  if (!look?.pictures.length) throw new Error(`This server could not draw ${name}. Read its text instead.`);
+  // Why, when it is known — a library that did not load is the server's, not the file's.
+  if (!look?.pictures.length) throw new Error(`This server could not draw ${name}${drawingProblem() ? ` (${drawingProblem()})` : ''}. Read its text instead.`);
   const first = look.pictures[0];
   if (canSee) {
     return {

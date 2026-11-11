@@ -161,6 +161,34 @@ function sandboxInput(input) {
     delete out.language;
     delete out.lang;
   }
+  // A file given without its path (owner, 2026-11-11: "files[0].path is required"): the
+  // name the command runs it by — `python abs2.py` → abs2.py — or a plain one by its kind.
+  if (Array.isArray(out.files)) out.files = out.files.map((file, i) => namedFile(file, i, String(out.command || '')));
+  return out;
+}
+
+/** The scripts a command runs, in order: `python x.py`, `node y.js`, `bash z.sh`, `./w.sh`. */
+const RUNS = /(?:^|[\s;&|(])(?:python3?|node|bash|sh|ruby|perl|Rscript|deno run|bun)\s+(?:-\S+\s+)*([\w./-]+\.(?:py|js|mjs|cjs|sh|rb|pl|R|ts))\b|(?:^|[\s;&|(])\.\/([\w./-]+\.\w+)\b/g;
+
+/** One file of `files`, with a path if it came without one. */
+function namedFile(file, i, command) {
+  if (!file || typeof file !== 'object' || Array.isArray(file)) return file;
+  const out = { ...file };
+  if (typeof out.path === 'string' && out.path.trim()) return out;
+  const alias = ['name', 'filename', 'file', 'filepath', 'file_path'].find((k) => typeof out[k] === 'string' && out[k].trim());
+  if (alias) {
+    out.path = out[alias].trim();
+    delete out[alias];
+    return out;
+  }
+  const scripts = [...command.matchAll(RUNS)].map((m) => String(m[1] || m[2] || '').replace(/^\.\//, '')).filter(Boolean);
+  if (scripts[i]) {
+    out.path = scripts[i];
+    return out;
+  }
+  const content = String(out.content ?? '');
+  const ext = PYTHONISH.test(content) ? 'py' : /^#!.*\b(ba)?sh\b/.test(content) ? 'sh' : 'txt';
+  out.path = `file${i + 1}.${ext}`;
   return out;
 }
 

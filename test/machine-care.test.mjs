@@ -408,6 +408,32 @@ function fakeMachineSdk() {
   return { state, sdk: { Sandbox } };
 }
 
+section('a command runs within what is left of the run (owner, 2026-11-11)');
+{
+  const { state, sdk } = fakeMachineSdk();
+  e2b.__testing.useSdk(sdk);
+  const late = await runInSandbox({ command: 'python3 slow.py' }, { userId: 'u-care', chatId: null, deadline: Date.now() + 10_000 });
+  check('with no time left for it, a command is not started — and says to run it again', /Not started/.test(late?.content || '') && !state.calls.some((c) => c.kind === 'run' && /slow\.py/.test(String(c.cmd))), String(late?.content).slice(0, 120));
+  await runInSandbox({ command: 'python3 v2.py' }, { userId: 'u-care', chatId: null, deadline: Date.now() + 90_000 });
+  const ran = state.calls.find((c) => c.kind === 'run' && /v2\.py/.test(String(c.cmd)));
+  const limit = ran?.opts?.timeoutMs ?? ran?.timeoutMs;
+  // The command's own limit (65 s here) plus the 15 s e2b.js gives the call around it.
+  check('  with some, it is given only that much, so it stops before the run does', !!ran && limit <= 80_000 && limit >= 75_000, String(limit));
+}
+
+section('a file given without its path takes the one its command runs (owner, 2026-11-11)');
+{
+  const { canonicalInput } = await import('../public/js/tool-aliases.js');
+  const named = canonicalInput('sandbox_run', { command: 'cd ~ && python abs2.py 2>&1', files: [{ content: 'import requests\nprint(1)' }] });
+  check('"python abs2.py" names the file abs2.py', named.files[0].path === 'abs2.py', JSON.stringify(named.files));
+  const two = canonicalInput('sandbox_run', { command: 'node a.js && bash ./b.sh', files: [{ content: 'console.log(1)' }, { content: '#!/bin/bash\necho 2' }] });
+  check('  two scripts, in the order the command runs them', two.files.map((f) => f.path).join() === 'a.js,b.sh', JSON.stringify(two.files.map((f) => f.path)));
+  const loose = canonicalInput('sandbox_run', { command: 'ls', files: [{ name: 'data.csv', content: 'a,b' }, { content: 'import os\nprint(2)' }] });
+  check('  a "name" is the path; otherwise a plain name by what it holds', loose.files[0].path === 'data.csv' && !('name' in loose.files[0]) && loose.files[1].path === 'file2.py', JSON.stringify(loose.files));
+  const kept = canonicalInput('sandbox_run', { command: 'python x.py', files: [{ path: 'given.py', content: 'x' }] });
+  check('  a path given is kept', kept.files[0].path === 'given.py');
+}
+
 section('handing a file over');
 {
   const { state, sdk } = fakeMachineSdk();
