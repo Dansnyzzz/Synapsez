@@ -1553,11 +1553,6 @@ export function readTheWeb(messages) {
 const TURN_BUDGET_MS = 270_000;
 
 /**
- * @param stream  the provider call, injectable so the loop can be driven in a
- *   test with no network — see `compact()` and `runParallel` for the same seam.
- *   Defaults to the real `streamCompletion`.
- */
-/**
  * Run one turn of a conversation — the agent loop (below, `runTurn`) — and, when the
  * turn is stopped or fails, take back what a bot saved to its memory in it (owner,
  * 2026-11-10, after OpenBot's staged memory writes): a half-finished turn must not leave
@@ -1594,6 +1589,11 @@ export async function runAgent(options) {
   }
 }
 
+/**
+ * @param stream  the provider call, injectable so the loop can be driven in a
+ *   test with no network — see `compact()` and `runParallel` for the same seam.
+ *   Defaults to the real `streamCompletion`.
+ */
 async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, answers, handoff = false, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion, deadlineAt = Infinity, turnId = null, turnOrigin: originGiven = null, turnInfo = null }) {
   const store = getStore();
   // This turn's deadline on this function, handed to every model call (HAR-015).

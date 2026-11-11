@@ -150,12 +150,6 @@ export function botTools(bot) {
 
 const list = (value) => (Array.isArray(value) ? value.map((v) => String(v ?? '').trim()).filter(Boolean) : []);
 
-/**
- * Run one bot tool for the conversation `chatId`. Returns `{ content, isError }`
- * like every tool; never throws, so the model reads a refusal and changes course.
- *
- * @param {{ userId: string, chatId: string, name: string, input: any }} call
- */
 /** Tools that reshape the team: only a turn the person started may run them (owner, 2026-11-10). */
 const TEAM_CHANGING = new Set(['create_bot', 'create_group', 'update_group']);
 
@@ -163,6 +157,9 @@ const TEAM_CHANGING = new Set(['create_bot', 'create_group', 'update_group']);
 const STARTED_BY = { handoff: 'another bot', task: 'a scheduled task', webhook: 'a request from outside the app', review: 'a memory review' };
 
 /**
+ * Run one bot tool for the conversation `chatId`. Returns `{ content, isError }`
+ * like every tool; never throws, so the model reads a refusal and changes course.
+ *
  * @param {{ userId: string, chatId: string, name: string, input?: any, turnId?: string | null, turnOrigin?: string | null }} call
  *   `turnOrigin`: who started the turn — 'person' (or none) when the person wrote it;
  *   'handoff', 'task', 'webhook' or 'review' otherwise (server/agent.js)

@@ -560,7 +560,6 @@ export async function readEvents(res, onEvent) {
   }
 }
 
-/** Write in a group chat and follow its round (server/routes/bots.js). */
 /**
  * Write in a group and follow the round it starts. While another segment holds the
  * group, the line is taken and answered in that round: no stream comes back, and this
