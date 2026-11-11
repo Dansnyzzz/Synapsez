@@ -201,7 +201,7 @@ export async function recall(userId, scope, query) {
  * Entries as a prompt section, newest kept when there is more than fits. Marked as
  * what they are: notes, not instructions.
  *
- * @param {{ text: string, created_at?: any }[]} rows @param {string} heading @param {string} about
+ * @param {{ text: string, created_at?: any, pinned?: boolean }[]} rows @param {string} heading @param {string} about
  */
 export function memorySection(rows, heading, about) {
   // Said even when empty: a bot with nothing saved yet still has to know it can save
