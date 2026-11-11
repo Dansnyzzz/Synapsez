@@ -596,5 +596,39 @@ section('7f coingecko.js: every result says "Powered by CoinGecko"');
   check('the old COINS map came along', coingecko.COINS.btc === 'bitcoin' && coingecko.COINS.sol === 'solana');
 }
 
+const fx = await import('../server/finance/sources/fx.js');
+
+section('7g fx.js: reference rates down a chain, a bank\'s posted rates, and the credit each asks for');
+{
+  await fresh();
+  const fetchImpl = serve([
+    ['api.frankfurter.dev', 'frankfurter.json'],
+    ['data-api.ecb.europa.eu', 'ecb.json'],
+    ['open.er-api.com', 'erapi.json'],
+    ['vietcombank.com.vn', 'vietcombank.json'],
+  ]);
+  const ctx = { fetchImpl };
+  const usd = await fx.rates('USD', ['VND'], null, ctx);
+  check('USD/VND from Frankfurter first: a reference rate', usd.source === 'frankfurter' && usd.rates[0].rate === 25_648 && usd.rates[0].kind === 'reference', JSON.stringify(usd.rates[0]));
+  process.env.FIN_SOURCE_FRANKFURTER = 'off';
+  const viaEcb = await fx.rates('EUR', ['USD'], null, ctx);
+  check('Frankfurter switched off: the ECB answers, credited as its policy asks', viaEcb.source === 'ecb' && Math.abs(viaEcb.rates[0].rate - 1.1193) < 1e-9 && viaEcb.rates[0].date === '2026-11-09' && viaEcb.attribution.includes('Source: ECB statistics.'), JSON.stringify(viaEcb));
+  const cross = await fx.rates('USD', ['EUR'], null, ctx);
+  check('  a pair without the euro is crossed through it', cross.source === 'ecb' && Math.abs(cross.rates[0].rate - 1 / 1.1193) < 1e-9);
+  const vndViaErapi = await fx.rates('USD', ['VND'], null, ctx);
+  check('  the ECB has no ₫, so open.er-api answers — with its link', vndViaErapi.source === 'erapi' && vndViaErapi.attribution.some((a) => a.includes('https://www.exchangerate-api.com')) && vndViaErapi.tried.some((t) => /ECB/.test(t)), JSON.stringify(vndViaErapi.tried));
+  delete process.env.FIN_SOURCE_FRANKFURTER;
+  const money = await fx.convert(100, 'usd', 'vnd', ctx);
+  check('convert: 100 USD in ₫, and where the rate came from', money.value === 2_564_800 && money.source === 'frankfurter' && money.from === 'USD', JSON.stringify(money));
+  const board = await fx.vndBank('2026-11-10', ctx);
+  const usdRow = board.rows.find((r) => r.code === 'USD');
+  check('Vietcombank: strings to numbers — cash, transfer, sell', usdRow.cash === 25_350 && usdRow.transfer === 25_380 && usdRow.sell === 25_760, JSON.stringify(usdRow));
+  await fx.vndBank('2026-11-10', ctx);
+  check('  asked once in five minutes, as the bank asks', fetchImpl.calls.filter((c) => c.url.includes('vietcombank')).length === 1);
+  const bank = await fx.fromSource('vietcombank', 'USD', ['VND'], '2026-11-10', ctx);
+  check('  as rows: bank-cash, bank-transfer, bank-sell', bank.rates.map((r) => r.kind).join() === 'bank-cash,bank-transfer,bank-sell');
+  check('  and a pair not in ₫ is passed on', (await refusal(fx.fromSource('vietcombank', 'EUR', ['USD'], null, ctx))) instanceof http.SourceError);
+}
+
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll finance checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);
