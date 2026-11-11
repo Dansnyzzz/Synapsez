@@ -107,3 +107,33 @@ const INDICES = {
 export function vnIndexCode(symbol) {
   return INDICES[String(symbol || '').trim().toUpperCase()] || null;
 }
+
+/**
+ * Which board a code is listed on — found, not guessed: Vietcap's listing of each
+ * board (cached a day for everybody), then KBS's profile. Null when neither knows
+ * it, or when it is an index.
+ *
+ * @param {string} symbol
+ * @param {Record<string, any>} [ctx]
+ */
+export async function boardOf(symbol, ctx = {}) {
+  const code = String(symbol || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{2,12}$/.test(code) || vnIndexCode(code)) return null;
+  // Loaded here, not at the top: the adapters import this file's rules.
+  const vietcap = await import('./sources/vietcap.js');
+  for (const board of BOARDS) {
+    let list;
+    try {
+      list = await vietcap.group(board, ctx);
+    } catch {
+      break;
+    }
+    if (list.includes(code)) return board;
+  }
+  try {
+    const kbs = await import('./sources/kbs.js');
+    return normBoard((await kbs.profile(code, ctx))?.exchange);
+  } catch {
+    return null;
+  }
+}

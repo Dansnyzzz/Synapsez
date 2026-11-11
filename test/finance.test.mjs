@@ -471,5 +471,64 @@ section('7c kbs.js: numbers that arrive as strings, statements in thousand ₫')
   check('news it cannot read is a SourceError, so the chain moves on', none instanceof http.SourceError);
 }
 
+const vietcap = await import('../server/finance/sources/vietcap.js');
+
+section('7d vietcap.js: statements labelled by Vietcap, and its analysts\' views never passed on');
+{
+  await fresh();
+  const bankDetails = (() => {
+    const d = fixture('vietcap-details.json');
+    return { ...d, data: { ...d.data, ticker: 'VCB', organCode: 'VCB', comTypeCode: 'NH', isBank: true } };
+  })();
+  const fetchImpl = serve([
+    // Wrapped: Vietcap's own body has a `status` field, which `serve` would read as the envelope.
+    ['company/details?ticker=VCB', { status: 200, body: bankDetails }],
+    ['company/details', 'vietcap-details.json'],
+    ['financial-statement/metrics', 'vietcap-metrics.json'],
+    ['financial-statement?section', 'vietcap-statement.json'],
+    ['statistics-financial', 'vietcap-ratio.json'],
+    ['/v1/events', 'vietcap-events.json'],
+    ['/v1/news', { status: 200, successful: true, data: { content: [] } }],
+    ['getByGroup?group=HOSE', ['FPT', 'VNM', 'VCB'].map((symbol) => ({ symbol }))],
+    ['getByGroup?group=HNX', [{ symbol: 'SHS' }]],
+    ['getByGroup?group=UPCOM', [{ symbol: 'ACV' }]],
+    ['getByGroup?group=VN30', 'vietcap-group.json'],
+    ['stockinfo/profile/ZZZ', { SB: 'ZZZ', EX: 'UPCOM' }],
+  ]);
+  const ctx = { fetchImpl };
+  const income = await vietcap.statements('FPT', 'income', 'year', ctx);
+  const sales = income.lines.find((l) => l.code === 'isa3');
+  check('net sales 2025 = 70,112,825,100,710 ₫, as Yahoo\'s 70.11T', sales?.values[0] === 70_112_825_100_710 && income.periods[0].label === '2025', JSON.stringify(sales));
+  check('  labels from Vietcap\'s own metrics, in Vietnamese and English', sales.label_vi === 'Doanh thu thuần' && sales.label_en === 'Net sales');
+  check('  four years, newest first, each with its publish date; raw ₫; corporate template', income.periods.length === 4 && income.periods[0].published === '2026-03-20' && income.unit === 'VND' && income.template === 'corporate', JSON.stringify(income.periods));
+  check('  no more than 15 lines', income.lines.length > 5 && income.lines.length <= 15, String(income.lines.length));
+  const quarters = await vietcap.statements('FPT', 'income', 'quarter', ctx);
+  check('quarters are labelled Q3 2026 and the like', /^Q[1-4] \d{4}$/.test(quarters.periods[0].label), quarters.periods[0].label);
+  const bank = await vietcap.statements('VCB', 'income', 'year', ctx);
+  check('a bank is labelled a bank (comTypeCode NH)', bank.template === 'bank');
+
+  const p = await vietcap.profile('FPT', ctx);
+  const said = JSON.stringify(p);
+  check('details: shares, market cap, foreign ownership and its limit', p.shares === 1_885_727_648 && p.foreignLimit === 0.49 && p.foreignOwned > 0.26 && p.name_en === 'FPT Corporation');
+  check('  and never Vietcap\'s rating, target price, analyst or projected return', !/rating|target|analyst|upside|TSR|BUY|77800|90300/i.test(said), said.slice(0, 200));
+  const kept = JSON.stringify((await memory.query("SELECT value FROM finance_cache WHERE key LIKE 'vietcap|details|%'")).rows);
+  check('  not even in the shared cache', !/rating|target|BUY|77800/i.test(kept) && kept.length > 10);
+
+  const r = await vietcap.ratios('FPT', ctx);
+  check('ratios: the latest quarter\'s TTM figures, fractions marked as such', r.asOf === 'Q3 2026 (TTM)' && r.items.find((i) => i.key === 'pe')?.value > 9 && r.items.find((i) => i.key === 'roe')?.kind === 'fraction', r.asOf);
+  const ev = await vietcap.events('FPT', { from: '2025-11-01', to: '2026-12-31' }, ctx);
+  check('events: the 10% bonus issue with its ex-date', ev.some((e) => e.code === 'ISS' && e.exDate === '2026-09-21' && e.ratio === 0.1 && /Bonus/.test(e.title_en)), JSON.stringify(ev[0]));
+  const evUrl = fetchImpl.calls.find((c) => c.url.includes('/v1/events'))?.url || '';
+  check('  asked by code and date range only', /ticker=FPT&fromDate=20251101&toDate=20261231/.test(evUrl), evUrl);
+  check('an empty news list is a SourceError, so the chain moves on', (await refusal(vietcap.news('FPT', { from: '2026-11-01', to: '2026-11-10' }, ctx))) instanceof http.SourceError);
+  check('a listing is a list of codes', (await vietcap.group('VN30', ctx)).includes('FPT'));
+
+  check('the board is found, not guessed: FPT on HOSE, SHS on HNX, ACV on UPCoM', (await vn.boardOf('FPT', ctx)) === 'HOSE' && (await vn.boardOf('SHS', ctx)) === 'HNX' && (await vn.boardOf('acv', ctx)) === 'UPCOM');
+  check('  a code no listing has is asked of KBS', (await vn.boardOf('ZZZ', ctx)) === 'UPCOM');
+  const lists = fetchImpl.calls.filter((c) => c.url.includes('getByGroup?group=HOSE')).length;
+  check('  and each listing is fetched once, then kept a day', lists === 1, `${lists} calls`);
+  check('  an index has no board', (await vn.boardOf('VNINDEX', ctx)) === null);
+}
+
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll finance checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);
