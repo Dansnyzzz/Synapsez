@@ -270,6 +270,18 @@ export const api = {
   resetBot: (id) => request('POST', `/api/bots/${encodeURIComponent(id)}/reset`),
   resetGroup: (id) => request('POST', `/api/bot-groups/${encodeURIComponent(id)}/reset`),
   botUsage: ({ from, to, unit }) => request('GET', `/api/bots/usage?${new URLSearchParams({ from, to, unit, tz: localZone() })}`),
+  // Spec B (2026-11-11): what needs the person, read marks, copies, team files, a question aside.
+  botAttention: () => request('GET', '/api/bots/attention'),
+  readBot: (id) => request('POST', `/api/bots/${encodeURIComponent(id)}/read`),
+  readGroup: (id) => request('POST', `/api/bot-groups/${encodeURIComponent(id)}/read`),
+  duplicateBot: (id) => request('POST', `/api/bots/${encodeURIComponent(id)}/duplicate`),
+  exportBots: () => request('GET', '/api/bots/export'),
+  /** `dry`: say what would be added, and add nothing. */
+  importBots: (data, { dry = false } = {}) => request('POST', '/api/bots/import', { data, dry }),
+  askAside: (id, question, model) => request('POST', `/api/bots/${encodeURIComponent(id)}/aside`, { question, model }),
+  botUsageDetail: (id, { from, to }) => request('GET', `/api/bots/${encodeURIComponent(id)}/usage?${new URLSearchParams({ from, to })}`),
+  groupTasks: (id) => request('GET', `/api/bot-groups/${encodeURIComponent(id)}/tasks`),
+  addGroupTask: (id, task) => request('POST', `/api/bot-groups/${encodeURIComponent(id)}/tasks`, task),
 
   connectors: () => request('GET', '/api/connectors'),
   // Skills: upload (scan first, keep when asked) and the Create a skill draft (owner, 2026-11-01).

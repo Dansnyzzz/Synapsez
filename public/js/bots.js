@@ -6,7 +6,11 @@ import { faceHtml, paintFaces, inkOf } from './bot-avatar.js';
 import { mentionSpans, atQuery } from './bot-mentions.js';
 import { openBotSettings, mergeTeam, changeLine } from './bots-settings.js';
 import { compactCount } from './bots-usage.js';
-import { fileCard, copyButton } from './render.js';
+import { fileCard, copyButton, describeStep } from './render.js';
+import { sortRows, needsKeys, rowMarks, needsHtml, menuHtml, calledHtml } from './bots-list.js';
+import { firstRunHtml, createFromFirstRun } from './bots-firstrun.js';
+import { createAside } from './bots-aside.js';
+import { openTeamFiles, exportTeam } from './bots-porting.js';
 
 /**
  * The Bot page (owner, 2026-11-09): the person's team of bots, led by Chief.
@@ -74,7 +78,8 @@ const timeOf = (iso) => {
  *   onShow?: () => void,
  *   home: { input: HTMLTextAreaElement, lend: (slot: HTMLElement, ids: ('thread' | 'dock')[]) => void, giveBack: () => void,
  *     open: (chatId: string, options?: { incognito?: boolean }) => Promise<boolean>, blank: () => void,
- *     setHook: (hook: any) => void, refreshSend: () => void, incognito: () => boolean, model: () => string | undefined,
+ *     setHook: (hook: any) => void, refreshSend: () => void, setBlocker: (fn: (() => string | null) | null) => void,
+ *     incognito: () => boolean, model: () => string | undefined,
  *     setTitle: (text: string) => void, setPlaceholder: (text: string | null) => void },
  *   openFile?: (id: string) => void,
  * }} deps  `home`: the home chat's transcript and box, lent to the Bot page (owner, 2026-11-10);
@@ -107,6 +112,22 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
   let picker = /** @type {{ start: number, items: any[], index: number } | null} */ (null);
   /** Each bot's own conversation once known, so opening it again goes straight to the home chat. */
   const chatIds = new Map();
+  /** What waits for the person (GET /bots/attention), read with the team (spec B.2). */
+  let attention = /** @type {any[]} */ ([]);
+  /** Whom the open group's message called, and how each went (spec B.3). */
+  let called = /** @type {Array<{ bot: string, how: string }>} */ ([]);
+  /** The row menu: for which row, and what opened it (focus goes back there). */
+  let rowMenu = /** @type {{ kind: 'bot' | 'group', id: string, from: HTMLElement } | null} */ (null);
+  /** The first-run card (spec B.7): the goals ticked, what was typed for each, and whether it was put away. */
+  const firstPicked = new Set(['write']);
+  const firstDrafts = new Map();
+  let firstSkipped = (() => {
+    try {
+      return localStorage.getItem('bots.firstSkipped') === '1';
+    } catch {
+      return false;
+    }
+  })();
 
   page.innerHTML = `
     <aside class="botlist" aria-label="${escapeHtml(t('bots.list'))}">
@@ -121,18 +142,25 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
         <div class="botmenu" role="menu" data-menu="new" hidden>
           <button type="button" role="menuitem" data-act="new-bot">${escapeHtml(t('bots.newBot'))}</button>
           <button type="button" role="menuitem" data-act="new-group">${escapeHtml(t('bots.newGroup'))}</button>
+          <button type="button" role="menuitem" data-act="team-files">${escapeHtml(t('bots.port.menu'))}</button>
         </div>
       </header>
       <div class="botlist__chief" data-chief></div>
+      <div class="botlist__needs" data-needs></div>
       <ul class="botlist__rows" data-rows></ul>
+      <div class="botmenu botrowmenu" role="menu" data-row-menu hidden></div>
     </aside>
     <section class="botchat" aria-label="${escapeHtml(t('bots.title'))}" data-chat>
       <header class="botchat__head">
         <button class="icon-btn botchat__back" type="button" data-act="back" aria-label="${escapeHtml(t('bots.back'))}" title="${escapeHtml(t('bots.back'))}">‹</button>
         <button class="botchat__pill" type="button" data-act="details" aria-expanded="false"></button>
+        <button class="btn btn--small botchat__aside" type="button" data-act="aside" hidden>${escapeHtml(t('bots.aside.button'))}</button>
       </header>
       <div class="botchat__log scroll-quiet" role="log" aria-live="polite" aria-relevant="additions" data-log></div>
       <div class="botchat__working" data-working aria-live="polite"></div>
+      <div class="botfirst-wrap scroll-quiet" data-first hidden></div>
+      <div class="botpaused" data-paused role="status" hidden></div>
+      <aside data-aside hidden></aside>
       <!-- The home chat's transcript and box are lent here (app.js lendHome). -->
       <div class="botchat__home" data-home>
         <div class="atpick" role="listbox" aria-label="${escapeHtml(t('bots.pickerLabel'))}" data-picker hidden></div>
@@ -151,6 +179,15 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
   const details = /** @type {HTMLElement} */ (page.querySelector('[data-details]'));
   const workingBox = /** @type {HTMLElement} */ (page.querySelector('[data-working]'));
   const newMenu = /** @type {HTMLElement} */ (page.querySelector('[data-menu="new"]'));
+  const needsBox = /** @type {HTMLElement} */ (page.querySelector('[data-needs]'));
+  const rowMenuBox = /** @type {HTMLElement} */ (page.querySelector('[data-row-menu]'));
+  const firstBox = /** @type {HTMLElement} */ (page.querySelector('[data-first]'));
+  const pausedBox = /** @type {HTMLElement} */ (page.querySelector('[data-paused]'));
+  const asideButton = /** @type {HTMLElement} */ (page.querySelector('[data-act="aside"]'));
+  /** Who a group's message called, above the working lines. */
+  const calledBox = document.createElement('div');
+  calledBox.className = 'botcalled-wrap';
+  workingBox.prepend(calledBox);
 
   const botOf = (id) => team?.bots.find((b) => b.id === id) || null;
   const groupOf = (id) => team?.groups.find((g) => g.id === id) || null;
@@ -158,6 +195,8 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
   const subject = () => (open?.kind === 'group' ? groupOf(open.id) : open ? botOf(open.id) : null);
   const adminOf = (group) => (group?.admin && group.members.includes(group.admin) ? group.admin : group?.members?.[0] || null);
   const membersOf = (group) => (group?.members || []).map(botOf).filter(Boolean);
+  /** The card beside a bot's chat for a question asked aside (spec B.6). */
+  const aside = createAside({ host: /** @type {HTMLElement} */ (page.querySelector('[data-aside]')), api, toast, botOf: (id) => botOf(id), model: () => home.model() });
 
   /* ── the list on the left ─────────────────────────────────────── */
 
@@ -190,25 +229,54 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
            <span class="botchief__star" aria-hidden="true">★</span>
            <span class="botchief__name">${escapeHtml(lead.name)}</span>
            <span class="botchief__role">${escapeHtml(lead.role || t('bots.mainTag'))}</span>
-           ${lead.running ? busyMark() : ''}
+           ${rowMarks(lead, { needed: needsKeys(attention).has(`bot:${lead.id}`), busy: busyMark() })}
          </button>`
       : '';
-    const rows = [
-      ...team.groups.map((g) => ({ kind: 'group', item: g, at: g.at })),
-      ...team.bots.filter((b) => !b.main).map((b) => ({ kind: 'bot', item: b, at: b.at })),
-    ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
-    list.innerHTML = rows
+    // Pinned first, then whoever spoke last (spec B.3).
+    const needed = needsKeys(attention);
+    list.innerHTML = sortRows(team)
       .map(({ kind, item }) => {
         const isOpen = open?.kind === kind && open.id === item.id;
         const preview = previewOf(item, kind === 'group');
-        return `<li><button class="botrow${isOpen ? ' is-open' : ''}" type="button" data-open="${kind}:${escapeHtml(item.id)}" aria-current="${isOpen ? 'true' : 'false'}">
+        const key = `${kind}:${escapeHtml(item.id)}`;
+        const pin = item.pinned ? `<span class="botrow__pin" role="img" aria-label="${escapeHtml(t('bots.pinnedMark'))}" title="${escapeHtml(t('bots.pinnedMark'))}">📌</span>` : '';
+        const paused = item.paused ? `<span class="bottag bottag--paused">${escapeHtml(t('bots.pausedTag'))}</span>` : '';
+        return `<li class="botrowwrap"><button class="botrow${isOpen ? ' is-open' : ''}${item.paused ? ' is-paused' : ''}" type="button" data-open="${key}" data-row="${key}" aria-current="${isOpen ? 'true' : 'false'}">
           ${kind === 'group' ? groupFaces(item) : faceHtml(item, 36)}
-          <span class="botrow__text"><span class="botrow__name">${escapeHtml(item.name)}</span>${preview ? `<span class="botrow__last">${escapeHtml(preview)}</span>` : ''}</span>
-          ${item.running ? busyMark() : ''}
-        </button></li>`;
+          <span class="botrow__text"><span class="botrow__name">${pin}${escapeHtml(item.name)}${paused}</span>${preview ? `<span class="botrow__last">${escapeHtml(preview)}</span>` : ''}</span>
+          ${rowMarks(item, { needed: needed.has(`${kind}:${item.id}`), busy: busyMark() })}
+        </button><button class="icon-btn botrow__more" type="button" data-row-more="${key}" aria-haspopup="menu" aria-expanded="false" aria-label="${escapeHtml(t('bots.menu.more', { name: item.name }))}" title="${escapeHtml(t('bots.menu.more', { name: item.name }))}">⋯</button></li>`;
       })
       .join('');
+    // What waits for the person, above the rows; nothing at all when nothing does (spec B.2).
+    needsBox.innerHTML = needsHtml(attention, { botOf, groupOf, groupFaces });
     paintFaces(page);
+  }
+
+  /**
+   * The open conversation is read to its end: its unread mark goes, here at once and on the
+   * server just after (spec B.3). Only while the page shows and the tab is in front.
+   */
+  let readTimer = /** @type {any} */ (0);
+  function markRead() {
+    if (!open || !shown || document.hidden) return;
+    const target = open;
+    clearTimeout(readTimer);
+    readTimer = setTimeout(() => {
+      const it = target.kind === 'group' ? groupOf(target.id) : botOf(target.id);
+      if (it?.unread) {
+        it.unread = false;
+        renderList();
+      }
+      (target.kind === 'group' ? api.readGroup(target.id) : api.readBot(target.id)).catch(() => {});
+    }, 400);
+  }
+
+  /** How one member called in the open group is doing, for the strip above the box. */
+  function markCalled(bot, how) {
+    const have = called.find((c) => c.bot === bot);
+    if (have) have.how = how;
+    else called.push({ bot, how });
   }
 
   /* ── the conversation ─────────────────────────────────────────── */
@@ -347,6 +415,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
         log.insertAdjacentHTML('beforeend', linesHtml(fresh, it));
         finishLines(log, fresh, it);
         if (nearEnd) log.scrollTop = log.scrollHeight;
+        markRead();
       }
       // Continue comes and goes with what waits: the notices are drawn again, nothing else.
       for (const node of log.querySelectorAll('.botnotice__go')) node.remove();
@@ -380,6 +449,41 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     home.setPlaceholder(t('bots.message', { name: it.name }));
     home.setTitle(it.name);
     paintFaces(pill);
+    // A paused bot: said above the box, which keeps what is typed and does not send (spec B.5).
+    const paused = open?.kind === 'bot' && !!it.paused;
+    pausedBox.hidden = !paused;
+    if (paused) {
+      const said = t('bots.pausedBar', { name: it.name });
+      if (pausedBox.dataset.said !== said) {
+        pausedBox.dataset.said = said;
+        pausedBox.innerHTML = `<span>${escapeHtml(said)}</span><button class="btn btn--small" type="button" data-act="resume-open">${escapeHtml(t('bots.menu.resume'))}</button>`;
+      }
+    }
+    home.setBlocker(paused ? () => t('bots.pausedSend', { name: it.name }) : null);
+    // Ask aside: a bot's kept chat, not a group's or an incognito one (spec B.6).
+    asideButton.hidden = !(open?.kind === 'bot') || home.incognito();
+    if (asideButton.hidden || aside.showingFor() !== (open?.kind === 'bot' ? open.id : '')) aside.close();
+    renderFirst();
+  }
+
+  /** Chief alone with an empty chat: the first-run card in place of a blank box (spec B.7). */
+  function renderFirst() {
+    const lead = chief();
+    const show = !firstSkipped && !!lead && !!team && open?.kind === 'bot' && open.id === lead.id && team.bots.length === 1 && team.groups.length === 0 && !lead.last && !home.incognito();
+    firstBox.hidden = !show;
+    page.classList.toggle('is-firstrun', show);
+    if (!show) {
+      if (firstBox.childElementCount) firstBox.innerHTML = '';
+      return;
+    }
+    if (!firstBox.childElementCount) firstBox.innerHTML = firstRunHtml(firstPicked, firstDrafts);
+  }
+  /** What was typed in the card, kept before it is drawn again. */
+  function keepFirstDrafts() {
+    for (const li of /** @type {NodeListOf<HTMLElement>} */ (firstBox.querySelectorAll('[data-draft]'))) {
+      const value = (f) => /** @type {HTMLInputElement} */ (li.querySelector(`[data-field="${f}"]`))?.value ?? '';
+      firstDrafts.set(String(li.dataset.draft), { name: value('name'), role: value('role'), instructions: value('instructions') });
+    }
   }
 
   /** Send or Stop in the borrowed box: the home chat decides, asking `groupHook.busy`. */
@@ -402,7 +506,16 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       drawWorking();
     });
   }
+  let calledDrawn = '';
   function drawWorking() {
+    // Whom the message called (spec B.3): drawn again only when what it says changed, so its rings keep turning.
+    const showCalled = open?.kind === 'group' && (groupState.running || !!run || !!follow);
+    const calledNow = showCalled ? calledHtml(called, working, botOf) : '';
+    if (calledNow !== calledDrawn) {
+      calledDrawn = calledNow;
+      calledBox.innerHTML = calledNow;
+      paintFaces(calledBox);
+    }
     for (const [id, row] of workRows) {
       if (working.has(id)) continue;
       row.node.remove();
@@ -423,7 +536,8 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
         row = { node, who: /** @type {HTMLElement} */ (node.querySelector('.botworking__who')), text: /** @type {HTMLElement} */ (node.querySelector('.botworking__text')) };
         workRows.set(id, row);
       }
-      const doing = state.tool ? t('bots.using', { name: bot.name, tool: state.tool }) : state.thinking && !state.text ? t('bots.thinkingLive') : t('bots.working', { name: bot.name });
+      // Its step in the home transcript's own words (spec B.3), not the tool's name.
+      const doing = state.tool ? t('bots.using', { name: bot.name, tool: describeStep(state.tool, {}).verb }) : state.thinking && !state.text ? t('bots.thinkingLive') : t('bots.working', { name: bot.name });
       if (row.who.textContent !== doing) row.who.textContent = doing;
       const tail = state.text ? state.text.slice(-160) : '';
       if (row.text.textContent !== tail) row.text.textContent = tail;
@@ -505,7 +619,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     const [memory, usage, tasks] = await Promise.all([
       api.botMemory(kind, it.id).catch(() => ({ entries: detailsData?.key === key ? detailsData.entries : [] })),
       usageLine(isGroup ? it.members : [it.id]).catch(() => (detailsData?.key === key ? detailsData.usage : [])),
-      isGroup ? { tasks: [] } : api.botTasks(it.id).catch(() => ({ tasks: detailsData?.key === key ? detailsData.tasks : [] })),
+      (isGroup ? api.groupTasks(it.id) : api.botTasks(it.id)).catch(() => ({ tasks: detailsData?.key === key ? detailsData.tasks : [] })),
     ]);
     if (turn !== detailsTurn) return;
     detailsData = { key, entries: memory.entries || [], usage, tasks: tasks.tasks || [] };
@@ -543,8 +657,8 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       })
       .join('');
     parts.push(`<section class="botsec"><h3 class="botsec__label">${escapeHtml(t('bots.usage'))}</h3>${usage.some((u) => u.tokens) ? `<ul class="botusage">${usageRows}</ul>` : `<p class="hint">${escapeHtml(t('bots.usageNone'))}</p>`}</section>`);
-    // A bot's own scheduled tasks, here and only here (owner, 2026-11-10).
-    if (!isGroup) parts.push(tasksHtml(tasks || []));
+    // A bot's own scheduled tasks, and a group's (spec B.4), here and only here (owner, 2026-11-10).
+    parts.push(tasksHtml(tasks || []));
     // Reset, at the foot: asked once more before anything goes (owner, 2026-11-10).
     parts.push(`<section class="botsec botsec--reset"><button class="botlink botlink--danger" type="button" data-act="reset">${escapeHtml(t('bots.reset'))}</button></section>`);
     const html = parts.join('');
@@ -697,10 +811,14 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
   /** @param {{ announce?: boolean }} [options]  `announce`: say what was made or deleted since the last read */
   async function loadTeam({ announce = false } = {}) {
     const before = team;
-    team = await api.bots();
+    const [next, seen] = await Promise.all([api.bots(), api.botAttention().catch(() => null)]);
+    team = next;
+    if (seen) attention = seen.items || [];
     if (announce && before) announceChanges(before, team);
     renderList();
     fillStepFaces();
+    // Something new where the person is looking is read.
+    if (shown && subject()?.unread) markRead();
     return team;
   }
 
@@ -765,8 +883,10 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       if (open !== asked) return;
       chat = { chatId: data.chatId, messages: data.messages || [] };
       groupState = { running: !!data.running, pending: data.pending || null };
+      called = data.called || [];
       drawn = [];
       renderLog();
+      renderWorking();
       // A round this tab did not start is running: follow it.
       if (groupState.running && !run) followLive();
       renderSend();
@@ -807,6 +927,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     if (changed) {
       chat = null;
       memoryOpen = false;
+      called = [];
       stopFollowing();
       groupState = { running: false, pending: null };
       working.clear();
@@ -840,7 +961,8 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     renderHead();
     // Always: closed, it hides itself; open, it reads the newly opened one.
     renderDetails();
-    if (focus && matchMedia('(min-width: 760px)').matches) input.focus();
+    markRead();
+    if (focus && matchMedia('(min-width: 760px)').matches && firstBox.hidden) input.focus();
   }
 
   /* ── sending and stopping ─────────────────────────────────────── */
@@ -851,6 +973,8 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     closePicker();
     syncMentions();
     const target = open;
+    // A new message calls anew: the strip starts again (spec B.3).
+    called = [];
     const mine = { id: `mine-${crypto.randomUUID()}`, role: 'user', text, createdAt: new Date().toISOString() };
     if (chat) {
       chat.messages.push(mine);
@@ -911,10 +1035,14 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
             if (data.message.role === 'user' && mine && chat.messages.includes(mine)) chat.messages[chat.messages.indexOf(mine)] = data.message;
             else if (!chat.messages.some((m) => m.id === data.message.id)) chat.messages.push(data.message);
             if (data.message.bot) working.delete(data.message.bot);
+            const said = data.message;
+            if (said.bot && !said.notice) markCalled(said.bot, 'answered');
+            else if (said.params?.bot && ['failed', 'paused', 'approval'].includes(said.notice)) markCalled(said.params.bot, said.notice === 'approval' ? 'waiting' : said.notice);
             renderLog();
             renderWorking();
           } else if (event === 'member_start') {
             working.set(data.bot, { text: '', tool: '', thinking: true });
+            markCalled(data.bot, 'working');
             renderWorking();
           } else if (event === 'member_thinking') {
             const w = working.get(data.bot);
@@ -934,6 +1062,8 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
             renderWorking();
           } else if (event === 'member_end') {
             working.delete(data.bot);
+            // Passed, unless its answer is posted next (the post says answered).
+            if (called.find((c) => c.bot === data.bot)?.how === 'working') markCalled(data.bot, 'passed');
             renderWorking();
             // What it made or changed shows now, and the group's own notices with it.
             if (touched.delete(data.bot)) readTeamNow().then(() => (here() ? loadChat() : undefined)).catch(() => {});
@@ -955,6 +1085,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       if (here()) await loadChat().catch(() => {});
       if (goesOn && here() && !controller.signal.aborted) followLive();
       if (detailsOpen && here()) renderDetails();
+      if (here()) markRead();
     }
   }
 
@@ -982,6 +1113,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
         const data = await api.groupLive(target.id, since);
         if (!follow || follow.target !== target || open !== target) return;
         groupState = { running: !!data.running, pending: data.pending || null };
+        if (Array.isArray(data.called) && data.called.length) called = data.called;
         if (chat) for (const m of data.messages || []) if (!chat.messages.some((x) => x.id === m.id)) chat.messages.push(m);
         working.clear();
         for (const w of data.working || []) working.set(w.bot, { text: '', tool: w.tool || '', thinking: !w.tool });
@@ -1133,6 +1265,168 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     }
   }
 
+  /* ── the row menu (spec B.3) ─────────────────────────────────────── */
+
+  /**
+   * Open the menu of a row: under its ⋯ button, or where the pointer is for a right click
+   * or a long press. Arrow keys move in it, Escape shuts it and gives focus back.
+   *
+   * @param {'bot' | 'group'} kind @param {string} id @param {HTMLElement} from @param {{ x: number, y: number } | null} [at]
+   */
+  function openRowMenu(kind, id, from, at = null) {
+    const item = kind === 'group' ? groupOf(id) : botOf(id);
+    if (!item) return;
+    closeRowMenu(false);
+    rowMenu = { kind, id, from };
+    rowMenuBox.innerHTML = menuHtml(kind, item);
+    rowMenuBox.setAttribute('aria-label', t('bots.menu.more', { name: item.name }));
+    rowMenuBox.hidden = false;
+    from.setAttribute('aria-expanded', 'true');
+    const r = from.getBoundingClientRect();
+    const w = rowMenuBox.offsetWidth;
+    const h = rowMenuBox.offsetHeight;
+    const x = at ? at.x : r.right - w;
+    const y = at ? at.y : r.bottom + 4;
+    rowMenuBox.style.left = `${Math.max(8, Math.min(x, innerWidth - w - 8))}px`;
+    rowMenuBox.style.top = `${Math.max(8, y + h > innerHeight - 8 ? y - h - (at ? 0 : r.height + 8) : y)}px`;
+    /** @type {HTMLElement | null} */ (rowMenuBox.querySelector('[role="menuitem"]'))?.focus();
+  }
+  function closeRowMenu(focusBack = true) {
+    if (!rowMenu) return;
+    const { from } = rowMenu;
+    rowMenu = null;
+    rowMenuBox.hidden = true;
+    rowMenuBox.innerHTML = '';
+    if (from.isConnected) {
+      from.setAttribute('aria-expanded', 'false');
+      if (focusBack) from.focus();
+    }
+  }
+
+  /** Ask once more before a bot or a group goes (spec B.5), in the dialog Reset uses. */
+  function askDelete(kind, item) {
+    confirmBox.innerHTML = `<form method="dialog" class="botconfirm__form">
+      <h2 class="botconfirm__title">${escapeHtml(t('bots.deleteTitle', { name: item.name }))}</h2>
+      <p class="botconfirm__text">${escapeHtml(t(kind === 'group' ? 'bots.deleteBodyGroup' : 'bots.deleteBody', { name: item.name }))}</p>
+      <div class="botconfirm__acts">
+        <button class="btn" type="submit" value="cancel" autofocus>${escapeHtml(t('action.cancel'))}</button>
+        <button class="btn btn--danger" type="submit" value="delete">${escapeHtml(t('bots.menu.delete'))}</button>
+      </div>
+    </form>`;
+    confirmBox.returnValue = '';
+    confirmBox.addEventListener(
+      'close',
+      async () => {
+        if (confirmBox.returnValue !== 'delete') return;
+        try {
+          await (kind === 'group' ? api.deleteGroup(item.id) : api.deleteBot(item.id));
+          toast(changeLine({ kind, removed: item.id }, false, item.name), 'ok');
+          await applyChange({ kind, removed: item.id });
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      },
+      { once: true },
+    );
+    confirmBox.showModal();
+  }
+
+  /** What a row menu item does. @param {string} act */
+  async function rowAction(act) {
+    if (!rowMenu) return;
+    const { kind, id } = rowMenu;
+    const item = kind === 'group' ? groupOf(id) : botOf(id);
+    closeRowMenu(act !== 'open' && act !== 'settings' && act !== 'delete');
+    if (!item) return;
+    try {
+      if (act === 'open') await openSubject(kind, id);
+      else if (act === 'settings') openBotSettings({ ...settingsDeps(), page: kind === 'group' ? 'groups' : 'bots', id });
+      else if (act === 'pin' || act === 'unpin') {
+        const answer = kind === 'group' ? await api.updateGroup(id, { pinned: act === 'pin' }) : await api.updateBot(id, { pinned: act === 'pin' });
+        await applyChange({ kind, item: answer.group || answer.bot });
+      } else if (act === 'pause' || act === 'resume') {
+        const { bot } = await api.updateBot(id, { paused: act === 'pause' });
+        toast(t(act === 'pause' ? 'bots.pausedDone' : 'bots.resumedDone', { name: item.name }), 'ok');
+        await applyChange({ kind: 'bot', item: bot });
+      } else if (act === 'duplicate') {
+        const { bot } = await api.duplicateBot(id);
+        toast(t('bots.duplicated', { name: bot.name }), 'ok');
+        await applyChange({ kind: 'bot', item: bot });
+      } else if (act === 'export') {
+        await exportTeam(api, { kind, name: item.name });
+        toast(t('bots.port.exported'), 'ok');
+      } else if (act === 'delete') askDelete(kind, item);
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  }
+
+  rowMenuBox.addEventListener('keydown', (event) => {
+    const items = /** @type {HTMLElement[]} */ ([...rowMenuBox.querySelectorAll('[role="menuitem"]')]);
+    const at = items.indexOf(/** @type {HTMLElement} */ (document.activeElement));
+    const go = (i) => items[(i + items.length) % items.length]?.focus();
+    if (event.key === 'ArrowDown') go(at + 1);
+    else if (event.key === 'ArrowUp') go(at - 1);
+    else if (event.key === 'Home') go(0);
+    else if (event.key === 'End') go(items.length - 1);
+    else if (event.key === 'Escape') closeRowMenu();
+    else if (event.key === 'Tab') return closeRowMenu(false);
+    else return;
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  rowMenuBox.addEventListener('click', (event) => {
+    const item = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-row-act]'));
+    if (item) void rowAction(String(item.dataset.rowAct));
+  });
+  // A right click on a row, or the keyboard's menu key, opens its menu where it is.
+  page.addEventListener('contextmenu', (event) => {
+    const row = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-row]'));
+    if (!row) return;
+    event.preventDefault();
+    const [kind, id] = String(row.dataset.row).split(':');
+    const keyboard = event.button !== 2 && !event.clientX && !event.clientY;
+    openRowMenu(/** @type {'bot' | 'group'} */ (kind), id, row, keyboard ? null : { x: event.clientX, y: event.clientY });
+  });
+  // A long press on a phone opens it too; the tap that ends the press opens nothing.
+  let press = /** @type {{ timer: any, row: HTMLElement, x: number, y: number, fired: boolean } | null} */ (null);
+  page.addEventListener('pointerdown', (event) => {
+    const row = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-row]'));
+    if (!row || event.pointerType === 'mouse') return;
+    const at = { x: event.clientX, y: event.clientY };
+    press = {
+      row,
+      ...at,
+      fired: false,
+      timer: setTimeout(() => {
+        if (!press) return;
+        press.fired = true;
+        const [kind, id] = String(row.dataset.row).split(':');
+        openRowMenu(/** @type {'bot' | 'group'} */ (kind), id, row, at);
+      }, 550),
+    };
+  });
+  const endPress = (event) => {
+    if (!press) return;
+    if (event.type === 'pointermove' && Math.hypot(event.clientX - press.x, event.clientY - press.y) < 10) return;
+    clearTimeout(press.timer);
+    if (!press.fired) press = null;
+  };
+  for (const type of ['pointerup', 'pointercancel', 'pointermove']) page.addEventListener(type, endPress);
+  page.addEventListener(
+    'click',
+    (event) => {
+      if (!press?.fired) return;
+      press = null;
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    true,
+  );
+  document.addEventListener('pointerdown', (event) => {
+    if (rowMenu && !rowMenuBox.contains(/** @type {Node} */ (event.target)) && !/** @type {HTMLElement} */ (event.target).closest?.('[data-row-more]')) closeRowMenu(false);
+  });
+
   /* ── wiring ──────────────────────────────────────────────────── */
 
   const inGroup = () => shown && open?.kind === 'group';
@@ -1233,6 +1527,30 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     if (fileOpener && !target.closest('a[download], [data-no-open]')) {
       event.preventDefault();
       openFile(String(fileOpener.dataset.file));
+      return;
+    }
+    const more = /** @type {HTMLElement | null} */ (target.closest('[data-row-more]'));
+    if (more) {
+      const [kind, id] = String(more.dataset.rowMore).split(':');
+      if (rowMenu && rowMenu.from === more) closeRowMenu();
+      else openRowMenu(/** @type {'bot' | 'group'} */ (kind), id, more);
+      return;
+    }
+    // A line of Needs you: its button does what it says (spec B.2).
+    const need = /** @type {HTMLElement | null} */ (target.closest('[data-need]'));
+    if (need) {
+      const item = attention[Number(need.dataset.need)];
+      if (!item) return;
+      if (item.kind === 'failed' && item.taskId) {
+        attention = attention.filter((x) => x !== item);
+        renderList();
+        toast(t('bots.needs.retrying', { name: item.text }), 'ok');
+        api.runTask(item.taskId).catch((err) => toast(err.message, 'error')).finally(() => readTeamNow());
+      } else if (item.kind === 'ceiling' && item.group) {
+        await openSubject('group', item.group);
+        await continueRun();
+      } else if (item.group) await openSubject('group', item.group);
+      else if (item.bot) await openSubject('bot', item.bot);
       return;
     }
     const opener = /** @type {HTMLElement | null} */ (target.closest('[data-open]'));
@@ -1339,6 +1657,42 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       newMenu.hidden = !newMenu.hidden;
       page.querySelector('[data-act="new"]')?.setAttribute('aria-expanded', String(!newMenu.hidden));
       if (!newMenu.hidden) /** @type {HTMLElement} */ (newMenu.querySelector('button')).focus();
+    } else if (act === 'team-files') {
+      closeNewMenu();
+      openTeamFiles({ api, toast, onImported: () => readTeamNow() });
+    } else if (act === 'aside' && open?.kind === 'bot') {
+      if (aside.showingFor() === open.id) aside.close();
+      else aside.open(open.id);
+    } else if (act === 'resume-open' && open?.kind === 'bot') {
+      try {
+        const { bot } = await api.updateBot(open.id, { paused: false });
+        toast(t('bots.resumedDone', { name: bot.name }), 'ok');
+        await applyChange({ kind: 'bot', item: bot });
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    } else if (act === 'first-create') {
+      const lead = chief();
+      if (!lead) return;
+      keepFirstDrafts();
+      const button = /** @type {HTMLButtonElement} */ (target.closest('button'));
+      button.disabled = true;
+      const { made, failed, group } = await createFromFirstRun({ picked: firstPicked, drafts: firstDrafts, chiefId: lead.id, api });
+      for (const line of failed) toast(line, 'error');
+      if (made.length) toast(t('bots.first.done', { n: made.length }), 'ok');
+      await readTeamNow();
+      if (group) await openSubject('group', group.id);
+      else if (made.length === 1) await openSubject('bot', made[0].id);
+      else button.disabled = false;
+    } else if (act === 'first-skip') {
+      firstSkipped = true;
+      try {
+        localStorage.setItem('bots.firstSkipped', '1');
+      } catch {
+        /* the card comes back next time; nothing else depends on it */
+      }
+      renderFirst();
+      input.focus();
     } else if (act === 'new-bot' || act === 'new-group') {
       closeNewMenu();
       openBotSettings({ ...settingsDeps(), page: act === 'new-bot' ? 'bots' : 'groups', id: 'new' });
@@ -1379,13 +1733,25 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     }
   });
 
+  page.addEventListener('change', (event) => {
+    const box = /** @type {HTMLInputElement} */ (event.target);
+    if (!box.matches('[data-goal]')) return;
+    keepFirstDrafts();
+    if (box.checked) firstPicked.add(String(box.dataset.goal));
+    else firstPicked.delete(String(box.dataset.goal));
+    firstBox.innerHTML = firstRunHtml(firstPicked, firstDrafts);
+    /** @type {HTMLElement | null} */ (firstBox.querySelector(`[data-goal="${box.dataset.goal}"]`))?.focus();
+  });
+
   page.addEventListener('submit', async (event) => {
     const form = /** @type {HTMLElement} */ (event.target);
-    if (form.matches('[data-task-add]') && open?.kind === 'bot') {
+    if (form.matches('[data-task-add]') && open) {
       event.preventDefault();
       const value = (sel) => /** @type {HTMLInputElement} */ (form.querySelector(sel)).value.trim();
       try {
-        await api.addBotTask(open.id, { title: value('[data-task-title]'), prompt: value('[data-task-prompt]'), when: value('[data-task-when]'), tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
+        const task = { title: value('[data-task-title]'), prompt: value('[data-task-prompt]'), when: value('[data-task-when]'), tz: Intl.DateTimeFormat().resolvedOptions().timeZone };
+        // A group's task runs as a round from its prompt (spec B.4).
+        await (open.kind === 'group' ? api.addGroupTask(open.id, task) : api.addBotTask(open.id, task));
         taskFormOpen = false;
         await renderDetails();
       } catch (err) {
@@ -1436,6 +1802,13 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
   });
 
   page.addEventListener('keydown', (event) => {
+    const row = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest?.('[data-row]'));
+    if (row && (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey))) {
+      event.preventDefault();
+      const [kind, id] = String(row.dataset.row).split(':');
+      openRowMenu(/** @type {'bot' | 'group'} */ (kind), id, row);
+      return;
+    }
     if (event.key === 'Escape' && !newMenu.hidden) {
       closeNewMenu();
       /** @type {HTMLElement | null} */ (page.querySelector('[data-act="new"]'))?.focus();
@@ -1466,6 +1839,8 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     hide() {
       if (!shown) return;
       shown = false;
+      closeRowMenu(false);
+      aside.close();
       // The round goes on without the page (owner, 2026-11-10); coming back follows it again.
       stopFollowing();
       page.hidden = true;
@@ -1485,7 +1860,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     },
     /** A turn ended somewhere: the list shows what was said last, if it was a bot's chat. */
     turnEnded(chatId) {
-      if (shown && chat?.chatId === chatId) readTeamNow();
+      if (shown && chat?.chatId === chatId) readTeamNow().then(() => markRead());
     },
     /** A step of the turn on screen made or changed a bot or a group: shown now, not at the end. */
     teamChanged() {

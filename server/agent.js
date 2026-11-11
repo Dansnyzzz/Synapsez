@@ -1630,6 +1630,12 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
    * was given before that day is kept in its row and no longer read.
    */
   const persona = chat.bot_id ? await botPersona(userId, chat) : null;
+  // A paused bot does not answer (spec B.5): its chat stays readable, and Resume brings it back.
+  if (persona?.bot?.paused_at) {
+    emit('error', { message: `${persona.bot.name} is paused. Resume it on the Bot page to talk to it.`, code: 'bot_paused' });
+    emit('done', { stopReason: 'bot_paused' });
+    return;
+  }
   if (persona && turnInfo && !chat.bot_group_id && !chat.incognito) turnInfo.botOwnChat = true;
 
   /**

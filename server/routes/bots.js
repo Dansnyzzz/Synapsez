@@ -324,6 +324,29 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       res.json({ tasks: await store.listTasks(req.user.id, { groupId: group.id }) });
     }),
   );
+  api.post(
+    '/bot-groups/:id/tasks',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const group = await store.getBotGroup(req.user.id, req.params.id);
+      if (!group) return res.status(404).json({ error: 'No such group chat.' });
+      const title = String(req.body?.title ?? '').trim().slice(0, 120);
+      const prompt = String(req.body?.prompt ?? '').trim();
+      if (!title || !prompt) return res.status(400).json({ error: 'A scheduled task needs a name and what to do.' });
+      if (prompt.length > 8000) return res.status(400).json({ error: 'That is too long for a scheduled task.' });
+      const prefs = await getPrefs(req.user.id).catch(() => ({}));
+      const tz = validZone(req.body?.tz) ? req.body.tz : validZone(prefs.timezone) ? prefs.timezone : null;
+      let when;
+      try {
+        when = parseSchedule(req.body?.when, { once: req.body?.repeat === false, tz });
+      } catch (err) {
+        return res.status(400).json({ error: clientError(err) });
+      }
+      const task = await store.createTask(req.user.id, { id: crypto.randomUUID(), title, prompt, model: null, cron: when.cron, nextRunAt: when.nextRunAt, tz, botGroupId: group.id, missed: req.body?.missed });
+      if (!task) return res.status(404).json({ error: 'No such group chat.' });
+      res.status(201).json({ task });
+    }),
+  );
 
   /** A bot's own chat: its id, made the first time, and what is in it. */
   api.get(
