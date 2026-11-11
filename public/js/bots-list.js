@@ -60,6 +60,7 @@ export function needLine(item, { botOf, groupOf }) {
   }
   if (item.kind === 'question' && bot) return { face: bot, faceKind: 'bot', text: t('bots.needs.askBot', { bot: bot.name, text: said }), action: 'answer', label: t('bots.needs.answer'), open: `bot:${bot.id}` };
   if (item.kind === 'approval' && bot) return { face: bot, faceKind: 'bot', text: t('bots.needs.approval', { bot: bot.name, text: said }), action: 'view', label: t('bots.needs.view'), open: `bot:${bot.id}` };
+  if (item.kind === 'wait' && bot) return { face: bot, faceKind: 'bot', text: t('bots.needs.wait', { bot: bot.name, text: said }), action: 'view', label: t('bots.needs.view'), open: `bot:${bot.id}` };
   if (item.kind === 'ceiling' && group) return { face: group, faceKind: 'group', text: t('bots.needs.ceiling', { group: group.name }), action: 'continue', label: t('bots.continue'), open: `group:${group.id}` };
   if (item.kind === 'failed' && (bot || group)) {
     return {

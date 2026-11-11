@@ -118,6 +118,13 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
   let called = /** @type {Array<{ bot: string, how: string }>} */ ([]);
   /** The row menu: for which row, and what opened it (focus goes back there). */
   let rowMenu = /** @type {{ kind: 'bot' | 'group', id: string, from: HTMLElement } | null} */ (null);
+  /** A webhook's address and secret, shown once after it is made or rotated (spec C.1). */
+  let hookShown = /** @type {{ taskId: string, url: string, secret: string } | null} */ (null);
+  /** The hook whose deliveries are open, and what was read for it. */
+  let hookOpen = '';
+  let hookData = /** @type {any} */ (null);
+  /** The open bot's waits (spec C.2), as chips above its box. */
+  let waits = /** @type {any[]} */ ([]);
   /** The first-run card (spec B.7): the goals ticked, what was typed for each, and whether it was put away. */
   const firstPicked = new Set(['write']);
   const firstDrafts = new Map();
@@ -160,6 +167,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       <div class="botchat__working" data-working aria-live="polite"></div>
       <div class="botfirst-wrap scroll-quiet" data-first hidden></div>
       <div class="botpaused" data-paused role="status" hidden></div>
+      <ul class="botwaits" data-waits hidden></ul>
       <aside data-aside hidden></aside>
       <!-- The home chat's transcript and box are lent here (app.js lendHome). -->
       <div class="botchat__home" data-home>
@@ -183,6 +191,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
   const rowMenuBox = /** @type {HTMLElement} */ (page.querySelector('[data-row-menu]'));
   const firstBox = /** @type {HTMLElement} */ (page.querySelector('[data-first]'));
   const pausedBox = /** @type {HTMLElement} */ (page.querySelector('[data-paused]'));
+  const waitsBox = /** @type {HTMLElement} */ (page.querySelector('[data-waits]'));
   const asideButton = /** @type {HTMLElement} */ (page.querySelector('[data-act="aside"]'));
   /** Who a group's message called, above the working lines. */
   const calledBox = document.createElement('div');
@@ -757,22 +766,102 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
   let taskFormOpen = false;
   /** @param {any[]} tasks */
   function tasksHtml(tasks) {
-    const when = (task) => (task.enabled === false ? t('bots.taskPaused') : task.next_run_at ? t('bots.taskNext', { when: new Date(task.next_run_at).toLocaleString(localeTag(), { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) }) : '');
+    const isBot = open?.kind === 'bot';
+    const when = (task) => (task.enabled === false ? t('bots.taskPaused') : task.trigger === 'hook' ? t('bots.hook.label') : task.next_run_at ? t('bots.taskNext', { when: new Date(task.next_run_at).toLocaleString(localeTag(), { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) }) : '');
     const rows = tasks
-      .map((task) => `<li class="bottask"><span class="bottask__text"><span class="bottask__name">${escapeHtml(task.title)}</span><span class="bottask__when">${escapeHtml(when(task))}</span></span>
+      .map((task) => {
+        const hook = task.trigger === 'hook';
+        return `<li class="bottask"><span class="bottask__text"><span class="bottask__name">${escapeHtml(task.title)}</span><span class="bottask__when">${escapeHtml(when(task))}</span></span>
+        ${hook ? `<button class="btn btn--small" type="button" data-hook-open="${escapeHtml(task.id)}" aria-expanded="${hookOpen === task.id}">${escapeHtml(t('bots.hook.manage'))}</button>` : ''}
         <button class="btn btn--small" type="button" data-task-toggle="${escapeHtml(task.id)}" data-enabled="${task.enabled === false ? '0' : '1'}">${escapeHtml(t(task.enabled === false ? 'bots.taskResume' : 'bots.taskPause'))}</button>
-        <button class="btn btn--small" type="button" data-task-delete="${escapeHtml(task.id)}">${escapeHtml(t('bots.taskDelete'))}</button></li>`)
+        <button class="btn btn--small" type="button" data-task-delete="${escapeHtml(task.id)}">${escapeHtml(t('bots.taskDelete'))}</button></li>
+        ${hook && hookOpen === task.id ? `<li class="bothook">${hookPanelHtml(task)}</li>` : ''}`;
+      })
       .join('');
+    const once = hookShown && tasks.some((x) => x.id === hookShown.taskId) ? hookOnceHtml(hookShown) : '';
     return `<section class="botsec"><h3 class="botsec__label">${escapeHtml(t('bots.scheduled'))}</h3>
+      ${once}
       ${tasks.length ? `<ul class="bottasks">${rows}</ul>` : `<p class="hint">${escapeHtml(t('bots.tasksNone'))}</p>`}
       ${taskFormOpen
         ? `<form class="bottask__form" data-task-add>
             <input type="text" maxlength="120" required data-task-title aria-label="${escapeHtml(t('bots.taskName'))}" placeholder="${escapeHtml(t('bots.taskName'))}" />
             <textarea rows="2" maxlength="8000" required data-task-prompt aria-label="${escapeHtml(t('bots.taskPrompt'))}" placeholder="${escapeHtml(t('bots.taskPrompt'))}"></textarea>
+            ${isBot ? `<label class="bottask__trigger"><span>${escapeHtml(t('bots.hook.trigger'))}</span><select data-task-trigger><option value="schedule">${escapeHtml(t('bots.hook.onSchedule'))}</option><option value="hook">${escapeHtml(t('bots.hook.onRequest'))}</option></select></label>` : ''}
             <input type="text" maxlength="60" required data-task-when aria-label="${escapeHtml(t('bots.taskWhen'))}" placeholder="${escapeHtml(t('bots.taskWhen'))}" />
             <button class="btn btn--primary btn--small" type="submit">${escapeHtml(t('bots.taskSave'))}</button>
           </form>`
         : `<button class="botlink" type="button" data-act="task-add">${escapeHtml(t('bots.taskAdd'))} ›</button>`}</section>`;
+  }
+
+  /** A hook's address and secret, once: the secret is never shown again (spec C.1). */
+  function hookOnceHtml({ url, secret }) {
+    const field = (label, value) => `<div class="bothook__field"><span>${escapeHtml(label)}</span><code>${escapeHtml(value)}</code><button class="btn btn--small" type="button" data-copy-value="${escapeHtml(value)}">${escapeHtml(t('bots.hook.copy'))}</button></div>`;
+    return `<div class="bothook__once" role="status">
+      <p><strong>${escapeHtml(t('bots.hook.onceTitle'))}</strong> ${escapeHtml(t('bots.hook.onceHint'))}</p>
+      ${field(t('bots.hook.url'), url)}${field(t('bots.hook.secret'), secret)}
+      <p class="hint">${escapeHtml(t('bots.hook.howToSign'))}</p>
+      <button class="btn btn--small" type="button" data-hook-dismiss>${escapeHtml(t('bots.hook.done'))}</button></div>`;
+  }
+
+  /** A hook's last deliveries and why one was ignored, its filters, Test and Rotate. */
+  function hookPanelHtml(task) {
+    if (!hookData || hookData.taskId !== task.id) return `<p class="hint" role="status">…</p>`;
+    const when = (at) => new Date(at).toLocaleString(localeTag(), { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+    const receipts = hookData.receipts.length
+      ? `<ul class="bothook__receipts">${hookData.receipts.map((r) => `<li><span class="bothook__status bothook__status--${escapeHtml(r.status)}">${escapeHtml(t(`bots.hook.status.${r.status}`) === `bots.hook.status.${r.status}` ? r.status : t(`bots.hook.status.${r.status}`))}</span><span>${escapeHtml(when(r.at))}</span>${r.reason ? `<span class="hint">${escapeHtml(r.reason)}</span>` : ''}</li>`).join('')}</ul>`
+      : `<p class="hint">${escapeHtml(t('bots.hook.none'))}</p>`;
+    const match = [...(hookData.filters?.match || []), ...Array(5).fill(null)].slice(0, 5);
+    const rows = match
+      .map((m, i) => `<div class="bothook__match"><input type="text" maxlength="200" data-filter-pointer="${i}" value="${escapeHtml(m?.pointer || '')}" placeholder="/repository/name" aria-label="${escapeHtml(t('bots.hook.pointer', { n: i + 1 }))}" /><input type="text" maxlength="500" data-filter-value="${i}" value="${escapeHtml(m ? JSON.stringify(m.value) : '')}" placeholder='"site"' aria-label="${escapeHtml(t('bots.hook.value', { n: i + 1 }))}" /></div>`)
+      .join('');
+    return `<div class="bothook__panel">
+      <p class="bothook__url"><code>${escapeHtml(hookData.url)}</code> <button class="btn btn--small" type="button" data-copy-value="${escapeHtml(hookData.url)}">${escapeHtml(t('bots.hook.copy'))}</button></p>
+      <h4>${escapeHtml(t('bots.hook.deliveries'))}</h4>${receipts}
+      <form class="bothook__filters" data-hook-filters="${escapeHtml(task.id)}">
+        <h4>${escapeHtml(t('bots.hook.filters'))}</h4>
+        <label class="field"><span>${escapeHtml(t('bots.hook.type'))}</span><input type="text" maxlength="100" data-filter-type value="${escapeHtml(hookData.filters?.type || '')}" placeholder="build.done" /></label>
+        <p class="hint">${escapeHtml(t('bots.hook.matchHint'))}</p>${rows}
+        <button class="btn btn--small" type="submit">${escapeHtml(t('bots.hook.saveFilters'))}</button>
+      </form>
+      <div class="bothook__acts"><button class="btn btn--small" type="button" data-hook-test="${escapeHtml(task.id)}">${escapeHtml(t('bots.hook.test'))}</button>
+        <button class="btn btn--small btn--danger" type="button" data-hook-rotate="${escapeHtml(task.id)}">${escapeHtml(t('bots.hook.rotate'))}</button></div>
+    </div>`;
+  }
+
+  /** Read the open hook again, and draw the panel with it. */
+  async function readHook(taskId) {
+    try {
+      hookData = { taskId, ...(await api.botTaskHook(taskId)) };
+    } catch (err) {
+      hookData = null;
+      hookOpen = '';
+      toast(err.message, 'error');
+    }
+    await renderDetails();
+  }
+
+  /** The open bot's waits as chips above its box (spec C.2): what it parked, each with ✕. */
+  async function loadWaits() {
+    const target = open;
+    if (!target || target.kind !== 'bot' || home.incognito()) {
+      waits = [];
+      return drawWaits();
+    }
+    try {
+      const answer = await api.botWaits(target.id);
+      if (open !== target) return;
+      waits = answer.waits || [];
+    } catch {
+      waits = [];
+    }
+    drawWaits();
+  }
+  function drawWaits() {
+    waitsBox.hidden = !waits.length || open?.kind !== 'bot';
+    waitsBox.setAttribute('aria-label', t('bots.waits.label'));
+    waitsBox.innerHTML = waits
+      .map((w) => `<li class="botwait" title="${escapeHtml(w.request)}"><span aria-hidden="true">⏳</span><span class="botwait__text">${escapeHtml(w.note)}</span><button class="botwait__x" type="button" data-wait-close="${escapeHtml(w.id)}" aria-label="${escapeHtml(t('bots.waits.close', { note: w.note.slice(0, 60) }))}">✕</button></li>`)
+      .join('');
   }
 
   /** An entry being edited where it is, and one just forgotten (its Undo, for a few seconds). */
@@ -962,6 +1051,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     // Always: closed, it hides itself; open, it reads the newly opened one.
     renderDetails();
     markRead();
+    void loadWaits();
     if (focus && matchMedia('(min-width: 760px)').matches && firstBox.hidden) input.focus();
   }
 
@@ -1529,6 +1619,67 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       openFile(String(fileOpener.dataset.file));
       return;
     }
+    // A webhook's panel, its secret shown once, and Copy (spec C.1); a wait's ✕ (spec C.2).
+    const copyValue = /** @type {HTMLElement | null} */ (target.closest('[data-copy-value]'));
+    if (copyValue) {
+      navigator.clipboard?.writeText(String(copyValue.dataset.copyValue)).then(() => toast(t('viewer.copied'), 'ok'), () => {});
+      return;
+    }
+    const hookToggle = /** @type {HTMLElement | null} */ (target.closest('[data-hook-open]'));
+    if (hookToggle) {
+      const taskId = String(hookToggle.dataset.hookOpen);
+      hookOpen = hookOpen === taskId ? '' : taskId;
+      if (hookOpen) await readHook(taskId);
+      else await renderDetails();
+      return;
+    }
+    if (target.closest('[data-hook-dismiss]')) {
+      hookShown = null;
+      await renderDetails();
+      return;
+    }
+    const hookTest = /** @type {HTMLElement | null} */ (target.closest('[data-hook-test]'));
+    if (hookTest) {
+      try {
+        const answer = await api.testBotTaskHook(String(hookTest.dataset.hookTest));
+        toast(answer.accepted ? t('bots.hook.testSent') : t('bots.hook.testIgnored', { why: answer.ignored || answer.error || '' }), answer.accepted ? 'ok' : 'error');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+      setTimeout(() => (hookOpen ? void readHook(hookOpen) : undefined), 1500);
+      return;
+    }
+    const hookRotate = /** @type {HTMLElement | null} */ (target.closest('[data-hook-rotate]'));
+    if (hookRotate) {
+      if (hookRotate.dataset.armed !== '1') {
+        hookRotate.dataset.armed = '1';
+        hookRotate.textContent = t('bots.hook.rotateConfirm');
+        return;
+      }
+      try {
+        const taskId = String(hookRotate.dataset.hookRotate);
+        const answer = await api.rotateBotTaskHook(taskId);
+        hookShown = { taskId, url: answer.url, secret: answer.secret };
+        toast(t('bots.hook.rotated'), 'ok');
+        await readHook(taskId);
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+      return;
+    }
+    const waitClose = /** @type {HTMLElement | null} */ (target.closest('[data-wait-close]'));
+    if (waitClose && open?.kind === 'bot') {
+      const waitId = String(waitClose.dataset.waitClose);
+      const before = waits;
+      waits = waits.filter((w) => w.id !== waitId);
+      drawWaits();
+      await api.closeBotWait(open.id, waitId).catch((err) => {
+        waits = before;
+        drawWaits();
+        toast(err.message, 'error');
+      });
+      return;
+    }
     const more = /** @type {HTMLElement | null} */ (target.closest('[data-row-more]'));
     if (more) {
       const [kind, id] = String(more.dataset.rowMore).split(':');
@@ -1735,6 +1886,14 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
 
   page.addEventListener('change', (event) => {
     const box = /** @type {HTMLInputElement} */ (event.target);
+    if (box.matches('[data-task-trigger]')) {
+      const whenBox = /** @type {HTMLInputElement | null} */ (box.closest('form')?.querySelector('[data-task-when]') || null);
+      if (whenBox) {
+        whenBox.hidden = box.value === 'hook';
+        whenBox.required = box.value !== 'hook';
+      }
+      return;
+    }
     if (!box.matches('[data-goal]')) return;
     keepFirstDrafts();
     if (box.checked) firstPicked.add(String(box.dataset.goal));
@@ -1749,11 +1908,39 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       event.preventDefault();
       const value = (sel) => /** @type {HTMLInputElement} */ (form.querySelector(sel)).value.trim();
       try {
-        const task = { title: value('[data-task-title]'), prompt: value('[data-task-prompt]'), when: value('[data-task-when]'), tz: Intl.DateTimeFormat().resolvedOptions().timeZone };
-        // A group's task runs as a round from its prompt (spec B.4).
-        await (open.kind === 'group' ? api.addGroupTask(open.id, task) : api.addBotTask(open.id, task));
+        const trigger = /** @type {HTMLSelectElement | null} */ (form.querySelector('[data-task-trigger]'))?.value || 'schedule';
+        const task = { title: value('[data-task-title]'), prompt: value('[data-task-prompt]'), when: value('[data-task-when]'), tz: Intl.DateTimeFormat().resolvedOptions().timeZone, trigger };
+        // A group's task runs as a round from its prompt (spec B.4); a bot's may wait for a request (spec C.1).
+        const made = await (open.kind === 'group' ? api.addGroupTask(open.id, task) : api.addBotTask(open.id, task));
+        if (made?.hook) hookShown = { taskId: made.task.id, url: made.hook.url, secret: made.hook.secret };
         taskFormOpen = false;
         await renderDetails();
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+      return;
+    }
+    if (form.matches('[data-hook-filters]')) {
+      event.preventDefault();
+      const taskId = String(form.dataset.hookFilters);
+      const match = [];
+      for (let i = 0; i < 5; i += 1) {
+        const pointer = /** @type {HTMLInputElement | null} */ (form.querySelector(`[data-filter-pointer="${i}"]`))?.value.trim() || '';
+        const raw = /** @type {HTMLInputElement | null} */ (form.querySelector(`[data-filter-value="${i}"]`))?.value.trim() || '';
+        if (!pointer) continue;
+        let value = raw;
+        try {
+          value = JSON.parse(raw);
+        } catch {
+          /* a bare word is a string */
+        }
+        match.push({ pointer, value });
+      }
+      const type = /** @type {HTMLInputElement | null} */ (form.querySelector('[data-filter-type]'))?.value.trim() || '';
+      try {
+        await api.setBotTaskHookFilters(taskId, { ...(type ? { type } : {}), match });
+        toast(t('bots.hook.filtersSaved'), 'ok');
+        await readHook(taskId);
       } catch (err) {
         toast(err.message, 'error');
       }
@@ -1860,7 +2047,10 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     },
     /** A turn ended somewhere: the list shows what was said last, if it was a bot's chat. */
     turnEnded(chatId) {
-      if (shown && chat?.chatId === chatId) readTeamNow().then(() => markRead());
+      if (shown && chat?.chatId === chatId) {
+        readTeamNow().then(() => markRead());
+        void loadWaits();
+      }
     },
     /** A step of the turn on screen made or changed a bot or a group: shown now, not at the end. */
     teamChanged() {
