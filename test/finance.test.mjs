@@ -681,5 +681,18 @@ section('7i macro.js: World Bank, FRED only with its key and its notice, NSO sai
   check('NSO: a figure needs a POST, which is said, with the databases it has', nso instanceof http.SourceError && /POST/.test(nso.message) && /Công nghiệp/.test(nso.message), nso?.message);
 }
 
+const fmarket = await import('../server/finance/sources/fmarket.js');
+
+section('7j fmarket.js: a fund by its kept id, and plainly not when it has none');
+{
+  await fresh();
+  const fetchImpl = serve([['api.fmarket.vn/res/products/23', { status: 200, body: fixture('fmarket.json') }]]);
+  const ctx = { fetchImpl };
+  const f = await fmarket.fund('vesaf', ctx);
+  check('VESAF: NAV per unit in ₫, returns, fee, top holdings', f.nav === 30_733.81 && f.code === 'VESAF' && f.returns.some((r) => r.window === '12m' && r.pct === -10.14) && f.holdings[0].code === 'MBB' && f.managementFee === 1.75, JSON.stringify({ ...f, holdings: f.holdings.length }));
+  const unknown = await refusal(fmarket.fund('DCDS', ctx));
+  check('a fund not in the kept list is said plainly, and nothing is asked', unknown instanceof http.SourceError && /POST/.test(unknown.message) && /VESAF/.test(unknown.message) && fetchImpl.calls.length === 1, unknown?.message);
+}
+
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll finance checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);
