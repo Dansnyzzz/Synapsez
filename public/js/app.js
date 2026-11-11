@@ -6929,6 +6929,9 @@ async function loadFreeTier() {
     const report = await api.freeTier();
     const locale = currentLanguage() === 'vi' ? 'vi-VN' : 'en-US';
     const day = (iso) => new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short' }).format(new Date(iso));
+    // A per-minute or per-hour ceiling (CoinGecko, FRED) starts again within the hour: its time, not its day.
+    const clock = (iso) => new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
+    const PER_LABEL = { month: 'freetier.perMonth', day: 'freetier.perDay', hour: 'freetier.perHour', minute: 'freetier.perMinute' };
     // Exa and E2B are counted in thousandths of a dollar; the rest in requests or credits.
     const amount = (s, n) => (s.service === 'exa' || s.service === 'e2b' ? `$${(n / 1000).toFixed(2)}` : Number(n).toLocaleString(locale));
     const rows = report.services
@@ -6937,8 +6940,8 @@ async function loadFreeTier() {
         const share = s.used == null || !s.limit ? 0 : Math.min(100, Math.round((s.used / s.limit) * 100));
         return `<div class="ctable__row" role="row">
           <span role="cell"><strong>${escapeHtml(t(`freetier.${s.service}`))}</strong></span>
-          <span role="cell" class="freetier__used"><span class="freetier__bar${share >= 90 ? ' is-near' : ''}" aria-hidden="true"><span style="width:${share}%"></span></span>${escapeHtml(used)} ${escapeHtml(t(s.per === 'month' ? 'freetier.perMonth' : 'freetier.perDay'))}</span>
-          <span role="cell" class="crow__desc">${escapeHtml(t('freetier.resets', { day: day(s.resets) }))}</span>
+          <span role="cell" class="freetier__used"><span class="freetier__bar${share >= 90 ? ' is-near' : ''}" aria-hidden="true"><span style="width:${share}%"></span></span>${escapeHtml(used)} ${escapeHtml(t(PER_LABEL[s.per] || 'freetier.perDay'))}</span>
+          <span role="cell" class="crow__desc">${escapeHtml(t('freetier.resets', { day: s.per === 'minute' || s.per === 'hour' ? clock(s.resets) : day(s.resets) }))}</span>
         </div>`;
       })
       .join('');

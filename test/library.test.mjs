@@ -75,12 +75,65 @@ section('units');
   check('different dimensions are refused', /Cannot convert/.test(await fails(() => lib.convertUnits(1, 'kg', 'km'))));
 }
 
-section('market names become tickers');
+section('market names become tickers — and only the ones Yahoo has (server/finance)');
 {
-  check('VN-Index', lib.tickerFor('VNINDEX') === '^VNINDEX.VN');
-  check('a Vietnamese stock on the Vietnamese market', lib.tickerFor('fpt', 'vn') === 'FPT.VN');
-  check('an American one left alone', lib.tickerFor('aapl') === 'AAPL');
-  check('gold', lib.tickerFor('vàng') === 'GC=F');
+  const { yahooSymbol } = await import('../server/finance/sources/yahoo.js');
+  check('VN-Index', yahooSymbol('VNINDEX', { market: 'vn' }) === '^VNINDEX.VN');
+  check('a HOSE stock on the Vietnamese market', yahooSymbol('fpt', { market: 'vn', board: 'HOSE' }) === 'FPT.VN');
+  check('an American one left alone', yahooSymbol('aapl') === 'AAPL');
+  check('gold', yahooSymbol('vàng') === 'GC=F');
+  const refused = (fn) => {
+    try {
+      fn();
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  // The old TICKERS table sent these, and every one came back "no quote".
+  check('an HNX or UPCoM code is never made a .VN ticker', refused(() => yahooSymbol('SHS', { market: 'vn', board: 'HNX' })) && refused(() => yahooSymbol('ACV', { market: 'vn', board: 'UPCOM' })));
+  check('  nor VN30 or HNX made ^VN30.VN / ^HNX.VN, which do not exist', refused(() => yahooSymbol('VN30', { market: 'vn' })) && refused(() => yahooSymbol('HNX', { market: 'vn' })));
+  check('the old tickerFor is gone with the table', !('tickerFor' in lib));
+}
+
+section('market_data reads the finance layer: an HNX code answered by KBS, never Yahoo (stubbed)');
+{
+  process.env.FIN_PACE_SCALE = '0';
+  const real = globalThis.fetch;
+  const asked = [];
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    asked.push(u);
+    const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+    if (u.includes('stock_prices')) return json({ data: [] });
+    if (u.includes('getByGroup?group=HOSE')) return json([{ symbol: 'FPT' }]);
+    if (u.includes('getByGroup?group=HNX')) return json([{ symbol: 'SHS' }]);
+    if (u.includes('getByGroup?group=UPCOM')) return json([{ symbol: 'ACV' }]);
+    if (u.includes('/stocks/SHS/data_day')) return json({ symbol: 'SHS', data_day: [{ t: '2026-11-10 07:00', o: 18000, h: 18300, l: 17900, c: '18200', v: '9100000' }, { t: '2026-11-09 07:00', o: 17800, h: 18100, l: 17700, c: 18000, v: 8000000 }] });
+    if (u.includes('api.frankfurter.dev')) return json([{ date: '2026-11-10', base: 'USD', quote: 'VND', rate: 25648 }]);
+    if (u.includes('open.er-api.com')) return json({ result: 'success', base_code: 'USD', rates: { VND: 26000 }, time_last_update_unix: 1794268951 });
+    if (u.includes('/index/VN30/data_day')) return json({ symbol: 'VN30', data_day: [{ t: '2026-11-10 07:00', o: 1880, h: 1900, l: 1870, c: 1895.5, v: 1 }, { t: '2026-11-09 07:00', o: 1870, h: 1885, l: 1860, c: 1880, v: 1 }] });
+    return json({ error: 'not stubbed' }, 404);
+  };
+  try {
+    const shs = await L.market_data({ kind: 'quote', market: 'vn', symbols: ['SHS'] }, {});
+    check('SHS (HNX): KBS answers, with the reference, board and source', /^SHS · HNX · 18\.200 ₫ \(\+1,11 %\)/.test(shs.content) && /nguồn KBS/.test(shs.content), shs.content.split('\n')[0]);
+    check('  and Yahoo is never asked for it', !asked.some((u) => u.includes('yahoo')), asked.filter((u) => u.includes('yahoo')).join(','));
+    const vn30 = await L.market_data({ kind: 'quote', market: 'vn', symbols: ['VN30'] }, {});
+    check('VN30 comes from KBS\'s index bars, in points', /^VN30 · 1\.895,5 điểm/.test(vn30.content), vn30.content.split('\n')[0]);
+    check('  and ^VN30.VN is never requested', !asked.some((u) => /VN30\.VN|%5EVN30/.test(u)));
+    check('the answer carries a card and the app\'s note', shs.widget?.kind === 'market' && /for reference only/.test(shs.note));
+    const money = await L.convert_units({ value: 100, from: 'USD', to: 'VND' }, {});
+    check('convert_units: money through the finance layer\'s rates, Frankfurter first', /100 USD = 2,564,800 VND/.test(money) && /Frankfurter/.test(money), money);
+    process.env.FIN_SOURCE_FRANKFURTER = 'off';
+    process.env.FIN_SOURCE_ECB = 'off';
+    const linked = await L.convert_units({ value: 1, from: 'USD', to: 'VND' }, {});
+    delete process.env.FIN_SOURCE_FRANKFURTER;
+    delete process.env.FIN_SOURCE_ECB;
+    check('  and from open.er-api, with the link its terms ask for', /1 USD = 26,000 VND/.test(linked) && /https:\/\/www\.exchangerate-api\.com/.test(linked), linked);
+  } finally {
+    globalThis.fetch = real;
+  }
 }
 
 section('feeds, text and tables are read correctly');
@@ -175,10 +228,10 @@ section('the services are read the way they answer (stubbed)');
     return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   try {
-    const coin = await L.market_data({ kind: 'crypto', symbols: ['btc'] });
-    check('crypto: price, 24h change and source', /BTC \(bitcoin\): 84,000 USD/.test(coin) && /24h -1\.23%/.test(coin) && /CoinGecko/.test(coin), coin);
-    const index = await L.market_data({ kind: 'stock', symbols: ['VNINDEX'] });
-    check('an index is in points, with its change', /1,785\.11 points, \+0\.56%/.test(index) && /may be delayed/.test(index), index);
+    const coin = (await L.market_data({ kind: 'crypto', symbols: ['btc'] }, {})).content;
+    check('crypto: price, 24h change and source, credited as CoinGecko asks', /^BTC · 84,000 USD \(-1\.23% 24h\)/.test(coin) && /source CoinGecko/.test(coin) && /Powered by CoinGecko/.test(coin), coin);
+    const index = (await L.market_data({ kind: 'stock', symbols: ['VNINDEX'] }, {})).content;
+    check('an index is in points, with its change', /1\.785,11 điểm \(\+0,56 %\)/.test(index) && /có thể trễ/.test(index) && /Yahoo Finance/.test(index), index);
     const road = await L.place_lookup({ op: 'distance', from: 'Hà Nội', to: 'Hải Phòng' });
     check('distance in a straight line and by road', /km in a straight line/.test(road.content) && /107\.6 km, roughly 1 h 22 min/.test(road.content), road.content);
     check('and a map with both ends and a line between them', road.widget?.kind === 'map' && road.widget.points.length === 2 && road.widget.line.length >= 2);

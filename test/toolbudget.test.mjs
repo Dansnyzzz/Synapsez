@@ -174,6 +174,19 @@ section('tools a turn probably will not use are deferred');
   check('a sub-agent is exempt', !sub.some((t) => t.name === 'load_tools'));
 }
 
+section('market_data is one tool, not twelve (finance, 2026-11-10)');
+{
+  // The owner's twelve finance tools as one, with a `kind`: about 500 tokens, and only on
+  // the turns that load it — twelve would cost 2,000–3,500 on every step of those turns.
+  const tool = TOOLS.find((t) => t.name === 'market_data');
+  const cost = estimateTokens([tool]);
+  check('market_data costs at most 600 tokens', cost <= 600, `${cost} tok`);
+  check('  its description at most 450 characters', tool.description.length <= 450, `${tool.description.length}`);
+  check('  every kind is in its schema', ['quote', 'history', 'intraday', 'statements', 'ratios', 'profile', 'events', 'news', 'fund', 'options', 'fx', 'gold', 'macro', 'screen'].every((k) => tool.parameters.properties.kind.enum.includes(k)));
+  const plain = availableTools({ workerOnline: false, desktopOnline: false, policy: 'auto', context: 128_000, activated: new Set() });
+  check('  and it stays deferred until a turn asks for it', !plain.some((t) => t.name === 'market_data'));
+}
+
 section('The load_tools index');
 {
   const { firstSentence } = __testing;

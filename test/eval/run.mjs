@@ -63,7 +63,9 @@ const liveEffort = process.env.EVAL_EFFORT || 'low';
 const DEFAULT_EVAL_MODEL = 'openrouter/nvidia/nemotron-3.5-super-vl:free';
 const liveModel = process.env.EVAL_MODEL || DEFAULT_EVAL_MODEL;
 
-const { availableTools, assessRisk } = await import('../../server/tools/definitions.js');
+const { availableTools, assessRisk, TOOLS_BY_NAME } = await import('../../server/tools/definitions.js');
+const { readArguments } = await import('../../server/tools/validate.js');
+const { normalize: readMarketRequest } = await import('../../server/finance/index.js');
 const { UNTRUSTED_RULE } = await import('../../server/tools/untrusted.js');
 const { renderProject } = await import('../../server/projects.js');
 const { buildSystemPrompt, promptVersion } = await import('../../server/agent.js');
@@ -172,6 +174,25 @@ function scripted(testCase) {
         notes.push(`${rival} is not offered at all, so the comparison is moot`);
       }
     }
+  }
+
+  /*
+   * The one call a case expects (finance, 2026-11-10): the tool's own schema must
+   * accept it as written, and — for market_data — the finance layer must read it
+   * as the case means. A schema change that renamed `kind` or dropped `statement`
+   * fails here, before any model is paid to find out.
+   */
+  if (want.call) {
+    const tool = TOOLS_BY_NAME[want.prefers];
+    const read = readArguments(want.prefers, tool?.parameters || {}, want.call);
+    if (!read.ok) return { pass: false, why: `${want.prefers} refuses ${JSON.stringify(want.call)}: ${read.error}` };
+    if (read.notes?.length) return { pass: false, why: `${want.prefers} drops part of ${JSON.stringify(want.call)}: ${read.notes.join(' ')}` };
+    if (want.reads && want.prefers === 'market_data') {
+      const got = readMarketRequest(read.input);
+      const off = Object.entries(want.reads).filter(([key, value]) => JSON.stringify(got[key]) !== JSON.stringify(value));
+      if (off.length) return { pass: false, why: `market_data reads ${JSON.stringify(want.call)} differently: ${off.map(([k, v]) => `${k} ${JSON.stringify(got[k])}, not ${JSON.stringify(v)}`).join('; ')}` };
+    }
+    notes.push(`the call ${JSON.stringify(want.call)} is accepted and read as meant`);
   }
 
   if (want.promptRule) {

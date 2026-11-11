@@ -545,7 +545,8 @@ const STEP_DETAILS = {
   world_facts: (i) => clip((Array.isArray(i.requests) ? i.requests : [i]).map(factAsked).join(', '), 96),
   date_calc: (i) => clip([i.op, i.date, i.to, i.time].filter(Boolean).join(' · '), 64),
   convert_units: (i) => clip(`${i.value} ${i.from} → ${i.to}`, 64),
-  market_data: (i) => clip((Array.isArray(i.requests) ? i.requests : [i]).flatMap((r) => [].concat(r?.symbols || [])).join(', '), 96),
+  // The symbols asked about; gold and macro have none, so their indicator or kind says what it was.
+  market_data: (i) => clip((Array.isArray(i.requests) ? i.requests : [i]).flatMap((r) => (r?.symbols?.length ? [].concat(r.symbols) : [r?.indicator || r?.kind].filter(Boolean))).join(', '), 96),
   // Read the way the tool reads it, so `query`/`location` and a nearby search are labelled too.
   place_lookup: (raw) => {
     const i = canonicalInput('place_lookup', raw) || raw;
@@ -1598,7 +1599,8 @@ export function widgetNode(widget, toolName = null) {
  * Whether a result carries something to draw. A map, a gallery or a card has
  * no markup — it is drawn from its data — so `markup` alone is not the test.
  */
-const drawable = (widget) => !!(widget && (widget.markup || ['map', 'images', 'card', 'connectors'].includes(widget.kind)));
+const drawable = (widget) =>
+  !!(widget && (widget.markup || ['map', 'images', 'card', 'connectors'].includes(widget.kind) || (widget.kind === 'market' && Array.isArray(widget.rows) && widget.rows.length > 0)));
 
 /**
  * When a scheduled run fires next, in the zone it was set in.
@@ -3195,6 +3197,16 @@ export function assistantMessage() {
           const out = el('div', 'lookup__out');
           out.textContent = said2 || t('chat.noOutput');
           item.append(out);
+          /*
+           * A lookup that brings a card — market_data's prices, with their source and
+           * credit — draws it beside the card of lookups, like any other result's.
+           * Without this the card was made, kept and never shown, and a source's
+           * required credit lived only in the folded text.
+           */
+          if (drawable(result.widget)) {
+            body.append(widgetNode(result.widget, result.name));
+            endRunAt(run);
+          }
         }
         paintGroupSummary(run);
         settleLookup(run);

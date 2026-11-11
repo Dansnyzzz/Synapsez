@@ -1,0 +1,70 @@
+{
+  "quoteSummary": {
+    "result": [
+      {
+        "summaryDetail": {
+          "trailingPE": {
+            "raw": 39.05234,
+            "fmt": "39.05"
+          },
+          "forwardPE": {
+            "raw": 33.235027,
+            "fmt": "33.24"
+          },
+          "dividendYield": {
+            "raw": 0.0031,
+            "fmt": "0.31%"
+          },
+          "marketCap": {
+            "raw": 5096291172352,
+            "fmt": "5.1T",
+            "longFmt": "5,096,291,172,352"
+          },
+          "beta": {
+            "raw": 1.089,
+            "fmt": "1.09"
+          },
+          "priceToSalesTrailing12Months": {
+            "raw": 10.643127,
+            "fmt": "10.64"
+          },
+          "currency": "USD"
+        },
+        "defaultKeyStatistics": {
+          "priceToBook": {
+            "raw": 45.467396,
+            "fmt": "45.47"
+          },
+          "profitMargins": {
+            "raw": 0.27604,
+            "fmt": "27.60%"
+          },
+          "sharesOutstanding": {
+            "raw": 14532182000,
+            "fmt": "14.53B",
+            "longFmt": "14,532,182,000"
+          },
+          "enterpriseValue": {
+            "raw": 5134047772672,
+            "fmt": "5.13T",
+            "longFmt": "5,134,047,772,672"
+          },
+          "bookValue": {
+            "raw": 7.713,
+            "fmt": "7.71"
+          }
+        },
+        "price": {
+          "regularMarketPrice": {
+            "raw": 350.69,
+            "fmt": "350.69"
+          },
+          "currency": "USD",
+          "longName": "Apple Inc.",
+          "exchangeName": "NasdaqGS"
+        }
+      }
+    ],
+    "error": null
+  }
+}

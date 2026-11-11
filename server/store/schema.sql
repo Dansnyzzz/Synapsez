@@ -1297,3 +1297,17 @@ ALTER TABLE bots ADD COLUMN IF NOT EXISTS turns_since_review INTEGER NOT NULL DE
 -- turn and the provider's cached prefix holds; later saves arrive as a short message.
 ALTER TABLE chats ADD COLUMN IF NOT EXISTS memory_snapshot TEXT;
 ALTER TABLE chats ADD COLUMN IF NOT EXISTS memory_snapshot_at TIMESTAMPTZ;
+
+-- 45 (owner, 2026-11-10): market data shared by every account and instance, so a
+-- price asked twice is fetched once. Only the fields the tool returns are kept:
+-- public prices and figures, never anything about a person. `expires_at` NULL is a
+-- row kept for good (a closed day's raw bar, a past day's rate); the sweep drops
+-- those after 400 days, and any row expired more than a day ago (server/finance/cache.js).
+-- Stands alone: nothing here depends on another table, or on version 44.
+CREATE TABLE IF NOT EXISTS finance_cache (
+  key        TEXT PRIMARY KEY,
+  value      JSONB NOT NULL,
+  fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS finance_cache_expires_idx ON finance_cache (expires_at);

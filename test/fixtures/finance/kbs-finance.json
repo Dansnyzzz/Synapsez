@@ -1,0 +1,225 @@
+{
+  "Audit": [
+    {
+      "AuditedStatusCode": "SX",
+      "Description": "Soát xét",
+      "DescriptionEn": "Reviewed"
+    },
+    {
+      "AuditedStatusCode": "CKT",
+      "Description": "Chưa kiểm toán",
+      "DescriptionEn": "Unaudited"
+    },
+    {
+      "AuditedStatusCode": "KT",
+      "Description": "Kiểm toán",
+      "DescriptionEn": "Audited"
+    }
+  ],
+  "Unit": [
+    {
+      "UnitedCode": "HN",
+      "UnitedName": "Hợp nhất",
+      "UnitedNameEN": "Consolidated"
+    },
+    {
+      "UnitedCode": "ĐL",
+      "UnitedName": "Đơn lẻ",
+      "UnitedNameEN": "Stand-alone"
+    },
+    {
+      "UnitedCode": "CTM",
+      "UnitedName": "Công ty mẹ",
+      "UnitedNameEN": "Parent Company"
+    }
+  ],
+  "Head": [
+    {
+      "ID": 1,
+      "CompanyID": 191,
+      "YearPeriod": 2025,
+      "TermCode": "N",
+      "TermName": "Năm",
+      "TermNameEN": "Year",
+      "ReportTermID": 1,
+      "DisplayOrdering": 1,
+      "United": "HN",
+      "AuditedStatus": "KT",
+      "PeriodBegin": "202501",
+      "PeriodEnd": "202512",
+      "ReportDate": "2026-03-18T00:00:00",
+      "CreatedDate": "2026-03-20T15:35:57.453",
+      "AuditStatusID": 10,
+      "LastUpdate": "2026-03-23T23:00:03.453",
+      "DatePubDepartment": "2026-03-20T00:00:00",
+      "TotalRow": 14,
+      "BusinessType": 1
+    },
+    {
+      "ID": 2,
+      "CompanyID": 191,
+      "YearPeriod": 2024,
+      "TermCode": "N",
+      "TermName": "Năm",
+      "TermNameEN": "Year",
+      "ReportTermID": 1,
+      "DisplayOrdering": 1,
+      "United": "HN",
+      "AuditedStatus": "KT",
+      "PeriodBegin": "202401",
+      "PeriodEnd": "202412",
+      "ReportDate": "2025-03-11T00:00:00",
+      "CreatedDate": "2025-03-15T09:41:50.683",
+      "AuditStatusID": 10,
+      "LastUpdate": "2026-03-06T11:38:05.58",
+      "DatePubDepartment": "2025-03-14T00:00:00",
+      "TotalRow": 14,
+      "BusinessType": 1
+    },
+    {
+      "ID": 3,
+      "CompanyID": 191,
+      "YearPeriod": 2023,
+      "TermCode": "N",
+      "TermName": "Năm",
+      "TermNameEN": "Year",
+      "ReportTermID": 1,
+      "DisplayOrdering": 1,
+      "United": "HN",
+      "AuditedStatus": "KT",
+      "PeriodBegin": "202301",
+      "PeriodEnd": "202312",
+      "ReportDate": "2024-03-07T00:00:00",
+      "CreatedDate": "2024-03-11T16:43:35.343",
+      "AuditStatusID": 10,
+      "LastUpdate": "2026-03-06T11:37:35.36",
+      "DatePubDepartment": "2024-03-08T00:00:00",
+      "TotalRow": 14,
+      "BusinessType": 1
+    },
+    {
+      "ID": 4,
+      "CompanyID": 191,
+      "YearPeriod": 2022,
+      "TermCode": "N",
+      "TermName": "Năm",
+      "TermNameEN": "Year",
+      "ReportTermID": 1,
+      "DisplayOrdering": 1,
+      "United": "HN",
+      "AuditedStatus": "KT",
+      "PeriodBegin": "202201",
+      "PeriodEnd": "202212",
+      "ReportDate": "2023-03-08T00:00:00",
+      "CreatedDate": "2023-03-14T13:58:46.663",
+      "AuditStatusID": 10,
+      "LastUpdate": "2023-04-07T16:13:27.677",
+      "DatePubDepartment": "2023-03-10T00:00:00",
+      "TotalRow": 14,
+      "BusinessType": 1
+    }
+  ],
+  "Content": {
+    "Kết quả kinh doanh": [
+      {
+        "ID": 1,
+        "ReportNormID": 2206,
+        "Name": "1. Doanh thu bán hàng và cung cấp dịch vụ ",
+        "NameEn": "1. Revenue",
+        "Levels": 0,
+        "Value1": 70207688945,
+        "Value2": 62962652135,
+        "Value3": 52625174861,
+        "Value4": 44023010881
+      },
+      {
+        "ID": 3,
+        "ReportNormID": 2216,
+        "Name": "3. Doanh thu thuần về bán hàng và cung cấp dịch vụ",
+        "NameEn": "3. Net revenue  ",
+        "Levels": 0,
+        "Value1": 70112825101,
+        "Value2": 62848794351,
+        "Value3": 52617900827,
+        "Value4": 44009527681
+      },
+      {
+        "ID": 4,
+        "ReportNormID": 2207,
+        "Name": "4. Giá vốn hàng bán ",
+        "NameEn": "4. Cost of goods sold",
+        "Levels": 0,
+        "Value1": 44224295588,
+        "Value2": 39150445981,
+        "Value3": 32298347383,
+        "Value4": 26842249040
+      },
+      {
+        "ID": 5,
+        "ReportNormID": 2217,
+        "Name": "5. Lợi nhuận gộp về bán hàng và cung cấp dịch vụ",
+        "NameEn": "5. Gross profit",
+        "Levels": 0,
+        "Value1": 25888529512,
+        "Value2": 23698348370,
+        "Value3": 20319553445,
+        "Value4": 17167278641
+      },
+      {
+        "ID": 13,
+        "ReportNormID": 2208,
+        "Name": "11. Lợi nhuận thuần từ hoạt động kinh doanh",
+        "NameEn": "11. Operating profit ",
+        "Levels": 0,
+        "Value1": 12951675965,
+        "Value2": 11025080773,
+        "Value3": 9111745534,
+        "Value4": 7589289622
+      },
+      {
+        "ID": 18,
+        "ReportNormID": 2211,
+        "Name": "15. Tổng lợi nhuận kế toán trước thuế",
+        "NameEn": "15. Profit before tax",
+        "Levels": 0,
+        "Value1": 13043632834,
+        "Value2": 11069666418,
+        "Value3": 9203006099,
+        "Value4": 7662282960
+      },
+      {
+        "ID": 21,
+        "ReportNormID": 2212,
+        "Name": "18. Lợi nhuận sau thuế thu nhập doanh nghiệp",
+        "NameEn": "18. Net profit after tax",
+        "Levels": 0,
+        "Value1": 11232339451,
+        "Value2": 9427422530,
+        "Value3": 7788049740,
+        "Value4": 6491343454
+      },
+      {
+        "ID": 23,
+        "ReportNormID": 2214,
+        "Name": "Lợi nhuận sau thuế của cổ đông của Công ty mẹ",
+        "NameEn": "Profit after tax for shareholders of parent company",
+        "Levels": 0,
+        "Value1": 9376127630,
+        "Value2": 7856767812,
+        "Value3": 6465190433,
+        "Value4": 5310108591
+      },
+      {
+        "ID": 24,
+        "ReportNormID": 2215,
+        "Name": "19. Lãi cơ bản trên cổ phiếu (VNÐ)",
+        "NameEn": "19. Earnings per share (VND)",
+        "Levels": 0,
+        "Value1": 5216,
+        "Value2": 4944,
+        "Value3": 4661,
+        "Value4": 4429
+      }
+    ]
+  }
+}

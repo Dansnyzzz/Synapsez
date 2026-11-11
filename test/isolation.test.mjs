@@ -1509,6 +1509,8 @@ section('the untrusted-content boundary');
     'run_parallel',
     // Its report prints page titles raw and claims distilled from pages (SEC-044).
     'deep_research',
+    // Headlines, company summaries and event titles from brokers and publishers (finance, 2026-11-10).
+    'market_data',
   ]) {
     check(`${name} output is declared external`, returnsExternalContent(name) === true);
   }

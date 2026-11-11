@@ -8,6 +8,9 @@ import { saveGenerated } from '../attachments.js';
 import { untrusted } from './untrusted.js';
 import { asciiLower, openAt, elementSpans, firstInner, firstAttr, stripTags } from '../util/markup.js';
 import { solarToLunar, lunarToSolar, yearName, dayName } from './lunar.js';
+import { marketData } from '../finance/index.js';
+import { convert as convertMoney } from '../finance/sources/fx.js';
+import { sourceLabel } from '../finance/http.js';
 
 /**
  * The everyday toolbox: the questions people ask that a model should answer
@@ -272,9 +275,13 @@ export function currencyCode(raw) {
  * "1 USD → VND" is a conversion to anybody asking, and the model reached for
  * this tool, failed on "USD is not a unit", and had to find the exchange-rate
  * one on a second try. Two currencies are converted here at the day's
- * reference rate (open.er-api.com, keyless) instead.
+ * reference rate instead — from the finance layer's rate chain (Frankfurter,
+ * the ECB, open.er-api, Yahoo), with the credit the answering source asks for.
+ *
+ * @param {Record<string, any>} input
+ * @param {{ signal?: AbortSignal | null }} [context]
  */
-async function convertUnitsTool({ value, from, to }) {
+async function convertUnitsTool({ value, from, to }, context = {}) {
   const a = currencyCode(from);
   const b = currencyCode(to);
   let unitA = null;
@@ -286,13 +293,14 @@ async function convertUnitsTool({ value, from, to }) {
   if (a && b && !unitA) {
     const amount = Number(value);
     if (!Number.isFinite(amount)) throw new Error('Give the value as a number.');
-    const data = await getJson(`https://open.er-api.com/v6/latest/${a}`);
-    const rate = Number(data?.rates?.[b]);
-    if (!Number.isFinite(rate)) throw new Error(`There is no rate from ${a} to ${b} today.`);
+    const money = await convertMoney(amount, a, b, { signal: context.signal || null }).catch((err) => {
+      throw new Error(`There is no rate from ${a} to ${b} today: ${err?.message || err}`);
+    });
     return (
-      `${fmt(amount)} ${a} = ${fmt(Number((amount * rate).toPrecision(12)))} ${b} ` +
-      `(1 ${a} = ${fmt(Number(rate.toPrecision(10)))} ${b}, updated ${data?.time_last_update_utc || 'today'}). ` +
-      'A mid-market reference rate from open.er-api.com, not what a bank or exchange will quote.'
+      `${fmt(amount)} ${a} = ${fmt(Number(money.value.toPrecision(12)))} ${b} ` +
+      `(1 ${a} = ${fmt(Number(money.rate.toPrecision(10)))} ${b}, ${money.date || 'today'}). ` +
+      `A mid-market reference rate from ${sourceLabel(money.source)}, not what a bank or exchange will quote.` +
+      (money.attribution.length ? ` ${money.attribution.join(' ')}` : '')
     );
   }
   return convertUnits(value, from, to);
@@ -300,95 +308,17 @@ async function convertUnitsTool({ value, from, to }) {
 
 /* ── markets ───────────────────────────────────────────────────── */
 
-const COINS = {
-  btc: 'bitcoin', eth: 'ethereum', usdt: 'tether', usdc: 'usd-coin', bnb: 'binancecoin', sol: 'solana', xrp: 'ripple',
-  ada: 'cardano', doge: 'dogecoin', ton: 'the-open-network', trx: 'tron', dot: 'polkadot', ltc: 'litecoin', avax: 'avalanche-2',
-  link: 'chainlink', shib: 'shiba-inu', matic: 'matic-network', pol: 'polygon-ecosystem-token', xlm: 'stellar', atom: 'cosmos',
-  near: 'near', apt: 'aptos', arb: 'arbitrum', op: 'optimism', sui: 'sui', pepe: 'pepe', uni: 'uniswap', bch: 'bitcoin-cash',
-};
-
-async function coinId(symbol) {
-  const s = String(symbol).trim().toLowerCase();
-  if (COINS[s]) return COINS[s];
-  const found = await getJson(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(s)}`);
-  const hit = found?.coins?.find((c) => c.symbol?.toLowerCase() === s) || found?.coins?.[0];
-  if (!hit) throw new Error(`No coin called "${symbol}".`);
-  return hit.id;
-}
-
-async function cryptoQuotes(symbols, vs) {
-  const ids = await Promise.all(symbols.map(coinId));
-  const currencies = [...new Set(['usd', String(vs || 'vnd').toLowerCase()])];
-  const data = await getJson(
-    `https://api.coingecko.com/api/v3/simple/price?ids=${ids.join(',')}&vs_currencies=${currencies.join(',')}&include_24hr_change=true&include_market_cap=true`,
-  );
-  const lines = ids.map((id, i) => {
-    const q = data[id];
-    if (!q) return `- ${symbols[i]}: no price`;
-    const prices = currencies.map((c) => `${fmt(q[c])} ${c.toUpperCase()}`).join(' · ');
-    const change = q.usd_24h_change != null ? `, 24h ${q.usd_24h_change >= 0 ? '+' : ''}${round(q.usd_24h_change)}%` : '';
-    return `- ${symbols[i].toUpperCase()} (${id}): ${prices}${change}${q.usd_market_cap ? `, market cap $${fmt(Math.round(q.usd_market_cap))}` : ''}`;
-  });
-  return `Crypto prices now:\n${lines.join('\n')}\nSource: CoinGecko.`;
-}
-
-/** Common names people use, as the tickers the quote service knows. */
-const TICKERS = {
-  vnindex: '^VNINDEX.VN', 'vn-index': '^VNINDEX.VN', vn30: '^VN30.VN', hnx: '^HNX.VN',
-  'sp500': '^GSPC', 's&p500': '^GSPC', 's&p 500': '^GSPC', dow: '^DJI', 'dow jones': '^DJI', nasdaq: '^IXIC', nasdaq100: '^NDX',
-  nikkei: '^N225', 'hang seng': '^HSI', ftse: '^FTSE', dax: '^GDAXI', vix: '^VIX',
-  gold: 'GC=F', 'vàng': 'GC=F', silver: 'SI=F', oil: 'CL=F', wti: 'CL=F', brent: 'BZ=F', 'dxy': 'DX-Y.NYB',
-};
-
-export function tickerFor(symbol, market) {
-  const s = String(symbol || '').trim();
-  const named = TICKERS[s.toLowerCase()];
-  if (named) return named;
-  // A bare three-letter code asked about on the Vietnamese market is a HOSE listing.
-  if (String(market || '').toLowerCase() === 'vn' && /^[A-Za-z]{3}$/.test(s)) return `${s.toUpperCase()}.VN`;
-  return s.toUpperCase();
-}
-
-async function stockQuotes(symbols, market) {
-  const lines = await Promise.all(
-    symbols.map(async (raw) => {
-      const ticker = tickerFor(raw, market);
-      try {
-        const data = await getJson(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=5d&interval=1d`, {
-          'User-Agent': 'Mozilla/5.0',
-        });
-        const meta = data?.chart?.result?.[0]?.meta;
-        if (!meta?.regularMarketPrice) return `- ${raw}: no quote for ${ticker}`;
-        const prev = meta.chartPreviousClose ?? meta.previousClose;
-        const change = prev ? ((meta.regularMarketPrice - prev) / prev) * 100 : null;
-        const when = new Date(meta.regularMarketTime * 1000).toISOString().replace('T', ' ').slice(0, 16);
-        return (
-          // An index is in points, not in the currency its exchange trades in.
-          `- ${meta.symbol}${meta.longName || meta.shortName ? ` (${meta.longName || meta.shortName})` : ''}: ${fmt(meta.regularMarketPrice)} ${meta.instrumentType === 'INDEX' ? 'points' : meta.currency || ''}` +
-          `${change != null ? `, ${change >= 0 ? '+' : ''}${round(change)}% vs previous close ${fmt(prev)}` : ''}` +
-          ` · ${meta.fullExchangeName || meta.exchangeName}, as of ${when} UTC`
-        );
-      } catch (err) {
-        return `- ${raw}: ${err.message}`;
-      }
-    }),
-  );
-  return `Market quotes:\n${lines.join('\n')}\nSource: Yahoo Finance (may be delayed; not for trading decisions).`;
-}
-
-async function marketDataTool({ kind, symbols, vs, market, requests }) {
-  if (Array.isArray(requests) && requests.length) {
-    const answers = await Promise.all(requests.slice(0, 6).map((request) => marketDataTool(request).catch((err) => `Could not find that: ${err?.message || err}`)));
-    return `${answers.join('\n\n')}${requests.length > 6 ? `\n\n(${requests.length - 6} more were not asked: 6 at most in one call.)` : ''}`;
-  }
-  const list = (Array.isArray(symbols) ? symbols : String(symbols || '').split(/[,;]/))
-    .map((s) => String(s).trim())
-    .filter(Boolean)
-    .slice(0, 12);
-  if (!list.length) throw new Error('Name at least one symbol — e.g. BTC, ETH, AAPL, FPT, VNINDEX, gold.');
-  if (kind === 'crypto') return cryptoQuotes(list, vs);
-  if (kind === 'stock') return stockQuotes(list, market);
-  throw new Error('kind is crypto or stock.');
+/**
+ * `market_data` is the finance layer (server/finance): one tool, fourteen kinds,
+ * every source labelled, cached for everybody, paced, and switched off by env.
+ * The old ticker table, which sent HNX and UPCoM codes, ^VN30.VN and ^HNX.VN to
+ * Yahoo (none of which it has), is gone with it.
+ *
+ * @param {Record<string, any>} input
+ * @param {{ signal?: AbortSignal | null }} [context]
+ */
+function marketDataTool(input, context = {}) {
+  return marketData(input, { signal: context.signal || null });
 }
 
 /* ── places ────────────────────────────────────────────────────── */

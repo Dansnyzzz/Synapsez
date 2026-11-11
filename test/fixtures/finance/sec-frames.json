@@ -1,0 +1,50 @@
+{
+  "taxonomy": "us-gaap",
+  "tag": "AccountsPayableCurrent",
+  "ccp": "CY2025Q2I",
+  "uom": "USD",
+  "label": "Accounts Payable, Current",
+  "pts": 5,
+  "data": [
+    {
+      "accn": "0001104659-26-085459",
+      "cik": 1750,
+      "entityName": "AAR CORP",
+      "loc": "US-IL",
+      "end": "2025-05-31",
+      "val": 303100000
+    },
+    {
+      "accn": "0000001961-26-000025",
+      "cik": 1961,
+      "entityName": "GEMAXEL INC. (formerly known as Worlds Inc.)",
+      "loc": "US-FL",
+      "end": "2025-06-30",
+      "val": 835213
+    },
+    {
+      "accn": "0000950170-25-103966",
+      "cik": 2098,
+      "entityName": "ACME UNITED CORP",
+      "loc": "US-CT",
+      "end": "2025-06-30",
+      "val": 10181000
+    },
+    {
+      "accn": "0001437749-25-026668",
+      "cik": 2186,
+      "entityName": "BK Technologies Corp",
+      "loc": "US-FL",
+      "end": "2025-06-30",
+      "val": 9835000
+    },
+    {
+      "accn": "0000002488-25-000108",
+      "cik": 2488,
+      "entityName": "ADVANCED MICRO DEVICES, INC",
+      "loc": "US-CA",
+      "end": "2025-06-28",
+      "val": 3080000000
+    }
+  ]
+}

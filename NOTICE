@@ -5,6 +5,42 @@ the mascot art in public/assets/mascot/NOTICE.txt. This file covers the rest.
 
 ────────────────────────────────────────────────────────────────────────────────
 
+Market data (server/finance/; the market card in public/js/cards.js)
+
+  The finance tools call these services when a person asks, and show what they
+  answer, each answer naming its source. What each asks for, and where it is given:
+
+  CoinGecko         "Powered by CoinGecko" in every result and on the card (CoinGecko
+                    API Terms 4.1.4); nothing kept longer than 24 hours (6.1).
+  ExchangeRate-API  (open.er-api.com) "Rates By Exchange Rate API" with a link to
+                    https://www.exchangerate-api.com wherever its rate is shown.
+  FRED              "This product uses the FRED® API but is not endorsed or certified
+                    by the Federal Reserve Bank of St. Louis." Only FRED's own series.
+  European Central Bank   "Source: ECB statistics."
+  World Bank        World Bank Open Data, licensed CC BY 4.0,
+                    https://creativecommons.org/licenses/by/4.0/
+  SEC EDGAR         US government public data, asked with the owner's contact in the
+                    User-Agent (SEC_USER_AGENT), as SEC requires.
+  Frankfurter       Free for commercial use; named as the source.
+  Vietcombank, SJC  The bank's and the company's own posted prices; named as the source.
+  NSO (GSO) Vietnam Named as the source.
+
+  Used without a licence: Yahoo Finance, and the Vietnamese brokers' read-only
+  endpoints — VNDirect, KBS, Vietcap — and FMarket. These are unofficial or
+  undocumented, with no published terms for this use. They are called only on a
+  person's request, never crawled; through a shared cache and a pace per source;
+  with an honest User-Agent and never a borrowed Referer or Origin. Every answer
+  names the source, says it may be delayed and that it is for reference only, not
+  investment advice; nothing is offered for bulk export; Vietcap's analyst ratings
+  and target prices are never read or shown. If a broker or provider objects, its
+  source is switched off everywhere with FIN_SOURCE_<NAME>=off, at once and
+  without a deploy.
+
+  No code, field-mapping table or request-header list was taken from vnstock or any
+  other library: the labels come from the sources' own metadata.
+
+────────────────────────────────────────────────────────────────────────────────
+
 The Bot page (public/js/bots.js, bots-settings.js, bots-usage.js, bot-mentions.js,
 bot-avatar.js; server/bots/; server/routes/bots.js)
 
