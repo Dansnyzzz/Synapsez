@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-11-11 — A team that runs itself and says what it needs (1.21.0)
+
+**Chief sets a group to work** (`post_to_group`, `server/bots/rounds.js`; schema 46). Asked by the person in Chief's own chat, Chief writes the message into the group and its round starts at once on its own (the same segments, ceiling and budget as the person's, picked up by the heartbeat if the start is lost); Chief's chat gets one line when it is done. Only a turn the person started may do it.
+
+**Needs you.** A strip at the top of the Bot list, only when something waits: a bot's question or a step waiting for a yes in its own chat, a group's question to the person, a round waiting for Continue, a scheduled run that failed or stopped for a yes — each with its button (Answer, View, Continue, Retry), the count equal to the rows.
+
+**The list says what is going on.** Unread dots (`chats.read_seq`; the bot chats there were count as read), the amber mark of what needs the person, the working ring, pinned rows first. A row menu — from ⋯, a right click, a long press or Shift+F10 — opens, pins, pauses, duplicates, exports and deletes. A running group shows whom the message called and how each went, its step in the home transcript's words.
+
+**Scheduled runs that know when to keep quiet.** A run is offered `no_update` and `run_failed`: nothing new folds the run away (no unread mark, no preview), a failure is recorded with its reason and listed under Needs you. A task can skip a run the daily cron missed, or run it once (the default). A task set in a group belongs to the group: its prompt starts a round.
+
+**Managing bots.** Pause a bot (its tasks wait, rounds pass it by with a word, its chat refuses to answer; Resume lets the missed runs go). Duplicate one with its memory, its tasks paused. Export the team as `synapsez-bots/1` (no conversations, no keys) and import one — what it adds shown first, each bot or group whole or not at all, memory through the same secret check as typing, tasks paused, clashing names "(2)" — including the answer another assistant gives to the ready migrate prompt. A colour of its own, from twelve, in the bot's form.
+
+**Ask aside**: one question about a bot's conversation, answered in a card from its newest 60 messages with no tools, kept nowhere; the tab keeps the last five.
+
+**A first run** with Chief alone and an empty chat offers four goals and their bots, editable, made with their group without asking a model. Chief interviews for anything else one question at a time, never asking for keys in chat.
+
+**Usage** compares the total with the span before, shows the cost, and opens each bot: tokens by kind (reasoning now recorded where a provider reports it), models, groups, scheduled against typed, memory reviews and questions asked aside on lines of their own.
+
+**The finance probe ran** from Vercel Sandboxes in iad1 and sin1 (`docs/research/2026-11-10-finance-probe-iad1.md`): every source answers from iad1 except Vietcap (it refuses US addresses, answers from Singapore and Vietnam) and SJC (a Cloudflare challenge for every datacenter). The settings that follow are the owner's to make.
+
 ## 2026-11-11 — Group work that finishes, a Bot page like the home chat, finance tools (1.20.0)
 
 **A group's work finishes** (`server/bots/rounds.js`, `server/bots/continue.js`; schema 44). The owner's three researching bots were cut off at 300 seconds with Chief's answer and its document still to come, and nothing picked them up. A round now runs in segments over the group's `pending`, written after every batch: a segment short of time asks this deployment for the next one once it has let the group go; one that was killed is found by the heartbeat. A member cut off mid-step carries on rather than starting over. At most eight segments a message, then Continue; the hand-off ceiling waits for Continue too ("tiếp tục" works). What the person writes while the group works is answered in that round; changing the model chip moves the next batch to it; Stop lets go of what was waiting.
