@@ -155,5 +155,94 @@ section('usage keeps reasoning and who started the turn, and drills down');
   check('the span\'s total, for the comparison', total.tokens === 2130 && Math.abs(total.cost - 0.03) < 1e-9, JSON.stringify(total));
 }
 
+/* ── Task 3: Chief starts a group's work; paused members; who is at work ── */
+
+const { runBotTool, __chain } = await import('../server/bots/tools.js');
+const { continueGroup } = await import('../server/bots/continue.js');
+const nameOfChat = async (chatId) => {
+  const chat = await store.getChat(uid, chatId);
+  const bot = chat?.bot_id ? await store.getBot(uid, chat.bot_id) : null;
+  return bot?.name || '?';
+};
+/** The agent loop, scripted: `plan[name]` is that bot's reply, or a function of the call returning one. */
+function fakeAgent(plan) {
+  const calls = [];
+  const run = async ({ chatId, signal, turnOrigin }) => {
+    const name = await nameOfChat(chatId);
+    const history = await store.listMessages(uid, chatId);
+    const prompt = [...history].reverse().find((m) => m.role === 'user')?.text || '';
+    const call = { name, prompt, chatId, turnOrigin };
+    calls.push(call);
+    let step = plan[name];
+    if (typeof step === 'function') step = await step(call);
+    if (signal?.aborted) return;
+    await store.appendMessage(uid, chatId, { id: id(), role: 'assistant', text: String(step ?? '[PASS]') });
+  };
+  return { run, calls };
+}
+
+section('Chief writes to a group for the person, and the group gets to work');
+{
+  const chiefChat = await store.botChat(uid, { botId: chief.id, title: 'Chief' });
+  const writerChat = await store.botChat(uid, { botId: writer.id, title: 'Writer' });
+  const chained = [];
+  __chain.next = (userId, groupId) => chained.push(groupId);
+
+  const member = await runBotTool({ userId: uid, chatId: writerChat.id, name: 'post_to_group', input: { group: 'Desk', message: 'Draft it' }, turnOrigin: 'person' });
+  check('a member cannot', member.isError && /main bot/i.test(member.content), member.content);
+  for (const turnOrigin of ['handoff', 'task']) {
+    const r = await runBotTool({ userId: uid, chatId: chiefChat.id, name: 'post_to_group', input: { group: 'Desk', message: 'Draft it' }, turnOrigin });
+    check(`  nor Chief in a turn a ${turnOrigin} started`, r.isError && /Only the person sets a group to work/.test(r.content), r.content);
+  }
+  check('  nothing was queued by a refusal', !(await store.getBotGroup(uid, group.id)).pending && !chained.length);
+  const missing = await runBotTool({ userId: uid, chatId: chiefChat.id, name: 'post_to_group', input: { group: 'Nowhere', message: 'x' }, turnOrigin: 'person' });
+  check('a group that is not there is said', missing.isError && /no group called Nowhere/.test(missing.content));
+
+  const ok = await runBotTool({ userId: uid, chatId: chiefChat.id, name: 'post_to_group', input: { group: 'desk', message: '@Scout find three sources on tea' }, turnOrigin: 'person' });
+  check('from its own chat, for the person, it starts', !ok.isError && /Posted in Desk/.test(ok.content), ok.content);
+  const pending = (await store.getBotGroup(uid, group.id)).pending;
+  check('  the round is queued for the member it named, and asked for at once', pending?.reason === 'chief' && pending.queue.length === 1 && pending.queue[0].botId === scout.id && chained.join() === group.id, JSON.stringify(pending));
+  check('  whom it called is there for the strip', pending.called?.[0]?.bot === scout.id && pending.called[0].how === 'called');
+  const log = await store.botChat(uid, { groupId: group.id, title: 'Desk' });
+  const line = (await store.listMessages(uid, log.id)).at(-1);
+  check('  Chief\'s line is in the group, as Chief\'s', line.role === 'assistant' && line.bot === chief.id && line.via === 'chief' && /three sources/.test(line.text));
+  const again = await runBotTool({ userId: uid, chatId: chiefChat.id, name: 'post_to_group', input: { group: 'Desk', message: 'More' }, turnOrigin: 'person' });
+  check('  a second while it waits is refused', again.isError && /at work on something else/.test(again.content));
+  const listed = await store.listStaleGroupRounds({ limit: 10 });
+  check('  the heartbeat would start it if the request were lost', listed.some((r) => r.group_id === group.id));
+
+  const agent = fakeAgent({ Scout: 'Three sources: A, B, C.' });
+  const ran = await continueGroup({ userId: uid, groupId: group.id, runAgent: agent.run, chain: async () => {} });
+  check('the round runs', ran.status === 'ran' && agent.calls.length === 1 && agent.calls[0].name === 'Scout', JSON.stringify(ran));
+  check('  the member is told Chief wrote it, and its turn is not the person\'s', /Chief wrote the newest line/.test(agent.calls[0].prompt) && agent.calls[0].turnOrigin === 'handoff', agent.calls[0].turnOrigin);
+  check('  and the group is free again', !(await store.getBotGroup(uid, group.id)).pending);
+  const told = (await store.listMessages(uid, chiefChat.id)).at(-1);
+  check('Chief\'s chat gets one line when it is done', told?.role === 'assistant' && told.text === 'Desk is done — see the group.' && told.groupDone === group.id, JSON.stringify(told));
+  __chain.next = null;
+}
+
+section('a paused member sits the round out; how each went is kept');
+{
+  await store.updateBot(uid, scout.id, { pausedAt: new Date().toISOString() });
+  const { runGroupRound } = await import('../server/bots/rounds.js');
+  const agent = fakeAgent({ Writer: ({ prompt }) => (/Scout is paused by the user/.test(prompt) ? 'Done; Scout is paused, so I checked it myself.' : 'Done, @Scout check it'), Scout: 'Checked.' });
+  const events = [];
+  const saved = [];
+  const real = store.setGroupPending.bind(store);
+  store.setGroupPending = async (u, g, p) => {
+    if (p) saved.push(structuredClone(p));
+    return real(u, g, p);
+  };
+  await runGroupRound({ user, groupId: group.id, text: 'Write the intro', emit: (event, data) => events.push({ event, data }), signal: new AbortController().signal, runAgent: agent.run });
+  store.setGroupPending = real;
+  check('the paused bot is not run', !agent.calls.some((c) => c.name === 'Scout'), agent.calls.map((c) => c.name).join());
+  const posts = events.filter((e) => e.event === 'post').map((e) => e.data.message);
+  check('  the group is told it is paused', posts.some((m) => m.notice === 'paused' && m.params?.bot === scout.id));
+  const states = saved.map((p) => (p.called || []).map((c) => `${(c.bot === writer.id ? 'W' : 'S')}:${c.how}`).join(','));
+  check('  the bot that called it hears it is paused, and stops calling it', agent.calls.filter((c) => c.name === 'Writer').length === 2, agent.calls.map((c) => c.name).join());
+  check('whom the message called and how each went, as it went', states.includes('W:called') && states.includes('W:working') && states.some((s) => s.startsWith('W:answered')) && states.some((s) => /S:paused/.test(s)), states.join(' | '));
+  await store.updateBot(uid, scout.id, { pausedAt: null });
+}
+
 console.log(failures ? `\n\x1b[31m${failures} failed\x1b[0m` : '\n\x1b[32mall passed\x1b[0m');
 process.exit(failures ? 1 : 0);

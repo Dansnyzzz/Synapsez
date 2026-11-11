@@ -1769,6 +1769,8 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
     // A bot's own chat is the home chat, which draws question cards (owner, 2026-11-10); in a
     // group nobody is there to press one — a member asks with ask_person instead.
     if (persona && chat.bot_group_id) out.add('ask_options');
+    // Chief writes to a group from its own chat (spec B.1); inside a group it just replies.
+    if (persona && chat.bot_group_id) out.add('post_to_group');
     return out;
   };
   let withhold = withheldHere();

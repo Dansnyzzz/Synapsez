@@ -4666,7 +4666,7 @@ export function createPgStore(connectionString) {
            FROM bot_groups g
            JOIN chats c ON c.user_id = g.user_id AND c.bot_group_id = g.id AND c.bot_id IS NULL AND NOT c.incognito
           WHERE g.pending IS NOT NULL
-            AND g.pending->>'reason' IN ('time', 'running')
+            AND g.pending->>'reason' IN ('time', 'running', 'chief', 'task')
             AND COALESCE((g.pending->>'segments')::int, 0) < $3
             AND COALESCE((g.pending->>'at')::timestamptz, NOW()) > NOW() - ($4 || ' milliseconds')::interval
             AND (c.run_lock_by IS NULL OR c.run_lock_at <= NOW() - ($1 || ' milliseconds')::interval)

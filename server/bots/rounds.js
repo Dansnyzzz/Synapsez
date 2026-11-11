@@ -4,6 +4,8 @@ import { runAgent as realRunAgent } from '../agent.js';
 import { redactSecrets } from '../redact.js';
 import { mentionedBots } from '../../public/js/bot-mentions.js';
 import { HANDOFF_CEILING, adminOf } from './team.js';
+import { getPrefs } from '../settings.js';
+import { translateMessage } from '../i18n/index.js';
 
 /**
  * A group chat's round: what happens after the person writes in a group (owner,
@@ -57,6 +59,14 @@ const TURN_FLOOR_MS = 40_000;
 export const ROUND_BUDGET_MS = 285_000;
 /** Segments one message may run before the person is asked to Continue (≈ 38 minutes). */
 export const MAX_SEGMENTS = 8;
+
+/**
+ * What a group has pending that goes on by itself (spec B.1, B.4): a segment ran short of
+ * time ('time'), one is at work ('running'), or Chief or a scheduled task queued a round
+ * that has not started yet ('chief', 'task'). The others — 'ceiling', 'segments' — wait
+ * for Continue.
+ */
+export const RESUMABLE = Object.freeze(['time', 'running', 'chief', 'task']);
 
 const PASS = /^\s*\[?PASS\]?\s*\.?\s*$/i;
 /**
@@ -113,6 +123,7 @@ function reportWhy(report, nameOf) {
   if (report.answered?.length) said.push(`${names(report.answered)} posted above.`);
   if (report.passed?.length) said.push(`${names(report.passed)} gave no answer — do not wait for ${report.passed.length === 1 ? 'it' : 'them'}.`);
   if (report.failed?.length) said.push(`${names(report.failed)} could not answer.`);
+  if (report.paused?.length) said.push(`${names(report.paused)} ${report.paused.length === 1 ? 'is' : 'are'} paused by the user and took no part: hand ${report.paused.length === 1 ? 'it' : 'them'} nothing until the user resumes ${report.paused.length === 1 ? 'it' : 'them'}.`);
   return `What you handed on is back: ${said.join(' ') || 'nobody answered.'} Answer with what came of it — for the user, or hand on the next step with @Name.`;
 }
 
@@ -155,7 +166,7 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
   const waiting = group.pending && ['ceiling', 'segments'].includes(group.pending.reason);
   // A round still working between two segments (or one a killed invocation left): what
   // the person writes joins it — the queue goes on, and the scan answers their line.
-  const working = group.pending && ['time', 'running'].includes(group.pending.reason);
+  const working = group.pending && RESUMABLE.includes(group.pending.reason);
   let joining = false;
   if (!resume && said && working) {
     resume = true;
@@ -174,6 +185,7 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
     state = structuredClone(group.pending);
     state.queue ||= [];
     state.owed ||= {};
+    state.called ||= [];
     state.working = [];
     if (fresh) {
       state.handoffs = 0;
@@ -181,7 +193,7 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
     }
   } else {
     if (!model && group.model) model = group.model;
-    state = { messageId: null, queue: [], handoffs: 0, segments: 0, model: model || null, reason: 'running', owed: {}, working: [], lastSeq: -1 };
+    state = { messageId: null, queue: [], handoffs: 0, segments: 0, model: model || null, reason: 'running', owed: {}, working: [], called: [], lastSeq: -1 };
   }
   let lastSeq = Number.isFinite(Number(state.lastSeq)) ? Number(state.lastSeq) : -1;
 
@@ -237,6 +249,7 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
           : admin
             ? [{ botId: admin, by: null, report: null, person: 'admin' }]
             : [];
+      state.called = state.queue.map((q) => ({ bot: q.botId, how: 'called' }));
     }
   }
   if (!resume && model) await store.setGroupModel(userId, groupId, model);
@@ -264,13 +277,26 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
       if (item.person === 'named') parts.push(`The user called you with @${self.name}. Answer them.`);
       else if (item.person === 'answer') parts.push("You asked the user a question in the group; their answer is the newest line. Carry on with it.");
       else if (item.person === 'admin') parts.push('The user wrote to the group and you are its admin: answer, or hand the work to the member who should do it with @Name.');
+      else if (item.person === 'chief') parts.push(`${nameOf(item.from) || "The user's main bot"} wrote the newest line to the group for the user. Do what it asks, or hand the work to the member who should do it with @Name, and reply with the result for the group.`);
+      else if (item.person === 'task') parts.push("The user's scheduled task for this group posted the newest line. Do it and reply with the result for the group; reply [PASS] when there is nothing worth saying this time.");
       else parts.push('Carry on.');
     }
     return parts.join(' ');
   };
 
-  /** The person's own call, or a bot's hand-off (and the turn reading what came back). */
-  const originOf = (item) => (item.person && !item.by && !item.report ? 'person' : 'handoff');
+  /**
+   * Who started a member's turn: the person's own call; a scheduled task's ('task'); or a
+   * bot — a hand-off, the turn reading what came back, or Chief writing to the group.
+   */
+  const originOf = (item) => (item.by || item.report || !item.person || item.person === 'chief' ? 'handoff' : item.person === 'task' ? 'task' : 'person');
+
+  /** Who this message called and how each went, for the strip above the box (spec B.3). */
+  const mark = (botId, how) => {
+    state.called ||= [];
+    const have = state.called.find((c) => c.bot === botId);
+    if (have) have.how = how;
+    else state.called.push({ bot: botId, how });
+  };
 
   const setWorking = async (botId, tool) => {
     state.working = (state.working || []).filter((w) => w.bot !== botId);
@@ -281,11 +307,17 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
   /**
    * One member's turn. Resolves to what it posted, if anything, and how it went:
    * answered, passed, failed, waiting (for a yes), unfinished (cut off by the
-   * segment's end — the next segment carries it on), or gone (no longer a member).
+   * segment's end — the next segment carries it on), gone (no longer a member), or
+   * paused (the person paused it, so it sits rounds out — spec B.5).
    */
   async function memberTurn(item, together) {
     const self = byId.get(item.botId);
     if (!self || !(group.members || []).includes(self.id)) return { message: null, outcome: 'gone' };
+    // A paused bot sits rounds out (spec B.5): the group is told, and it counts as passing.
+    if (self.paused_at) {
+      await notice('paused', `${self.name} is paused.`, { bot: self.id });
+      return { message: null, outcome: 'paused' };
+    }
     const chat = await store.botChat(userId, { botId: self.id, groupId, title: `${self.name} · ${group.name}` });
     const since = new Date(Date.now() - 1000);
     if (!item.resume) {
@@ -306,6 +338,7 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
       item.seenTo = lines.length ? Number(lines.at(-1).seq) : null;
       item.since = since.toISOString();
     }
+    mark(self.id, 'working');
     await setWorking(self.id, '');
 
     emit('member_start', { bot: self.id });
@@ -389,7 +422,10 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
       const named = mentionedBots(line.text, members);
       const targets = named.length ? named.map((b) => b.id) : adminOf(group) ? [adminOf(group)] : [];
       for (const botId of targets) {
-        if (!state.queue.some((q) => q.botId === botId && !q.resume)) state.queue.push({ botId, by: null, report: null, person: named.length ? 'named' : 'admin' });
+        if (!state.queue.some((q) => q.botId === botId && !q.resume)) {
+          state.queue.push({ botId, by: null, report: null, person: named.length ? 'named' : 'admin' });
+          mark(botId, 'called');
+        }
       }
     }
     if (!state.queue.length) break;
@@ -447,6 +483,8 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
     };
     results.forEach((r, i) => {
       if (r.outcome === 'unfinished') next.push(batch[i]);
+      const how = { answered: 'answered', passed: 'passed', gone: 'passed', failed: 'failed', waiting: 'waiting', paused: 'paused' }[r.outcome];
+      if (how) mark(batch[i].botId, how);
     });
     for (const r of results) {
       if (!r.message) continue;
@@ -455,8 +493,9 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
     batch.forEach((item, i) => {
       const r = results[i];
       if (!item.by || r.outcome === 'unfinished' || r.outcome === 'aborted') return;
-      const owed = (state.owed[item.by] ||= { answered: [], passed: [], failed: [] });
-      const kind = r.outcome === 'answered' ? 'answered' : r.outcome === 'passed' || r.outcome === 'gone' ? 'passed' : 'failed';
+      const owed = (state.owed[item.by] ||= { answered: [], passed: [], failed: [], paused: [] });
+      const kind = r.outcome === 'answered' ? 'answered' : r.outcome === 'passed' || r.outcome === 'gone' ? 'passed' : r.outcome === 'paused' ? 'paused' : 'failed';
+      (owed[kind] ||= []);
       if (!owed[kind].includes(item.botId)) owed[kind].push(item.botId);
     });
     for (const [asker, owed] of Object.entries(state.owed)) {
@@ -469,6 +508,7 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
     if (only && only.person === 'admin' && !only.by && !only.report && results[0].outcome === 'passed' && !next.length) {
       await notice('nobody', 'Nobody answered. Call a member with @Name to ask them.');
     }
+    for (const q of next) if (!q.resume) mark(q.botId, 'called');
     state.queue = next;
     await save({ reason: 'running' });
   }
@@ -484,5 +524,63 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
     return { stopReason: 'handoff_ceiling', turns, handoffs: state.handoffs, pending: true };
   }
   await store.setGroupPending(userId, groupId, null);
+  if (state.notify?.chatId) await tellStarter(userId, state.notify, group).catch(() => {});
   return { stopReason, turns, handoffs: state.handoffs, pending: false };
+}
+
+/**
+ * Chief's own chat hears once when a round it started has ended (spec B.1): one line, in
+ * the person's language, naming the group.
+ */
+async function tellStarter(userId, notify, group) {
+  const prefs = await getPrefs(userId).catch(() => /** @type {any} */ ({}));
+  const text = translateMessage(`${group.name} is done — see the group.`, prefs?.language === 'vi' ? 'vi' : 'en');
+  await getStore().appendMessage(userId, notify.chatId, { id: crypto.randomUUID(), role: 'assistant', text, groupDone: group.id });
+}
+
+/**
+ * Queue a round that runs by itself (spec B.1, B.4): Chief writing to a group for the
+ * person (`by`: Chief's id, reason 'chief'), or a group's scheduled task (reason 'task').
+ * Writes the line, queues the members it names or else the admin, and saves the group's
+ * `pending`; whoever calls this then starts it (`continueGroup`, or `chainNext`).
+ * Refused while the group is at work or has a round waiting to start.
+ *
+ * @param {{ userId: string, groupId: string, text: string, reason: 'chief' | 'task', by?: string | null, notify?: { chatId: string } | null }} options
+ * @returns {Promise<{ started: boolean, why?: 'gone' | 'busy' | 'empty' | 'nobody', messageId?: string }>}
+ */
+export async function startPendingRound({ userId, groupId, text, reason, by = null, notify = null }) {
+  const store = getStore();
+  const group = await store.getBotGroup(userId, groupId);
+  if (!group) return { started: false, why: 'gone' };
+  if (group.pending && RESUMABLE.includes(group.pending.reason)) return { started: false, why: 'busy' };
+  const said = String(text ?? '').trim();
+  if (!said) return { started: false, why: 'empty' };
+  const bots = await store.listBots(userId);
+  const members = bots.filter((b) => (group.members || []).includes(b.id));
+  const named = mentionedBots(said, members);
+  const admin = adminOf(group);
+  const targets = named.length ? named.map((b) => b.id) : admin ? [admin] : [];
+  if (!targets.length) return { started: false, why: 'nobody' };
+  const log = await store.botChat(userId, { groupId, title: group.name });
+  const line = await store.appendMessage(
+    userId,
+    log.id,
+    by ? { id: crypto.randomUUID(), role: 'assistant', bot: by, text: said, via: reason } : { id: crypto.randomUUID(), role: 'user', text: said, origin: 'task' },
+  );
+  const queue = targets.map((botId) => ({ botId, by: null, report: null, person: reason, ...(by ? { from: by } : {}) }));
+  await store.setGroupPending(userId, groupId, {
+    messageId: line?.id || null,
+    queue,
+    handoffs: 0,
+    segments: 0,
+    model: group.model || null,
+    reason,
+    owed: {},
+    working: [],
+    called: queue.map((q) => ({ bot: q.botId, how: 'called' })),
+    lastSeq: Number.isFinite(Number(line?.seq)) ? Number(line.seq) : -1,
+    notify,
+    at: new Date().toISOString(),
+  });
+  return { started: true, messageId: line?.id };
 }

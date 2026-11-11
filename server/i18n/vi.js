@@ -1463,4 +1463,6 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'Vietcap lists no covered warrants or index futures{0}.': 'Vietcap không có chứng quyền hay hợp đồng tương lai chỉ số nào{0}.',
   'macro needs an indicator: gdp, cpi (inflation), unemployment, rate, 10y, population — or a World Bank or FRED code.': 'macro cần một chỉ tiêu: gdp, cpi (lạm phát), unemployment (thất nghiệp), rate (lãi suất), 10y, population (dân số) — hoặc một mã của Ngân hàng Thế giới hay FRED.',
   'There is no rate from {0} to {1} today: {2}': 'Hôm nay không có tỷ giá từ {0} sang {1}: {2}',
+  // The Bot page's team features (spec B, 2026-11-11).
+  '{0} is done — see the group.': '{0} đã xong — xem trong nhóm.',
 };

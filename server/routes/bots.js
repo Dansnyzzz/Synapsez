@@ -8,7 +8,7 @@ import { log } from '../util/trace.js';
 import { clientError } from '../util/clientError.js';
 import { BotError, CREATURES, LIMITS, HANDOFF_CEILING, botView, groupView, createBot, createGroup, distinctFaces, ensureChief, removeBot, updateBot, updateGroup } from '../bots/team.js';
 import { listMemory, pin, remember, undoForget } from '../bots/memory.js';
-import { runGroupRound } from '../bots/rounds.js';
+import { runGroupRound, RESUMABLE } from '../bots/rounds.js';
 import { chainNext } from '../bots/continue.js';
 import { parseSchedule } from '../scheduler.js';
 
@@ -62,7 +62,7 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
         groups: groups.map((g) => {
           const p = last('bot_group_id', g.id);
           // A round between two segments is still running; who is at work names the row's line.
-          const between = !!g.pending && ['time', 'running'].includes(g.pending.reason);
+          const between = !!g.pending && RESUMABLE.includes(g.pending.reason);
           const busy = running(p) || between;
           return { ...groupView(g), last: preview(p), at: p?.updated_at || g.updated_at, running: busy, working: busy ? (g.pending?.working || []).map((w) => w.bot) : [] };
         }),
@@ -281,8 +281,9 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       const pending = group.pending || null;
       res.json({
         chatId: chat.id,
-        running: running(chat) || (!!pending && ['time', 'running'].includes(pending.reason)),
+        running: running(chat) || (!!pending && RESUMABLE.includes(pending.reason)),
         pending: pending ? { reason: pending.reason } : null,
+        called: pending && RESUMABLE.includes(pending.reason) ? pending.called || [] : [],
         messages: await store.listMessages(req.user.id, chat.id),
       });
     }),
@@ -333,7 +334,7 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       const group = await store.getBotGroup(req.user.id, req.params.id);
       if (!group) return res.status(404).json({ error: 'No such group chat.' });
       const chat = await store.botChat(req.user.id, { groupId: group.id, title: group.name });
-      if (running(chat) || (group.pending && ['time', 'running'].includes(group.pending.reason))) {
+      if (running(chat) || (group.pending && RESUMABLE.includes(group.pending.reason))) {
         return res.status(409).json({ error: 'This group is answering. Stop it first, then reset.', code: 'running' });
       }
       const removed = await store.resetConversation(req.user.id, { groupId: group.id });
@@ -464,9 +465,11 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       const held = running(chat);
       res.setHeader('Cache-Control', 'private, no-store');
       res.json({
-        running: held || (!!pending && ['time', 'running'].includes(pending.reason)),
+        running: held || (!!pending && RESUMABLE.includes(pending.reason)),
         messages: await store.messagesSince(req.user.id, chat.id, since),
         working: held ? pending?.working || [] : [],
+        // Whom the person's message called and how each went: the strip above the box (spec B.3).
+        called: pending && RESUMABLE.includes(pending.reason) ? pending.called || [] : [],
         pending: pending ? { reason: pending.reason } : null,
       });
     }),
