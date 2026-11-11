@@ -9,7 +9,7 @@
  * themselves (see server/imageProxy.js), so the page's image policy stays
  * "this app only".
  */
-import { t } from './i18n.js';
+import { t, has, localeTag } from './i18n.js';
 import { createQuizPlan } from './quiz-plan.js';
 
 /** A tag with a class and, optionally, text. */
@@ -733,8 +733,169 @@ function connectorsFigure(widget) {
   return figure;
 }
 
+/* ── market data (server/finance) ──────────────────────────────── */
+
+/** Where each source's own pages are, so its name in the footer is a way to it. */
+const SOURCE_SITES = {
+  'Yahoo Finance': 'https://finance.yahoo.com',
+  VNDIRECT: 'https://www.vndirect.com.vn',
+  KBS: 'https://www.kbsec.com.vn',
+  Vietcap: 'https://www.vietcap.com.vn',
+  'SEC EDGAR': 'https://www.sec.gov/edgar',
+  CoinGecko: 'https://www.coingecko.com',
+  SJC: 'https://sjc.com.vn',
+  Vietcombank: 'https://www.vietcombank.com.vn',
+  'World Bank': 'https://data.worldbank.org',
+  FRED: 'https://fred.stlouisfed.org',
+  ECB: 'https://data.ecb.europa.eu',
+  Frankfurter: 'https://frankfurter.dev',
+  'ExchangeRate-API': 'https://www.exchangerate-api.com',
+  FMarket: 'https://fmarket.vn',
+};
+
+/** A price or figure in the app's language: no decimals for ₫ and volumes, two for the rest. */
+function marketNumber(value, unit) {
+  if (value == null || !Number.isFinite(Number(value))) return '—';
+  const n = Number(value);
+  const digits = unit === 'VND' || unit == null ? 0 : Math.abs(n) < 10 ? 4 : 2;
+  const text = new Intl.NumberFormat(localeTag(), { maximumFractionDigits: digits }).format(n);
+  if (unit === 'VND') return `${text} ₫`;
+  if (unit === 'points') return `${text} ${t('market.points')}`;
+  return unit ? `${text} ${unit}` : text;
+}
+
+/** "+1,20 %" with its sign, never colour alone. */
+function marketChange(pct) {
+  const n = Number(pct);
+  const sign = n > 0 ? '+' : n < 0 ? '−' : '';
+  return `${sign}${new Intl.NumberFormat(localeTag(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.abs(n))} %`;
+}
+
+/** When, in the exchange's own zone; the date alone for a daily figure. */
+function marketWhen(iso, zone, dateOnly) {
+  const date = new Date(iso);
+  if (!iso || Number.isNaN(date.getTime())) return String(iso || '');
+  /** @type {Intl.DateTimeFormatOptions} */
+  const options = dateOnly ? { day: 'numeric', month: 'short', year: 'numeric' } : { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' };
+  try {
+    return new Intl.DateTimeFormat(localeTag(), { ...options, ...(zone ? { timeZone: zone } : {}) }).format(date);
+  } catch {
+    return new Intl.DateTimeFormat(localeTag(), options).format(date);
+  }
+}
+
+/** A line of the closes, 120 × 32, drawn by hand — no chart library for twenty points. */
+function sparkline(series, up) {
+  const points = (series || []).map((p) => Number(p?.c)).filter((c) => Number.isFinite(c));
+  if (points.length < 2) return null;
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const span = max - min || 1;
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 120 32');
+  svg.setAttribute('width', '120');
+  svg.setAttribute('height', '32');
+  svg.setAttribute('class', `xmarket__spark ${up ? 'is-up' : 'is-down'}`);
+  svg.setAttribute('role', 'img');
+  const first = series.find((p) => Number.isFinite(Number(p?.c)));
+  const last = [...series].reverse().find((p) => Number.isFinite(Number(p?.c)));
+  svg.setAttribute('aria-label', t('market.spark', { from: String(first?.t || '').slice(0, 10), to: String(last?.t || '').slice(0, 10) }));
+  const line = document.createElementNS(NS, 'polyline');
+  line.setAttribute('fill', 'none');
+  line.setAttribute('stroke', 'currentColor');
+  line.setAttribute('stroke-width', '1.5');
+  line.setAttribute('stroke-linejoin', 'round');
+  line.setAttribute('points', points.map((c, i) => `${((i / (points.length - 1)) * 118 + 1).toFixed(1)},${(30 - ((c - min) / span) * 28).toFixed(1)}`).join(' '));
+  svg.append(line);
+  return svg;
+}
+
+/**
+ * A market card: the numbers, a sparkline for a series, the session, and a
+ * footer with the source, its credit and "for reference only" — so a source's
+ * terms are met even when the model's sentence drops them. Every word is the
+ * browser's (locales); the widget carries keys and numbers.
+ */
+export function marketFigure(widget) {
+  const rows = Array.isArray(widget?.rows) ? widget.rows : [];
+  if (!rows.length) return null;
+  const figure = h('figure', 'widget xcard xcard--market');
+  figure.setAttribute('aria-label', String(widget.title || t('market.kind')));
+  const head = h('div', 'xcard__head');
+  const titles = h('div');
+  titles.append(h('div', 'xcard__title', widget.title || t('market.kind')));
+  if (widget.adjusted !== undefined) titles.append(h('div', 'xcard__sub', t(widget.adjusted ? 'market.adjusted' : 'market.raw')));
+  head.append(titles);
+  const chip = widget.session && has(`market.session.${widget.session}`) ? t(`market.session.${widget.session}`) : has(`market.delay.${widget.delay}`) ? t(`market.delay.${widget.delay}`) : '';
+  if (chip) head.append(h('span', `xcard__kind xmarket__session${widget.session ? ` is-${widget.session}` : ''}`, chip));
+  const body = h('div', 'xcard__body');
+
+  const change = widget.change && Number.isFinite(Number(widget.change.pct)) ? Number(widget.change.pct) : null;
+  const labelOf = (row) => row.label || (row.key && has(`market.row.${row.key}`) ? t(`market.row.${row.key}`) : row.key || '');
+  // One instrument: its first figure large, with its change. Several: a list, one row each.
+  const main = rows[0];
+  const single = !!main.key && !main.label;
+  if (single) {
+    const top = h('div', 'xmarket__top');
+    const price = h('div', 'xmarket__price');
+    if (main.key !== 'price') price.append(h('span', 'xmarket__what', labelOf(main)));
+    price.append(h('span', 'xmarket__value', marketNumber(main.value, main.unit)));
+    if (widget.perUnit === 'lượng') price.append(h('span', 'xmarket__per', t('market.perLuong')));
+    if (change != null) {
+      const moved = h('span', `xmarket__change ${change >= 0 ? 'is-up' : 'is-down'}`, `${change >= 0 ? '▲' : '▼'} ${marketChange(change)}${widget.change.window === '24h' ? ` (${t('market.window24h')})` : ''}`);
+      moved.setAttribute('aria-label', `${t('market.change')} ${marketChange(change)}`);
+      price.append(moved);
+    }
+    top.append(price);
+    const spark = sparkline(widget.series, change == null ? true : change >= 0);
+    if (spark) top.append(spark);
+    body.append(top);
+  }
+
+  const list = h('dl', 'xmarket__rows');
+  for (const row of rows.slice(single ? 1 : 0, 12)) {
+    const label = labelOf(row);
+    const item = h('div', 'xmarket__row');
+    item.append(h('dt', null, label));
+    const dd = h('dd', null, row.key === 'volume' ? marketNumber(row.value, null) : marketNumber(row.value, row.unit));
+    if (row.sub != null && row.sub !== '') {
+      const sub = typeof row.sub === 'number' ? marketChange(row.sub) : String(row.sub);
+      dd.append(h('span', `xmarket__sub${typeof row.sub === 'number' ? (row.sub >= 0 ? ' is-up' : ' is-down') : ''}`, sub));
+    }
+    item.append(dd);
+    list.append(item);
+  }
+  if (list.childElementCount) body.append(list);
+
+  const foot = h('div', 'xmarket__foot');
+  const source = h('p', 'xmarket__source');
+  const site = SOURCE_SITES[String(widget.source || '')];
+  const name = site ? link(site, widget.source, 'xmarket__link') : h('span', null, widget.source || '');
+  source.append(document.createTextNode(`${t('market.source')} `), name);
+  const when = marketWhen(widget.asOf, widget.zone, widget.dateOnly);
+  const delay = has(`market.delay.${widget.delay}`) ? t(`market.delay.${widget.delay}`) : '';
+  source.append(document.createTextNode([when, delay].filter(Boolean).map((s) => ` · ${s}`).join('')));
+  foot.append(source);
+  for (const credit of Array.isArray(widget.attribution) ? widget.attribution : []) {
+    const line = h('p', 'xmarket__credit');
+    const url = String(credit).match(/https?:\/\/\S+/)?.[0];
+    if (url) {
+      line.append(document.createTextNode(String(credit).slice(0, String(credit).indexOf(url))), link(url.replace(/[.,)]+$/, ''), url.replace(/^https?:\/\//, '').replace(/[.,)/]+$/, ''), 'xmarket__link'));
+    } else if (/^Powered by CoinGecko$/.test(String(credit))) {
+      line.append(link('https://www.coingecko.com', credit, 'xmarket__link'));
+    } else line.textContent = String(credit);
+    foot.append(line);
+  }
+  foot.append(h('p', 'xmarket__disclaimer', t('market.disclaimer')));
+  body.append(foot);
+  figure.append(head, body);
+  return figure;
+}
+
 /** The right drawing for a widget of one of these kinds, or null. */
 export function richWidget(widget) {
+  if (widget?.kind === 'market') return marketFigure(widget);
   if (widget?.kind === 'map') return mapFigure(widget);
   if (widget?.kind === 'images') return galleryFigure(widget);
   if (widget?.kind === 'card') return cardFigure(widget);
