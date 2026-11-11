@@ -630,5 +630,30 @@ section('7g fx.js: reference rates down a chain, a bank\'s posted rates, and the
   check('  and a pair not in ₫ is passed on', (await refusal(fx.fromSource('vietcombank', 'EUR', ['USD'], null, ctx))) instanceof http.SourceError);
 }
 
+const gold = await import('../server/finance/sources/gold.js');
+
+section('7h gold.js: SJC per lượng, and the world price per ounce');
+{
+  await fresh();
+  const goldChart = (() => {
+    const c = fixture('yahoo-chart-aapl.json');
+    c.chart.result[0].meta = { ...c.chart.result[0].meta, symbol: 'GC=F', currency: 'USD', instrumentType: 'FUTURE', regularMarketPrice: 4_012.5, longName: 'Gold Dec 26', fullExchangeName: 'COMEX' };
+    return c;
+  })();
+  const fetchImpl = serve([
+    ['sjc.com.vn', 'sjc.json'],
+    ['/chart/GC%3DF', goldChart],
+    ['/chart/SI%3DF', { status: 404, body: fixture('yahoo-notfound.json') }],
+  ]);
+  const ctx = { fetchImpl };
+  const rows = await gold.sjc(ctx);
+  check('SJC bars: buying and selling in ₫ per lượng (137,900,000 / 140,900,000)', rows[0].buy === 137_900_000 && rows[0].sell === 140_900_000 && rows[0].unit === 'VND/lượng' && rows[0].branch === 'Hồ Chí Minh', JSON.stringify(rows[0]));
+  check('  the board\'s own time, in Hanoi', rows[0].asOf === '2026-11-10T06:50:00.000Z', rows[0].asOf);
+  await gold.sjc(ctx);
+  check('  kept five minutes: asked once', fetchImpl.calls.filter((c) => c.url.includes('sjc.com.vn')).length === 1);
+  const world = await gold.world(ctx);
+  check('world gold from GC=F in USD per ounce; silver missing is not a failure', world.length === 1 && world[0].price === 4_012.5 && world[0].unit === 'USD/oz', JSON.stringify(world.map((w) => w.symbol)));
+}
+
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll finance checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);
