@@ -1,3 +1,4 @@
+import { ASIA_REGION, relayFor } from './relay.js';
 import fs from 'node:fs';
 import { take } from '../freeTier.js';
 
@@ -80,7 +81,8 @@ export const sourceLabel = (name) => LABEL[sourceOf(name)] || String(name);
  */
 const REFUSES_THIS_SERVER = Object.freeze({
   sjc: () => !!process.env.VERCEL,
-  vietcap: () => !!process.env.VERCEL && !/^(sin|hkg|hnd|kix|icn|bom)\d/i.test(String(process.env.VERCEL_REGION || '')),
+  // Asked through the Singapore relay where the deployment has one (relay.js, owner 2026-11-11).
+  vietcap: () => !!process.env.VERCEL && !ASIA_REGION.test(String(process.env.VERCEL_REGION || '')) && !relayFor('vietcap'),
 });
 
 /** What `FIN_SOURCE_<NAME>` says: 'off', 'on', or nothing. */
@@ -102,7 +104,7 @@ export function enabled(source) {
   return !REFUSES_THIS_SERVER[name]?.();
 }
 
-/** Sources whose bare 400 is a refusal of the asker, not a mistake in the request (Vietcap, outside Asia). */
+/** Sources whose bare 400 is a refusal of the asker, not a mistake in the request (Vietcap, from a US address). */
 const REFUSES_WITH_400 = new Set(['vietcap']);
 
 const PACE_MS = { vndirect: 1000, kbs: 1000, vietcap: 1000, yahoo: 500, sec: 200, default: 0 };
@@ -191,17 +193,29 @@ export async function getResponse(source, url, { headers = {}, timeoutMs = 8000,
   // The caller's headers, less anything that would say we are someone else.
   const own = Object.fromEntries(Object.entries(headers).filter(([key]) => !/^(referer|origin|user-agent)$/i.test(key)));
   const limit = AbortSignal.timeout(timeoutMs);
+  // Vietcap from a US server goes through the deployment's own function in Singapore (relay.js).
+  const relay = relayFor(name);
   let res;
   try {
-    res = await (fetchImpl || globalThis.fetch)(url, {
-      headers: { Accept: accept, ...own, 'User-Agent': ua },
-      signal: signal ? AbortSignal.any([signal, limit]) : limit,
-      redirect: 'follow',
-    });
+    res = relay
+      ? await (fetchImpl || globalThis.fetch)(`${relay.endpoint}?url=${encodeURIComponent(url)}`, {
+          headers: { Authorization: `Bearer ${relay.secret}`, 'X-Relay-UA': ua, ...(relay.bypass ? { 'x-vercel-protection-bypass': relay.bypass } : {}) },
+          signal: signal ? AbortSignal.any([signal, limit]) : limit,
+          redirect: 'error',
+        })
+      : await (fetchImpl || globalThis.fetch)(url, {
+          headers: { Accept: accept, ...own, 'User-Agent': ua },
+          signal: signal ? AbortSignal.any([signal, limit]) : limit,
+          redirect: 'follow',
+        });
   } catch (err) {
     if (signal?.aborted) throw err;
     const timedOut = limit.aborted || err?.name === 'TimeoutError';
     throw new SourceError(name, timedOut ? `${label} did not answer within ${Math.round(timeoutMs / 1000)} s.` : `${label} could not be reached (${err?.cause?.code || err?.name || 'network error'}).`);
+  }
+  // The relay refusing (its secret, its list, its size) is the relay's, not Vietcap's: no standing aside.
+  if (relay && res.headers?.get?.('x-finance-relay') !== 'passed') {
+    throw new SourceError(name, `${label} could not be asked through the Singapore relay (HTTP ${res.status}).`, { status: res.status });
   }
   // A bare 400 with next to nothing in it, from a source known to answer refusals that way.
   const bare400 = res.status === 400 && REFUSES_WITH_400.has(name) && (await res.clone().text().catch(() => '')).trim().length <= 8;
