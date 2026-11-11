@@ -29,7 +29,7 @@ const { initStore } = await import('../server/store/index.js');
 const db = await PGlite.create();
 const store = await initStore({ driver: { query: async (text, params = []) => (await db.query(text, params)).rows } });
 const { botPersona } = await import('../server/bots/prompt.js');
-const { botTools } = await import('../server/bots/tools.js');
+const { botTools, WAIT_NOTE } = await import('../server/bots/tools.js');
 const { LIMITS, HANDOFF_CEILING } = await import('../server/bots/team.js');
 const { TOOLS } = await import('../server/tools/definitions.js');
 
@@ -59,7 +59,7 @@ const NOT_TOOLS = new Set(['web_page']);
 section('a tool a bot is told about is a tool it has');
 for (const [role, { bot, chat }] of Object.entries(roles)) {
   const persona = await botPersona(user.id, chat);
-  const tools = botTools(bot);
+  const tools = botTools(bot, { inGroup: role === 'member in a group', openWaits: 1 });
   const offered = new Set([...tools.map((t) => t.name), ...appTools]);
   const said = [persona.intro, persona.section, ...tools.map((t) => t.description), ...tools.flatMap((t) => Object.values(t.parameters?.properties || {}).map((p) => p.description || ''))].join('\n');
   const named = [...new Set([...said.matchAll(/\b[a-z]+(?:_[a-z]+)+\b/g)].map((m) => m[0]))].filter((w) => !NOT_TOOLS.has(w));
@@ -73,13 +73,13 @@ for (const [role, { bot, chat }] of Object.entries(roles)) {
 
 section('a limit a description states is the one the code keeps');
 {
-  const tools = botTools(chief);
+  const tools = [...botTools(chief, { openWaits: 1 }), ...botTools(chief, { inGroup: true }).filter((t) => t.name === 'ask_person')];
   const text = (name) => {
     const tool = tools.find((t) => t.name === name);
     return [tool?.description || '', ...Object.values(tool?.parameters?.properties || {}).map((p) => p.description || '')].join(' ');
   };
   const numbersIn = (s) => [...s.matchAll(/at most (\d[\d,]*)/g)].map((m) => Number(m[1].replace(/,/g, '')));
-  const known = new Set([LIMITS.entry, LIMITS.notice, LIMITS.role, LIMITS.instructions, LIMITS.entries, HANDOFF_CEILING]);
+  const known = new Set([LIMITS.entry, LIMITS.notice, LIMITS.role, LIMITS.instructions, LIMITS.entries, HANDOFF_CEILING, WAIT_NOTE]);
   for (const t of tools) {
     const stated = numbersIn(text(t.name));
     const wrong = stated.filter((n) => !known.has(n));
@@ -96,7 +96,8 @@ section('each role stays within its size');
   const BUDGET = { chief: 9400, member: 5750, 'member in a group': 6250 };
   for (const [role, { bot, chat }] of Object.entries(roles)) {
     const persona = await botPersona(user.id, chat);
-    const size = persona.intro.length + persona.section.length + JSON.stringify(botTools(bot).map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }))).length;
+    // What a turn is offered there, with no wait open (close_wait comes only with one).
+    const size = persona.intro.length + persona.section.length + JSON.stringify(botTools(bot, { inGroup: role === 'member in a group' }).map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }))).length;
     check(`${role}: ${size} characters, within ${BUDGET[role]}`, size <= BUDGET[role], String(size));
   }
 }

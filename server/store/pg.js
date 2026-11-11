@@ -258,8 +258,10 @@ export function splitStatements(sql) {
  *  46  bots.paused_at / pinned_at, bot_groups.pinned_at, chats.read_seq,
  *      scheduled_tasks.bot_group_id / missed, usage_events.reasoning_tokens / origin
  *      — the Bot page's team features (spec B)
+ *  47  scheduled_tasks.trigger, hook_routes, hook_receipts, bot_waits, telegram_inbound,
+ *      outbox — work that starts outside the app (spec C)
  */
-export const SCHEMA_VERSION = 46;
+export const SCHEMA_VERSION = 47;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -3950,8 +3952,8 @@ export function createPgStore(connectionString) {
     },
     async createTask(userId, task) {
       const rows = await q(
-        `INSERT INTO scheduled_tasks (id, user_id, title, prompt, model, cron, next_run_at, tz, project_id, policy, bot_id, bot_group_id, missed, enabled)
-         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+        `INSERT INTO scheduled_tasks (id, user_id, title, prompt, model, cron, next_run_at, tz, project_id, policy, bot_id, bot_group_id, missed, enabled, trigger)
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
           WHERE ($11::text IS NULL OR EXISTS (SELECT 1 FROM bots WHERE user_id = $2 AND id = $11))
             AND ($12::text IS NULL OR EXISTS (SELECT 1 FROM bot_groups WHERE user_id = $2 AND id = $12))
          RETURNING *`,
@@ -3972,6 +3974,8 @@ export function createPgStore(connectionString) {
           task.botGroupId || null,
           task.missed === 'skip' ? 'skip' : 'once',
           task.enabled !== false,
+          // What starts it: its schedule, or a signed request (spec C.1).
+          task.trigger === 'hook' ? 'hook' : 'schedule',
         ],
       );
       return rows[0];
@@ -4925,6 +4929,162 @@ export function createPgStore(connectionString) {
       );
       return rows.length;
     },
+    // ── work that starts outside the app (spec C, schema 47) ──────────
+    /** A task's webhook route, made only for a task of this account. `secretEnc` is encrypted, never plain. */
+    async createHookRoute(userId, { id, taskId, secretEnc }) {
+      const rows = await q(
+        `INSERT INTO hook_routes (id, user_id, task_id, secret_enc)
+         SELECT $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM scheduled_tasks WHERE user_id = $2 AND id = $3)
+         ON CONFLICT (task_id) DO NOTHING
+         RETURNING *`,
+        [id, userId, String(taskId ?? ''), secretEnc],
+      );
+      return rows[0] ?? null;
+    },
+    /**
+     * A route by the id in its URL, with what its task needs to run — the one lookup a
+     * request from outside makes before its signature is checked. No account is asked
+     * for: the route id is the address, and the signature is the proof.
+     */
+    async getHookRoute(id) {
+      const rows = await q(
+        `SELECT r.*, t.enabled AS task_enabled, t.bot_id, t.title, t.trigger, b.paused_at AS bot_paused_at
+           FROM hook_routes r
+           JOIN scheduled_tasks t ON t.id = r.task_id
+           LEFT JOIN bots b ON b.id = t.bot_id
+          WHERE r.id = $1`,
+        [String(id ?? '')],
+      );
+      return rows[0] ?? null;
+    },
+    async getHookRouteForTask(userId, taskId) {
+      const rows = await q('SELECT * FROM hook_routes WHERE user_id = $1 AND task_id = $2', [userId, String(taskId ?? '')]);
+      return rows[0] ?? null;
+    },
+    async rotateHookRoute(userId, taskId, secretEnc) {
+      const rows = await q('UPDATE hook_routes SET secret_enc = $3, rotated_at = NOW() WHERE user_id = $1 AND task_id = $2 RETURNING *', [userId, String(taskId ?? ''), secretEnc]);
+      return rows[0] ?? null;
+    },
+    async setHookFilters(userId, taskId, filters) {
+      const rows = await q('UPDATE hook_routes SET filters = $3::jsonb WHERE user_id = $1 AND task_id = $2 RETURNING *', [userId, String(taskId ?? ''), JSON.stringify(filters || {})]);
+      return rows[0] ?? null;
+    },
+    /** A delivery's receipt, or false when that delivery came before — the retry runs nothing. */
+    async addHookReceipt({ key, userId, routeId = null, source, deliveryId, status, reason = null }) {
+      const rows = await q(
+        `INSERT INTO hook_receipts (key, user_id, route_id, source, delivery_id, status, reason)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (key) DO NOTHING RETURNING key`,
+        [key, userId, routeId, source, String(deliveryId).slice(0, 120), status, reason ? String(reason).slice(0, 300) : null],
+      );
+      return rows.length > 0;
+    },
+    async setHookReceipt(key, { status, reason = null }) {
+      await q('UPDATE hook_receipts SET status = $2, reason = $3 WHERE key = $1', [key, status, reason ? String(reason).slice(0, 300) : null]);
+    },
+    async listHookReceipts(userId, routeId, limit = 20) {
+      return q('SELECT delivery_id, status, reason, at FROM hook_receipts WHERE user_id = $1 AND route_id = $2 ORDER BY at DESC LIMIT $3', [userId, String(routeId ?? ''), limit]);
+    },
+
+    /** A wait a bot parks until its next run (spec C.2): refused (null) past `max` open ones, or for a bot not this account's. */
+    async addBotWait(userId, { id, botId, messageId = null, request, note, max = 20 }) {
+      const rows = await q(
+        `INSERT INTO bot_waits (id, user_id, bot_id, message_id, request, note)
+         SELECT $1, $2, $3, $4, $5, $6
+          WHERE EXISTS (SELECT 1 FROM bots WHERE user_id = $2 AND id = $3)
+            AND (SELECT COUNT(*) FROM bot_waits WHERE user_id = $2 AND bot_id = $3 AND closed_at IS NULL) < $7
+         RETURNING *`,
+        [id, userId, String(botId ?? ''), messageId, request, note, max],
+      );
+      return rows[0] ?? null;
+    },
+    /** A bot's open waits, oldest first; or with `botId` null, every open one of the account. */
+    async listBotWaits(userId, botId = null) {
+      if (botId) return q('SELECT * FROM bot_waits WHERE user_id = $1 AND bot_id = $2 AND closed_at IS NULL ORDER BY created_at, id', [userId, String(botId)]);
+      return q('SELECT * FROM bot_waits WHERE user_id = $1 AND closed_at IS NULL ORDER BY created_at, id', [userId]);
+    },
+    /** Close one: by the bot it belongs to (`botId`), or by the person (no `botId`). */
+    async closeBotWait(userId, id, { botId = null, outcome = null } = {}) {
+      const rows = await q(
+        `UPDATE bot_waits SET closed_at = NOW(), outcome = $4
+          WHERE user_id = $1 AND id = $2 AND closed_at IS NULL AND ($3::text IS NULL OR bot_id = $3)
+         RETURNING *`,
+        [userId, String(id ?? ''), botId, outcome ? String(outcome).slice(0, 500) : null],
+      );
+      return rows[0] ?? null;
+    },
+
+    async getTelegramInbound(userId) {
+      const rows = await q('SELECT * FROM telegram_inbound WHERE user_id = $1', [userId]);
+      return rows[0] ?? null;
+    },
+    async findTelegramInbound(pathHash) {
+      const rows = await q('SELECT * FROM telegram_inbound WHERE path_hash = $1', [String(pathHash ?? '')]);
+      return rows[0] ?? null;
+    },
+    /** Write the account's Telegram-to-Chief settings; only the keys given change. */
+    async saveTelegramInbound(userId, patch) {
+      const now = await this.getTelegramInbound(userId);
+      const row = { path_hash: '', token_hash: '', start_code: null, allowed_ids: [], bot_username: null, enabled: false, ...(now || {}), ...patch };
+      const rows = await q(
+        `INSERT INTO telegram_inbound (user_id, path_hash, token_hash, start_code, allowed_ids, bot_username, enabled, updated_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, NOW())
+         ON CONFLICT (user_id) DO UPDATE SET path_hash = EXCLUDED.path_hash, token_hash = EXCLUDED.token_hash, start_code = EXCLUDED.start_code,
+           allowed_ids = EXCLUDED.allowed_ids, bot_username = EXCLUDED.bot_username, enabled = EXCLUDED.enabled, updated_at = NOW()
+         RETURNING *`,
+        [userId, row.path_hash, row.token_hash, row.start_code, JSON.stringify(row.allowed_ids || []), row.bot_username, !!row.enabled],
+      );
+      return rows[0] ?? null;
+    },
+
+    /** Something to send (spec C.3). The id is made of what it is, so the same part of the same answer is queued once. */
+    async enqueueOutbox({ id, userId, channel, text }) {
+      const rows = await q(
+        `INSERT INTO outbox (id, user_id, channel, text) VALUES ($1, $2, $3::jsonb, $4)
+         ON CONFLICT (id) DO NOTHING RETURNING *`,
+        [id, userId, JSON.stringify(channel), String(text)],
+      );
+      if (rows[0]) return rows[0];
+      return this.getOutbox(id);
+    },
+    async getOutbox(id) {
+      const rows = await q('SELECT * FROM outbox WHERE id = $1', [String(id ?? '')]);
+      return rows[0] ?? null;
+    },
+    /**
+     * Take what is due to send. The claim moves `due_at` two minutes on, so a second
+     * sender (the heartbeat beside a request) does not take the same row while the first
+     * is still sending it.
+     */
+    async claimOutbox({ userId = null, ids = null, limit = 20 } = {}) {
+      return q(
+        `UPDATE outbox SET due_at = NOW() + INTERVAL '2 minutes'
+          WHERE id IN (SELECT id FROM outbox
+                        WHERE status = 'pending' AND due_at <= NOW()
+                          AND ($1::text IS NULL OR user_id = $1)
+                          AND ($2::text[] IS NULL OR id = ANY($2::text[]))
+                        ORDER BY created_at LIMIT $3
+                        FOR UPDATE SKIP LOCKED)
+        RETURNING *`,
+        [userId, ids, limit],
+      );
+    },
+    async markOutboxSent(id, providerId) {
+      await q("UPDATE outbox SET status = 'sent', provider_id = $2, sent_at = NOW(), reason = NULL WHERE id = $1", [id, String(providerId ?? '')]);
+    },
+    async markOutboxDropped(id, reason) {
+      await q("UPDATE outbox SET status = 'dropped', reason = $2 WHERE id = $1", [id, String(reason ?? '').slice(0, 300)]);
+    },
+    async retryOutbox(id, { attempts, dueAt, reason }) {
+      await q('UPDATE outbox SET attempts = $2, due_at = $3::timestamptz, reason = $4 WHERE id = $1', [id, attempts, new Date(dueAt).toISOString(), String(reason ?? '').slice(0, 300)]);
+    },
+    /** The bins of spec C: receipts after 7 days, closed waits after 30, the sent or dropped outbox after 7. */
+    async pruneTriggers() {
+      await q("DELETE FROM hook_receipts WHERE at < NOW() - INTERVAL '7 days'");
+      await q("DELETE FROM bot_waits WHERE closed_at IS NOT NULL AND closed_at < NOW() - INTERVAL '30 days'");
+      await q("DELETE FROM outbox WHERE status <> 'pending' AND created_at < NOW() - INTERVAL '7 days'");
+    },
+
     /** The person has read a conversation to its end (the Bot page's unread mark, schema 46). */
     async markChatRead(userId, chatId) {
       const rows = await q(

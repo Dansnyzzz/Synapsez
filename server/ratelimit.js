@@ -70,6 +70,8 @@ export const LIMITS = {
   rename: { limit: 10, windowMs: 60 * 60_000 },
   /** A question asked aside on the Bot page: one model call each (spec B.6). */
   aside: { limit: 60, windowMs: 60 * 60_000 },
+  /** Requests to the account's webhooks, from one address (spec C.1); each route has its own ceilings too. */
+  'hook-ip': { limit: 60, windowMs: 60_000 },
   /** A team file read or added on the Bot page (spec B.5): a look first, then the import. */
   'team-file': { limit: 40, windowMs: 60 * 60_000 },
 };

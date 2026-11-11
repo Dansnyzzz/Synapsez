@@ -383,6 +383,8 @@ const STEP_VERBS = {
   /* a scheduled run saying it has nothing new, or failed (spec B.4) */
   no_update: 'step.no_update',
   run_failed: 'step.run_failed',
+  wait_for: 'step.wait_for',
+  close_wait: 'step.close_wait',
 
   /* ── the shelf of sources ── */
   search_docs: 'step.search_docs',

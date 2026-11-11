@@ -26,6 +26,7 @@ import { LIBRARY_IMPLEMENTATIONS } from './library.js';
 import { GOOGLE_IMPLEMENTATIONS } from './google.js';
 import { normaliseSteps } from '../workflows.js';
 import { CONNECTOR_CALLS } from '../connectors.js';
+import { sendTelegramNow } from '../outbox.js';
 import { searchConnectorsTool, suggestConnectorsTool } from '../connectorDirectory.js';
 import { codeContextTool } from './codeContext.js';
 import { getPrefs, getApiKey, maskPersonalFor } from '../settings.js';
@@ -2745,8 +2746,25 @@ async function generateImageTool({ prompt, name, aspect_ratio: aspectRatio, coun
   };
 }
 
-async function telegramSendTool({ chat_id: chatIdArg, text }, { userId }) {
-  return CONNECTOR_CALLS.telegramSend(userId, chatIdArg, text);
+/**
+ * Through the outbox (spec C.3): written down, then sent, so a turn that runs again sends
+ * the same message once — keyed by the turn and what is sent. A Telegram that is slow is
+ * retried later; a chat that is gone says so.
+ */
+async function telegramSendTool({ chat_id: chatIdArg, text }, { userId, turnId = null }) {
+  const target = String(chatIdArg ?? '').trim();
+  if (!target) return CONNECTOR_CALLS.telegramSend(userId, chatIdArg, text);
+  const words = String(text ?? '');
+  if (!words.trim()) throw new Error('Say what to send.');
+  const key = `tool:${turnId || crypto.randomUUID()}:${crypto.createHash('sha256').update(words).digest('hex').slice(0, 16)}`;
+  const outcome = await sendTelegramNow({ userId, chatId: target, text: words, key });
+  if (outcome.sent) return `Sent to ${target}.`;
+  if (outcome.dropped) {
+    throw new Error(
+      `${outcome.dropped}${/chat not found|gone/i.test(outcome.dropped) ? ' A bot can only message someone who has messaged it first, or a group it has been added to.' : ''}`,
+    );
+  }
+  return `Telegram did not take it yet; it is queued and will be tried again in the background, at most once delivered (to ${target}).`;
 }
 
 async function metaPagePostTool({ message, link }, { userId }) {

@@ -129,6 +129,9 @@ import { EFFORTS, DATA_POLICY_REFUSED as DATA_POLICY } from './providers/openaiC
 import { mountWorkflowRoutes } from './routes/workflows.js';
 import { mountAutomationRoutes } from './routes/automations.js';
 import { mountBotRoutes } from './routes/bots.js';
+import { acceptHook, HOOK_BODY_MAX } from './hooks.js';
+import { acceptTelegram } from './telegramInbound.js';
+import { flushOutbox } from './outbox.js';
 import { mountConnectorRoutes } from './routes/connectors.js';
 import { translateErrors, translateEvent, languageOf, translateMessage } from './i18n/index.js';
 import { approximateLocation } from './whereabouts.js';
@@ -291,6 +294,35 @@ export function createApp() {
   // Before the body parser, so the error it raises for an oversized body is
   // translated too — see server/i18n.
   app.use(translateErrors);
+  /*
+   * Requests from outside the app (spec C): mounted before the JSON parser, because each
+   * is checked on its raw bytes — a webhook's signature, Telegram's secret header —
+   * before anything reads the body. No session: the URL's id and the secret are the
+   * proof. Answered at once; the work runs behind the answer (server/hooks.js,
+   * server/telegramInbound.js).
+   */
+  const outside = (handler) => (req, res, next) =>
+    Promise.resolve()
+      .then(() => initStore())
+      .then(() => handler(req, res))
+      .catch(next);
+  app.post(
+    '/api/hooks/telegram/:secret',
+    express.raw({ type: () => true, limit: '1mb' }),
+    outside(async (req, res) => {
+      const answer = await acceptTelegram({ secret: req.params.secret, raw: req.body, headers: req.headers, req });
+      res.status(answer.status).json(answer.body);
+    }),
+  );
+  app.post(
+    '/api/hooks/:routeId',
+    express.raw({ type: () => true, limit: HOOK_BODY_MAX }),
+    outside(async (req, res) => {
+      const answer = await acceptHook({ routeId: req.params.routeId, raw: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), headers: req.headers, req });
+      res.status(answer.status).json(answer.body);
+    }),
+  );
+
   // Attachments arrive as base64 inside the JSON body, and base64 costs a third
   // more than the bytes it carries. Six files at the 5MB-each limit is the worst
   // case this has to accept without a confusing 413.
@@ -572,7 +604,9 @@ export function createApp() {
     // Group rounds a killed invocation left, or whose next segment was never asked
     // for (server/bots/continue.js) — after the turns above, with what time is left.
     const groups = await resumeGroupRounds({ budgetMs: remaining() }).catch(() => []);
-    return { ran, workflows, resumed, groups };
+    // What is waiting to go out — a Telegram reply that failed a moment ago (spec C.3).
+    const outbox = await flushOutbox({ limit: 40 }).catch(() => null);
+    return { ran, workflows, resumed, groups, outbox };
   }
 
   /**

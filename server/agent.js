@@ -1777,21 +1777,21 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
   // What this conversation may not be given — see `withheldTools`. Recomputed
   // when the person pauses something mid-turn (PRV-021, `refreshConnections`).
   // A bot keeps its own memory (`remember`); the account's notes it reads, as the team's background, and does not write.
+  // A bot's waits (spec C.2): close_wait only while it has one open; wait_for only in its own chat.
+  const openWaits = persona && !chat.bot_group_id ? await store.listBotWaits(userId, persona.bot.id).catch(() => []) : [];
   const withheldHere = () => {
     const out = withheldTools({ chat, prefs });
+
     if (persona) for (const name of MEMORY_WRITE_TOOLS) out.add(name);
     // A bot's own chat is the home chat, which draws question cards (owner, 2026-11-10); in a
     // group nobody is there to press one — a member asks with ask_person instead.
     if (persona && chat.bot_group_id) out.add('ask_options');
-    // Chief writes to a group from its own chat (spec B.1); inside a group it just replies.
-    if (persona && chat.bot_group_id) out.add('post_to_group');
-    // A question for the person in a group (ask_person) has no place in a bot's own chat.
-    if (persona && !chat.bot_group_id) out.add('ask_person');
     return out;
   };
   let withhold = withheldHere();
   /** A bot's own tools — the team and its memory; Chief's also make bots and groups (server/bots/tools.js). */
-  const ownTools = persona && !chat.incognito ? botTools(persona.bot) : [];
+  // Each where it can act: post_to_group and wait_for in its own chat, ask_person in a group, close_wait with a wait open.
+  const ownTools = persona && !chat.incognito ? botTools(persona.bot, { inGroup: !!chat.bot_group_id, openWaits: openWaits.length }) : [];
   const pausesOf = (p) => JSON.stringify([p.connectorsOff || [], p.pluginsOff || [], p.memory !== false, p.chatSearch !== false, p.connectorSearch !== false]);
   let pausesSeen = pausesOf(prefs);
   const workerOnline = worker.online;

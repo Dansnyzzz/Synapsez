@@ -502,7 +502,8 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
       // `deliverable` is the set of tool names this account can actually be
       // given this turn. Only `load_tools` reads it, and only so it stops
       // promising tools that will never arrive — see loadToolsTool.
-      const result = await impl(input || {}, { userId, user, chatId, signal, deliverable, answers, origin, whereabouts, canSee, onProgress });
+      // `turnId`: what a tool that sends something keys its message by, so a turn run again sends it once (outbox.js).
+      const result = await impl(input || {}, { userId, user, chatId, signal, deliverable, answers, origin, whereabouts, canSee, onProgress, turnId });
 
       /**
        * A tool may hand back more than a sentence.
