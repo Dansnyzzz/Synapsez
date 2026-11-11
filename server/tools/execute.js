@@ -179,7 +179,9 @@ async function runViaWorker({ user, userId, name, input, chatId, timeoutMs, sign
  *   raw?: boolean,
  *   canSee?: boolean,
  *   onProgress?: ((text: string) => void)|null,
- * }} ToolCallArgs
+ *   turnId?: string|null,
+ * }} ToolCallArgs  `turnId`: the agent turn making the call — what a bot saves in it is
+ *   taken back if the turn is stopped or fails (server/agent.js)
  */
 
 /**
@@ -453,7 +455,7 @@ export function redactedOutput(name, content) {
  * @param {ToolCallArgs} args
  * @returns {Promise<ToolResult>}
  */
-async function runTool({ user, name, input, chatId, signal, deviceHint, deliverable, answers, origin = null, whereabouts = null, canSee = false, onProgress = null }) {
+async function runTool({ user, name, input, chatId, signal, deviceHint, deliverable, answers, origin = null, whereabouts = null, canSee = false, onProgress = null, turnId = null }) {
   const userId = user.id;
 
   /**
@@ -484,7 +486,7 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
    * conversation, so not in the static catalogue either. They read whose
    * conversation this is themselves; the arguments never say which bot is asking.
    */
-  if (BOT_TOOL_NAMES.has(name) && !TOOLS_BY_NAME[name]) return runBotTool({ userId, chatId, name, input: input || {} });
+  if (BOT_TOOL_NAMES.has(name) && !TOOLS_BY_NAME[name]) return runBotTool({ userId, chatId, name, input: input || {}, turnId });
 
   const def = TOOLS_BY_NAME[name];
   if (!def) return { isError: true, content: `Unknown tool "${name}".` };

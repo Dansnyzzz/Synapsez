@@ -186,8 +186,10 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       wrap(async (req, res) => {
         if (!(await exists(req))) return res.status(404).json({ error: 'Not found.' });
         try {
-          const { saved, entry } = await remember(req.user.id, scopeOf(req), req.body?.text, 'user');
-          res.status(saved ? 201 : 200).json({ saved, entry: { id: entry.id, text: entry.text, source: entry.source, createdAt: entry.created_at } });
+          const { saved, entries } = await remember(req.user.id, scopeOf(req), req.body?.text, 'user');
+          const view = (e) => ({ id: e.id, text: e.text, source: e.source, createdAt: e.created_at });
+          // A long note may become several entries (cut at its sentence ends): all of them, the first as `entry`.
+          res.status(saved ? 201 : 200).json({ saved, entry: view(entries[0]), entries: entries.map(view) });
         } catch (err) {
           fail(res, err);
         }

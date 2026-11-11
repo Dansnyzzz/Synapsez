@@ -87,7 +87,12 @@ const provider = http.createServer((req, res) => {
       res.write('data: [DONE]\n\n');
       res.end();
     };
-    if (record.who === 'slow') {
+    if (record.who === 'saver' && messages.at(-1)?.role !== 'tool') {
+      callN += 1;
+      send({ choices: [{ delta: { tool_calls: [{ index: 0, id: `call_${callN}`, type: 'function', function: { name: 'remember', arguments: JSON.stringify({ text: 'Saved in a turn that was stopped' }) } }] } }] });
+      return end('tool_calls');
+    }
+    if (record.who === 'slow' || record.who === 'saver') {
       let n = 0;
       const timer = setInterval(() => send({ choices: [{ delta: { content: `w${(n += 1)} ` } }] }), 80);
       res.on('close', () => {
@@ -584,6 +589,21 @@ section('a round that waits, joins, carries on and is watched (owner, 2026-11-10
   const internal = await fetch(`${base}/api/internal/bot-rounds/continue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: aliceId, groupId: loop.id }) });
   check('the internal route for the next segment needs the deployment secret', internal.status === 401 || internal.status === 503, String(internal.status));
   void pong;
+}
+
+section('a turn that is stopped takes back what it saved (owner, 2026-11-10)');
+{
+  const saver = (await alice.call('POST', '/api/bots', { name: 'Saver', role: 's' })).body.bot;
+  const own = (await alice.call('GET', `/api/bots/${saver.id}/chat`)).body;
+  await alice.call('POST', `/api/chats/${own.chatId}/messages`, { text: 'note something then keep going' });
+  const running = alice.stream(`/api/chats/${own.chatId}/run`, {});
+  const from = Date.now();
+  while (!(await store.listBotMemory(aliceId, { botId: saver.id })).length && Date.now() - from < 8000) await new Promise((r) => setTimeout(r, 50));
+  check('it saved while it worked', (await store.listBotMemory(aliceId, { botId: saver.id })).length === 1);
+  await new Promise((r) => setTimeout(r, 300));
+  await alice.call('POST', `/api/chats/${own.chatId}/stop`);
+  await running;
+  check('  and once stopped, that save is taken back', (await store.listBotMemory(aliceId, { botId: saver.id })).length === 0, JSON.stringify(await store.listBotMemory(aliceId, { botId: saver.id })));
 }
 
 section('reset empties a conversation and keeps the memory (owner, 2026-11-10)');

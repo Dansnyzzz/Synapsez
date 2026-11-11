@@ -30,25 +30,94 @@ export async function listMemory(userId, scope) {
 }
 
 /**
- * Save one entry. Refused, with a sentence the writer can act on: empty, too long,
- * a key or password, already saved, or the scope is full.
+ * Text as search reads it: lower case, no diacritics, "đ" as "d" — so "da nang" finds
+ * "Đà Nẵng" with no database extension. Computed here, stored beside the text.
+ *
+ * @param {unknown} text
+ */
+export function fold(text) {
+  return String(text ?? '')
+    .normalize('NFD')
+    .replace(/\p{M}+/gu, '')
+    .replace(/[đĐ]/g, 'd')
+    .toLowerCase();
+}
+
+/**
+ * A note longer than one entry, cut at its sentence ends into entries within the limit
+ * (owner, 2026-11-10: a bot's 327-character note was refused, and nothing was kept).
+ * Sentences are packed back together while they fit. Null when one sentence alone is
+ * longer than an entry: that one is said more briefly, not cut mid-thought.
+ *
+ * @param {string} text  already composed (NFC) and trimmed
+ * @param {number} [max]
+ * @returns {string[] | null}
+ */
+export function splitEntry(text, max = LIMITS.entry) {
+  const tidy = (s) => s.replace(/\s+/g, ' ').trim();
+  if (tidy(text).length <= max) return [tidy(text)];
+  const sentences = text
+    .split(/(?<=[.!?;…])\s+|\n+/)
+    .map(tidy)
+    .filter(Boolean);
+  if (sentences.some((s) => s.length > max)) return null;
+  const out = [];
+  let current = '';
+  for (const sentence of sentences) {
+    if (!current) current = sentence;
+    else if (current.length + 1 + sentence.length <= max) current = `${current} ${sentence}`;
+    else {
+      out.push(current);
+      current = sentence;
+    }
+  }
+  if (current) out.push(current);
+  return out;
+}
+
+/**
+ * Save a note: one entry, or several when it is longer than one and can be cut at its
+ * sentence ends. Refused, with a sentence the writer can act on: empty, a sentence too
+ * long, a key or password, or the scope is full. A piece already saved is not saved
+ * twice. Text is stored composed (NFC), so a Vietnamese mark counts once.
  *
  * @param {string} userId
  * @param {{ botId?: string | null, groupId?: string | null }} scope
  * @param {unknown} text @param {'bot' | 'user'} [source]
+ * @param {{ turnId?: string | null }} [options]  the turn that saved it, taken back if that turn fails
+ * @returns {Promise<{ saved: boolean, entry: any, entries: any[] }>}
  */
-export async function remember(userId, scope, text, source = 'bot') {
-  const entry = String(text ?? '').trim().replace(/\s+/g, ' ');
-  if (!entry) throw new BotError('An entry needs some words.', 400, 'empty');
-  if (entry.length > LIMITS.entry) throw new BotError(`An entry holds one fact, at most ${LIMITS.entry} characters; this one has ${entry.length}. Save it as two.`, 400, 'too_long');
-  if (redactSecrets(entry).text !== entry) throw new BotError('That looks like a key, token or password, which memory never keeps.', 400, 'secret');
+export async function remember(userId, scope, text, source = 'bot', { turnId = null } = {}) {
+  const raw = String(text ?? '').normalize('NFC').trim();
+  if (!raw) throw new BotError('An entry needs some words.', 400, 'empty');
+  const pieces = splitEntry(raw);
+  if (!pieces) throw new BotError(`One sentence here is longer than ${LIMITS.entry} characters, the most an entry holds. Say it more briefly.`, 400, 'too_long');
+  if (pieces.some((piece) => redactSecrets(piece).text !== piece)) throw new BotError('That looks like a key, token or password, which memory never keeps.', 400, 'secret');
   const store = getStore();
   const have = await store.listBotMemory(userId, scope);
-  if (have.some((row) => row.text.toLowerCase() === entry.toLowerCase())) return { saved: false, entry: have.find((row) => row.text.toLowerCase() === entry.toLowerCase()) };
-  if (have.length >= LIMITS.entries) throw new BotError(`This memory is full (${LIMITS.entries} entries). Forget one that is no longer true first.`, 409, 'full');
-  const row = await store.addBotMemory(userId, { id: crypto.randomUUID(), botId: scope.botId || null, groupId: scope.groupId || null, text: entry, source: source === 'user' ? 'user' : 'bot' });
-  if (!row) throw new BotError('No such bot or group.', 404, 'not_found');
-  return { saved: true, entry: row };
+  const same = (a, b) => a.normalize('NFC').toLowerCase() === b.toLowerCase();
+  const fresh = pieces.filter((piece) => !have.some((row) => same(row.text, piece)));
+  if (have.length + fresh.length > LIMITS.entries) throw new BotError(`This memory is full (${LIMITS.entries} entries). Forget one that is no longer true first.`, 409, 'full');
+  const entries = [];
+  for (const piece of pieces) {
+    const known = have.find((row) => same(row.text, piece));
+    if (known) {
+      entries.push(known);
+      continue;
+    }
+    const row = await store.addBotMemory(userId, {
+      id: crypto.randomUUID(),
+      botId: scope.botId || null,
+      groupId: scope.groupId || null,
+      text: piece,
+      textFolded: fold(piece),
+      source: source === 'user' ? 'user' : 'bot',
+      turnId,
+    });
+    if (!row) throw new BotError('No such bot or group.', 404, 'not_found');
+    entries.push(row);
+  }
+  return { saved: fresh.length > 0, entry: entries[0], entries };
 }
 
 /**

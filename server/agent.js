@@ -1257,7 +1257,7 @@ export function repeatedRead(call, memo, counts) {
   return key ? { key } : null;
 }
 
-async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, policy, sent, origin = null, whereabouts = null, answers, memo = null, counts = {}, withhold = null, googleData = false, guard = null, canSee = true, masking = false, deadline = Infinity }) {
+async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, policy, sent, origin = null, whereabouts = null, answers, memo = null, counts = {}, withhold = null, googleData = false, guard = null, canSee = true, masking = false, deadline = Infinity, turnId = null }) {
   /**
    * One call of the batch. Whether to run at all is decided first and draws
    * nothing: a call that would change nothing is not a step anybody needs to see.
@@ -1318,6 +1318,8 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         canSee: canSee && !masking,
         // What a command prints as it prints it, for the row that is running it.
         onProgress: progressFor(emit, call.id),
+        // What a bot saves in this turn is taken back if the turn is stopped or fails.
+        turnId,
       }));
       // Remembered before it is awaited, so a duplicate in the same batch waits
       // for this run instead of starting a second one. A failure is not kept:
@@ -1545,7 +1547,38 @@ const TURN_BUDGET_MS = 270_000;
  *   test with no network — see `compact()` and `runParallel` for the same seam.
  *   Defaults to the real `streamCompletion`.
  */
-export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, answers, handoff = false, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion, deadlineAt = Infinity }) {
+/**
+ * Run one turn of a conversation — the agent loop (below, `runTurn`) — and, when the
+ * turn is stopped or fails, take back what a bot saved to its memory in it (owner,
+ * 2026-11-10, after OpenBot's staged memory writes): a half-finished turn must not leave
+ * a fact behind that the rest of the turn would have corrected.
+ *
+ * @param {Parameters<typeof runTurn>[0]} options
+ */
+export async function runAgent(options) {
+  const turnId = crypto.randomUUID();
+  let stopReason = '';
+  let failed = false;
+  const emit = (event, data) => {
+    if (event === 'done') stopReason = String(data?.stopReason || '');
+    else if (event === 'error') failed = true;
+    return options.emit?.(event, data);
+  };
+  try {
+    return await runTurn({ ...options, emit, turnId });
+  } catch (err) {
+    failed = true;
+    throw err;
+  } finally {
+    if (failed || stopReason === 'aborted' || stopReason === 'error' || options.signal?.aborted) {
+      await getStore()
+        .dropTurnMemory(options.userId, turnId)
+        .catch((err) => log.error('could not take back what a stopped turn saved', err, { chatId: options.chatId }));
+    }
+  }
+}
+
+async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, answers, handoff = false, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion, deadlineAt = Infinity, turnId = null }) {
   const store = getStore();
   // This turn's deadline on this function, handed to every model call (HAR-015).
   // A group round runs several turns in one function's life, and hands each the time that is left (bots/rounds.js).
@@ -1985,7 +2018,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
 
       await store.markToolCallsStarted(userId, chatId, last.id, run.map((c) => c.id));
       const ran = run.length
-        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: answered, memo: turnReads, counts: turnCounts, withhold, googleData: carriesGoogleData(messages), guard: stepGuard, canSee: entry?.vision !== false, masking, deadline })
+        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: answered, memo: turnReads, counts: turnCounts, withhold, googleData: carriesGoogleData(messages), guard: stepGuard, canSee: entry?.vision !== false, masking, deadline, turnId })
         : { id: newId(), role: 'tool', results: [] };
 
       // Back into the order the model asked for them, which is the order it will
@@ -2843,7 +2876,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // No answers on this path: a well-formed question pauses above rather than
     // reaching here, so anything named `ask_options` that gets this far is a
     // malformed call on its way to becoming a tool error.
-    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: null, memo: turnReads, counts: turnCounts, withhold, googleData, guard: stepGuard, canSee: entry?.vision !== false, masking, deadline });
+    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: null, memo: turnReads, counts: turnCounts, withhold, googleData, guard: stepGuard, canSee: entry?.vision !== false, masking, deadline, turnId });
     // See the resume path: a superseded run leaves the results to the run that
     // replaced it, rather than writing a second tool message for one turn.
     if (signal?.reason === 'superseded') {

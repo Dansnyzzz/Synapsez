@@ -400,6 +400,36 @@ section('writing between two segments joins the round, not replaces it');
   check('  and the new line is answered in it', said.includes('Hi!'), said.join(' | '));
 }
 
+/* ── Task 7: memory that keeps up ──────────────────────────────── */
+
+const memory = await import('../server/bots/memory.js');
+
+section('a memory entry that is too long is split, not refused (owner, 2026-11-10)');
+{
+  const scope = { botId: writer.id };
+  // The owner's screenshot: 327 characters, three facts in one breath.
+  const long = 'Đội bot của người dùng: Writer (blog draft/edit), Coder (viết & review code) trong nhóm "Content & Code"; Finder (truy tìm tài liệu/nguồn) + Researcher (nghiên cứu sâu, tổng hợp, gắn nhãn độ chắc chắn) trong nhóm "Tài liệu & Nghiên cứu". Chief là admin cả hai nhóm. Bot "Reasearcher" viết nhầm đã được đổi tên thành Researcher.';
+  const res = await memory.remember(uid, scope, long, 'bot');
+  const texts = res.entries.map((e) => e.text);
+  check('it is saved as several entries, each within the limit', res.saved && texts.length >= 2 && texts.every((t) => t.length <= 300), JSON.stringify(texts.map((t) => t.length)));
+  check('  nothing of it lost', texts.join(' ').replace(/\s+/g, ' ').length >= long.replace(/\s+/g, ' ').length - texts.length, `${texts.join(' ').length} vs ${long.length}`);
+  const decomposed = 'Người dùng thích cà phê'.normalize('NFD');
+  const one = await memory.remember(uid, scope, decomposed, 'bot');
+  check('text is stored composed (NFC), so a mark is never counted twice', one.entries[0].text === 'Người dùng thích cà phê'.normalize('NFC'));
+  check('  and saved again in either form, it is the same entry', (await memory.remember(uid, scope, 'Người dùng thích cà phê', 'bot')).saved === false);
+  const oneSentence = 'x'.repeat(320);
+  let refused = '';
+  try {
+    await memory.remember(uid, scope, oneSentence, 'bot');
+  } catch (err) {
+    refused = err.message;
+  }
+  check('one sentence longer than the limit is still refused, saying why', /300/.test(refused), refused);
+  const saved = [...res.entries, ...one.entries].map((e) => e.id);
+  check('an entry keeps its text without marks for search', (await store.listBotMemory(uid, scope)).filter((e) => saved.includes(e.id)).every((e) => typeof e.text_folded === 'string' && !/[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễđ]/.test(e.text_folded)));
+  check('  "da nang" finds "Đà Nẵng" through it', memory.fold('Khách ở Đà Nẵng') === 'khach o da nang');
+}
+
 /* ── Task 3: carrying on in another invocation ─────────────────── */
 
 const { continueGroup, resumeGroupRounds } = await import('../server/bots/continue.js');
