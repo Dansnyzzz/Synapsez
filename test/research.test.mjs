@@ -238,7 +238,9 @@ for (const bought of ['https://x.edu.me/a', 'https://news.gov.ws/a', 'https://x.
 
 section('planning turns a question into search queries');
 {
-  const { parsePlan, planQuestions } = await import('../server/research/plan.js');
+  const { parsePlan, planQuestions, plannerSystem } = await import('../server/research/plan.js');
+  const told = plannerSystem(new Date('2026-11-11T08:00:00Z'));
+  check('the planner is told today, and to search names one at a time in English as well', /Today is 2026-11-11/.test(told) && /its own query/.test(told) && /in English/.test(told), told.slice(0, 120));
   check('queries are pulled from JSON in a fence', JSON.stringify(parsePlan('```json\n{"queries":["a","b"]}\n```')) === '["a","b"]');
   check('queries survive surrounding prose', JSON.stringify(parsePlan('Sure! {"queries":["a"]} done')) === '["a"]');
   check('garbage yields nothing rather than throwing', Array.isArray(parsePlan('not json')) && parsePlan('not json').length === 0);

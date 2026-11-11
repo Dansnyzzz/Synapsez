@@ -32,6 +32,7 @@ import { log, annotate } from './util/trace.js';
 import { mapWithLimit, MAX_PARALLEL_TOOLS } from './util/parallel.js';
 import { validZone } from './util/zone.js';
 import { sandboxConfigured } from './sandbox.js';
+import { firecrawlReady } from './firecrawl.js';
 import { lendEyes } from './vision.js';
 import { memoryForTurn, withheldTools, MEMORY_WRITE_TOOLS } from './memory.js';
 import { botPersona } from './bots/prompt.js';
@@ -44,8 +45,8 @@ import { batchSegments, createStepGuard, skippedAfterFailure } from './stepOrder
 import { lookAfterWriting, maskedPicturesNote, withLookedPictures, MAX_LOOKS_PER_TURN } from './fileLook.js';
 import { RUN_CONTROL_NAMES, RUN_CONTROL_TOOLS, runControlResult } from './tools/runControl.js';
 
-/** What this deployment can do beyond the account's own keys — see `needsHost`. */
-const hostCapabilities = () => (sandboxConfigured() ? ['sandbox'] : []);
+/** What this deployment can do beyond the account's own keys — see `needsHost` (definitions.js). */
+const hostCapabilities = () => [...(sandboxConfigured() ? ['sandbox'] : []), ...(firecrawlReady() ? ['firecrawl'] : [])];
 
 /**
  * There is one mode.

@@ -26,6 +26,12 @@ import { log } from './util/trace.js';
  *     10,000 with a free one (STACKEXCHANGE_KEY, from stackapps.com).
  *   - E2B, the cloud computer: a one-off credit, spread over the months before
  *     it lapses (`e2bMonthCap`). Its ceiling is worked out, not set.
+ *   - Firecrawl (checked 2026-11-11, server/firecrawl.js): 1,000 credits a month on its
+ *     Free plan, no card, a 402 at zero. Kept to 950 in all (FIRECRAWL_FREE_CREDITS),
+ *     shared as the owner chose: searches 570 (FIRECRAWL_SEARCH_FREE), pages read 332
+ *     (FIRECRAWL_SCRAPE_FREE), site maps, crawls and code 47 (FIRECRAWL_MORE_FREE) — each
+ *     share and the whole counted. Its Research and Government Indexes cost no credits
+ *     but a thousand calls a day: 950 (FIRECRAWL_INDEX_FREE_DAILY).
  *
  * Each ceiling can be set (EXA_FREE_MILLS, TAVILY_FREE_CREDITS,
  * BRAVE_FREE_REQUESTS, GOOGLE_FREE_DAILY, STACKEXCHANGE_FREE_DAILY), and
@@ -114,6 +120,12 @@ const TIERS = {
       return e2bMonthCap({ usedBefore: Math.max(0, total - usedThisMonth), now });
     },
   },
+  // Firecrawl: the month's credits, and each share of them (server/firecrawl.js).
+  firecrawl: { per: 'month', limit: () => num('FIRECRAWL_FREE_CREDITS', 950) },
+  firecrawl_search: { per: 'month', limit: () => num('FIRECRAWL_SEARCH_FREE', 570) },
+  firecrawl_scrape: { per: 'month', limit: () => num('FIRECRAWL_SCRAPE_FREE', 332) },
+  firecrawl_more: { per: 'month', limit: () => num('FIRECRAWL_MORE_FREE', 47) },
+  firecrawl_index: { per: 'day', limit: () => num('FIRECRAWL_INDEX_FREE_DAILY', 950) },
   // Market data (server/finance/http.js): see the header for each figure.
   coingecko: { per: 'month', limit: () => num('COINGECKO_FREE_MONTHLY', 9_500) },
   coingecko_minute: { per: 'minute', limit: () => num('COINGECKO_FREE_MINUTE', 90) },

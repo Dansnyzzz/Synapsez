@@ -16,8 +16,8 @@
  *          a picture it has no way to make.
  * needsHost
  *          something the deployment itself must be set up with — `sandbox` is
- *          the cloud computer, which needs Vercel credentials. Withheld when the
- *          caller says the host lacks it.
+ *          the cloud computer, which needs Vercel credentials; `firecrawl` its
+ *          key (server/firecrawl.js). Withheld when the caller says the host lacks it.
  * secondary
  *          useful but not part of the core loop. Dropped first when the model's
  *          context window is too small to hold the whole catalogue — see
@@ -1077,6 +1077,54 @@ export const TOOLS = [
         },
       },
       required: ['questions'],
+    },
+  },
+  {
+    name: 'site_pages',
+    scope: 'cloud',
+    readOnly: true,
+    // Firecrawl's map and crawl (server/firecrawl.js): the deployment's free month pays.
+    needsHost: 'firecrawl',
+    secondary: true,
+    description:
+      'List the pages of a website (op "map": addresses and titles, the ones matching `search` first) or read several of its pages at once (op "crawl", up to 10). ' +
+      'Map to find the right page, then web_fetch it; crawl only when several pages of one site are needed. Each uses the deployment\'s small monthly allowance.',
+    parameters: {
+      type: 'object',
+      properties: {
+        op: { type: 'string', enum: ['map', 'crawl'], description: 'map (default) or crawl.' },
+        url: { type: 'string', description: 'The site, e.g. https://example.com or a section of it.' },
+        search: { type: 'string', description: 'map: words to rank the pages by, e.g. "pricing".' },
+        limit: { type: 'integer', description: 'map: how many addresses, up to 500 (default 100). crawl: how many pages, up to 10 (default 5).' },
+        include_paths: { type: 'array', items: { type: 'string' }, description: 'crawl: only pages whose path matches one of these patterns, e.g. ["blog/.*"].' },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'research_index',
+    scope: 'cloud',
+    readOnly: true,
+    // Firecrawl's Research and Government Indexes: free, a thousand calls a day.
+    needsHost: 'firecrawl',
+    secondary: true,
+    description:
+      'Search about 43 million research paper abstracts (PubMed, bioRxiv, medRxiv, arXiv), read the passages of a paper that answer a question, find papers like it, citing it or cited by it — or search US statutes, regulations and court opinions. ' +
+      'Free. Cite the links it gives.',
+    parameters: {
+      type: 'object',
+      properties: {
+        op: { type: 'string', enum: ['papers', 'read', 'related', 'law'], description: 'papers (default): search; read: one paper (with query, its passages answering it); related: papers like, citing or cited by one; law: US law.' },
+        query: { type: 'string', description: 'papers and law: what to find. read: the question to answer from the paper. related: what the relation is about.' },
+        id: { type: 'string', description: 'read and related: the paper id from a papers result, e.g. "arxiv:2401.00001" or "pmid:12345678".' },
+        k: { type: 'integer', description: 'How many results (papers and law up to 25, default 10; read up to 10 passages).' },
+        from: { type: 'string', description: 'papers: earliest date, YYYY-MM-DD.' },
+        to: { type: 'string', description: 'papers: latest date, YYYY-MM-DD.' },
+        sort: { type: 'string', enum: ['relevance', 'date_desc'], description: 'papers: newest first with date_desc.' },
+        mode: { type: 'string', enum: ['similar', 'citers', 'references'], description: 'related: similar (default), citers or references.' },
+        jurisdiction: { type: 'string', description: 'law: "us" for federal, or "us-" and a state code, e.g. "us-ca".' },
+      },
+      required: [],
     },
   },
   {
@@ -2820,6 +2868,14 @@ const ALWAYS_SENSITIVE = new Set([
 /** Shell text that is destructive, irreversible, or reaches off the machine. */
 const DANGEROUS_COMMAND = [
   /\brm\s+(-[a-z]*\s+)*-[a-z]*[rf]/i, // rm -rf and friends
+  // …with the flags after a path (`rm build -rf`) or spelled long (`rm --recursive --force`).
+  /\brm\b[^|;&\n]*\s-[a-z]*[rf]/i,
+  /\brm\b[^|;&\n]*\s--(recursive|force)\b/i,
+  // Deleting without saying rm.
+  /\bfind\b[^|;&\n]*\s(-delete\b|-exec\s+rm\b)/i,
+  /\bshred\b/i,
+  /\btruncate\b[^|;&\n]*\s-s\s*0\b/i,
+  /\bgit\s+clean\b[^|;&\n]*\s-[a-z]*f/i,
   /\brmdir\s+\/s/i,
   /\bdel\s+\/[qsf]/i,
   /\bformat\s+[a-z]:/i,
@@ -3055,12 +3111,24 @@ function googleRiskReason(name, input = {}) {
   }
   if (name === 'google_drive' && action === 'trash') return 'Moves a file to your Google Drive trash.';
   if (name === 'google_tasks' && action === 'delete') return 'Deletes a task from Google Tasks.';
+  // A cell that makes Google fetch an address when the sheet opens can carry the sheet with it
+  // (2026-11-11, the "CellShock" class): said, with where it goes, rather than "changes something".
+  if (name === 'google_sheets' && Array.isArray(input?.values)) {
+    const reaching = input.values.flat().map(String).filter((cell) => NETWORK_FORMULA.test(cell));
+    if (reaching.length) {
+      const hosts = [...new Set(reaching.flatMap((cell) => [...cell.matchAll(/https?:\/\/([^/"'\s)]+)/gi)].map((m) => m[1])))].slice(0, 3);
+      return `Writes a formula that makes Google fetch ${hosts.length ? hosts.join(', ') : 'an address'} whenever the sheet is opened — it can send the sheet's contents there.`;
+    }
+  }
   return `Changes something in your Google account (${name.replace('google_', '')}: ${action}).`;
 }
 
+/** A spreadsheet formula that fetches an address by itself: in Excel, or in Google Sheets. */
+export const NETWORK_FORMULA = /^\s*=.*\b(?:IMAGE|IMPORTXML|IMPORTHTML|IMPORTFEED|IMPORTRANGE|IMPORTDATA|WEBSERVICE|RTD|CALL|REGISTER\.ID)\s*\(/i;
+
 /** The URL argument of every tool that makes a request to an address the model chose. */
 export const URL_ARGUMENT = {
-  web_fetch: 'url', extract: 'url', read_feed: 'url', youtube_transcript: 'url', http_request: 'url', look_at: 'url',
+  web_fetch: 'url', extract: 'url', read_feed: 'url', youtube_transcript: 'url', http_request: 'url', look_at: 'url', site_pages: 'url',
   download_file: 'url', export_pdf: 'url', browser_open: 'url', open_url: 'target', cloud_browser: 'url',
 };
 
@@ -3092,7 +3160,18 @@ export function carriesData(name, input) {
   if (!/^https?:$/.test(url.protocol)) return false;
   if (url.search.length > 300) return true;
   const pieces = [...url.pathname.split('/'), ...[...url.searchParams.values()], url.hash.slice(1)];
-  return pieces.some((p) => p.length > 120);
+  if (pieces.some((p) => p.length > 120)) return true;
+  /*
+   * The same block, spread out (2026-11-11, from a probe of this function against the
+   * Orca incident archive's exfiltration class): twenty path segments of a hundred
+   * characters each, or the data as the labels of the host name — `<60 chars>.<60 chars>.
+   * evil.example` is answered by the attacker's own name server, so the request need not
+   * even arrive. Ordinary addresses have short host labels, a handful of them, and paths
+   * well under 400 characters.
+   */
+  const labels = url.hostname.split('.');
+  if (url.hostname.length > 120 || labels.length > 8 || labels.some((l) => l.length > 40)) return true;
+  return url.pathname.length > 400 || url.href.length > 800;
 }
 
 /**
@@ -3361,9 +3440,25 @@ export function riskReason(name, rawInput = {}) {
   return null;
 }
 
+/**
+ * A command as the shell will run it, near enough to match against (2026-11-11, the
+ * "GuardFall" class: guards that read the text while the shell rewrites it). A backslash
+ * before a letter is dropped (`\rm` runs rm), and so are quotes inside a word
+ * (`r""m`, `'rm'` run rm). Only for matching — and matching both this and the text as
+ * written can only ask more often, never less.
+ */
+export function shellFolded(command) {
+  return String(command || '')
+    .replace(/\\(?=[A-Za-z])/g, '')
+    .replace(/(["'])\1/g, '')
+    .replace(/(?<=[\w./-])["']|["'](?=[\w./-])/g, '');
+}
+
 /** Whether a shell command matched one of the destructive patterns. */
 export function looksDestructive(command) {
-  return DANGEROUS_COMMAND.some((re) => re.test(String(command || '')));
+  const written = String(command || '');
+  const folded = shellFolded(written);
+  return DANGEROUS_COMMAND.some((re) => re.test(written) || re.test(folded));
 }
 
 /**
@@ -3627,6 +3722,8 @@ const DEFERRABLE = new Set([
   // Reading a video. A real job and a rare one — most turns never see a link
   // to one, and the schema is pure cost on all of them.
   'youtube_transcript',
+  // A site's pages, and the paper and law indexes (Firecrawl): real jobs, and rare ones.
+  'site_pages', 'research_index',
   // Indexing and its housekeeping. Searching stays loaded; building the index
   // is a deliberate act somebody asks for by name.
   'index_folder', 'list_indexed', 'forget_docs',

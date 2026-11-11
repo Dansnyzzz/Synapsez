@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-11-11 — Firecrawl, and holes closed (1.24.0)
+
+**Firecrawl** (`server/firecrawl.js`), on the deployment's `FIRECRAWL_API_KEY` and its Free plan — 1,000 credits a month, no card, a refusal at zero, never a bill (docs.firecrawl.dev, read 2026-11-11). It replaces the Bright Data plan, which was never shipped.
+- **A search engine**, second after Exa and the one fused beside it from Extra high up: the search engines' own ranking, 2 credits for ten results; news, research papers and PDFs asked as Firecrawl's own sources and categories, GitHub by its domain.
+- **`web_fetch`** reads a page that refuses this server, or draws itself with script, through Firecrawl's browser when Exa could not — 1 credit, a PDF's first 5 pages at most; `extract` does too. The pages `web_search` opens by itself never spend Firecrawl's credits.
+- **SJC's gold board on Vercel**, which turns every datacenter away, is read through Firecrawl and kept half an hour (`FIN_SOURCE_SJC=off` stops it).
+- **`site_pages`**: a site's pages listed (`map`, 1 credit), or up to 10 read at once (`crawl`, a credit a page — stopped where the run runs short of time, so nothing more is spent).
+- **`code_context`** asks Firecrawl's Developer Index — issues, pull requests, READMEs, documentation — when Exa found nothing (2 credits for ten).
+- **`research_index`**: about 43 million paper abstracts (PubMed, bioRxiv, medRxiv, arXiv) — search, a paper's passages that answer a question, related, citing and cited papers — and US law. Free: a thousand calls a day.
+- The 1,000 credits are kept to 950 and shared as the owner chose for the plan this replaces: searches 570, pages read 332, site maps, crawls and code 47 — each share and the whole held before a call and given back when Firecrawl charged nothing; Firecrawl's own count of what is left is asked every ten minutes and believed when lower (its month need not start on the 1st). Settings → Admin shows both. Not used: Interact (2–7 credits a browser minute), Agent, Monitor, Parse, webhooks.
+
+**Holes closed** — found by running the code against the patterns in the Orca AI incident archive (github.com/Continuum-AI-Corp, read 2026-11-11):
+- An address carrying data out spread over twenty path segments, or written as the labels of its host name, was graded safe and fetched without asking. Both ask now (`carriesData`).
+- A destructive command spelled `rm --recursive --force`, `r""m -rf`, `\rm -rf`, with the flags after the path, or as `find -delete`, `shred`, `truncate -s 0`, `git clean -f` was graded ordinary. The command is matched as written and as the shell will read it (`shellFolded`).
+- `</UNTRUSTED>` — any case, spacing or hidden character — closed the envelope web pages travel in. Any tag that reads as it is defanged.
+- A key split by a zero-width space passed the redactor into notes and logs. Invisible characters inside a token are dropped first.
+- A spreadsheet formula that fetches an address when the file opens (`IMAGE`, the `IMPORT` family) could be written into an Office file, and a Google Sheets write holding one asked only "changes something". The first is refused; the second names the host it reaches.
+
+**Deep research** is told today's date, and to search each named thing on its own and in English as well as the question's language.
+
+Privacy notice privacy-2026-11-11-3.
+
 ## 2026-11-11 — Twenty in each place, pins not counted (1.23.1)
 
 **The limit is twenty in each place, not twenty in all** (`server/chatLimit.js`). Outside projects an account keeps its 20 most recently used unpinned conversations, and each project keeps its own 20 — a project's conversations are organised work and loose questions no longer push them out. A pinned conversation is never deleted and no longer counts toward the 20; instead an account may pin up to 10 (`PIN_LIMIT`; pins already past it stay, a new one is refused: "You can pin up to 10 conversations. Unpin one first."). Administrators have no limit on either. Why: an average ChatGPT user sends about 26 messages a week at about 6 prompts a conversation — 4 to 5 conversations a week, so twenty is about a month — and with pins counted, someone with 15 pinned kept only 5; ChatGPT caps pins (at three) and caps no project's conversations. Privacy notice privacy-2026-11-11-2.

@@ -1,6 +1,7 @@
 import { ASIA_REGION, relayFor } from './relay.js';
 import fs from 'node:fs';
 import { take } from '../freeTier.js';
+import { firecrawlReady, firecrawlScrape } from '../firecrawl.js';
 
 /**
  * The only fetch the finance layer makes (owner, 2026-11-10).
@@ -77,10 +78,12 @@ export const sourceLabel = (name) => LABEL[sourceOf(name)] || String(name);
  * Cloudflare bot check that refuses every datacenter, in iad1 and sin1 alike, and is not
  * to be got round; Vietcap answers a bare 400 to US addresses and 200 from Singapore. On
  * such a server they are off unless `FIN_SOURCE_<NAME>=on` asks for them anyway — the
- * owner's choice, 2026-11-11. Elsewhere (a machine in Vietnam) they are on.
+ * owner's choice, 2026-11-11. Elsewhere (a machine in Vietnam) they are on. SJC is read
+ * through Firecrawl's browser where the deployment has Firecrawl (owner, 2026-11-11) — see
+ * `throughFirecrawl`.
  */
 const REFUSES_THIS_SERVER = Object.freeze({
-  sjc: () => !!process.env.VERCEL,
+  sjc: () => !!process.env.VERCEL && !firecrawlReady(),
   // Asked through the Singapore relay where the deployment has one (relay.js, owner 2026-11-11).
   vietcap: () => !!process.env.VERCEL && !ASIA_REGION.test(String(process.env.VERCEL_REGION || '')) && !relayFor('vietcap'),
 });
@@ -102,6 +105,28 @@ export function enabled(source) {
   const said = switchOf(name);
   if (said) return said === 'on';
   return !REFUSES_THIS_SERVER[name]?.();
+}
+
+/**
+ * Sources read through Firecrawl's browser on a server they turn away (owner, 2026-11-11):
+ * SJC, whose bot check refuses every datacenter. A credit of the deployment's free month a
+ * read, so its board is kept longer (sources/gold.js).
+ */
+const THROUGH_FIRECRAWL = new Set(['sjc']);
+export const throughFirecrawl = (source) => THROUGH_FIRECRAWL.has(sourceOf(source)) && !!process.env.VERCEL && firecrawlReady() && switchOf(sourceOf(source)) !== 'off';
+
+/** What a browser shows of an API's JSON: the body as sent, or the text of the page that wraps it. */
+export function jsonOfPage(text) {
+  const body = String(text || '').trim();
+  if (/^[[{]/.test(body)) return body;
+  const pre = body.match(/<pre[^>]*>([\s\S]*?)<\/pre>/i)?.[1] ?? body.replace(/<[^>]+>/g, '');
+  return pre
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .trim();
 }
 
 /** Sources whose bare 400 is a refusal of the asker, not a mistake in the request (Vietcap, from a US address). */
@@ -193,6 +218,20 @@ export async function getResponse(source, url, { headers = {}, timeoutMs = 8000,
   // The caller's headers, less anything that would say we are someone else.
   const own = Object.fromEntries(Object.entries(headers).filter(([key]) => !/^(referer|origin|user-agent)$/i.test(key)));
   const limit = AbortSignal.timeout(timeoutMs);
+  // SJC from a datacenter goes through Firecrawl's browser: its own refusals are Firecrawl's to say.
+  if (throughFirecrawl(name)) {
+    let read;
+    try {
+      read = await firecrawlScrape(url, { raw: true, timeoutMs: Math.max(timeoutMs, 40_000), signal });
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      throw new SourceError(name, `${label} could not be read through Firecrawl (${String(err?.message || err).slice(0, 160)}).`);
+    }
+    if (!read) throw new SourceError(name, `${label} is read through Firecrawl here, and its free allowance is used for now.`, { standAside: true });
+    const status = read.status || 200;
+    if (okOnly && status >= 400) throw new SourceError(name, `${label} answered HTTP ${status} through Firecrawl.`, { status });
+    return new Response(jsonOfPage(read.text), { status, headers: { 'content-type': 'application/json' } });
+  }
   // Vietcap from a US server goes through the deployment's own function in Singapore (relay.js).
   const relay = relayFor(name);
   let res;

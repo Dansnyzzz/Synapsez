@@ -306,6 +306,8 @@ const STEP_VERBS = {
   web_fetch: 'step.web_fetch',
   ask_options: 'step.ask_options',
   youtube_transcript: 'step.youtube_transcript',
+  site_pages: 'step.site_pages',
+  research_index: 'step.research_index',
   deep_research: 'step.deep_research',
   extract: 'step.extract',
 
@@ -537,6 +539,8 @@ const STEP_DETAILS = {
   /* the web */
   web_search: (i) => clip(i.query),
   web_fetch: (i) => readableUrl(i.url),
+  site_pages: (i) => `${readableUrl(i.url)}${i.search ? ` — ${clip(i.search, 32)}` : ''}`,
+  research_index: (i) => clip(i.query || i.id || ''),
   deep_research: (i) => clip(i.question, 72),
   extract: (i) => `${readableUrl(i.url)}${i.what ? ` — ${clip(i.what, 32)}` : ''}`,
 

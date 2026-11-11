@@ -73,7 +73,10 @@ const BEARER = /\b(authorization\s*:\s*(?:bearer|basic)\s+)[A-Za-z0-9._~+/=-]{12
  *   editing what someone asked to save.
  */
 export function redactSecrets(input) {
-  let text = String(input ?? '');
+  // An invisible character inside a token hides it from every pattern below (2026-11-11,
+  // `sk-abc\u200Bdefg…`): dropped where it sits between two of a token's characters. An
+  // emoji's joiner sits between emoji, and stays.
+  let text = String(input ?? '').replace(/(?<=[A-Za-z0-9_-])(?:[\u00AD\u180E\u200B-\u200F\u2060-\u2064\uFEFF]|\u034F)+(?=[A-Za-z0-9_-])/g, '');
   const found = [];
   const note = (what) => {
     if (!found.includes(what)) found.push(what);

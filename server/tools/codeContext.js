@@ -1,6 +1,7 @@
 import { untrusted } from './untrusted.js';
 import { search, SEARCH_LEVELS } from '../search.js';
 import { allowance, spend, exhaust, exaMills, exaSpent } from '../freeTier.js';
+import { developerSearch, firecrawlReady } from '../firecrawl.js';
 
 /**
  * `code_context` — working code and documentation for a programming question,
@@ -12,6 +13,9 @@ import { allowance, spend, exhaust, exaMills, exaSpent } from '../freeTier.js';
  *     asked as Exa's own code tool asks: the passages that match the question
  *     (highlights focused on the query), from anywhere it has indexed code and
  *     documentation, not a fixed list of sites.
+ *   - **Firecrawl's Developer Index**, when Exa found nothing: issues, merged pull
+ *     requests, READMEs and documentation sites, the passages that match — 2 of the
+ *     deployment's free monthly credits for up to ten (server/firecrawl.js, 2026-11-11).
  *   - **Stack Overflow**, through the Stack Exchange API: free and keyless, the
  *     questions that match and their best answers, code kept as code.
  *   - Otherwise the ordinary web search, for documentation pages.
@@ -82,6 +86,18 @@ async function fromExa(query, count, plan, { fetchImpl, signal }) {
     }));
 }
 
+/** What each kind of Developer Index result is, said the way a person would. */
+const DEVELOPER_KIND = { doc: 'documentation', issue: 'issue', pull_request: 'pull request', readme: 'README' };
+
+/** Firecrawl's Developer Index — nothing without its key, or once its share of the month is used. */
+async function fromFirecrawl(query, count, { signal }) {
+  if (!firecrawlReady()) return [];
+  const rows = await developerSearch(query, { k: count, signal });
+  return rows
+    .filter((r) => r.text)
+    .map((r) => ({ source: `Firecrawl · ${DEVELOPER_KIND[r.kind] || 'developer index'}`, title: r.title, url: r.url, text: clip(r.text) }));
+}
+
 /**
  * Stack Overflow's matching questions and the best answer to each, through the
  * free Stack Exchange API. Its quota is the server's — 300 requests a day per
@@ -144,7 +160,9 @@ export async function codeContextTool({ query, max_results }, { userId = null, s
     fromExa(asked, count, plan, { fetchImpl, signal: timed }).catch(() => []),
     fromStackOverflow(asked, count, { fetchImpl, signal: timed }).catch(() => []),
   ]);
-  let found = [...exa, ...overflow];
+  // Firecrawl only when Exa had nothing: its credits are the month's, and few.
+  const developer = exa.length ? [] : await fromFirecrawl(asked, count, { signal: timed }).catch(() => []);
+  let found = [...exa, ...developer, ...overflow];
   // Nothing from either: documentation pages from the ordinary search.
   if (!found.length) {
     const web = await search(`${asked} documentation example`, { count, userId, plan }).catch(() => null);

@@ -1165,6 +1165,7 @@ Four engines, tried in order, and the first one that answers wins:
 | | | |
 |---|---|---|
 | **Exa** | `EXA_API_KEY` | Neural search — returns the passage that answers the question rather than a page that mentions the words. First for that reason. |
+| **Firecrawl** | `FIRECRAWL_API_KEY` | Web search with the search engines' own ranking, 2 credits for ten results, on Firecrawl's Free plan (1,000 credits a month, no card, a refusal at zero — never a bill). Second, and the engine fused in beside Exa from Extra high up. See "Firecrawl" below. |
 | **DuckDuckGo** | no key | Free, so it sits ahead of the paid fallbacks: an outage on the good engine should not start spending credits. |
 | **Tavily** | `TAVILY_API_KEY` | Paid safety net. |
 | **Brave** | `BRAVE_API_KEY` | Paid safety net. |
@@ -1215,6 +1216,28 @@ One table (`SEARCH_LEVELS` in `server/search.js`) that every engine reads, so th
 only script is read through Exa's `/contents` — what Exa's `web_fetch_exa` calls — when the deployment
 has `EXA_API_KEY`. The answer says *read through Exa* and why; a 404 is not retried, a private address
 never reaches Exa, and a readable page never goes there.
+
+**Firecrawl** (`server/firecrawl.js`, 2026-11-11), on the deployment's `FIRECRAWL_API_KEY` and its free month:
+
+- `web_fetch`: a page that refuses this server or is only script, read through Firecrawl's browser when
+  Exa could not read it either — 1 credit a page, a PDF's first 5 pages at most. Said *read through
+  Firecrawl* and why. The pages `web_search` opens by itself never go there; `extract` does.
+- SJC's gold board on Vercel, which turns every datacenter away — read through Firecrawl and kept half an
+  hour (`FIN_SOURCE_SJC=off` stops it).
+- `site_pages`: a site's pages listed (`map`, 1 credit) or up to 10 of them read at once (`crawl`, a
+  credit a page, stopped where the run runs short of time so nothing more is spent).
+- `code_context`: its Developer Index — issues, pull requests, READMEs, documentation — when Exa found
+  nothing (2 credits for ten).
+- `research_index`: about 43 million paper abstracts (PubMed, bioRxiv, medRxiv, arXiv) — search, a
+  paper's passages that answer a question, related, citing and cited papers — and US law. Free: a
+  thousand calls a day.
+
+The 1,000 credits are kept to 950 and shared as the owner chose: searches 570, pages read 332, site maps,
+crawls and code 47 — each share and the whole counted before a call, given back when Firecrawl charged
+nothing. Firecrawl's own count (`/v2/team/credit-usage`) is asked every ten minutes and believed when it is
+lower, since its month need not start on the 1st; Settings → Admin shows it. Not used: Interact sessions
+(2–7 credits a browser minute — the cloud computer has a browser), Agent, Monitor (a credit a page a check),
+Parse, webhooks.
 
 **Exa's other pieces, where they cost nothing more:** `category` on `web_search` (news, company, people,
 research paper, pdf, github, financial report, personal site — Tavily gets its news/finance topic,
@@ -1978,6 +2001,8 @@ step, with the optional certificate and how to bring data over from another data
 | `QUALITY_GATE_ROUNDS` | optional | How many times a finished answer citing an address no source holds is sent back to correct that sentence, before the link is dropped (1–3, default `2`). Each round is one short call, made only while something is still flagged. See "The quality gate". |
 | `PROVIDER_REQUEST_BUDGET_MS` | optional | How long one call to a model may take, every key and retry together (default `240000`, under the 300 s a Vercel function lives). Waits and first-word timeouts are cut to what is left, and a stumble's Retry-After is waited a minute at most, so a provider that will not answer ends the turn with a reason rather than a cut-off stream. This budget starts again with each call, so a turn also has a deadline, 270 s after it began on this function, that bounds what a call waits for — a stumble's retry, a rate-limited key's rest, the wait for a first word — on the turn's steps and when it folds the conversation. It does not cut a reply that is already streaming, and a call still gets 20 s to start (the least worth trying), so a long turn can outlive the function; a turn cut off that way is picked up again (`server/resume.js`) rather than ended early.
 | `EXA_FREE_MILLS`, `TAVILY_FREE_CREDITS`, `BRAVE_FREE_REQUESTS`, `GOOGLE_FREE_DAILY`, `STACKEXCHANGE_FREE_DAILY` | optional | Each service's ceiling, if its free tier is not the default one: Exa in thousandths of a dollar a month (9500), Tavily credits a month (950), Brave requests a month (950), Google grounded searches a day on the deployment's Gemini key (450), Stack Exchange requests a day (280, or 9500 with a key). |
+| `FIRECRAWL_API_KEY` | optional | Firecrawl (firecrawl.dev, Free plan, no card): a search engine, pages that refuse this server, SJC's gold board, a site's pages, code discussions and the free paper and law indexes. See "Searching the web". |
+| `FIRECRAWL_FREE_CREDITS`, `FIRECRAWL_SEARCH_FREE`, `FIRECRAWL_SCRAPE_FREE`, `FIRECRAWL_MORE_FREE`, `FIRECRAWL_INDEX_FREE_DAILY` | optional | Firecrawl's ceilings: all credits a month (950), searches (570), pages read (332), site maps, crawls and code (47), and the free indexes' calls a day (950). |
 | `SEC_USER_AGENT` | recommended | Market data: how SEC EDGAR is asked, as SEC requires — `Synapsez <contact email>`, the owner's real contact. Without it SEC is never asked, and US statements, filings and the US screen fall back to Yahoo or say so. See `docs/vercel-config.md`. |
 | `COINGECKO_DEMO_KEY` | optional | Market data: CoinGecko's free Demo key (no card) — 100 calls a minute of the deployment's own instead of a share of the server address's. |
 | `FRED_API_KEY` | optional | Market data: FRED's free key, for US rates, inflation, unemployment and GDP. Without it US series come from the World Bank (annual). |

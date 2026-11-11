@@ -1,14 +1,25 @@
 import { askModel, extractJson } from './llm.js';
 import { modelForRole } from '../roleModel.js';
 
-const SYSTEM = [
-  'You are a research planner. Break the question into 4 to 6 web-search queries',
-  'that together cover it from different angles — different wordings, sub-questions,',
-  'and the specific facts a good answer would need. Prefer queries that would reach',
-  'primary and reputable sources over ones that would reach opinion.',
-  '',
-  'Reply with JSON only, no prose: {"queries": ["...", "..."]}',
-].join('\n');
+/**
+ * What the planner is told. Today's date (2026-11-11, from the patterns that recur in
+ * leading assistants' prompts): without it "latest", "this year" and "who holds X now"
+ * were searched as of whenever the model was trained. And one query per named thing, in
+ * English as well as the question's own language: most sources are in English, and a
+ * name searched once in another language finds a fraction of them.
+ */
+export function plannerSystem(now = new Date()) {
+  return [
+    'You are a research planner. Break the question into 4 to 6 web-search queries',
+    'that together cover it from different angles — different wordings, sub-questions,',
+    'and the specific facts a good answer would need. Prefer queries that would reach',
+    'primary and reputable sources over ones that would reach opinion.',
+    `Today is ${now.toISOString().slice(0, 10)}: put the year in queries about anything current, and read "now", "latest" and "this year" as of today.`,
+    'Give each named person, company, product or place its own query. When the question is not in English, write some queries in English and some in its language.',
+    '',
+    'Reply with JSON only, no prose: {"queries": ["...", "..."]}',
+  ].join('\n');
+}
 
 /** The queries out of the model's JSON, or [] if there are none to find. */
 export function parsePlan(text) {
@@ -53,7 +64,7 @@ export async function planQuestions(question, { userId, entry, stream, budget, s
     // queries. It is a rewriting job, not a reasoning one, and paying for deep
     // thinking on it buys nothing measurable.
     const text = await askModel({
-      userId, entry: writer, system: SYSTEM, prompt: question, stream, budget, signal,
+      userId, entry: writer, system: plannerSystem(), prompt: question, stream, budget, signal,
       chatId, role: 'research.plan', effort: 'low',
     });
     const queries = parsePlan(text);

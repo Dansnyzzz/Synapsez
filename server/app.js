@@ -93,6 +93,7 @@ import { mountSceneAssets } from './sceneAssets.js';
 import { checkDomain } from './domainCheck.js';
 import { afterTurn, titleShown } from './themes.js';
 import { freeTierReport } from './freeTier.js';
+import { firecrawlAccount } from './firecrawl.js';
 import { SECURITY_HEADERS, HSTS } from './securityHeaders.js';
 import { insightsConfig } from './insights.js';
 import { withTrace, newTraceId, annotate, log, mark, since } from './util/trace.js';
@@ -2718,7 +2719,8 @@ export function createApp() {
     '/free-tier',
     requirePermission('free_tier'),
     wrap(async (req, res) => {
-      res.json(await freeTierReport());
+      // Firecrawl's own count beside ours: its cycle need not start on the 1st (firecrawl.js).
+      res.json({ ...(await freeTierReport()), firecrawl: await firecrawlAccount().catch(() => null) });
     }),
   );
 

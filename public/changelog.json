@@ -1,6 +1,36 @@
 {
   "entries": [
     {
+      "version": "1.24.0",
+      "date": "2026-11-11",
+      "new": {
+        "vi": [
+          "Firecrawl: thêm một công cụ tìm kiếm web; đọc được trang từ chối máy chủ hoặc chỉ hiện bằng script; xem danh sách trang hoặc đọc nhiều trang của một website; tìm trong issue, PR, README khi hỏi về lập trình.",
+          "Tra cứu miễn phí khoảng 43 triệu bài báo khoa học (PubMed, bioRxiv, arXiv…) — đọc đúng đoạn trả lời câu hỏi, tìm bài liên quan, bài trích dẫn — và luật Mỹ."
+        ],
+        "en": [
+          "Firecrawl: one more web search engine; pages that refuse the server or are drawn by script can be read; a website's pages listed or several read at once; issues, PRs and READMEs searched for programming questions.",
+          "Free search of about 43 million research papers (PubMed, bioRxiv, arXiv…) — the passages that answer a question, related, citing and cited papers — and US law."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Giá vàng SJC có lại trên bản triển khai, đọc qua Firecrawl. Nghiên cứu sâu biết ngày hôm nay và tìm cả bằng tiếng Anh."
+        ],
+        "en": [
+          "SJC gold prices are back on the deployed app, read through Firecrawl. Deep research knows today's date and searches in English too."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Vá các lỗ hổng: địa chỉ mang dữ liệu ra ngoài qua đường dẫn dài hoặc tên miền, lệnh xoá viết kiểu khác, thẻ đóng viết hoa, khoá bí mật chèn ký tự vô hình, công thức bảng tính tự tải địa chỉ."
+        ],
+        "en": [
+          "Holes closed: addresses carrying data out in long paths or host names, destructive commands spelled differently, an upper-case closing tag, keys split by invisible characters, spreadsheet formulas that fetch an address."
+        ]
+      }
+    },
+    {
       "version": "1.23.1",
       "date": "2026-11-11",
       "improved": {

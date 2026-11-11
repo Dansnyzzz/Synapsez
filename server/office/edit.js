@@ -144,7 +144,8 @@ function cellXml(p, ref, style, edit) {
   if (edit.formula != null) {
     const body = String(edit.formula).replace(/^=/, '');
     // Opened in Excel these reach out to an address: a change to a file is not the place to add that.
-    if (/\b(?:WEBSERVICE|IMPORTDATA|RTD|CALL|REGISTER\.ID)\s*\(/i.test(body)) throw new Error('A formula that reaches out to the internet or another program cannot be added here.');
+    // IMAGE and the IMPORT family too (2026-11-11): each fetches an address the moment the file opens.
+    if (/\b(?:WEBSERVICE|IMPORTDATA|IMPORTXML|IMPORTHTML|IMPORTFEED|IMPORTRANGE|IMAGE|RTD|CALL|REGISTER\.ID)\s*\(/i.test(body)) throw new Error('A formula that reaches out to the internet or another program cannot be added here.');
     return `<${p}c ${at}><${p}f>${escapeXml(body)}</${p}f></${p}c>`;
   }
   const value = edit.value;
