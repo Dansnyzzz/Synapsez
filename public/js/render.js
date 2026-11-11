@@ -1515,6 +1515,12 @@ export function widgetFrame(widget) {
   frame.style.colorScheme = scheme;
   const ink = scheme === 'light' ? '#1d2733' : '#c8d3de';
   const rule = scheme === 'light' ? '#d5dde5' : '#2a3642';
+  /*
+   * A drawing made for the other canvas gets that canvas (owner, 2026-11-11: dark grey
+   * text, drawn for paper, vanished on the dark theme). The server reads which one it was
+   * drawn for from its colours (widgetCheck.js); one it could not tell sits on the page.
+   */
+  const paper = widget.canvas && widget.canvas !== scheme ? (widget.canvas === 'light' ? '#ffffff' : '#0f1720') : '';
 
   // A document rather than a fragment, so the picture is not styled by this page
   // and cannot reach out of its box.
@@ -1554,6 +1560,7 @@ export function widgetFrame(widget) {
     // Anything narrower than the frame — a table, a fixed-width card — sits
     // in its middle.
     'body{padding:12px}body>*{margin-left:auto;margin-right:auto;max-width:100%}' +
+    (paper ? `body{background:${paper};border-radius:10px}` : '') +
     'svg{max-width:100%;height:auto;display:block;margin:0 auto}body>svg:only-child{cursor:zoom-in}' +
     `table{border-collapse:collapse;font-size:12px}td,th{border:1px solid ${rule};padding:4px 8px}` +
     `a{color:${scheme === 'light' ? '#1b6fc4' : '#7cc7ff'}}` +

@@ -39,7 +39,7 @@ import { botTools } from './bots/tools.js';
 import { carriesGoogleData, withGoogleData } from './googleData.js';
 import { withoutStrayTags } from '../public/js/model-text.js';
 import { splitChecks } from '../public/js/check-notes.js';
-import { checkAnswer, checkFigures, textsIn } from './qualityGate.js';
+import { checkAnswer, checkFigures, mendScript, textsIn } from './qualityGate.js';
 import { batchSegments, createStepGuard, skippedAfterFailure } from './stepOrder.js';
 import { lookAfterWriting, maskedPicturesNote, withLookedPictures, MAX_LOOKS_PER_TURN } from './fileLook.js';
 import { RUN_CONTROL_NAMES, RUN_CONTROL_TOOLS, runControlResult } from './tools/runControl.js';
@@ -2756,6 +2756,11 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
         });
         if (gated?.changed) assistant.text = gated.text;
       }
+      // Chinese slipped into another language, mended whatever the gate's setting (qualityGate.js).
+      if (!signal?.aborted) {
+        const mended = await mendScript({ answer: assistant.text, messages, language, ask }).catch(() => null);
+        if (mended?.changed) assistant.text = mended.text;
+      }
       if (prefs.figureCheck === true && readTheWeb(messages) && !signal?.aborted) {
         const checked = await checkFigures({ answer: assistant.text, messages, sources: gateSources(shownStep || {}, { every: true }), moreSources, language, ask }).catch((err) => {
           log.warn('figure check did not run', { error: String(err?.message || err).slice(0, 160) });
@@ -2764,6 +2769,14 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
         if (checked?.changed) assistant.text = checked.text;
       }
       if (assistant.text !== streamed) revised = true;
+    }
+    // The words beside a step ("I fixed it and draw it again:") slip too: the stray characters go, no call spent.
+    if (assistant.toolCalls.length && assistant.text && !signal?.aborted) {
+      const mended = await mendScript({ answer: assistant.text, messages, language: prefs.language || 'en', ask: async () => '' }).catch(() => null);
+      if (mended?.changed) {
+        assistant.text = mended.text;
+        revised = true;
+      }
     }
     if (revised) emit('answer_revised', { text: assistant.text });
     if (done?.usage) {

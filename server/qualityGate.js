@@ -811,3 +811,49 @@ export async function checkFigures({ answer, messages, sources = [], moreSources
   const note = figureNote({ fixed, marked }, language);
   return { text: note ? `${marks.text.trimEnd()}\n\n${note}` : marks.text, changed: true, flagged, fixed, marked };
 }
+
+/** Chinese characters (and their compatibility forms). */
+const HAN_RUN = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+/g;
+const HAN_ONE = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/;
+const LANGUAGE_NAMES = { vi: 'Vietnamese', en: 'English' };
+
+/**
+ * Chinese slipped into an answer in another language (owner, 2026-11-11: "Có một lỗi文字
+ * trong nhãn năm"). The rule against it is in the prompt and a model still does it, so the
+ * answer is checked after it is written: when the person has not written Chinese, each
+ * line outside code that holds Chinese characters is rewritten in their language by one
+ * small call; a line that does not come back clean has the characters taken out. Code,
+ * and a conversation the person holds in Chinese, are left alone.
+ *
+ * @param {{ answer: string, messages: Array<{ role: string, text?: string }>, language?: string, ask: (system: string, prompt: string) => Promise<string> }} input
+ * @returns {Promise<{ text: string, changed: boolean, lines: number } | null>} null when there is nothing to mend
+ */
+export async function mendScript({ answer, messages, language = 'en', ask }) {
+  const text = String(answer || '');
+  if (!HAN_ONE.test(text)) return null;
+  if (messages.some((m) => m.role === 'user' && HAN_ONE.test(String(m.text || '')))) return null;
+  const lines = text.split('\n');
+  let fenced = false;
+  const bad = [];
+  lines.forEach((line, i) => {
+    if (FENCE.test(line)) fenced = !fenced;
+    else if (!fenced && HAN_ONE.test(line.replace(CODE_SPAN, ''))) bad.push(i);
+  });
+  if (!bad.length) return null;
+  const name = LANGUAGE_NAMES[language] || 'the language the rest of the text is in';
+  let fixed = [];
+  try {
+    const reply = await ask(
+      `You fix a slip of language. Each line you are given was written in ${name}, but Chinese words slipped into it. Rewrite each line in ${name} only, keeping its meaning, its Markdown and everything else exactly as it is. Answer with the lines, one per line, in the same order, and nothing else.`,
+      bad.map((i) => lines[i]).join('\n'),
+    );
+    fixed = String(reply || '').replace(/^```\w*\n?|\n?```$/g, '').split('\n').filter((l) => l.trim() !== '');
+  } catch {
+    fixed = [];
+  }
+  const usable = fixed.length === bad.length && fixed.every((l) => !HAN_ONE.test(l));
+  bad.forEach((at, k) => {
+    lines[at] = usable ? fixed[k] : lines[at].replace(HAN_RUN, '').replace(/ {2,}/g, ' ');
+  });
+  return { text: lines.join('\n'), changed: true, lines: bad.length };
+}

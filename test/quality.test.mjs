@@ -513,5 +513,24 @@ section('only what reached the model is a source (QC-012)');
   check('  and a link in a drawing is no source for the source check', !textsIn(step).join('\n').includes('made-up.example'));
 }
 
+section('Chinese slipped into another language is mended (owner, 2026-11-11)');
+{
+  const { mendScript } = await import('../server/qualityGate.js');
+  const asked = [];
+  const ask = async (system, prompt) => {
+    asked.push({ system, prompt });
+    return 'Có một lỗi chữ trong nhãn năm của sơ đồ vừa vẽ.';
+  };
+  const answer = 'Mở đầu bình thường.\nCó một lỗi文字 trong nhãn năm của sơ đồ vừa vẽ.\n```python\nprint("中文")\n```\nKết thúc.';
+  const mended = await mendScript({ answer, messages: [{ role: 'user', text: 'vẽ sơ đồ giúp tôi' }], language: 'vi', ask });
+  check('only the line with Chinese in it is rewritten, in Vietnamese', mended?.changed && mended.text.includes('Có một lỗi chữ trong nhãn năm') && asked.length === 1 && !asked[0].prompt.includes('Mở đầu'), mended?.text);
+  check('  code is left as it is', mended.text.includes('print("中文")'));
+  check('  and the rest of the answer untouched', mended.text.startsWith('Mở đầu bình thường.\n') && mended.text.endsWith('Kết thúc.'));
+  const stripped = await mendScript({ answer: 'Tôi sẽ vẽ lại文字 ngay.', messages: [], language: 'vi', ask: async () => '' });
+  check('when the rewrite does not come back, the stray characters are taken out', stripped?.text === 'Tôi sẽ vẽ lại ngay.', stripped?.text);
+  check('a person writing Chinese gets Chinese back, untouched', (await mendScript({ answer: '好的，我来画。', messages: [{ role: 'user', text: '请画一张图' }], language: 'en', ask })) === null);
+  check('an answer with no Chinese costs nothing', (await mendScript({ answer: 'All fine.', messages: [], language: 'en', ask })) === null && asked.length === 1);
+}
+
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll quality-gate checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);

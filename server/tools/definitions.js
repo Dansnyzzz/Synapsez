@@ -1329,6 +1329,7 @@ export const TOOLS = [
       'Draw something in the conversation itself — a diagram, a chart, a table, a small illustration. ' +
       'It appears inline where you called it, so the user reads it in the flow of what you are saying rather than opening a file. ' +
       'Give `svg` for a diagram or chart, or `html` for anything richer; inline every style, because nothing is fetched. ' +
+      'SVG text does not wrap: keep each label inside its box (break a long one into <tspan> lines), everything inside the viewBox, labels beside arrows rather than over boxes, text that stands out from what is behind it, every word in the language the user writes in. It is checked before it is shown, and you are told what to fix. ' +
       '\n\n' +
       '**Not for charts.** Anything with numbers in it goes to `chart`, which draws it to scale from the data — a chart ' +
       'drawn by hand comes out crooked and mislabelled however carefully you try. Use this for what `chart` cannot do: ' +
