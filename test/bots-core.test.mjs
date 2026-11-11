@@ -583,6 +583,49 @@ section('memory: replace, pin, recall, and a forget that Undo brings back');
   await store.deleteBot(uid, bot.id);
 }
 
+/* ── Task 7: the memory review (owner: "both automatic") ───────── */
+
+const { maybeReview } = await import('../server/bots/review.js');
+
+section('every N turns, a review on the free model keeps a bot\'s memory tidy');
+{
+  const bot = await store.createBot(uid, { id: id(), name: 'Tidy', role: 't', avatar: 'frog' });
+  await store.updateBot(uid, bot.id, { reviewEvery: 2 });
+  const chat = await store.botChat(uid, { botId: bot.id, title: 'Tidy' });
+  await store.appendMessage(uid, chat.id, { id: id(), role: 'user', text: 'I moved to Huế last week, and I prefer short answers.' });
+  await store.appendMessage(uid, chat.id, { id: id(), role: 'assistant', text: 'Noted.' });
+  const mine = (await memory.remember(uid, { botId: bot.id }, 'The user lives in Hà Nội.', 'user')).entry;
+  const old = (await memory.remember(uid, { botId: bot.id }, 'The user likes long answers.', 'bot')).entry;
+  let asked = 0;
+  let saw = '';
+  const answer = (json) => async function* stream(request) {
+    asked += 1;
+    saw = request.messages.map((m) => m.text).join('\n');
+    yield { type: 'text', delta: JSON.stringify(json) };
+    yield { type: 'done', usage: { input: 100, output: 20 } };
+  };
+  const plan = { add: ['The user moved to Huế in November 2026.'], update: [{ id: old.id, text: 'The user prefers short answers.' }, { id: mine.id, text: 'Overwritten by a review' }], forget: [mine.id] };
+  const resolve = async () => ({ id: 'openrouter/free-model', provider: 'openrouter' });
+  const first = await maybeReview({ userId: uid, chatId: chat.id, stream: answer(plan), resolve });
+  check('it waits for its turn count', first.status === 'counting' && asked === 0, JSON.stringify(first));
+  const second = await maybeReview({ userId: uid, chatId: chat.id, stream: answer(plan), resolve });
+  const rows = await store.listBotMemory(uid, { botId: bot.id });
+  check('on the Nth turn it reviews, once', second.status === 'reviewed' && asked === 1, JSON.stringify(second));
+  check('  it read the conversation and the entries', /moved to Huế/.test(saw) && /Hà Nội/.test(saw));
+  check('  a new fact is added', rows.some((r) => r.text === 'The user moved to Huế in November 2026.'));
+  check("  a bot's own entry is corrected", rows.some((r) => r.id === old.id && r.text === 'The user prefers short answers.'));
+  check('  an entry the person wrote is never changed or forgotten by it', rows.some((r) => r.id === mine.id && r.text === 'The user lives in Hà Nội.'));
+  check('  and the count starts again', (await store.getBot(uid, bot.id)).turns_since_review === 0);
+  await store.updateBot(uid, bot.id, { reviewEvery: 0 });
+  check('Off means off', (await maybeReview({ userId: uid, chatId: chat.id, stream: answer(plan), resolve })).status === 'off');
+  const secret = await store.botChat(uid, { botId: bot.id, title: 'Tidy' });
+  await store.updateBot(uid, bot.id, { reviewEvery: 1 });
+  const group = await maybeReview({ userId: uid, chatId: (await store.botChat(uid, { botId: bot.id, groupId: room.id, title: 'x' })).id, stream: answer(plan), resolve });
+  check('a group conversation is not reviewed (its own memory is the group\'s)', group.status === 'skip');
+  void secret;
+  await store.deleteBot(uid, bot.id);
+}
+
 /* ── Task 3: carrying on in another invocation ─────────────────── */
 
 const { continueGroup, resumeGroupRounds } = await import('../server/bots/continue.js');

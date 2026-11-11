@@ -49,6 +49,9 @@ export const LIMITS = Object.freeze({
  */
 export const HANDOFF_CEILING = 6;
 
+/** How often a bot's memory is reviewed (server/bots/review.js): off, or every N of its turns. */
+export const REVIEW_CHOICES = Object.freeze([0, 20, 40]);
+
 /** The creatures a bot may wear, in the order a new bot is given them. */
 export const CREATURES = Object.freeze([...DRAWN_IDS]);
 export const isCreature = (id) => CREATURES.includes(String(id || ''));
@@ -193,7 +196,7 @@ export async function createBot(userId, input) {
  * Change a bot, checked. Only the fields given change.
  *
  * @param {string} userId @param {string} id
- * @param {{ name?: unknown, role?: unknown, instructions?: unknown, avatar?: unknown, model?: unknown }} input
+ * @param {{ name?: unknown, role?: unknown, instructions?: unknown, avatar?: unknown, model?: unknown, reviewEvery?: unknown }} input
  */
 export async function updateBot(userId, id, input) {
   const store = getStore();
@@ -202,6 +205,11 @@ export async function updateBot(userId, id, input) {
   if (input.role !== undefined) patch.role = cleanText(input.role, LIMITS.role, 'A role');
   if (input.instructions !== undefined) patch.instructions = cleanText(input.instructions, LIMITS.instructions, 'Instructions');
   if (input.model !== undefined) patch.model = cleanModel(input.model);
+  if (input.reviewEvery !== undefined) {
+    const every = Number(input.reviewEvery);
+    if (!REVIEW_CHOICES.includes(every)) throw new BotError('A memory review is off, or every 20 or 40 turns.', 400, 'bad_review');
+    patch.reviewEvery = every;
+  }
   if (input.avatar !== undefined) {
     if (!isCreature(input.avatar)) throw new BotError('That is not one of the creatures.', 400, 'bad_avatar');
     patch.avatar = String(input.avatar);
@@ -343,6 +351,7 @@ export function botView(row) {
     hue: Number(row.hue) || 0,
     instructions: row.instructions,
     main: !!row.is_main,
+    reviewEvery: row.review_every == null ? 20 : Number(row.review_every),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

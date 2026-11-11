@@ -89,7 +89,7 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
     wrap(async (req, res) => {
       const b = req.body || {};
       try {
-        const bot = await updateBot(req.user.id, req.params.id, { name: b.name, role: b.role, instructions: b.instructions, avatar: b.avatar });
+        const bot = await updateBot(req.user.id, req.params.id, { name: b.name, role: b.role, instructions: b.instructions, avatar: b.avatar, reviewEvery: b.reviewEvery });
         res.json({ bot: botView(bot) });
       } catch (err) {
         fail(res, err);

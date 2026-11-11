@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
+import { waitUntil } from '@vercel/functions';
+import { maybeReview } from './bots/review.js';
 import { getPrefs, getPauses, usesSharedKey, providerStatus } from './settings.js';
 import { checkQuota, record as recordUsage, turnTokenLimit } from './usage.js';
 import { normaliseQuestions, askLayout } from './tools/askOptions.js';
@@ -1567,13 +1569,15 @@ export async function runAgent(options) {
   const turnId = crypto.randomUUID();
   let stopReason = '';
   let failed = false;
+  /** Set by the turn: whether it was a bot's own conversation, which a memory review follows. */
+  const turnInfo = { botOwnChat: false };
   const emit = (event, data) => {
     if (event === 'done') stopReason = String(data?.stopReason || '');
     else if (event === 'error') failed = true;
     return options.emit?.(event, data);
   };
   try {
-    return await runTurn({ ...options, emit, turnId });
+    return await runTurn({ ...options, emit, turnId, turnInfo });
   } catch (err) {
     failed = true;
     throw err;
@@ -1582,11 +1586,15 @@ export async function runAgent(options) {
       await getStore()
         .dropTurnMemory(options.userId, turnId)
         .catch((err) => log.error('could not take back what a stopped turn saved', err, { chatId: options.chatId }));
+    } else if (turnInfo.botOwnChat && (stopReason === 'end_turn' || stopReason === 'max_steps')) {
+      // Every so many turns, a look over the bot's memory on the free model (server/bots/review.js),
+      // after the reply and never in its way.
+      waitUntil(maybeReview({ userId: options.userId, chatId: options.chatId }));
     }
   }
 }
 
-async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, answers, handoff = false, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion, deadlineAt = Infinity, turnId = null, turnOrigin: originGiven = null }) {
+async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, answers, handoff = false, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion, deadlineAt = Infinity, turnId = null, turnOrigin: originGiven = null, turnInfo = null }) {
   const store = getStore();
   // This turn's deadline on this function, handed to every model call (HAR-015).
   // A group round runs several turns in one function's life, and hands each the time that is left (bots/rounds.js).
@@ -1614,6 +1622,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
    * was given before that day is kept in its row and no longer read.
    */
   const persona = chat.bot_id ? await botPersona(userId, chat) : null;
+  if (persona && turnInfo && !chat.bot_group_id && !chat.incognito) turnInfo.botOwnChat = true;
 
   /**
    * One model for the whole account, not one per conversation.
