@@ -6974,7 +6974,11 @@ async function loadFreeTier() {
         <div class="ctable__head" role="row"><span role="columnheader">${escapeHtml(t('freetier.service'))}</span><span role="columnheader">${escapeHtml(t('freetier.used'))}</span><span role="columnheader">${escapeHtml(t('freetier.when'))}</span></div>
         ${rows}
       </div>
-      <p class="hint">${escapeHtml(report.enforced ? t('freetier.enforced', { n: String(report.userDaily) }) : t('freetier.off'))}</p>`;
+      <p class="hint">${escapeHtml(report.enforced ? t('freetier.enforced', { n: String(report.userDaily) }) : t('freetier.off'))}</p>${
+        Number.isFinite(report.firecrawl?.remaining)
+          ? `<p class="hint">${escapeHtml(t('freetier.firecrawlLive', { left: Number(report.firecrawl.remaining).toLocaleString(locale), plan: report.firecrawl.plan == null ? '—' : Number(report.firecrawl.plan).toLocaleString(locale) }))}</p>`
+          : ''
+      }`;
   } catch (err) {
     host.textContent = err.message;
   }

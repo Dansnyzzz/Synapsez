@@ -178,6 +178,11 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Máy tính đám mây đã dùng hết hạn mức miễn phí của tháng này, nên không máy nào khởi động được cho tới khi hạn mức được làm mới. Hãy nói rõ với người dùng và đề xuất cách làm không cần nó.',
   'A project needs a name.': 'Dự án cần có tên.',
   'No such project.': 'Không có dự án này.',
+  'Firecrawl answered HTTP {0}: {1}': 'Firecrawl trả lời HTTP {0}: {1}',
+  'research_index with op "{0}" needs {1}.': 'research_index với op "{0}" cần {1}.',
+  'op is one of "papers", "read", "related" or "law".': 'op là một trong "papers", "read", "related" hoặc "law".',
+  '"{0}" is not a valid URL — give the site\'s address, e.g. https://example.com.': '"{0}" không phải URL hợp lệ — hãy đưa địa chỉ website, ví dụ https://example.com.',
+  'op is "map" or "crawl".': 'op là "map" hoặc "crawl".',
   'You can pin up to {0} conversations. Unpin one first.': 'Bạn ghim được tối đa {0} hội thoại. Hãy bỏ ghim một hội thoại trước.',
   'Skill not found': 'Không tìm thấy kỹ năng',
   'Say what the task should do.': 'Hãy nói tác vụ cần làm gì.',
@@ -1074,6 +1079,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Xoá một việc khỏi Google Tasks.",
   "Changes something in your Google account ({0}: {1}).":
     "Thay đổi dữ liệu trong tài khoản Google của bạn ({0}: {1}).",
+  "Writes a formula that makes Google fetch {0} whenever the sheet is opened — it can send the sheet's contents there.":
+    "Ghi một công thức khiến Google tải {0} mỗi khi trang tính được mở — công thức đó có thể gửi nội dung trang tính tới địa chỉ ấy.",
   "This conversation uses under 25% of the window, so there is nothing worth folding yet.":
     "Cuộc trò chuyện này dùng chưa tới 25% cửa sổ ngữ cảnh, nên chưa có gì đáng để nén.",
   "The provider stopped sending (stalled for {0}s).":

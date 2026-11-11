@@ -33,7 +33,7 @@ import { codeContextTool } from './codeContext.js';
 import { getPrefs, getApiKey, maskPersonalFor } from '../settings.js';
 import { sendEmail, emailBackend, senderName } from '../email.js';
 import { composeMessage, KIND_NAMES } from '../mailTemplate.js';
-import { safeFetch, readCapped } from '../util/safeFetch.js';
+import { safeFetch, readCapped, assertPublic } from '../util/safeFetch.js';
 import { searchDocs, listSources, forgetSource } from '../rag.js';
 import { SPREADSHEET_FORMATS, createDocument, extensionOf, readOfficeAsync } from '../office/index.js';
 import { extractPdfText } from '../pdf.js';
@@ -43,6 +43,8 @@ import { airQuality, countryFacts, earthquakes, elevation, moonPhase, publicHoli
 import { record as recordUsage } from '../usage.js';
 import { log } from '../util/trace.js';
 import { search, formatResults, searchPlan, readThroughExa, countryOf } from '../search.js';
+import { firecrawlReady, firecrawlScrape, firecrawlMap, firecrawlCrawl, researchPapers, readPaper, relatedPapers, lawSearch } from '../firecrawl.js';
+import { mayMeter, countMetered } from '../freeTier.js';
 import { untrusted } from './untrusted.js';
 import { searchProject } from '../projects.js';
 import { normaliseQuestions, answerText } from './askOptions.js';
@@ -393,24 +395,67 @@ async function fetchedThroughExa(url, maxChars, why, { moreThan = 0 } = {}) {
   return `# ${url} (read through Exa — ${why})\n\n${untrusted(url, read.text.slice(0, limit))}`;
 }
 
-async function webFetch({ url, max_chars: maxChars }) {
+/**
+ * The page through Firecrawl's browser, said as such — when Exa could not read it either
+ * (server/firecrawl.js, owner 2026-11-11). A credit of the deployment's free month, and one
+ * of this account's metered calls today (freeTier.js). Null when there is no Firecrawl, no
+ * room left, or it read nothing better; the caller then says what went wrong.
+ *
+ * @param {string} url @param {any} maxChars @param {string} why
+ * @param {{ moreThan?: number, userId?: string|null, signal?: AbortSignal }} [options]
+ */
+async function fetchedThroughFirecrawl(url, maxChars, why, { moreThan = 0, userId = null, signal } = {}) {
+  if (!firecrawlReady() || !(await mayMeter(userId))) return null;
+  let read;
+  try {
+    read = await firecrawlScrape(url, { signal });
+  } catch (err) {
+    log.info('web_fetch: Firecrawl could not read it', { error: String(err?.message || err).slice(0, 160) });
+    return null;
+  }
+  if (!read) return null;
+  await countMetered(userId);
+  const body = read.text.trim();
+  // An error page in a browser's clothes is not the page.
+  if (body.length <= moreThan || (read.status >= 400 && body.length < THIN_PAGE_CHARS)) return null;
+  const limit = Math.min(Math.max(Number(maxChars) || PAGE_CHARS, 500), 200_000);
+  const notes = [];
+  if (body.length > limit) notes.push(`truncated — ${body.length - limit} more characters. Call web_fetch again with a larger max_chars to read the rest.`);
+  if (read.pages > 5) notes.push(`a PDF of ${read.pages} pages — only its first 5 were read this way.`);
+  return `# ${url} (read through Firecrawl — ${why})\n\n${untrusted(url, body.slice(0, limit))}${notes.map((line) => `\n\n[${line}]`).join('')}`;
+}
+
+/**
+ * `viaFirecrawl`: false for the pages web_search reads on its own — those would spend the
+ * month's credits on pages nobody asked for by name; a refused one is simply skipped there.
+ *
+ * @param {{ url: string, max_chars?: number }} input
+ * @param {{ userId?: string|null, signal?: AbortSignal, viaFirecrawl?: boolean }} [context]
+ */
+async function webFetch({ url, max_chars: maxChars }, { userId = null, signal, viaFirecrawl = true } = {}) {
+  const firecrawl = (target, why, options = {}) => (viaFirecrawl ? fetchedThroughFirecrawl(target, maxChars, why, { userId, signal, ...options }) : null);
   let page;
   try {
     page = await fetchReadable(url);
   } catch (err) {
     // A refusal by status (403 to anything that is not a browser, 429, 5xx) is
-    // worth asking Exa about. An address this server will not visit at all —
-    // a private one — never reaches here with a status, and is never sent on.
-    const viaExa = err.status && !GONE.has(err.status) ? await fetchedThroughExa(url, maxChars, err.message) : null;
+    // worth asking Exa about, and Firecrawl's browser after it. An address this
+    // server will not visit at all — a private one — never reaches here with a
+    // status, and is never sent on.
+    const refused = err.status && !GONE.has(err.status);
+    const viaExa = refused ? await fetchedThroughExa(url, maxChars, err.message) : null;
     if (viaExa) return viaExa;
+    const throughFirecrawl = refused ? await firecrawl(url, err.message) : null;
+    if (throughFirecrawl) return throughFirecrawl;
     throw err;
   }
   const { parsed, text, note, html, truncated, cap } = page;
   if (html && !note && text.trim().length < THIN_PAGE_CHARS) {
-    const viaExa = await fetchedThroughExa(parsed.href, maxChars, `${parsed.host} sent almost no text without running its scripts`, {
-      moreThan: text.trim().length,
-    });
+    const why = `${parsed.host} sent almost no text without running its scripts`;
+    const viaExa = await fetchedThroughExa(parsed.href, maxChars, why, { moreThan: text.trim().length });
     if (viaExa) return viaExa;
+    const throughFirecrawl = await firecrawl(parsed.href, why, { moreThan: text.trim().length });
+    if (throughFirecrawl) return throughFirecrawl;
   }
 
   // A document gets a larger default than a page. 20,000 characters is a
@@ -653,7 +698,7 @@ async function webSearch({ query, count, depth, recency, sites, category }, cont
   // not a whole article each. A page that will not open is skipped, not fatal.
   const top = found.results.slice(0, plan.read);
   const pages = await Promise.all(
-    top.map((r) => webFetch({ url: r.url, max_chars: EXCERPT_CHARS }).catch(() => null)),
+    top.map((r) => webFetch({ url: r.url, max_chars: EXCERPT_CHARS }, { userId, viaFirecrawl: false }).catch(() => null)),
   );
   const read = pages
     .map((text, i) => (text ? `── Page ${i + 1}: ${top[i].url}\n${text}` : null))
@@ -1251,7 +1296,7 @@ async function extractTool({ url, what, fields }, { userId, chatId, signal }) {
     // So the spend lands against the conversation that caused it, the same way
     // an ordinary turn does — this call used to be booked nowhere at all.
     chatId,
-    fetchPage: (target) => webFetch({ url: target, max_chars: 60000 }),
+    fetchPage: (target) => webFetch({ url: target, max_chars: 60000 }, { userId, signal }),
   });
 }
 
@@ -3081,12 +3126,156 @@ async function publishFileTool({ file_id: fileId, unpublish }, { userId, origin 
   );
 }
 
+/* ── Firecrawl's indexes and a site's pages (server/firecrawl.js, owner 2026-11-11) ── */
+
+const clipText = (text, n) => {
+  const s = String(text || '').replace(/\s+/g, ' ').trim();
+  return s.length > n ? `${s.slice(0, n)}…` : s;
+};
+
+/** A paper's own page, from the id its index gives it. */
+export function paperLink(paper) {
+  const id = String(paper?.primaryId || paper?.paperId || '');
+  const [space, ...rest] = id.split(':');
+  const value = rest.join(':');
+  if (!value) return null;
+  if (space === 'arxiv') return `https://arxiv.org/abs/${value}`;
+  if (space === 'pmid') return `https://pubmed.ncbi.nlm.nih.gov/${value}/`;
+  if (space === 'pmcid') return `https://www.ncbi.nlm.nih.gov/pmc/articles/${value}/`;
+  if (space === 'doi') return `https://doi.org/${value}`;
+  if (space === 'web' && /^https?:\/\//.test(value)) return value;
+  return null;
+}
+
+const authorsOf = (authors) => {
+  const list = Array.isArray(authors) ? authors : String(authors || '').split(',').map((a) => a.trim()).filter(Boolean);
+  return list.length > 4 ? `${list.slice(0, 4).join(', ')} et al.` : list.join(', ');
+};
+
+function paperLine(paper, i) {
+  const when = String(paper.createdDate || '').slice(0, 10);
+  const link = paperLink(paper);
+  return [
+    `${i + 1}. ${clipText(paper.title, 240)}${authorsOf(paper.authors) ? ` — ${authorsOf(paper.authors)}` : ''}${when ? ` (${when})` : ''}`,
+    `   id: ${paper.primaryId || paper.paperId}${link ? ` · ${link}` : ''}`,
+    paper.abstract ? `   ${clipText(paper.abstract, 600)}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+/** A standing-aside from server/firecrawl.js, said as what to do instead. */
+const firecrawlAside = (err, instead) => (err?.skip ? `Firecrawl is not available for this right now (${String(err.message).replace(/^firecrawl: /, '')}). ${instead}` : null);
+
+/**
+ * research_index — Firecrawl's free indexes: about 43 million research paper abstracts
+ * (PubMed, bioRxiv, medRxiv, arXiv), a paper's passages that answer a question, the papers
+ * like it, citing it or cited by it; and US federal and state law. No credits; a thousand
+ * calls a day for the deployment (freeTier.js `firecrawl_index`).
+ *
+ * @param {any} input @param {{ signal?: AbortSignal }} [context]
+ */
+async function researchIndexTool({ op = 'papers', query, id, k, from, to, sort, mode, jurisdiction }, { signal } = {}) {
+  const asked = String(query || '').trim();
+  const paperId = String(id || '').trim();
+  const needs = (what) => {
+    throw new Error(`research_index with op "${op}" needs ${what}.`);
+  };
+  try {
+    if (op === 'papers') {
+      if (!asked) needs('a query');
+      const rows = await researchPapers(asked, { k, from, to, sort, signal });
+      if (!rows.length) return `No papers matched "${asked}". Try other words or a wider date range, or web_search.`;
+      return `Research papers for "${asked}" — ${rows.length} from Firecrawl's index of about 43 million abstracts:\n${untrusted('research paper abstracts', rows.map(paperLine).join('\n\n'))}\nRead one with op "read" and its id (with a question, to get the passages that answer it). Cite the links you use.`;
+    }
+    if (op === 'read') {
+      if (!paperId) needs('the id of a paper (from op "papers")');
+      const { paper, passages } = await readPaper(paperId, { query: asked, k, signal });
+      if (!paper) return `No paper with the id "${paperId}".`;
+      const head = paperLine({ ...paper, abstract: asked ? '' : paper.abstract }, 0).replace(/^1\. /, '');
+      const found = passages.map((p, i) => `[${i + 1}] ${clipText(p.text, 1500)}`).join('\n\n');
+      return `${untrusted('a research paper', asked ? `${head}\n\nPassages answering "${asked}":\n${found || '(none matched)'}` : head)}\nCite the link.`;
+    }
+    if (op === 'related') {
+      if (!paperId) needs('the id of a paper (from op "papers")');
+      const rows = await relatedPapers(paperId, { intent: asked, mode, k, signal });
+      if (!rows.length) return `Found no ${mode === 'citers' ? 'papers citing' : mode === 'references' ? 'references of' : 'papers like'} ${paperId}.`;
+      return `${mode === 'citers' ? 'Papers citing' : mode === 'references' ? 'Papers cited by' : 'Papers like'} ${paperId} — ${rows.length}:\n${untrusted('research paper abstracts', rows.map(paperLine).join('\n\n'))}`;
+    }
+    if (op === 'law') {
+      if (!asked) needs('a query');
+      const rows = await lawSearch(asked, { k, jurisdiction, signal });
+      if (!rows.length) return `No US law matched "${asked}".`;
+      const lines = rows.map((r, i) => `${i + 1}. ${clipText(r.title, 200)}\n   ${r.url}\n   ${clipText(r.description, 500)}`).join('\n\n');
+      return `US law for "${asked}" — ${rows.length} from Firecrawl's Government Index:\n${untrusted('statutes, regulations and court opinions', lines)}\nCheck the issuer, the jurisdiction and whether it is in force before relying on it; cite the links.`;
+    }
+  } catch (err) {
+    const aside = firecrawlAside(err, 'Use web_search with category "research paper" instead.');
+    if (aside) return aside;
+    throw err;
+  }
+  throw new Error('op is one of "papers", "read", "related" or "law".');
+}
+
+/** What a crawl reads of each page, and of all of them together. */
+const CRAWL_PAGE_CHARS = 4_000;
+const CRAWL_TOTAL_CHARS = 30_000;
+
+/**
+ * site_pages — a website's pages listed (op "map": a credit), or a few of them read at once
+ * (op "crawl": a credit a page, ten at most), through Firecrawl. Both are metered calls for
+ * the account's share of the day, like a search (freeTier.js).
+ *
+ * @param {any} input @param {{ userId?: string|null, signal?: AbortSignal, deadline?: number }} [context]
+ */
+async function sitePagesTool({ op = 'map', url, search: term, limit, include_paths: includePaths }, { userId, signal, deadline } = {}) {
+  let parsed;
+  try {
+    parsed = new URL(String(url || ''));
+  } catch {
+    throw new Error(`"${url}" is not a valid URL — give the site's address, e.g. https://example.com.`);
+  }
+  await assertPublic(parsed);
+  if (!firecrawlReady()) return 'Listing and crawling a site needs Firecrawl, which this deployment does not have. Use web_fetch on the pages instead.';
+  if (!(await mayMeter(userId))) return "This account's share of today's metered web calls is used. Use web_fetch on the pages instead.";
+  try {
+    if (op === 'map') {
+      const links = await firecrawlMap(parsed.href, { search: term, limit, signal });
+      await countMetered(userId);
+      if (!links.length) return `Found no pages on ${parsed.host}.`;
+      const lines = links.slice(0, 200).map((l) => `- ${l.url}${l.title ? ` — ${clipText(l.title, 120)}` : ''}`).join('\n');
+      return `${links.length} page${links.length === 1 ? '' : 's'} on ${parsed.host}${term ? `, most relevant to "${term}" first` : ''}:\n${untrusted(parsed.href, lines)}\nOpen the one you need with web_fetch.`;
+    }
+    if (op === 'crawl') {
+      const paths = (Array.isArray(includePaths) ? includePaths : []).map(String).filter(Boolean);
+      const { pages, finished } = await firecrawlCrawl(parsed.href, { limit, includePaths: paths, deadline, signal });
+      await countMetered(userId);
+      if (!pages.length) return `Read no pages of ${parsed.host}${finished ? '' : ' before this run ran short of time'}.`;
+      let total = 0;
+      const blocks = [];
+      for (const page of pages) {
+        const block = `## ${clipText(page.title || page.url, 160)}\n${page.url}${page.status >= 400 ? ` (HTTP ${page.status})` : ''}\n\n${page.text.slice(0, CRAWL_PAGE_CHARS)}`;
+        if (total + block.length > CRAWL_TOTAL_CHARS) break;
+        total += block.length;
+        blocks.push(block);
+      }
+      return `${blocks.length} page${blocks.length === 1 ? '' : 's'} of ${parsed.host}${finished ? '' : ' (stopped where this run ran short of time — what was read so far)'}, the first ${CRAWL_PAGE_CHARS} characters of each:\n${untrusted(parsed.href, blocks.join('\n\n'))}\nweb_fetch one for the rest of it.`;
+    }
+  } catch (err) {
+    const aside = firecrawlAside(err, 'Use web_fetch on the pages instead.');
+    if (aside) return aside;
+    throw err;
+  }
+  throw new Error('op is "map" or "crawl".');
+}
+
 export const CLOUD_IMPLEMENTATIONS = {
   create_file: createFileTool,
   update_file: updateFileTool,
   read_generated_file: readGeneratedFileTool,
   file_versions: fileVersionsTool,
   web_fetch: webFetch,
+  // Firecrawl (server/firecrawl.js): a site's pages, and the free paper and law indexes.
+  site_pages: sitePagesTool,
+  research_index: researchIndexTool,
   ask_options: askOptionsTool,
   youtube_transcript: youtubeTranscript,
   load_tools: loadToolsTool,

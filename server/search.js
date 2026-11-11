@@ -9,10 +9,14 @@
  * did — because "who told you that" is a fair question and the model should be
  * able to pass the answer on.
  *
- * The default order is Exa, then Google, then DuckDuckGo, then Tavily, then Brave:
+ * The default order is Exa, then Firecrawl, then Google, then DuckDuckGo, then
+ * Tavily, then Brave:
  *
  *   **Exa** is neural search built for exactly this — it returns the passage
  *   that answers the question rather than a page that mentions the words.
+ *   **Firecrawl** is web search with the search engines' own ranking, on the
+ *   deployment's free month (server/firecrawl.js) — second, and the engine fused
+ *   in beside Exa from Extra high up (owner, 2026-11-11).
  *   **Google** is real Google results through Gemini's search grounding, on
  *   a Gemini key; with none it stands aside silently (see `searchGoogle`).
  *   **DuckDuckGo** needs no key and costs nothing, so it sits ahead of the paid
@@ -27,8 +31,9 @@ import { untrusted } from './tools/untrusted.js';
 import { log } from './util/trace.js';
 import { googleDataInScope } from './googleData.js';
 import { allowance, spend, take, exhaust, mayMeter, countMetered, exaMills, exaSpent } from './freeTier.js';
+import { firecrawlSearch } from './firecrawl.js';
 
-const DEFAULT_ORDER = ['exa', 'google', 'duckduckgo', 'tavily', 'brave'];
+const DEFAULT_ORDER = ['exa', 'firecrawl', 'google', 'duckduckgo', 'tavily', 'brave'];
 
 /**
  * How far one search goes at each reasoning level (owner, 2026-11-02) — one
@@ -256,6 +261,25 @@ async function searchExa(query, ask) {
   }));
   const said = typeof json.output?.content === 'string' ? json.output.content.trim() : '';
   return { results, answer: said || null };
+}
+
+/**
+ * Firecrawl: the search engines' own ranking, ten results for 2 of the deployment's
+ * monthly credits — counted and held in server/firecrawl.js, which stands aside when the
+ * month's share is used. Its news source for news, its research and PDF categories, and
+ * the same span and sites as every other engine.
+ */
+async function searchFirecrawl(query, ask) {
+  await metered('firecrawl_search', ask, 2);
+  const results = await firecrawlSearch(query, {
+    count: ask.count,
+    recency: ask.recency,
+    sites: ask.sites,
+    category: ask.category,
+    country: ask.country,
+    timeoutMs: ask.plan.timeoutMs,
+  });
+  return results.map((r) => ({ ...r, snippet: trim(r.snippet, ask.plan.snippet) }));
 }
 
 /** Tavily's own topics, for the categories it has one for. */
@@ -530,6 +554,7 @@ async function searchGoogle(query, ask) {
 /** `metered`: drawn from a free allowance the deployment shares (freeTier.js). */
 const ENGINES = {
   exa: { label: 'Exa', run: searchExa, key: 'EXA_API_KEY', metered: true },
+  firecrawl: { label: 'Firecrawl', run: searchFirecrawl, key: 'FIRECRAWL_API_KEY', metered: true },
   tavily: { label: 'Tavily', run: searchTavily, key: 'TAVILY_API_KEY', metered: true },
   brave: { label: 'Brave', run: searchBrave, key: 'BRAVE_API_KEY', metered: true },
   // No key, so it is always available — which is what makes it a good middle

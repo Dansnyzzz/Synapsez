@@ -34,17 +34,30 @@ const OPEN = '<untrusted';
 const CLOSE = '</untrusted>';
 
 /**
+ * Characters that show as nothing: zero-width spaces and joiners, bidi marks, the word
+ * joiner and its kin, variation selectors, the BOM, the Hangul fillers and soft hyphen.
+ */
+export const INVISIBLE = /(?:[\u00AD\u061C\u115F\u1160\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFEFF\uFFA0]|\u034F|\u17B4|\u17B5|[\u180B-\u180F]|[\uFE00-\uFE0F])/g;
+
+/**
  * Stop the content from closing its own envelope.
  *
  * Without this the whole thing is decorative: text containing `</untrusted>`
  * ends the block early, and everything after it reads as though it came from
  * the application rather than from the page. A zero-width space inside the tag
  * keeps it visually identical to a reader while no longer matching.
+ *
+ * Any tag that reads as this one once case, spaces and invisible characters are set
+ * aside — `</UNTRUSTED>`, `< /untrusted >`, `</un\u200Btrusted>` (2026-11-11: the
+ * upper-case close survived the exact-match replace this used to be). A tag that
+ * already has the zero-width space after `<` is left alone.
  */
 const defang = (text) =>
-  String(text ?? '')
-    .replaceAll(CLOSE, '<​/untrusted>')
-    .replaceAll(OPEN, '<​untrusted');
+  String(text ?? '').replace(/<[^<>]{0,80}/g, (piece) => {
+    if (piece[1] === '\u200B') return piece;
+    const folded = piece.replace(INVISIBLE, '').replace(/\s+/g, '').toLowerCase();
+    return /^<\/?untrusted/.test(folded) ? `<\u200B${piece.slice(1)}` : piece;
+  });
 
 /**
  * @param source  where it came from, in a few words — a URL, a server name, a

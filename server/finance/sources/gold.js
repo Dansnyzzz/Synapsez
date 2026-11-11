@@ -1,4 +1,4 @@
-import { getJson, SourceError } from '../http.js';
+import { getJson, SourceError, throughFirecrawl } from '../http.js';
 import { cached, ttlFor } from '../cache.js';
 import { num } from '../util.js';
 import * as yahoo from './yahoo.js';
@@ -8,6 +8,8 @@ import * as yahoo from './yahoo.js';
  * 37.5 g) — what people mean by "giá vàng SJC" — kept five minutes for everybody.
  * Elsewhere, the COMEX futures through Yahoo (USD per troy ounce): `GC=F` gold,
  * `SI=F` silver. A by-date SJC history needs a POST, which this does not make.
+ * Read through Firecrawl (a credit of the free month each time), the board is kept half
+ * an hour: SJC changes it a few times a day.
  */
 
 const SJC = 'https://sjc.com.vn/GoldPrice/Services/PriceService.ashx';
@@ -22,7 +24,7 @@ function sjcTime(text) {
 
 /** SJC's board: each kind of bar or ring, by branch, buying and selling in ₫ per lượng. */
 export async function sjc(ctx = {}) {
-  return cached('sjc|gold|SJC|', ttlFor('gold'), async () => {
+  return cached('sjc|gold|SJC|', throughFirecrawl('sjc') ? Math.max(ttlFor('gold'), 30 * 60_000) : ttlFor('gold'), async () => {
     const data = await getJson('sjc', SJC, ctx);
     if (data?.success === false) throw new SourceError('sjc', 'SJC did not answer with prices.');
     const asOf = sjcTime(data?.latestDate) || new Date().toISOString();
