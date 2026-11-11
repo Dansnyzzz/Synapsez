@@ -1332,3 +1332,74 @@ CREATE INDEX IF NOT EXISTS scheduled_group_idx ON scheduled_tasks (user_id, bot_
 ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS missed TEXT NOT NULL DEFAULT 'once';
 ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS reasoning_tokens BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS origin TEXT;
+
+-- 47 (owner, 2026-11-11): work that starts outside the app (spec C). A scheduled task
+-- can be started by a signed request instead of a clock (`trigger` 'hook'); its route
+-- keeps the secret encrypted — an HMAC is checked with the secret itself — and filters
+-- on the event. Every delivery leaves a receipt keyed by its id, so a retry runs
+-- nothing (never the body; kept 7 days). A bot's waits are rows read into its next run,
+-- not processes. Telegram to Chief: the account's URL and header secrets as hashes,
+-- who may write, and the code that links the owner's Telegram id. The outbox holds what
+-- goes out — a stored provider message id means it was sent, so a retry never sends
+-- twice.
+ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS trigger TEXT NOT NULL DEFAULT 'schedule';
+CREATE TABLE IF NOT EXISTS hook_routes (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  task_id    TEXT NOT NULL UNIQUE REFERENCES scheduled_tasks(id) ON DELETE CASCADE,
+  secret_enc TEXT NOT NULL,
+  filters    JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  rotated_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS hook_routes_user_idx ON hook_routes (user_id);
+CREATE TABLE IF NOT EXISTS hook_receipts (
+  key         TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  route_id    TEXT REFERENCES hook_routes(id) ON DELETE CASCADE,
+  source      TEXT NOT NULL,
+  delivery_id TEXT NOT NULL,
+  status      TEXT NOT NULL,
+  reason      TEXT,
+  at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS hook_receipts_route_idx ON hook_receipts (route_id, at DESC);
+CREATE INDEX IF NOT EXISTS hook_receipts_at_idx ON hook_receipts (at);
+CREATE TABLE IF NOT EXISTS bot_waits (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  bot_id     TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+  message_id TEXT,
+  request    TEXT NOT NULL,
+  note       TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at  TIMESTAMPTZ,
+  outcome    TEXT
+);
+CREATE INDEX IF NOT EXISTS bot_waits_open_idx ON bot_waits (user_id, bot_id) WHERE closed_at IS NULL;
+CREATE INDEX IF NOT EXISTS bot_waits_closed_idx ON bot_waits (closed_at) WHERE closed_at IS NOT NULL;
+CREATE TABLE IF NOT EXISTS telegram_inbound (
+  user_id      TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  path_hash    TEXT NOT NULL UNIQUE,
+  token_hash   TEXT NOT NULL,
+  start_code   TEXT,
+  allowed_ids  JSONB NOT NULL DEFAULT '[]'::jsonb,
+  bot_username TEXT,
+  enabled      BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS outbox (
+  id          TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  channel     JSONB NOT NULL,
+  text        TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'pending',
+  provider_id TEXT,
+  attempts    INTEGER NOT NULL DEFAULT 0,
+  due_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  reason      TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  sent_at     TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS outbox_due_idx ON outbox (due_at) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS outbox_done_idx ON outbox (created_at) WHERE status <> 'pending';

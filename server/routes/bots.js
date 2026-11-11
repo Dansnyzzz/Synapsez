@@ -9,6 +9,8 @@ import { clientError } from '../util/clientError.js';
 import { BotError, CREATURES, LIMITS, HANDOFF_CEILING, botView, groupView, createBot, createGroup, distinctFaces, duplicateBot, ensureChief, removeBot, updateBot, updateGroup } from '../bots/team.js';
 import { exportTeam, importTeam } from '../bots/porting.js';
 import { askAside } from '../bots/aside.js';
+import { cleanFilters, newHookSecret, newRouteId, sealHookSecret, sendTestHook } from '../hooks.js';
+import { disableTelegram, enableTelegram, setTelegramOthers, telegramView } from '../telegramInbound.js';
 import { limit as rateLimit } from '../ratelimit.js';
 import { withMarkup } from '../pricing.js';
 import { needsApproval } from '../agent.js';
@@ -148,6 +150,9 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       }
       for (const a of seen.asks) items.push({ kind: 'question', group: a.group_id, bot: a.bot, text: String(a.text || '').slice(0, 200) });
       for (const g of groups) if (g.pending && ['ceiling', 'segments'].includes(g.pending.reason)) items.push({ kind: 'ceiling', group: g.id });
+      // A bot still waiting on something after a day (spec C.2).
+      const dayAgo = Date.now() - 86_400_000;
+      for (const w of await store.listBotWaits(req.user.id)) if (new Date(w.created_at).getTime() < dayAgo) items.push({ kind: 'wait', bot: w.bot_id, waitId: w.id, text: String(w.note).slice(0, 200) });
       for (const t of tasks) {
         const state = taskState(t);
         // A run stopped for a yes is the waiting step above, when its chat says so already.
@@ -302,6 +307,15 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       if (prompt.length > 8000) return res.status(400).json({ error: 'That is too long for a scheduled task.' });
       const prefs = await getPrefs(req.user.id).catch(() => ({}));
       const tz = validZone(req.body?.tz) ? req.body.tz : validZone(prefs.timezone) ? prefs.timezone : null;
+      // Started by a signed request rather than a clock (spec C.1): no schedule, a route and a secret.
+      if (req.body?.trigger === 'hook') {
+        const task = await store.createTask(req.user.id, { id: crypto.randomUUID(), title, prompt, model: null, cron: null, nextRunAt: null, tz, botId: bot.id, trigger: 'hook' });
+        if (!task) return res.status(404).json({ error: 'No such bot.' });
+        const secret = newHookSecret();
+        const route = await store.createHookRoute(req.user.id, { id: newRouteId(), taskId: task.id, secretEnc: sealHookSecret(secret) });
+        // Shown this once; only its encrypted form is kept.
+        return res.status(201).json({ task, hook: { url: hookUrl(req, route.id), secret } });
+      }
       let when;
       try {
         when = parseSchedule(req.body?.when, { once: req.body?.repeat === false, tz });
@@ -311,6 +325,123 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       const task = await store.createTask(req.user.id, { id: crypto.randomUUID(), title, prompt, model: null, cron: when.cron, nextRunAt: when.nextRunAt, tz, botId: bot.id, missed: req.body?.missed });
       if (!task) return res.status(404).json({ error: 'No such bot.' });
       res.status(201).json({ task });
+    }),
+  );
+
+  /* ── a task's webhook (spec C.1): only the person, never a bot ─────── */
+
+  /** Where a hook is: the deployment's public address, then the one this request came to. */
+  const hookUrl = (req, routeId) => `${publicBase(req)}/api/hooks/${routeId}`;
+  const publicBase = (req) => String(process.env.PUBLIC_URL || origin(req) || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '')).replace(/\/+$/, '');
+  const hookOf = async (req, res) => {
+    const store = getStore();
+    const task = await store.getTask(req.user.id, req.params.id);
+    const route = task ? await store.getHookRouteForTask(req.user.id, task.id) : null;
+    if (!route) res.status(404).json({ error: 'This task has no hook.' });
+    return route;
+  };
+  /** Its address, filters and the last deliveries — never its secret. */
+  api.get(
+    '/bot-tasks/:id/hook',
+    wrap(async (req, res) => {
+      const route = await hookOf(req, res);
+      if (!route) return;
+      const receipts = await getStore().listHookReceipts(req.user.id, route.id, 20);
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.json({ url: hookUrl(req, route.id), filters: route.filters || {}, rotatedAt: route.rotated_at, receipts: receipts.map((r) => ({ delivery: r.delivery_id, status: r.status, reason: r.reason, at: r.at })) });
+    }),
+  );
+  api.patch(
+    '/bot-tasks/:id/hook',
+    wrap(async (req, res) => {
+      const route = await hookOf(req, res);
+      if (!route) return;
+      let filters;
+      try {
+        filters = cleanFilters(req.body?.filters);
+      } catch (err) {
+        return res.status(err.status || 400).json({ error: clientError(err) });
+      }
+      const saved = await getStore().setHookFilters(req.user.id, route.task_id, filters);
+      res.json({ filters: saved?.filters || filters });
+    }),
+  );
+  /** A new secret, at once: the old one stops working now. Shown this once. */
+  api.post(
+    '/bot-tasks/:id/hook/rotate',
+    wrap(async (req, res) => {
+      const route = await hookOf(req, res);
+      if (!route) return;
+      const secret = newHookSecret();
+      await getStore().rotateHookRoute(req.user.id, route.task_id, sealHookSecret(secret));
+      res.json({ url: hookUrl(req, route.id), secret });
+    }),
+  );
+  /** "Gửi thử": a signed test event from the server, through the same door as any. */
+  api.post(
+    '/bot-tasks/:id/hook/test',
+    wrap(async (req, res) => {
+      const route = await hookOf(req, res);
+      if (!route) return;
+      const answer = await sendTestHook({ userId: req.user.id, taskId: route.task_id });
+      res.status(answer.status === 202 || answer.status === 200 ? 200 : answer.status).json(answer.body);
+    }),
+  );
+
+  /* ── a bot's waits (spec C.2) ─────────────────────────────────────── */
+  api.get(
+    '/bots/:id/waits',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const bot = await store.getBot(req.user.id, req.params.id);
+      if (!bot) return res.status(404).json({ error: 'No such bot.' });
+      const waits = await store.listBotWaits(req.user.id, bot.id);
+      res.json({ waits: waits.map((w) => ({ id: w.id, request: w.request, note: w.note, createdAt: w.created_at })) });
+    }),
+  );
+  /** The person closes one (the ✕ on its chip). */
+  api.delete(
+    '/bots/:id/waits/:wait',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const bot = await store.getBot(req.user.id, req.params.id);
+      if (!bot) return res.status(404).json({ error: 'No such bot.' });
+      const closed = await store.closeBotWait(req.user.id, req.params.wait, { botId: bot.id, outcome: 'closed by the user' });
+      if (!closed) return res.status(404).json({ error: 'No such wait.' });
+      res.json({ ok: true });
+    }),
+  );
+
+  /* ── Telegram to Chief (spec C.3) ─────────────────────────────────── */
+  api.get(
+    '/telegram/inbound',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const [row, connected] = await Promise.all([store.getTelegramInbound(req.user.id), store.getConnector(req.user.id, 'telegram')]);
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.json({ connected: !!connected, ...telegramView(row) });
+    }),
+  );
+  api.post(
+    '/telegram/inbound',
+    rateLimit('connect', (req) => req.user?.id),
+    wrap(async (req, res) => {
+      try {
+        const row = req.body?.enabled ? await enableTelegram(req.user.id, { base: publicBase(req) }) : await disableTelegram(req.user.id);
+        res.json(telegramView(row));
+      } catch (err) {
+        res.status(err.status || 400).json({ error: clientError(err) });
+      }
+    }),
+  );
+  api.put(
+    '/telegram/inbound/others',
+    wrap(async (req, res) => {
+      try {
+        res.json(telegramView(await setTelegramOthers(req.user.id, req.body?.ids)));
+      } catch (err) {
+        res.status(err.status || 400).json({ error: clientError(err) });
+      }
     }),
   );
 

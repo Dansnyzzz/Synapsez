@@ -22,7 +22,17 @@ import { forget, recall, remember } from './memory.js';
 
 const NAME = { type: 'string', description: "A bot's exact name, as list_bots shows it" };
 
-/** @type {Record<string, { description: string, parameters: any, readOnly?: boolean, mainOnly?: boolean }>} */
+/** A wait's note, and how many a bot keeps open (spec C.2). */
+export const WAIT_NOTE = 500;
+export const WAITS_OPEN = 20;
+
+/**
+ * `mainOnly`: Chief's alone. `ownChat`: only in a bot's own chat; `groupChat`: only in a
+ * group; `withWaits`: only while the bot has a wait open — a tool that can only refuse
+ * where it is not offered costs every step of every turn for nothing.
+ *
+ * @type {Record<string, { description: string, parameters: any, readOnly?: boolean, mainOnly?: boolean, ownChat?: boolean, groupChat?: boolean, withWaits?: boolean }>}
+ */
 const DEFS = {
   list_bots: {
     readOnly: true,
@@ -88,6 +98,7 @@ const DEFS = {
   },
   post_to_group: {
     mainOnly: true,
+    ownChat: true,
     description:
       "Main bot only, from your own chat: give one of the user's group chats work, for them. It starts at once (@Name calls that member, else the admin answers); the user watches it there and you get a line here when it is done.",
     parameters: {
@@ -122,12 +133,34 @@ const DEFS = {
     },
   },
   ask_person: {
+    groupChat: true,
     description:
       "In a group chat only: ask the user one short question when you cannot go on without their answer. It is posted in the group as a question; end your turn with [PASS] right after, and the user's answer comes to you. In your own chat, ask in words or with ask_options instead.",
     parameters: {
       type: 'object',
       properties: { question: { type: 'string', description: "One short question, in the user's language" } },
       required: ['question'],
+    },
+  },
+  wait_for: {
+    ownChat: true,
+    description: 'Park a request you cannot settle now until your next scheduled run or request from outside ("tell me when the build ends").',
+    parameters: {
+      type: 'object',
+      properties: { note: { type: 'string', description: `What to check at the next run, and what settles it (at most ${WAIT_NOTE} characters)` } },
+      required: ['note'],
+    },
+  },
+  close_wait: {
+    withWaits: true,
+    description: 'Close a wait you parked, once it is settled, with what came of it.',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: "The wait's id, as your run's note lists it" },
+        outcome: { type: 'string', description: 'What came of it, in a sentence' },
+      },
+      required: ['id', 'outcome'],
     },
   },
   forget: {
@@ -150,14 +183,14 @@ export const BOT_TOOL_NAMES = new Set(Object.keys(DEFS));
 export const botToolRisk = (name) => (DEFS[name]?.readOnly ? 'safe' : 'ordinary');
 
 /**
- * The definitions a bot's turn is offered, in the catalogue's shape. Chief gets all
- * of them; any other bot the ones that are not Chief's alone.
+ * The definitions a bot's turn is offered, in the catalogue's shape: Chief's alone only to
+ * Chief, and each where it can do something — its own chat or a group, a wait to close.
  *
- * @param {{ is_main?: boolean }} bot
+ * @param {{ is_main?: boolean }} bot @param {{ inGroup?: boolean, openWaits?: number }} [where]
  */
-export function botTools(bot) {
+export function botTools(bot, { inGroup = false, openWaits = 0 } = {}) {
   return Object.entries(DEFS)
-    .filter(([, def]) => !def.mainOnly || bot?.is_main)
+    .filter(([, def]) => (!def.mainOnly || bot?.is_main) && !(def.ownChat && inGroup) && !(def.groupChat && !inGroup) && !(def.withWaits && !openWaits))
     .map(([name, def]) => ({ name, description: def.description, parameters: def.parameters, scope: 'cloud', readOnly: !!def.readOnly, botTool: true }));
 }
 
@@ -325,6 +358,21 @@ export async function runBotTool({ userId, chatId, name, input = {}, turnId = nu
         const log = await store.botChat(userId, { groupId, title: group?.name || 'Group' });
         await store.appendMessage(userId, log.id, { id: crypto.randomUUID(), role: 'assistant', bot: self.id, text: question, ask: true });
         return { isError: false, content: "Your question is in the group. End your turn now with [PASS]: the user's answer comes to you." };
+      }
+      case 'wait_for': {
+        // A row, not a process: read into the bot's next run (scheduler.js waitsNote).
+        if (groupId) return { isError: true, content: 'wait_for works in your own chat with the user.' };
+        const note = String(input.note ?? '').normalize('NFC').replace(/\s+/g, ' ').trim().slice(0, WAIT_NOTE);
+        if (!note) return { isError: true, content: 'Say in the note what to check at the next run.' };
+        const said = [...(await store.listMessages(userId, chatId))].reverse().find((m) => m.role === 'user' && String(m.text || '').trim() && m.id !== 'continue-note');
+        const wait = await store.addBotWait(userId, { id: crypto.randomUUID(), botId: self.id, messageId: said?.id || null, request: String(said?.text || note).slice(0, 1000), note, max: WAITS_OPEN });
+        if (!wait) return { isError: true, content: `You have ${WAITS_OPEN} open waits. Close one that is settled with close_wait first.` };
+        return { isError: false, content: `Parked (wait ${wait.id}). It is listed at your next scheduled run or request from outside; tell the user you will see to it then.` };
+      }
+      case 'close_wait': {
+        const wait = await store.closeBotWait(userId, String(input.id ?? '').trim(), { botId: self.id, outcome: String(input.outcome ?? '').trim() || null });
+        if (!wait) return { isError: true, content: 'No open wait of yours has that id.' };
+        return { isError: false, content: 'Closed.' };
       }
       case 'forget': {
         const scope = groupId && input.scope !== 'own' ? { groupId } : { botId: self.id };

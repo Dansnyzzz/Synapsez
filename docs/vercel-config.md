@@ -115,7 +115,7 @@ that a missing secret and a wrong secret both get a 401.
 | `SEC_USER_AGENT` | The User-Agent SEC EDGAR is asked with, as SEC requires: `Synapsez <contact email>` — the owner's real contact. **Required for US statements, filings and the US screen.** | SEC is never asked; US statements fall through to Yahoo, and the answer says "SEC needs SEC_USER_AGENT". |
 | `COINGECKO_DEMO_KEY` | CoinGecko's free Demo key (no card): 100 calls a minute of this deployment's own, sent as `x-cg-demo-api-key`. | Keyless CoinGecko, rate-limited by the server's address and shared with every other tenant on it. |
 | `FRED_API_KEY` | FRED's free key: US rates, inflation, unemployment, GDP. | US macro falls through to the World Bank (annual). |
-| `FIN_SOURCE_<NAME>=off` | Switches one source off everywhere, at once, without a deploy. `<NAME>` is one of `YAHOO, VNDIRECT, KBS, VIETCAP, SEC, COINGECKO, FRANKFURTER, ECB, ERAPI, VIETCOMBANK, SJC, WORLDBANK, FRED, NSO, FMARKET`. Use it if a source objects, or keeps refusing. | Every source is on. |
+| `FIN_SOURCE_<NAME>=off` | Switches one source off everywhere, at once, without a deploy. `<NAME>` is one of `YAHOO, VNDIRECT, KBS, VIETCAP, SEC, COINGECKO, FRANKFURTER, ECB, ERAPI, VIETCOMBANK, SJC, WORLDBANK, FRED, NSO, FMARKET`. Use it if a source objects, or keeps refusing. `=on` asks a source the deployment would otherwise leave alone. | Every source is on, except SJC on Vercel (a Cloudflare bot check turns every datacenter away) and Vietcap on Vercel outside Asia (a bare 400 to US addresses) — the probe of 2026-11-11, `docs/research/2026-11-10-finance-probe-iad1.md`. |
 
 The pooled ceilings (`server/freeTier.js`) can be set too, each a number:
 `COINGECKO_FREE_MONTHLY` (9,500), `COINGECKO_FREE_MINUTE` (90), `YAHOO_FREE_DAILY`

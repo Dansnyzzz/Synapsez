@@ -1,6 +1,6 @@
 # Finance sources from a server address (rule 3) · 2026-11-10, run 2026-11-11
 
-**Status: run, from iad1 and from sin1, on 2026-11-11 (06:27 and 06:29 UTC).**
+**Status: run, from iad1 and from sin1, on 2026-11-11 (06:27 and 06:29 UTC); its findings are now the defaults (below).**
 
 `scripts/finance-probe.mjs` (`npm run finance:probe`) starts one Vercel Sandbox —
 iad1 by default, the region the app's functions run in, or `--region sin1` — and
@@ -51,14 +51,19 @@ is expected: it only sets the cookie the crumb request needs.
 - **Everything else answers from iad1**, SEC included now that `SEC_USER_AGENT`
   is set. The Vietnamese sources are 3–5 times faster from sin1.
 
-## Recommended settings (the owner's to make, in Vercel)
+## What was done (owner, 2026-11-11: "follow the recommendation")
 
-1. `FIN_SOURCE_SJC=off` — it cannot answer a server, and the gold answer should
-   say plainly that it is the world price.
-2. `FIN_SOURCE_VIETCAP=off` while the app's functions run in iad1 — or keep it on
-   and move the finance work to sin1 (below).
-3. A decision, not a setting: Vietnamese financial statements need Vietcap, which
-   needs a non-US address. Either go without them (1–2 above), or run the app (or
-   only the finance tool) from sin1. Moving the whole app adds the distance to the
-   database and the model providers to every request; a sin1 function for market
-   data alone keeps that cost to finance calls.
+1. **SJC is off on Vercel by default** — in code, not a dashboard setting
+   (`server/finance/http.js`, `REFUSES_THIS_SERVER`). Gold for Vietnam then comes
+   from Yahoo, the world price, and says so by its source. `FIN_SOURCE_SJC=on` asks
+   anyway; on a machine in Vietnam it is on.
+2. **Vietcap is off on Vercel outside Asia by default** (`VERCEL_REGION` not a sin1,
+   hkg1, hnd1, kix1, icn1 or bom1), and its bare 400 now stands it aside for an hour
+   like a 403, so a deployment that turns it on anyway does not pay a round trip
+   per question.
+3. **Not done: a sin1 function for market data.** Vercel's region page lists Hobby
+   as "single region" and says a deployment to more regions than the plan allows
+   fails before the build; it does not say whether one function in sin1 beside the
+   rest in iad1 counts as two. Trying it on `main` could stop every deploy, so it
+   waits for a preview deployment to show which. Until then, Vietnamese financial
+   statements and index lists are not available from the deployed app.

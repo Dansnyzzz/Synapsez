@@ -282,6 +282,16 @@ export const api = {
   botUsageDetail: (id, { from, to }) => request('GET', `/api/bots/${encodeURIComponent(id)}/usage?${new URLSearchParams({ from, to })}`),
   groupTasks: (id) => request('GET', `/api/bot-groups/${encodeURIComponent(id)}/tasks`),
   addGroupTask: (id, task) => request('POST', `/api/bot-groups/${encodeURIComponent(id)}/tasks`, task),
+  // Spec C (2026-11-11): a task's webhook, a bot's waits, Telegram to Chief.
+  botTaskHook: (taskId) => request('GET', `/api/bot-tasks/${encodeURIComponent(taskId)}/hook`),
+  setBotTaskHookFilters: (taskId, filters) => request('PATCH', `/api/bot-tasks/${encodeURIComponent(taskId)}/hook`, { filters }),
+  rotateBotTaskHook: (taskId) => request('POST', `/api/bot-tasks/${encodeURIComponent(taskId)}/hook/rotate`),
+  testBotTaskHook: (taskId) => request('POST', `/api/bot-tasks/${encodeURIComponent(taskId)}/hook/test`),
+  botWaits: (id) => request('GET', `/api/bots/${encodeURIComponent(id)}/waits`),
+  closeBotWait: (id, waitId) => request('DELETE', `/api/bots/${encodeURIComponent(id)}/waits/${encodeURIComponent(waitId)}`),
+  telegramInbound: () => request('GET', '/api/telegram/inbound'),
+  setTelegramInbound: (enabled) => request('POST', '/api/telegram/inbound', { enabled }),
+  setTelegramOthers: (ids) => request('PUT', '/api/telegram/inbound/others', { ids }),
 
   connectors: () => request('GET', '/api/connectors'),
   // Skills: upload (scan first, keep when asked) and the Create a skill draft (owner, 2026-11-01).

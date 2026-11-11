@@ -138,6 +138,35 @@ section('http.js: every call says who it is, and nothing else');
   delete process.env.SEC_USER_AGENT;
 }
 
+section('sources that turn away servers are off there unless asked for (probe, 2026-11-11)');
+{
+  const keep = { VERCEL: process.env.VERCEL, VERCEL_REGION: process.env.VERCEL_REGION };
+  delete process.env.FIN_SOURCE_SJC;
+  delete process.env.FIN_SOURCE_VIETCAP;
+  delete process.env.VERCEL;
+  check('on a machine of its own, SJC and Vietcap are asked', http.enabled('sjc') && http.enabled('vietcap'));
+  process.env.VERCEL = '1';
+  process.env.VERCEL_REGION = 'iad1';
+  check('on Vercel in iad1, neither is', !http.enabled('sjc') && !http.enabled('vietcap'));
+  check('  and they drop out of the chains: gold for Vietnam comes from Yahoo', chains.chainFor('gold', 'vn').join(',') === 'yahoo', chains.chainFor('gold', 'vn').join(','));
+  const fetchImpl = fakeFetch();
+  const why = await refusal(http.getJson('sjc', 'https://sjc.com.vn/x', { fetchImpl }));
+  check('  asked anyway, it says why and asks nothing', why instanceof http.SourceError && /turns away servers like this one/.test(why.message) && /FIN_SOURCE_SJC=on/.test(why.message) && fetchImpl.calls.length === 0, why?.message);
+  process.env.VERCEL_REGION = 'sin1';
+  check('in sin1, Vietcap answers and is asked; SJC still is not', http.enabled('vietcap') && !http.enabled('sjc'));
+  process.env.VERCEL_REGION = 'iad1';
+  process.env.FIN_SOURCE_VIETCAP = 'on';
+  process.env.FIN_SOURCE_SJC = 'yes';
+  check('FIN_SOURCE_<NAME>=on asks anyway', http.enabled('vietcap') && http.enabled('sjc'));
+  process.env.FIN_SOURCE_YAHOO = 'off';
+  check('  and =off still switches any source off', !http.enabled('yahoo'));
+  for (const name of ['FIN_SOURCE_VIETCAP', 'FIN_SOURCE_SJC', 'FIN_SOURCE_YAHOO']) delete process.env[name];
+  for (const [k, v] of Object.entries(keep)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+}
+
 section('http.js: switched off, standing aside, or over a ceiling means no call at all');
 {
   http.__resetHttp();
@@ -162,6 +191,15 @@ section('http.js: switched off, standing aside, or over a ceiling means no call 
   const broken = fakeFetch(() => ({ status: 503, body: 'down' }));
   const down = await refusal(http.getJson('sjc', 'https://sjc.com.vn/x', { fetchImpl: broken }));
   check('any other failure is an error with its status, and no standing aside', down?.status === 503 && !down.standAside && !http.standingAside('sjc'), down?.message);
+  http.__resetHttp();
+  const bare = fakeFetch(() => ({ status: 400, body: 'null' }));
+  const refusedUs = await refusal(http.getJson('vietcap', 'https://iq.vietcap.com.vn/x', { fetchImpl: bare }));
+  check('Vietcap\'s bare 400 — how it turns away a US address — stands it aside too', refusedUs?.standAside === true && http.standingAside('vietcap') > Date.now(), refusedUs?.message);
+  http.__resetHttp();
+  const realBad = fakeFetch(() => ({ status: 400, body: '{"error":"section must be one of …"}' }));
+  const badAsk = await refusal(http.getJson('vietcap', 'https://iq.vietcap.com.vn/x', { fetchImpl: realBad }));
+  check('  but a 400 that says what was wrong is a plain error', badAsk?.status === 400 && !badAsk.standAside, badAsk?.message);
+  http.__resetHttp();
   const html = fakeFetch(() => ({ body: '<html>blocked</html>', headers: { 'content-type': 'text/html' } }));
   const notJson = await refusal(http.getJson('worldbank', 'https://api.worldbank.org/x', { fetchImpl: html }));
   check('a page that is not JSON is a readable failure', notJson instanceof http.SourceError && /not JSON/i.test(notJson.message), notJson?.message);

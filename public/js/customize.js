@@ -2,6 +2,7 @@ import { api } from './api.js';
 import { t, localeTag } from './i18n.js';
 import { escapeHtml } from './markdown.js';
 import { toast } from './render.js';
+import { mountTelegramInbound } from './telegram-inbound.js';
 import { PLUGINS } from './plugins.js';
 import { CONNECTORS, CONNECTOR_BY_ID, CATEGORIES, relatedTo } from './connector-catalog.js';
 
@@ -893,6 +894,7 @@ export function createCustomize(deps) {
         <div class="cpage__actions">${action}</div>
       </div>
       ${tokenForm}${help}
+      ${c.key === 'telegram' && s.connected ? '<section class="cpage__tg tgin" id="tg-inbound" aria-live="polite"></section>' : ''}
       <p class="cpage__about">${escapeHtml(t(`conn.${c.key}.about`))}</p>
       <div class="cpage__toolsrow">
         <h4>${escapeHtml(t('conn.tools'))}</h4>
@@ -912,6 +914,9 @@ export function createCustomize(deps) {
       <div class="cgrid cgrid--ext">${relatedTo(c, listed()).map(connectorCard).join('')}</div>
       <p class="cpage__foot">${escapeHtml(t('conn.foot'))}</p>`;
     settleLogos(host);
+    // Telegram to Chief, on the Telegram connector's own page (spec C.3).
+    const tgHost = /** @type {HTMLElement | null} */ (host.querySelector('#tg-inbound'));
+    if (tgHost) void mountTelegramInbound(tgHost, { toast });
     document.getElementById('connector-more')?.addEventListener('click', (event) =>
       openMenu(/** @type {HTMLElement} */ (event.currentTarget), [
         { label: t('conn.disconnect'), danger: true, confirm: t('connectors.reallyDisconnect'), run: () => disconnectOne(id) },

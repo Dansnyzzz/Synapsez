@@ -1,6 +1,38 @@
 {
   "entries": [
     {
+      "version": "1.22.0",
+      "date": "2026-11-11",
+      "new": {
+        "vi": [
+          "Việc của bot có thể chạy khi có yêu cầu đến (webhook có chữ ký): địa chỉ và khoá bí mật chỉ hiện một lần, có Gửi thử và Đổi khoá.",
+          "Bot có thể hẹn lại việc chưa xong tới lần chạy sau; các việc chờ hiện thành nhãn phía trên ô nhập.",
+          "Nhắn Chief từ Telegram: bật trong trang kết nối Telegram, liên kết bằng mã /start, Chief trả lời ngay trên Telegram."
+        ],
+        "en": [
+          "A bot's task can run when a request arrives (a signed webhook): its address and secret shown once, with Send a test and Rotate.",
+          "A bot can park what it cannot settle now until its next run; open waits are chips above its box.",
+          "Message Chief from Telegram: turn it on on the Telegram connector's page, link with a /start code, and Chief answers you there."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Tin trả lời được ghi lại trước khi gửi, nên không bao giờ gửi hai lần; mỗi công cụ của bot chỉ xuất hiện ở nơi dùng được, nên lời nhắc gọn hơn."
+        ],
+        "en": [
+          "Replies are written down before they are sent, so never sent twice; each bot tool appears only where it can act, so prompts are smaller."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Nguồn giá vàng SJC và Vietcap không còn bị hỏi từ máy chủ đã chặn chúng."
+        ],
+        "en": [
+          "SJC and Vietcap are no longer asked from servers they turn away."
+        ]
+      }
+    },
+    {
       "version": "1.21.0",
       "date": "2026-11-11",
       "new": {

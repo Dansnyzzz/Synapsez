@@ -13,6 +13,7 @@ import { sweepEventMail } from './eventMail.js';
 import { abortHere, holdRun, watchStopped } from './liveRuns.js';
 import { readCron, writeCron, readWhen, normTime, LIMITS, WEEK } from '../public/js/schedule-grammar.js';
 import { TASK_QUIET, TASK_SKIPPED, TASK_STOPPED } from '../public/js/automation-status.js';
+import { untrusted } from './tools/untrusted.js';
 
 /**
  * Work that happens without anyone watching.
@@ -500,6 +501,42 @@ export function scheduledRunNote({ title, now = new Date(), timeZone = null, ste
   );
 }
 
+/** The longest payload a request from outside puts in front of the model. */
+const HOOK_PAYLOAD_CHARS = 20_000;
+
+/** What a request from outside said, as data the model reads and never obeys (spec C.1). */
+function hookPayload(event) {
+  const shown = JSON.stringify({ type: event.type, occurredAt: event.occurredAt || undefined, data: event.data ?? null }, null, 2);
+  return untrusted(`a request to this task from outside the app (event "${String(event.type).slice(0, 60)}")`, shown.length > HOOK_PAYLOAD_CHARS ? `${shown.slice(0, HOOK_PAYLOAD_CHARS)}\n… (cut)` : shown);
+}
+
+/**
+ * What a bot parked to see to at its next run (spec C.2), for that run's note: each open
+ * wait with what was asked and the bot's note. Nothing when there are none.
+ */
+export async function waitsNote(userId, botId) {
+  const waits = await getStore().listBotWaits(userId, botId).catch(() => []);
+  if (!waits.length) return '';
+  const lines = waits.map((w) => `- [${w.id}] asked ${new Date(w.created_at).toISOString().slice(0, 10)}: "${String(w.request).slice(0, 300)}" — your note: ${String(w.note).slice(0, 500)}`);
+  return `\n\n(Open waits you parked for a run like this one. See to each you can now, and close it with close_wait and what came of it; leave the others open.)\n${lines.join('\n')}`;
+}
+
+/**
+ * A bot's task started by a request from outside (spec C.1): the same run as a scheduled
+ * one, its prompt followed by the request as data, its turn a 'webhook' one. A run
+ * already going is not started twice ('busy').
+ *
+ * @param {string} userId @param {string} taskId @param {{ type: string, occurredAt?: string | null, data?: unknown }} event
+ */
+export async function runHookTask(userId, taskId, event) {
+  const store = getStore();
+  const task = await store.getTask(userId, taskId);
+  if (!task) return { taskId, status: 'gone', chatId: null };
+  const claimed = await store.claimTask(userId, taskId, { nextRunAt: task.next_run_at });
+  if (!claimed) return { taskId, status: 'busy', chatId: task.last_chat ?? null };
+  return runTask({ ...claimed, hookEvent: event });
+}
+
 /**
  * How late a run may start before a task that skips missed runs lets it go (spec B.4). The
  * daily cron and a pinger every few minutes make a few minutes late normal; a run half an
@@ -643,9 +680,10 @@ async function runTask(task) {
     const prompted = await store.appendMessage(user.id, chatId, {
       id: crypto.randomUUID(),
       role: 'user',
-      text: task.prompt,
+      // A request from outside (spec C.1): the task's prompt, then what came, as data.
+      text: task.hookEvent ? `${task.prompt}\n\n${hookPayload(task.hookEvent)}` : task.prompt,
       // A task's prompt, not the person typing: some tools run only for the person (server/agent.js).
-      origin: 'task',
+      origin: task.hookEvent ? 'webhook' : 'task',
     });
     promptSeq = Number.isFinite(Number(prompted?.seq)) ? Number(prompted.seq) - 1 : -1;
     // Known from the start, so the conversation shows as running in the sidebar.
@@ -673,8 +711,8 @@ async function runTask(task) {
       unattended: true,
       // `no_update` and `run_failed`: a run may say it has nothing new, or failed (tools/runControl.js).
       runControl: true,
-      // The day and hour of this run, in the task's zone — see `scheduledRunNote`.
-      runNote: scheduledRunNote({ title: task.title, timeZone: task.tz || prefs.timezone }),
+      // The day and hour of this run, in the task's zone — see `scheduledRunNote`; and a bot's open waits (spec C.2).
+      runNote: scheduledRunNote({ title: task.title, timeZone: task.tz || prefs.timezone }) + (task.bot_id ? await waitsNote(user.id, task.bot_id) : ''),
       emit(event, data) {
         // Stored in last_status and shown in the interface, so a key quoted
         // back by a provider must not survive the trip — nor a database's own
@@ -865,6 +903,8 @@ export async function sweep() {
   const store = getStore();
   await Promise.allSettled([
     store.pruneRateLimits(),
+    // Receipts, closed waits, the outbox's sent and dropped (spec C).
+    store.pruneTriggers(),
     store.prunePairings(),
     // Unsent uploads, and files still labelled with a conversation that is gone.
     // Every path that binds a file to a conversation creates the conversation

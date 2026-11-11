@@ -953,6 +953,65 @@ section('needs you, unread, pins, the row menu, pause, who is called, ask aside,
   await page.evaluate(() => document.querySelector('dialog.botport')?.close());
 }
 
+section('triggers from outside: a webhook task, its secret once, a test; waits as chips; Telegram on its page (spec C)');
+{
+  const writer = (await store.listBots(me.id)).find((b) => b.name === 'Writer');
+  await page.click(`[data-row="bot:${writer.id}"]`);
+  if (await page.evaluate(() => document.querySelector('[data-details]')?.hidden !== false)) await page.click('.botchat__pill');
+  await page.waitForSelector('[data-details] [data-act="task-add"]', { timeout: 8000 }).catch(() => {});
+  await page.click('[data-details] [data-act="task-add"]');
+  await page.waitForSelector('[data-task-trigger]', { timeout: 5000 }).catch(() => {});
+  await page.fill('[data-task-title]', 'On deploy');
+  await page.fill('[data-task-prompt]', 'Say what was deployed.');
+  await page.selectOption('[data-task-trigger]', 'hook');
+  check('choosing "when a request arrives" puts away the schedule', await page.evaluate(() => document.querySelector('[data-task-when]')?.hidden === true));
+  await page.click('[data-task-add] button[type="submit"]');
+  await page.waitForSelector('.bothook__once', { timeout: 8000 }).catch(() => {});
+  const once = await page.evaluate(() => [...document.querySelectorAll('.bothook__once code')].map((c) => c.textContent));
+  check('the address and the secret are shown once', /\/api\/hooks\/[\w-]+$/.test(once[0] || '') && /^whsec_/.test(once[1] || ''), JSON.stringify(once));
+  const made = (await store.listTasks(me.id, { botId: writer.id })).find((x) => x.title === 'On deploy');
+  const route = await store.getHookRouteForTask(me.id, made.id);
+  check('  and only its encrypted form is kept', !!route && !String(route.secret_enc).includes(once[1] || 'x'));
+  await page.click('[data-hook-dismiss]');
+  await page.waitForFunction(() => !document.querySelector('.bothook__once'), null, { timeout: 5000 }).catch(() => {});
+  check('  Done puts it away for good', !(await page.evaluate(() => !!document.querySelector('.bothook__once'))));
+  await page.click(`[data-hook-open="${made.id}"]`);
+  await page.waitForSelector('.bothook__panel', { timeout: 6000 }).catch(() => {});
+  await page.click(`[data-hook-test="${made.id}"]`);
+  await page.waitForFunction(() => /Ran|Accepted|Failed/.test(document.querySelector('.bothook__receipts')?.textContent || ''), null, { timeout: 15_000 }).catch(() => {});
+  const receipts = await page.evaluate(() => document.querySelector('.bothook__receipts')?.textContent.replace(/\s+/g, ' ').trim());
+  check('Send a test goes through the same door and is listed', /Ran|Accepted/.test(receipts || ''), receipts);
+  check('  the panel never shows the secret', !(await page.evaluate((s) => document.querySelector('.bothook__panel')?.textContent.includes(s), once[1] || 'whsec_')));
+
+  // A wait as a chip above the box, closed with ✕.
+  await store.addBotWait(me.id, { id: 'wait-ui-1', botId: writer.id, request: 'Tell me when it ships', note: 'Check the release page' });
+  const blogRow = await page.evaluate(() => document.querySelector('[data-row^="group:"]')?.dataset.row);
+  await page.click(`[data-row="${blogRow}"]`);
+  await page.click(`[data-row="bot:${writer.id}"]`);
+  await page.waitForSelector('[data-waits] .botwait', { timeout: 6000 }).catch(() => {});
+  check('a bot\'s open wait is a chip above its box', /Check the release page/.test(await page.evaluate(() => document.querySelector('[data-waits]')?.textContent || '')));
+  await page.click('[data-wait-close="wait-ui-1"]');
+  await page.waitForFunction(() => !document.querySelector('[data-waits] .botwait'), null, { timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(400);
+  check('  ✕ closes it', !(await page.evaluate(() => !!document.querySelector('[data-waits] .botwait'))) && !(await store.listBotWaits(me.id, writer.id)).some((w) => w.id === 'wait-ui-1'));
+  await store.deleteTask(me.id, made.id);
+
+  // Telegram to Chief, on the Telegram connector's page (read only: turning it on would call Telegram).
+  const { encryptSecret } = await import('../server/crypto.js');
+  await store.saveConnector(me.id, 'telegram', encryptSecret('123456:TEST'), '@test_bot');
+  // Settings → Connectors → Telegram, as a person gets there.
+  await page.click('#account-button');
+  await page.waitForTimeout(250);
+  await page.click('.plusmenu--account [data-row="settings"]');
+  await page.click('#tab-connectors');
+  await page.waitForSelector('#connector-list [data-open-connector="telegram"]', { timeout: 8000 }).catch(() => {});
+  await page.locator('#connector-list [data-open-connector="telegram"] .cname').click();
+  await page.waitForSelector('#tg-inbound [data-tg-on]', { timeout: 10_000 }).catch(() => {});
+  const tgView = await page.evaluate(() => ({ title: document.querySelector('#tg-inbound h4')?.textContent, on: document.querySelector('#tg-inbound [data-tg-on]')?.checked, role: document.querySelector('#tg-inbound [data-tg-on]')?.getAttribute('role') }));
+  check('the Telegram page offers "Let me message Chief from Telegram", off', tgView.title === 'Message Chief from Telegram' && tgView.on === false && tgView.role === 'switch', JSON.stringify(tgView));
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => /** @type {HTMLDialogElement} */ (d).close()));
+}
+
 section('a first run makes its bots and their group, asking no model (spec B.7)');
 {
   await store.createUser({ id: 'u-first', email: 'first@test.local', name: 'First', username: 'ui.first', passwordHash: await hashPassword(password), role: 'user' });
