@@ -68,6 +68,10 @@ export const LIMITS = {
   skillUpload: { limit: 60, windowMs: 60 * 60_000 },
   // Choosing a new username: each refusal says a name is taken, so a script could list them (SEC-059).
   rename: { limit: 10, windowMs: 60 * 60_000 },
+  /** A question asked aside on the Bot page: one model call each (spec B.6). */
+  aside: { limit: 60, windowMs: 60 * 60_000 },
+  /** A team file read or added on the Bot page (spec B.5): a look first, then the import. */
+  'team-file': { limit: 40, windowMs: 60 * 60_000 },
 };
 
 /**

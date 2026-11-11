@@ -333,5 +333,48 @@ section('a group\'s task runs a round from its prompt');
   await store.deleteTask(uid, task.id);
 }
 
+/* ── Task 5: ask aside ─────────────────────────────────────────── */
+
+section('a question asked aside is answered and never kept');
+{
+  const { askAside, ASIDE_MESSAGES } = await import('../server/bots/aside.js');
+  const own = await store.botChat(uid, { botId: writer.id, title: 'Writer' });
+  for (let i = 0; i < ASIDE_MESSAGES + 10; i += 1) await store.appendMessage(uid, own.id, { id: id(), role: i % 2 ? 'assistant' : 'user', text: `line ${i}` });
+  const before = await store.listMessages(uid, own.id);
+  const memoryBefore = (await store.listBotMemory(uid, { botId: writer.id })).length;
+  let seen = null;
+  const stream = async function* (args) {
+    seen = args;
+    yield { type: 'text', delta: 'You agreed on ' };
+    yield { type: 'text', delta: 'Fridays.' };
+    yield { type: 'done', usage: { input: 900, output: 12 } };
+  };
+  const resolve = async (_u, want) => ({ id: `stub/${want}`, provider: 'stub', label: 'Stub' });
+  const at = Date.now();
+  const got = await askAside({ user, botId: writer.id, question: 'What day did we agree on?', model: 'openai/chip', stream, resolve });
+  check('the answer comes back', got.answer === 'You agreed on Fridays.' && got.model === 'stub/openai/chip', JSON.stringify(got));
+  check('  on the chip\'s model, with no tools, in the bot\'s persona', seen?.tools?.length === 0 && /Writer/.test(seen.system) && /asked aside/.test(seen.system));
+  check(`  reading the newest ${ASIDE_MESSAGES} messages and then the question`, seen.messages.length === ASIDE_MESSAGES + 1 && seen.messages.at(-1).text === 'What day did we agree on?' && seen.messages[0].text === 'line 10', seen.messages[0].text);
+  const after = await store.listMessages(uid, own.id);
+  check('nothing is added to the conversation', after.length === before.length && after.at(-1).id === before.at(-1).id);
+  check('  nor to memory', (await store.listBotMemory(uid, { botId: writer.id })).length === memoryBefore);
+  const usage = await store.botUsageDetail(uid, writer.id, { from: new Date(at - 60_000), to: new Date(Date.now() + 60_000) });
+  check('it is booked to the bot as its own line', usage.roles.some((r) => r.role === 'ask_aside' && r.tokens === 912), JSON.stringify(usage.roles));
+  let refused = '';
+  try {
+    await askAside({ user, botId: writer.id, question: '   ', stream, resolve });
+  } catch (err) {
+    refused = err.message;
+  }
+  check('an empty question is refused', /Ask something/.test(refused));
+  refused = '';
+  try {
+    await askAside({ user: other, botId: writer.id, question: 'x', stream, resolve });
+  } catch (err) {
+    refused = err.message;
+  }
+  check('  another account\'s bot is not there', /No such bot/.test(refused));
+}
+
 console.log(failures ? `\n\x1b[31m${failures} failed\x1b[0m` : '\n\x1b[32mall passed\x1b[0m');
 process.exit(failures ? 1 : 0);

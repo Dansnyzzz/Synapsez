@@ -8,6 +8,9 @@ import { log } from '../util/trace.js';
 import { clientError } from '../util/clientError.js';
 import { BotError, CREATURES, LIMITS, HANDOFF_CEILING, botView, groupView, createBot, createGroup, distinctFaces, duplicateBot, ensureChief, removeBot, updateBot, updateGroup } from '../bots/team.js';
 import { exportTeam, importTeam } from '../bots/porting.js';
+import { askAside } from '../bots/aside.js';
+import { limit as rateLimit } from '../ratelimit.js';
+import { withMarkup } from '../pricing.js';
 import { needsApproval } from '../agent.js';
 import { taskState } from '../../public/js/automation-status.js';
 import { listMemory, pin, remember, undoForget } from '../bots/memory.js';
@@ -209,6 +212,7 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
    */
   api.post(
     '/bots/import',
+    rateLimit('team-file', (req) => req.user?.id),
     wrap(async (req, res) => {
       try {
         const result = await importTeam(req.user.id, req.body?.data, { apply: req.body?.dry !== true });
@@ -216,6 +220,45 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       } catch (err) {
         fail(res, err);
       }
+    }),
+  );
+
+  /**
+   * A question to a bot, asked aside (spec B.6): answered from its conversation in one
+   * call with no tools, and never kept — the conversation and its memory stay as they were.
+   */
+  api.post(
+    '/bots/:id/aside',
+    rateLimit('aside', (req) => req.user?.id),
+    wrap(async (req, res) => {
+      try {
+        const model = typeof req.body?.model === 'string' ? req.body.model.slice(0, 200) : null;
+        res.json(await askAside({ user: req.user, botId: req.params.id, question: req.body?.question, model }));
+      } catch (err) {
+        fail(res, err);
+      }
+    }),
+  );
+
+  /**
+   * One bot's spending over a range, opened from its row on the Usage page (spec B.8): by
+   * kind of token, model, group, who started the turn, and what made the call. Cost at
+   * the price charged.
+   */
+  api.get(
+    '/bots/:id/usage',
+    wrap(async (req, res) => {
+      const from = new Date(String(req.query.from || ''));
+      const to = new Date(String(req.query.to || ''));
+      if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || to <= from) return res.status(400).json({ error: 'Give a range: from and to.' });
+      if (to.getTime() - from.getTime() > 400 * 86_400_000) return res.status(400).json({ error: 'A range is at most 400 days.' });
+      const store = getStore();
+      const bot = await store.getBot(req.user.id, req.params.id);
+      if (!bot) return res.status(404).json({ error: 'No such bot.' });
+      const d = await store.botUsageDetail(req.user.id, bot.id, { from, to });
+      const charged = (row) => ({ ...row, cost: withMarkup(Number(row.cost || 0)) });
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.json({ ...d, models: d.models.map(charged), roles: d.roles.map(charged) });
     }),
   );
 
@@ -639,9 +682,12 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       if (to.getTime() - from.getTime() > 400 * 86_400_000) return res.status(400).json({ error: 'A range is at most 400 days.' });
       if (!['hour', 'day', 'week', 'month'].includes(unit)) return res.status(400).json({ error: 'The unit is hour, day, week or month.' });
       if (!validZone(tz)) return res.status(400).json({ error: 'That is not a time zone.' });
-      const rows = await getStore().botUsage(req.user.id, { from, to, unit, tz });
+      // The same span just before, for "+18% on the 7 days before" (spec B.8).
+      const span = to.getTime() - from.getTime();
+      const [rows, before] = await Promise.all([getStore().botUsage(req.user.id, { from, to, unit, tz }), getStore().botUsageTotal(req.user.id, { from: new Date(from.getTime() - span), to: from })]);
       res.json({
         unit,
+        before: { tokens: before.tokens, cost: withMarkup(before.cost) },
         rows: rows.map((r) => ({
           bucket: r.bucket,
           bot: r.bot_id,
@@ -650,6 +696,8 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
           output: Number(r.output_tokens || 0),
           cacheRead: Number(r.cache_read_tokens || 0),
           calls: Number(r.calls || 0),
+          // At the price charged, since it is billed (spec B.8).
+          cost: withMarkup(Number(r.cost || 0)),
         })),
       });
     }),
