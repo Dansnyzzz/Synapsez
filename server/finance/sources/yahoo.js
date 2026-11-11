@@ -1,5 +1,5 @@
 import { getJson, getResponse, getText, SourceError } from '../http.js';
-import { cached, ttlFor } from '../cache.js';
+import { cached, forget, ttlFor } from '../cache.js';
 import { dayIn } from '../clock.js';
 import { vnIndexCode } from '../vn.js';
 import { num, plainText } from '../util.js';
@@ -20,6 +20,7 @@ import { num, plainText } from '../util.js';
 const Q1 = 'https://query1.finance.yahoo.com';
 const Q2 = 'https://query2.finance.yahoo.com';
 const SOURCE = 'yahoo';
+const CRUMB_KEY = 'yahoo|crumb||';
 
 /** Names people use, as Yahoo's tickers. */
 const NAMED = {
@@ -242,7 +243,7 @@ export async function statements(symbol, kind = 'income', period = 'year', ctx =
 
 /** The A3 cookie and a crumb, fetched together and kept six hours for everybody. */
 export async function crumb(ctx = {}) {
-  return cached('yahoo|crumb||', ttlFor('crumb'), async () => {
+  return cached(CRUMB_KEY, ttlFor('crumb'), async () => {
     const res = await getResponse(SOURCE, 'https://fc.yahoo.com/', { ...ctx, okOnly: false, accept: '*/*' });
     const cookie = (typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [res.headers.get('set-cookie') || ''])
       .map((c) => String(c).split(';')[0])
@@ -255,11 +256,24 @@ export async function crumb(ctx = {}) {
   });
 }
 
-/** A crumb-gated call: v10 quoteSummary, v7 quote, v7 options. */
+/**
+ * A crumb-gated call: v10 quoteSummary, v7 quote, v7 options. A crumb Yahoo has
+ * stopped accepting (401 "Invalid Crumb") is forgotten and fetched once more,
+ * rather than failing every such call until its six hours are up.
+ */
 async function withCrumb(url, ctx) {
-  const { cookie, crumb: value } = await crumb(ctx);
   const sep = url.includes('?') ? '&' : '?';
-  return getJson(SOURCE, `${url}${sep}crumb=${encodeURIComponent(value)}`, { ...ctx, headers: { Cookie: cookie } });
+  const ask = async () => {
+    const { cookie, crumb: value } = await crumb(ctx);
+    return getJson(SOURCE, `${url}${sep}crumb=${encodeURIComponent(value)}`, { ...ctx, headers: { Cookie: cookie } });
+  };
+  try {
+    return await ask();
+  } catch (err) {
+    if (!(err instanceof SourceError) || err.status !== 401) throw err;
+    await forget(CRUMB_KEY);
+    return ask();
+  }
 }
 
 /** v10 quoteSummary modules for a symbol. */

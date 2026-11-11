@@ -94,6 +94,13 @@ export async function cached(key, ttlMs, load, { valid, now = Date.now() } = {})
   }
 }
 
+/** Forget a kept answer everywhere — a session token the source has stopped accepting. */
+export async function forget(key) {
+  memory.delete(key);
+  const store = storeOrNull();
+  if (store) await store.financePut(key, {}, new Date(0)).catch(() => {});
+}
+
 /** What is kept for `key`, fresh or not, without asking the source: `{ value, fetchedAt }` or null. */
 export async function peek(key) {
   const mine = memory.get(key);

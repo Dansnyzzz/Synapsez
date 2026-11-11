@@ -1586,7 +1586,8 @@ export function widgetNode(widget, toolName = null) {
  * Whether a result carries something to draw. A map, a gallery or a card has
  * no markup — it is drawn from its data — so `markup` alone is not the test.
  */
-const drawable = (widget) => !!(widget && (widget.markup || ['map', 'images', 'card', 'connectors', 'market'].includes(widget.kind)));
+const drawable = (widget) =>
+  !!(widget && (widget.markup || ['map', 'images', 'card', 'connectors'].includes(widget.kind) || (widget.kind === 'market' && Array.isArray(widget.rows) && widget.rows.length > 0)));
 
 /**
  * When a scheduled run fires next, in the zone it was set in.

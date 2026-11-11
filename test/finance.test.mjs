@@ -399,6 +399,17 @@ section('7a yahoo.js: chart, statements, crumb');
   check('options: the nearest expiry, strikes around the price', opts.calls.length > 0 && opts.puts.length > 0 && opts.expiry === '2026-11-11', `${opts.expiry} ${opts.calls.length}`);
   const headlines = await yahoo.news('FPT', { ...ctx, market: 'vn', board: 'HOSE' });
   check('news: headline, publisher and link only', headlines.length === 1 && headlines[0].url === 'https://example.com/fpt-ai' && !('summary' in headlines[0]));
+
+  // A kept crumb Yahoo stops accepting: forgotten, fetched again, and the call answered.
+  await fresh();
+  let refusals = 1;
+  const stale = serve([
+    ['fc.yahoo.com', { status: 404, body: 'not here', headers: { 'set-cookie': 'A3=d=AQABBtest; Domain=.yahoo.com; Path=/' } }],
+    ['getcrumb', { status: 200, body: 'aBcD3fGh1Jk', headers: { 'content-type': 'text/plain' } }],
+    ['quoteSummary', () => (refusals-- > 0 ? { status: 401, body: fixture('yahoo-crumb-refused.json') } : { status: 200, body: fixture('yahoo-quotesummary.json') })],
+  ]);
+  const again = await yahoo.ratios('AAPL', { fetchImpl: stale, market: 'us' });
+  check('an "Invalid Crumb" refusal: the crumb is fetched again and the call answers', again.items.length > 0 && stale.calls.filter((c) => c.url.includes('getcrumb')).length === 2 && stale.calls.filter((c) => c.url.includes('quoteSummary')).length === 2);
 }
 
 const vndirect = await import('../server/finance/sources/vndirect.js');
