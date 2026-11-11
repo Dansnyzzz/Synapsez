@@ -196,11 +196,26 @@ export async function createBot(userId, input) {
  * Change a bot, checked. Only the fields given change.
  *
  * @param {string} userId @param {string} id
- * @param {{ name?: unknown, role?: unknown, instructions?: unknown, avatar?: unknown, model?: unknown, reviewEvery?: unknown }} input
+ * @param {{ name?: unknown, role?: unknown, instructions?: unknown, avatar?: unknown, model?: unknown, reviewEvery?: unknown, hue?: unknown, pinned?: unknown, paused?: unknown }} input
+ *   `hue`: one of HUES (the form's colour); `pinned`, `paused`: true or false (spec B.3, B.5)
  */
 export async function updateBot(userId, id, input) {
   const store = getStore();
   const patch = {};
+  if (input.pinned !== undefined) patch.pinnedAt = input.pinned ? new Date().toISOString() : null;
+  if (input.paused !== undefined) {
+    if (input.paused) {
+      const current = await store.getBot(userId, id);
+      // Chief runs the team: nobody would be left to ask.
+      if (current?.is_main) throw new BotError('Chief runs the team, so it is never paused.', 409, 'main_bot');
+    }
+    patch.pausedAt = input.paused ? new Date().toISOString() : null;
+  }
+  if (input.hue !== undefined) {
+    const hue = Number(input.hue);
+    if (!HUES.includes(hue)) throw new BotError('That is not one of the colours.', 400, 'bad_hue');
+    patch.hue = hue;
+  }
   if (input.name !== undefined) patch.name = cleanName(input.name);
   if (input.role !== undefined) patch.role = cleanText(input.role, LIMITS.role, 'A role');
   if (input.instructions !== undefined) patch.instructions = cleanText(input.instructions, LIMITS.instructions, 'Instructions');
@@ -216,7 +231,8 @@ export async function updateBot(userId, id, input) {
     const current = await store.getBot(userId, id);
     // Chief keeps the cosmic whale (owner, 2026-11-10). The form sends the one it wears with every save.
     if (current?.is_main && current.avatar !== patch.avatar) throw new BotError('Chief keeps the cosmic whale.', 400, 'chief_avatar');
-    if (current && current.avatar !== patch.avatar) {
+    // A new creature gets a colour nobody else wears with it — unless the form chose one.
+    if (current && current.avatar !== patch.avatar && patch.hue === undefined) {
       const others = (await store.listBots(userId)).filter((b) => b.id !== id);
       patch.hue = pickHue(patch.avatar, others);
     }
@@ -270,14 +286,15 @@ export async function createGroup(userId, input) {
  * members; removing the admin hands the role to the first who stays.
  *
  * @param {string} userId @param {string} id
- * @param {{ name?: unknown, members?: unknown, admin?: unknown, notice?: unknown }} input  `notice`: the
- *   group's standing note (at most LIMITS.notice), '' to clear it
+ * @param {{ name?: unknown, members?: unknown, admin?: unknown, notice?: unknown, pinned?: unknown }} input  `notice`: the
+ *   group's standing note (at most LIMITS.notice), '' to clear it; `pinned`: kept at the top of the list
  */
 export async function updateGroup(userId, id, input) {
   const store = getStore();
   const group = await store.getBotGroup(userId, id);
   if (!group) throw new BotError('No such group chat.', 404, 'not_found');
   const patch = {};
+  if (input.pinned !== undefined) patch.pinnedAt = input.pinned ? new Date().toISOString() : null;
   if (input.name !== undefined) {
     const name = cleanText(input.name, LIMITS.groupName, 'A group name');
     if (!name) throw new BotError('A group chat needs a name.', 400, 'bad_name');
@@ -319,6 +336,48 @@ export async function updateGroup(userId, id, input) {
 }
 
 /**
+ * A free name for a copy or an import: the name itself, else "name (2)", "name (3)"…
+ * cut to fit NAME_MAX with the number kept (spec B.5).
+ *
+ * @param {string} wanted @param {Iterable<string>} taken
+ */
+export function freeName(wanted, taken) {
+  const used = new Set([...taken].map((n) => n.toLowerCase()));
+  const base = String(wanted).slice(0, NAME_MAX).trim();
+  if (!used.has(base.toLowerCase())) return base;
+  for (let n = 2; n < 1000; n += 1) {
+    const tail = ` (${n})`;
+    const name = `${base.slice(0, NAME_MAX - tail.length).trim()}${tail}`;
+    if (!used.has(name.toLowerCase())) return name;
+  }
+  return `${base.slice(0, NAME_MAX - 9)} ${crypto.randomUUID().slice(0, 8)}`;
+}
+
+/**
+ * A copy of a bot (spec B.5): "X (copy)", the same role, instructions, creature (in the
+ * next free colour) and memory review; its memory copied; its scheduled tasks copied
+ * and paused, so nothing runs twice until the person says so. Never Chief.
+ *
+ * @param {string} userId @param {string} id @param {'vi' | 'en'} [language]
+ */
+export async function duplicateBot(userId, id, language = 'en') {
+  const store = getStore();
+  const source = await store.getBot(userId, id);
+  if (!source) throw new BotError('No such bot.', 404, 'not_found');
+  if (source.is_main) throw new BotError('Chief is one of a kind: make a new bot instead.', 409, 'main_bot');
+  const bots = await store.listBots(userId);
+  const name = freeName(`${source.name.slice(0, NAME_MAX - 11)}${language === 'vi' ? ' (bản sao)' : ' (copy)'}`, bots.map((b) => b.name));
+  let bot = await createBot(userId, { name, role: source.role, instructions: source.instructions, avatar: source.avatar });
+  bot = (await store.updateBot(userId, bot.id, { reviewEvery: source.review_every ?? 20 })) || bot;
+  const memory = await store.copyBotMemory(userId, source.id, bot.id);
+  const tasks = await store.listTasks(userId, { botId: source.id });
+  for (const t of tasks) {
+    await store.createTask(userId, { id: crypto.randomUUID(), title: t.title, prompt: t.prompt, model: null, cron: t.cron, nextRunAt: t.next_run_at, tz: t.tz, policy: t.policy, botId: bot.id, missed: t.missed, enabled: false });
+  }
+  return { bot, memory, tasks: tasks.length };
+}
+
+/**
  * Delete a bot (never Chief), said in each group it was in, with who answers there now
  * when it was that group's admin (owner, 2026-11-10).
  *
@@ -352,6 +411,8 @@ export function botView(row) {
     instructions: row.instructions,
     main: !!row.is_main,
     reviewEvery: row.review_every == null ? 20 : Number(row.review_every),
+    pinned: !!row.pinned_at,
+    paused: !!row.paused_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -366,6 +427,7 @@ export function groupView(row) {
     admin: row.admin_bot_id || null,
     members: Array.isArray(row.members) ? row.members : [],
     notice: row.notice || '',
+    pinned: !!row.pinned_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

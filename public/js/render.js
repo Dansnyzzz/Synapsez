@@ -377,6 +377,12 @@ const STEP_VERBS = {
   update_group: 'step.update_group',
   remember: 'step.remember',
   forget: 'step.forget',
+  recall: 'step.recall',
+  ask_person: 'step.ask_person',
+  post_to_group: 'step.post_to_group',
+  /* a scheduled run saying it has nothing new, or failed (spec B.4) */
+  no_update: 'step.no_update',
+  run_failed: 'step.run_failed',
 
   /* ── the shelf of sources ── */
   search_docs: 'step.search_docs',
@@ -2125,6 +2131,19 @@ export function fillBubble(bubble, text) {
     }
   });
   bubbleWatch.observe(body);
+}
+
+/**
+ * A scheduled run that checked and had nothing new (`no_update`, spec B.4): its prompt and
+ * answer folded under one line, closed, so the conversation reads as the news it holds.
+ */
+export function quietRunFold() {
+  const node = el('details', 'quietrun');
+  const head = el('summary', 'quietrun__head');
+  head.textContent = t('chat.quietRun');
+  const body = el('div', 'quietrun__body');
+  node.append(head, body);
+  return { node, body };
 }
 
 /**

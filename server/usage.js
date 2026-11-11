@@ -97,7 +97,7 @@ export async function checkQuota(user, { usingSharedKey, store = getStore() }) {
  * Anything that calls a model passes its own role now, and the usage page can
  * finally say where the money went.
  */
-export async function record(userId, { chatId, model, usage, costUsd, role = 'turn' }) {
+export async function record(userId, { chatId, model, usage, costUsd, role = 'turn', origin = null }) {
   if (!usage) return;
   await getStore().recordUsage(userId, {
     id: crypto.randomUUID(),
@@ -110,6 +110,10 @@ export async function record(userId, { chatId, model, usage, costUsd, role = 'tu
     // separately because the ratio between the two is the cache hit rate, which
     // there was previously no way to read at all.
     cacheReadTokens: usage.cacheRead || 0,
+    // Part of outputTokens where a provider reports it (openaiCompatible.js `reasoning`).
+    reasoningTokens: usage.reasoning || 0,
+    // Who started the turn: 'person', 'task', 'handoff'… (the Bot page's usage, spec B.8).
+    origin,
     costUsd: costUsd || 0,
   });
 }

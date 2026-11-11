@@ -12,7 +12,7 @@ import { expireMachineUploads } from './sandbox.js';
 import { sweepEventMail } from './eventMail.js';
 import { abortHere, holdRun, watchStopped } from './liveRuns.js';
 import { readCron, writeCron, readWhen, normTime, LIMITS, WEEK } from '../public/js/schedule-grammar.js';
-import { TASK_STOPPED } from '../public/js/automation-status.js';
+import { TASK_QUIET, TASK_SKIPPED, TASK_STOPPED } from '../public/js/automation-status.js';
 
 /**
  * Work that happens without anyone watching.
@@ -500,6 +500,58 @@ export function scheduledRunNote({ title, now = new Date(), timeZone = null, ste
   );
 }
 
+/**
+ * How late a run may start before a task that skips missed runs lets it go (spec B.4). The
+ * daily cron and a pinger every few minutes make a few minutes late normal; a run half an
+ * hour past its time was missed.
+ */
+export const MISSED_GRACE_MS = 30 * 60_000;
+
+/** Whether a claimed task's run was missed and the task said to skip such runs. */
+export function missedSkip(task, now = Date.now()) {
+  if (task?.missed !== 'skip' || !task.due_at) return false;
+  const due = new Date(task.due_at).getTime();
+  return Number.isFinite(due) && now - due > MISSED_GRACE_MS;
+}
+
+/** A missed run let go: nothing runs, and the schedule moves on from now. */
+async function skipMissed(task) {
+  await getStore().finishTask(task.id, { status: TASK_SKIPPED, chatId: task.last_chat ?? null, nextRunAt: nextRunOf(task), retire: !!(task.cron || task.next_run_at) });
+  return { taskId: task.id, status: TASK_SKIPPED, chatId: task.last_chat ?? null };
+}
+
+/**
+ * A group's task (spec B.4): its prompt is the person's line in the group, and the run is a
+ * round from the group's `pending` — started here, carried on by the chain or the
+ * heartbeat if it outlasts this invocation. Refused while the group is at work.
+ */
+async function runGroupTask(task, user) {
+  const store = getStore();
+  const [{ startPendingRound }, { continueGroup }] = await Promise.all([import('./bots/rounds.js'), import('./bots/continue.js')]);
+  const group = await store.getBotGroup(user.id, task.bot_group_id);
+  if (!group) {
+    await store.finishTask(task.id, { status: 'error: the group no longer exists', chatId: null, nextRunAt: null });
+    return { taskId: task.id, status: 'orphaned', chatId: null };
+  }
+  const log = await store.botChat(user.id, { groupId: group.id, title: group.name });
+  let status = 'ok';
+  const started = await startPendingRound({ userId: user.id, groupId: group.id, text: task.prompt, reason: 'task' });
+  if (!started.started) {
+    status = started.why === 'busy' ? 'stopped: the group was at work on something else' : 'error: nobody in the group can answer';
+  } else {
+    await store.markTaskChat(task.id, log.id);
+    // The loop the tests swap in (`__agent`) runs the members too; otherwise the real one.
+    /** @type {{ status: string, stopReason?: string, error?: unknown }} */
+    const ran = await continueGroup({ userId: user.id, groupId: group.id, ...(agentLoop !== runAgent ? { runAgent: /** @type {any} */ (agentLoop) } : {}) }).catch((err) => ({ status: 'failed', error: err }));
+    if (ran.status === 'failed') status = `error: ${clientError(ran.error).slice(0, 200)}`;
+    else if (ran.stopReason === 'aborted') status = TASK_STOPPED;
+    else if (ran.stopReason === 'handoff_ceiling' || ran.stopReason === 'segments') status = 'stopped: the group waits for Continue';
+  }
+  const retire = !!(task.cron || task.next_run_at);
+  await store.finishTask(task.id, { status, chatId: log.id, nextRunAt: nextRunOf(task), retire });
+  return { taskId: task.id, status, chatId: log.id };
+}
+
 async function runTask(task) {
   const store = getStore();
   const user = await store.getUserById(task.user_id);
@@ -509,6 +561,8 @@ async function runTask(task) {
     await store.finishTask(task.id, { status: 'error: account no longer exists', chatId: null, nextRunAt: null });
     return { taskId: task.id, status: 'orphaned', chatId: null };
   }
+
+  if (task.bot_group_id) return runGroupTask(task, user);
 
   const prefs = await getPrefs(user.id);
 
@@ -551,6 +605,10 @@ async function runTask(task) {
   let status = 'ok';
   let ending = null;
   let waitingForApproval = false;
+  /** What the run said of itself: nothing new (`no_update`) or failed (`run_failed`) — spec B.4. */
+  let outcome = /** @type {{ kind: string, reason?: string } | null} */ (null);
+  /** The prompt's place in the conversation: what a quiet run folds from. */
+  let promptSeq = -1;
 
   /**
    * Stop reaches this run (the Automations page, or the conversation's own stop button).
@@ -582,13 +640,14 @@ async function runTask(task) {
         projectId: task.project_id || null,
       });
     }
-    await store.appendMessage(user.id, chatId, {
+    const prompted = await store.appendMessage(user.id, chatId, {
       id: crypto.randomUUID(),
       role: 'user',
       text: task.prompt,
       // A task's prompt, not the person typing: some tools run only for the person (server/agent.js).
       origin: 'task',
     });
+    promptSeq = Number.isFinite(Number(prompted?.seq)) ? Number(prompted.seq) - 1 : -1;
     // Known from the start, so the conversation shows as running in the sidebar.
     await store.markTaskChat(task.id, chatId);
 
@@ -612,6 +671,8 @@ async function runTask(task) {
       // one, the account's default otherwise — see `policyFor` in the loop.
       policy: task.policy || null,
       unattended: true,
+      // `no_update` and `run_failed`: a run may say it has nothing new, or failed (tools/runControl.js).
+      runControl: true,
       // The day and hour of this run, in the task's zone — see `scheduledRunNote`.
       runNote: scheduledRunNote({ title: task.title, timeZone: task.tz || prefs.timezone }),
       emit(event, data) {
@@ -623,6 +684,7 @@ async function runTask(task) {
         // A scheduled run that stops to ask is stopped for good: the prompt goes
         // nowhere, because nobody is watching a run that happens at 3am.
         else if (event === 'approval_required' || event === 'question_required') waitingForApproval = true;
+        else if (event === 'run_outcome' && data?.kind) outcome = data;
       },
     });
   } catch (err) {
@@ -633,6 +695,12 @@ async function runTask(task) {
   }
 
   status = controller.signal.aborted ? TASK_STOPPED : unattendedStatus(status, ending, waitingForApproval);
+  if (status === 'ok' && outcome?.kind === 'failed') status = `failed: ${outcome.reason}`;
+  else if (status === 'ok' && outcome?.kind === 'quiet') {
+    status = TASK_QUIET;
+    // Folded away under the run: no unread mark, no preview (spec B.4).
+    await store.markMessagesQuiet(user.id, chatId, promptSeq).catch(() => 0);
+  }
 
   // Only a task that had a schedule can run out of one; a manual task has
   // no next run and stays on.
@@ -724,6 +792,11 @@ export async function runDueTasks({ limit = 5, userId = null, budgetMs = null } 
   for (let i = 0; i < limit && roomLeft(); i += 1) {
     const task = await getStore().claimDueTask(new Date().toISOString(), userId);
     if (!task) break;
+    // A run the daily cron missed, of a task that would rather skip it (spec B.4).
+    if (missedSkip(task)) {
+      ran.push(await skipMissed(task));
+      continue;
+    }
     ran.push(await runTask(task));
   }
   return ran;

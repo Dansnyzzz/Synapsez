@@ -11,6 +11,7 @@ import { setCitationEvidence } from './cite.js';
 import {
   assistantMessage,
   userMessage,
+  quietRunFold,
   statusLine,
   toast,
   summariseToolInput,
@@ -380,6 +381,8 @@ const suggestions = () => [
 let gateMode = 'signin';
 /** While a group chat on the Bot page holds the box: what Send and Stop do there (bots.js). */
 let composerHook = /** @type {{ send: (text: string) => Promise<void>, stop: () => void, busy: () => boolean } | null} */ (null);
+/** Why the box may not send now, said instead of sending, the words kept (a paused bot, bots.js); null when it may. */
+let sendBlocker = /** @type {(() => string | null) | null} */ (null);
 /** The box's placeholder while the Bot page holds it ("Message Chief"), or null for its own. */
 let placeholderFor = /** @type {string | null} */ (null);
 /** Whether the Bot page is on screen; the page itself answers once it exists. */
@@ -2231,8 +2234,18 @@ function drawTranscript(host, messages, { live = false } = {}) {
   const resultsByCallId = resultsOf(messages);
 
   const newest = messages.findLastIndex((m) => m.role === 'assistant');
+  /** Where the next message goes: the transcript, or the fold of a quiet scheduled run (spec B.4). */
+  let into = /** @type {HTMLElement} */ (host);
   messages.forEach((m, i) => {
-    if (m.role === 'user') host.append(userMessage(m.text, m.attachments || [], m.id, m.createdAt, m.skills || []));
+    if (m.role === 'user' || m.role === 'assistant') {
+      if (!m.quiet) into = host;
+      else if (into === host) {
+        const fold = quietRunFold();
+        host.append(fold.node);
+        into = fold.body;
+      }
+    }
+    if (m.role === 'user') into.append(userMessage(m.text, m.attachments || [], m.id, m.createdAt, m.skills || []));
     // A summary is what the model reads in place of the older turns; the
     // person still has those turns, so it is not drawn among them.
     else if (m.role === 'summary') return;
@@ -2240,7 +2253,7 @@ function drawTranscript(host, messages, { live = false } = {}) {
     // web card the step before it ended on — see `webCard` in render.js.
     else if (m.role === 'assistant') {
       const turn = assistantMessage();
-      host.append(turn.node);
+      into.append(turn.node);
       // The turn ends where the next thing said is the person's, or nothing.
       const next = messages.slice(i + 1).find((x) => x.role === 'user' || x.role === 'assistant');
       turn.hydrate(m, resultsByCallId, { pending: live && i === newest, endsTurn: !next || next.role === 'user' });
@@ -3193,6 +3206,7 @@ function giveHomeBack() {
   for (const [id, mark] of lentHome) mark.replaceWith($(id));
   lentHome.clear();
   composerHook = null;
+  sendBlocker = null;
   placeholderFor = null;
   // A bot's incognito conversation is thrown away with the page, as any incognito one is when left.
   if (state.incognitoChat && state.chatId === state.incognitoChat) leaveIncognito();
@@ -3238,6 +3252,9 @@ const botPage = createBotPage({
       refreshSendState();
     },
     refreshSend: () => refreshSendState(),
+    setBlocker: (fn) => {
+      sendBlocker = fn || null;
+    },
     incognito: () => !!state.incognito,
     model: () => state.model || undefined,
     setTitle: (text) => ($('chat-title').textContent = text),
@@ -3630,6 +3647,12 @@ $('composer').addEventListener('submit', async (event) => {
   // failed — must not be silently dropped from a message that claims to have it.
   const ready = staged.filter((f) => f.id);
   if (!text && !ready.length) return;
+  // A paused bot on the Bot page: said, and what was typed stays in the box (spec B.5).
+  const notNow = sendBlocker?.();
+  if (notNow) {
+    toast(notNow);
+    return;
+  }
   // A group chat on the Bot page has the box: what is sent goes to the group (bots.js).
   if (composerHook) {
     if (ready.length) {

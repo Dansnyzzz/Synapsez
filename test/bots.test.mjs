@@ -651,6 +651,96 @@ section('reset empties a conversation and keeps the memory (owner, 2026-11-10)')
   check('  its memory kept', (await alice.call('GET', `/api/bot-groups/${blog.id}/memory`)).body.entries.some((e) => /Fridays/.test(e.text)));
 }
 
+section('needs you, read marks, pins, pause, duplicate, export and import (spec B, 2026-11-11)');
+{
+  const team = (await alice.call('GET', '/api/bots')).body;
+  const member = team.bots.find((b) => !b.main);
+  const chiefRow = team.bots.find((b) => b.main);
+  check('the team read carries unread, pinned and paused', 'unread' in member && 'pinned' in member && 'paused' in member && team.groups.every((g) => 'unread' in g && 'pinned' in g));
+
+  // A step waiting for a yes in a bot's own chat, and a group question nobody answered.
+  const own = (await alice.call('GET', `/api/bots/${member.id}/chat?light=1`)).body;
+  await store.appendMessage(aliceId, own.chatId, { id: crypto.randomUUID(), role: 'assistant', text: '', toolCalls: [{ id: 'gate-1', name: 'send_email', input: { to: 'x@y.z', subject: 's', body: 'b' } }] });
+  const g = team.groups[0];
+  const glog = (await alice.call('GET', `/api/bot-groups/${g.id}/chat`)).body;
+  await store.appendMessage(aliceId, glog.chatId, { id: crypto.randomUUID(), role: 'assistant', bot: member.id, text: 'Which week?', ask: true });
+  let attention = (await alice.call('GET', '/api/bots/attention')).body.items;
+  check('Needs you lists the step waiting for a yes', attention.some((i) => i.kind === 'approval' && i.bot === member.id && i.chatId === own.chatId), JSON.stringify(attention));
+  check('  and the question in the group', attention.some((i) => i.kind === 'question' && i.group === g.id && i.text === 'Which week?'));
+  check('  another account sees none of it', (await bob.call('GET', '/api/bots/attention')).body.items.length === 0);
+  await store.appendMessage(aliceId, own.chatId, { id: crypto.randomUUID(), role: 'tool', results: [{ toolCallId: 'gate-1', content: 'declined' }] });
+  await store.appendMessage(aliceId, glog.chatId, { id: crypto.randomUUID(), role: 'user', text: 'This week' });
+  attention = (await alice.call('GET', '/api/bots/attention')).body.items;
+  check('  answered, both go', !attention.some((i) => i.chatId === own.chatId || i.group === g.id), JSON.stringify(attention));
+
+  // A failed scheduled run.
+  const task = await store.createTask(aliceId, { id: crypto.randomUUID(), title: 'Morning brief', prompt: 'Brief me', cron: '08:00', nextRunAt: new Date(Date.now() + 3600_000).toISOString(), botId: member.id });
+  await store.finishTask(task.id, { status: 'failed: The feed asks for a sign-in.', chatId: own.chatId, nextRunAt: new Date(Date.now() + 3600_000).toISOString() });
+  attention = (await alice.call('GET', '/api/bots/attention')).body.items;
+  check('a failed run is listed with its reason', attention.some((i) => i.kind === 'failed' && i.taskId === task.id && i.reason === 'The feed asks for a sign-in.'), JSON.stringify(attention));
+  await store.deleteTask(aliceId, task.id);
+
+  // Read marks.
+  await store.appendMessage(aliceId, own.chatId, { id: crypto.randomUUID(), role: 'assistant', text: 'Declined; nothing was sent.' });
+  check('a bot\'s new line is unread', (await alice.call('GET', '/api/bots')).body.bots.find((b) => b.id === member.id).unread === true);
+  check('  another account cannot mark it read', (await bob.call('POST', `/api/bots/${member.id}/read`)).status === 404);
+  const read = await alice.call('POST', `/api/bots/${member.id}/read`);
+  check('  reading it clears the mark', read.body.ok === true && (await alice.call('GET', '/api/bots')).body.bots.find((b) => b.id === member.id).unread === false);
+  check('a group can be marked read', (await alice.call('POST', `/api/bot-groups/${g.id}/read`)).body.ok === true);
+
+  // Pin and pause.
+  const pinned = await alice.call('PATCH', `/api/bots/${member.id}`, { pinned: true });
+  check('a bot is pinned', pinned.body.bot?.pinned === true);
+  check('  a group is pinned', (await alice.call('PATCH', `/api/bot-groups/${g.id}`, { pinned: true })).body.group?.pinned === true);
+  check('Chief is never paused', (await alice.call('PATCH', `/api/bots/${chiefRow.id}`, { paused: true })).status === 409);
+  const missedTask = await store.createTask(aliceId, { id: crypto.randomUUID(), title: 'Daily', prompt: 'x', cron: '08:00', nextRunAt: new Date(Date.now() - 3 * 3600_000).toISOString(), botId: member.id });
+  check('a bot is paused', (await alice.call('PATCH', `/api/bots/${member.id}`, { paused: true })).body.bot?.paused === true);
+  const resumed = await alice.call('PATCH', `/api/bots/${member.id}`, { paused: false });
+  const moved = await store.getTask(aliceId, missedTask.id);
+  check('  resumed, its missed runs are let go and its tasks go on from now', resumed.body.bot?.paused === false && new Date(moved.next_run_at).getTime() > Date.now(), moved.next_run_at);
+  await store.deleteTask(aliceId, missedTask.id);
+  check('a colour from the list is kept; another is refused', (await alice.call('PATCH', `/api/bots/${member.id}`, { hue: 210 })).body.bot?.hue === 210 && (await alice.call('PATCH', `/api/bots/${member.id}`, { hue: 17 })).status === 400);
+
+  // Duplicate.
+  await alice.call('POST', `/api/bots/${member.id}/memory`, { text: 'Posts go out on Fridays.' });
+  const taskToCopy = await store.createTask(aliceId, { id: crypto.randomUUID(), title: 'Weekly', prompt: 'Sum up the week', cron: 'fri 17:00', nextRunAt: new Date(Date.now() + 86400_000).toISOString(), botId: member.id });
+  const dup = await alice.call('POST', `/api/bots/${member.id}/duplicate`);
+  check('a duplicate is made, named as a copy', dup.status === 201 && /\((copy|bản sao)\)$/.test(dup.body.bot?.name || ''), dup.text);
+  const dupMemory = (await alice.call('GET', `/api/bots/${dup.body.bot.id}/memory`)).body.entries;
+  check('  with the memory', dupMemory.some((e) => /Fridays/.test(e.text)));
+  const dupTasks = (await alice.call('GET', `/api/bots/${dup.body.bot.id}/tasks`)).body.tasks;
+  check('  and the tasks, paused', dupTasks.length === 1 && dupTasks[0].enabled === false && dupTasks[0].title === 'Weekly');
+  check('  Chief cannot be duplicated', (await alice.call('POST', `/api/bots/${chiefRow.id}/duplicate`)).status === 409);
+  check('  nor another account\'s bot', (await bob.call('POST', `/api/bots/${member.id}/duplicate`)).status === 404);
+  await store.deleteTask(aliceId, taskToCopy.id);
+
+  // Export, then import into another account.
+  const file = (await alice.call('GET', '/api/bots/export')).body;
+  check('the team goes out as synapsez-bots/1', file.format === 'synapsez-bots/1' && file.bots.length >= 2 && file.bots.some((b) => b.main));
+  check('  with no ids, chats or keys', !JSON.stringify(file).includes(aliceId) && !JSON.stringify(file).includes(own.chatId));
+  const bobBefore = (await bob.call('GET', '/api/bots')).body;
+  const plan = await bob.call('POST', '/api/bots/import', { data: file, dry: true });
+  check('a dry import says what it would add, and adds nothing', plan.status === 200 && plan.body.items.some((i) => i.kind === 'chief') && (await bob.call('GET', '/api/bots')).body.bots.length === bobBefore.bots.length, plan.text.slice(0, 200));
+  const done = await bob.call('POST', '/api/bots/import', { data: JSON.stringify(file) });
+  const bobAfter = (await bob.call('GET', '/api/bots')).body;
+  check('the import adds the bots and the groups', done.status === 201 && bobAfter.bots.length === bobBefore.bots.length + file.bots.filter((b) => !b.main).length && bobAfter.groups.length === bobBefore.groups.length + file.groups.length, done.text.slice(0, 300));
+  const again = await bob.call('POST', '/api/bots/import', { data: file, dry: true });
+  check('  a name already there becomes "(2)"', again.body.items.filter((i) => i.kind === 'bot').every((i) => / \(2\)$/.test(i.as)), JSON.stringify(again.body.items.map((i) => i.as)));
+  const sneaky = { format: 'synapsez-bots/1', bots: [{ key: 'x', name: 'Leaky', role: 'r', instructions: 'Use key sk-ant-api03-' + 'a'.repeat(60), memory: [{ text: 'The password is hunter2hunter2 and sk-' + 'b'.repeat(48) }, { text: 'Likes tea.' }] }] };
+  const leaky = (await bob.call('POST', '/api/bots/import', { data: sneaky })).body.items[0];
+  const leakyBot = (await bob.call('GET', '/api/bots')).body.bots.find((b) => b.name === 'Leaky');
+  const leakyMemory = (await bob.call('GET', `/api/bots/${leakyBot.id}/memory`)).body.entries.map((e) => e.text);
+  check('a secret in imported memory is refused and listed', leaky.refused.length === 1 && leakyMemory.join() === 'Likes tea.', JSON.stringify(leaky));
+  check('  without echoing the key back', !/sk-b{10}/.test(JSON.stringify(leaky)), JSON.stringify(leaky.refused));
+  check('  and struck out of the instructions', !/sk-ant-api03-a{20}/.test(leakyBot.instructions), leakyBot.instructions);
+  const half = { format: 'synapsez-bots/1', bots: [{ key: 'ok', name: 'Fine', role: 'r' }], groups: [{ name: 'Nobody here', members: ['missing'] }] };
+  const halfDone = (await bob.call('POST', '/api/bots/import', { data: half })).body.items;
+  check('a bad item is left out alone; the rest come in', halfDone.find((i) => i.kind === 'bot')?.added === true && halfDone.find((i) => i.kind === 'group')?.added === false && !(await bob.call('GET', '/api/bots')).body.groups.some((x) => x.name === 'Nobody here'), JSON.stringify(halfDone));
+  check('another format is refused', (await bob.call('POST', '/api/bots/import', { data: { format: 'other/9', bots: [{ name: 'x' }] } })).status === 400);
+  const pasted = 'Here you go:\n```json\n{"format":"synapsez-bots/1","bots":[{"name":"Pasted","role":"Notes","memory":["Lives in Hà Nội."]}]}\n```';
+  check('an answer pasted from another assistant reads', (await bob.call('POST', '/api/bots/import', { data: pasted })).body.items[0]?.added === true);
+}
+
 await new Promise((r) => server.close(r));
 provider.closeAllConnections?.();
 provider.close();

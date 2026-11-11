@@ -1,6 +1,44 @@
 {
   "entries": [
     {
+      "version": "1.21.0",
+      "date": "2026-11-11",
+      "new": {
+        "vi": [
+          "Chief giao việc cho nhóm: nhóm bắt đầu ngay, và Chief báo lại một dòng khi xong.",
+          "Mục \"Cần bạn\" trên danh sách bot: câu hỏi, bước chờ bạn đồng ý, nhóm chờ Tiếp tục, việc theo lịch bị lỗi — mỗi mục một nút.",
+          "Tạm dừng, nhân bản, ghim bot; xuất và nhập cả đội (kể cả bộ nhớ mang từ trợ lý khác sang).",
+          "Hỏi riêng một bot về cuộc trò chuyện mà không lưu lại; thẻ khởi đầu lập đội không cần gọi mô hình."
+        ],
+        "en": [
+          "Chief gives a group work: it starts at once, and Chief says so in a line when it is done.",
+          "Needs you, at the top of the Bot list: questions, steps waiting for your yes, groups waiting for Continue, scheduled runs that failed — each with its button.",
+          "Pause, duplicate and pin bots; export and import the team (memory brought from another assistant too).",
+          "Ask a bot a question aside, kept nowhere; a first-run card sets up a team without asking a model."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Danh sách cho biết tin chưa đọc, ai đang làm và ai được gọi trong nhóm; menu cho từng dòng, dùng được bằng bàn phím.",
+          "Việc theo lịch không có gì mới thì tự gấp lại; việc bỏ lỡ có thể bỏ qua; nhóm có việc theo lịch riêng.",
+          "Trang Sử dụng so sánh với khoảng trước, ghi chi phí và mở chi tiết từng bot."
+        ],
+        "en": [
+          "The list shows what is unread, who is working and who a group called; each row has a menu, keyboard included.",
+          "A scheduled run with nothing new folds away; a missed run can be skipped; a group can have its own scheduled tasks.",
+          "Usage compares with the span before, shows the cost and opens each bot."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Bước \"tìm trong bộ nhớ\" và \"hỏi bạn trong nhóm\" có tên riêng thay vì tên công cụ."
+        ],
+        "en": [
+          "\"Searched memory\" and \"Asked you in the group\" steps are named, not shown as tool names."
+        ]
+      }
+    },
+    {
       "version": "1.20.0",
       "date": "2026-11-11",
       "new": {

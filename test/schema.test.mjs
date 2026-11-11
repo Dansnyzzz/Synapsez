@@ -229,7 +229,7 @@ section('schema.sql and SCHEMA_VERSION move together');
   // 42: bots, bot_groups, bot_group_members, bot_memory, chats.bot_id/.bot_group_id,
   // usage_events.bot_id — the Bot page.
   // 43: bots.hue, scheduled_tasks.bot_id, and incognito chats with a bot left out of one-chat-per-bot.
-  const STAMPED = { version: 45, fingerprint: '7f7776ad92b83c9c' };
+  const STAMPED = { version: 46, fingerprint: '91a474507f6d203e' };
 
   check(
     'the recorded version matches the code',
@@ -309,7 +309,34 @@ section('the market data cache reaches a database from 43, whether or not 44 cam
   await createPgStore(driver).init();
   check('opening it adds the table', (await tableExists('finance_cache')) && (await columnExists('finance_cache', 'expires_at')));
   const stamp = await driver.query("SELECT value FROM settings WHERE key = 'schema_version'");
-  check('  and stamps it 45', Number(stamp[0]?.value) === 45, String(stamp[0]?.value));
+  const { SCHEMA_VERSION } = await import('../server/store/pg.js');
+  check('  and stamps it with the current version', Number(stamp[0]?.value) === SCHEMA_VERSION, String(stamp[0]?.value));
+}
+
+section('the team features reach a database from 45; its bot chats count as read (schema 46)');
+{
+  const store = createPgStore(driver);
+  await store.init();
+  await store.createUser({ id: 'u-team', email: 'team@example.com', name: 'Team', passwordHash: 'x', role: 'user' });
+  const bot = await store.createBot('u-team', { id: 'b-team', name: 'Writer', role: 'Editor', avatar: 'minnow' });
+  const chat = await store.botChat('u-team', { botId: bot.id, title: 'Writer' });
+  await store.appendMessage('u-team', chat.id, { id: 'm-team-1', role: 'user', text: 'Hello' });
+  await store.appendMessage('u-team', chat.id, { id: 'm-team-2', role: 'assistant', text: 'Hi.' });
+  // As a database that had not reached 46 yet.
+  for (const [table, column] of [['bots', 'paused_at'], ['bots', 'pinned_at'], ['bot_groups', 'pinned_at'], ['chats', 'read_seq'], ['scheduled_tasks', 'bot_group_id'], ['scheduled_tasks', 'missed'], ['usage_events', 'reasoning_tokens'], ['usage_events', 'origin']]) {
+    await driver.query(`ALTER TABLE ${table} DROP COLUMN IF EXISTS ${column}`);
+  }
+  await driver.query(`UPDATE settings SET value = '45'::jsonb WHERE key = 'schema_version'`);
+  check('they really are gone first', !(await columnExists('chats', 'read_seq')) && !(await columnExists('bots', 'paused_at')), 'otherwise this proves nothing');
+  const upgraded = createPgStore(driver);
+  await upgraded.init();
+  check('opening it adds them', (await columnExists('chats', 'read_seq')) && (await columnExists('scheduled_tasks', 'missed')) && (await columnExists('usage_events', 'origin')));
+  const seen = (await upgraded.botPreviews('u-team')).find((p) => p.chat_id === chat.id);
+  check('  a bot chat from before counts as read', seen?.unread === false, JSON.stringify(seen));
+  const later = await upgraded.createBot('u-team', { id: 'b-team-2', name: 'Scout', role: 'Research', avatar: 'owl' });
+  const fresh = await upgraded.botChat('u-team', { botId: later.id, title: 'Scout' });
+  await upgraded.appendMessage('u-team', fresh.id, { id: 'm-team-3', role: 'assistant', text: 'Ready.' });
+  check('  one made after starts unread', (await upgraded.botPreviews('u-team')).find((p) => p.chat_id === fresh.id)?.unread === true);
 }
 
 section('and the stamp is what decides');

@@ -229,6 +229,21 @@ section("Chief is there on the first visit, in the home chat's own view");
   await page.waitForFunction(() => !!getComputedStyle(document.querySelector('.botchief__face')).backgroundImage.includes('data:image'), null, { timeout: 8000 }).catch(() => {});
   check('Chief wears its creature, drawn in pixels', await page.evaluate(() => getComputedStyle(document.querySelector('.botchief__face')).backgroundImage.includes('data:image/png')));
   chiefId = (await store.listBots(me.id)).find((b) => b.is_main).id;
+
+  // Chief alone, its chat empty: the first-run card, not a blank box (spec B.7).
+  await page.waitForSelector('.botfirst', { timeout: 8000 }).catch(() => {});
+  const first = await page.evaluate(() => ({
+    goals: [...document.querySelectorAll('.botfirst [data-goal]')].map((g) => g.dataset.goal),
+    checked: [...document.querySelectorAll('.botfirst [data-goal]:checked')].map((g) => g.dataset.goal),
+    drafts: document.querySelectorAll('.botfirst [data-draft]').length,
+  }));
+  check('the first-run card offers four goals, writing ticked, one bot to make', first.goals.join() === 'write,research,code,personal' && first.checked.join() === 'write' && first.drafts === 1, JSON.stringify(first));
+  await page.fill('.botfirst [data-draft="write"] [data-field="name"]', 'Scribe');
+  await page.check('.botfirst [data-goal="research"]');
+  const two = await page.evaluate(() => ({ drafts: document.querySelectorAll('.botfirst [data-draft]').length, kept: document.querySelector('.botfirst [data-draft="write"] [data-field="name"]')?.value, note: /group with Chief/.test(document.querySelector('.botfirst')?.textContent || '') }));
+  check('  ticking another adds its bot, keeps what was typed, and says they will share a group', two.drafts === 2 && two.kept === 'Scribe' && two.note, JSON.stringify(two));
+  await page.click('[data-act="first-skip"]');
+  check('  "Not now" puts it away', await page.evaluate(() => document.querySelector('[data-first]')?.hidden === true));
 }
 
 section('what is written shows at once, and thinking streams as it comes');
@@ -357,10 +372,23 @@ section('a group chat: the same box, @ offers the members, the admin hands on, t
   check('  a blur the box came back from does not shut the picker a moment later', stays.open && stays.names === 1, JSON.stringify(stays));
   await page.press('#input', 'Escape');
   await page.fill('#input', 'Can we get a first post?');
-  const pressed = Date.now();
+  // Timed in the page, from the key to the line: the driver's own round trips are not the page's speed.
+  await page.evaluate(() => {
+    const log = document.querySelector('#bot-page [data-log]');
+    const probe = { from: 0, ms: -1 };
+    window.__lineAt = probe;
+    document.getElementById('input').addEventListener('keydown', () => (probe.from ||= performance.now()), { once: true, capture: true });
+    new MutationObserver((_, watch) => {
+      if (probe.from && /Can we get a first post/.test(log.textContent)) {
+        probe.ms = Math.round(performance.now() - probe.from);
+        watch.disconnect();
+      }
+    }).observe(log, { childList: true, subtree: true, characterData: true });
+  });
   await page.press('#input', 'Enter');
   await page.waitForFunction(() => /Can we get a first post/.test(document.querySelector('#bot-page [data-log]')?.textContent || ''), null, { timeout: 3000 }).catch(() => {});
-  check('what was written is in the group at once', Date.now() - pressed < 1500 && /Can we get a first post/.test(await logText()), `${Date.now() - pressed} ms`);
+  const lineMs = await page.evaluate(() => window.__lineAt?.ms ?? -1);
+  check('what was written is in the group at once', lineMs >= 0 && lineMs < 500 && /Can we get a first post/.test(await logText()), `${lineMs} ms`);
   check('  a box with no name in it is as it was, nothing laid under it', await page.evaluate(() => !document.querySelector('.mentionlay') && !document.getElementById('input').classList.contains('has-mentions')));
   await idle();
   await page.waitForFunction(() => document.querySelectorAll('#bot-page .botline--bot').length >= 3, null, { timeout: 15_000 }).catch(() => {});
@@ -635,9 +663,15 @@ section('Bot settings: Bots, Group chats, Usage; a creature in use comes in anot
     by: [...document.querySelectorAll('#bot-settings [data-by]')].map((b) => b.textContent.trim()),
   }));
   check('ranges from 24 hours to 12 months, and Custom; 7 days first', usage.ranges.join('|') === '24 hours|7 days|30 days|12 weeks|12 months|Custom' && usage.selected === '7 days', usage.ranges.join('|'));
-  check('totals: tokens, cache hit rate, output, calls', usage.tiles.join('|') === 'Last 7 days|Cache hit rate|Output|Calls' && /tokens$/.test(usage.big || ''), JSON.stringify(usage.tiles));
+  check('totals: tokens, cost, cache hit rate, output, calls', usage.tiles.join('|') === 'Last 7 days|Cost|Cache hit rate|Output|Calls' && /tokens$/.test(usage.big || ''), JSON.stringify(usage.tiles));
+  const cmp = await page.evaluate(() => ({ line: document.querySelector('#bot-settings [data-compare]')?.textContent.trim(), cost: document.querySelector('#bot-settings [data-cost]')?.textContent.trim() }));
+  check('  the total says how it compares with the span before, and the cost is in dollars', /on the 7 days before|Nothing in the span before/.test(cmp.line || '') && /^\$\d/.test(cmp.cost || ''), JSON.stringify(cmp));
   check('tokens over time, stacked, by bot or by model', usage.bars > 0 && usage.by.join('|') === 'By bot|By model', String(usage.bars));
   check('bots ranked by what they spent', usage.bots.includes('Chief') && usage.bots.includes('Writer'), usage.bots.join());
+  await page.click('#bot-settings .botuse__open:has-text("Chief")');
+  await page.waitForSelector('#bot-settings .botuse__drill', { timeout: 6000 }).catch(() => {});
+  const drill = await page.evaluate(() => ({ heads: [...document.querySelectorAll('#bot-settings .botuse__drill h4')].map((h) => h.textContent.trim()), expanded: document.querySelector('#bot-settings .botuse__open[aria-expanded="true"]')?.textContent.includes('Chief') }));
+  check("a bot's row opens what it spent: by kind, model, who started it, what made the calls", drill.expanded && ['Tokens by kind', 'Models', 'Who started its turns', 'What made the calls'].every((h) => drill.heads.includes(h)), JSON.stringify(drill));
   await page.evaluate(() => /** @type {HTMLDialogElement} */ (document.getElementById('bot-settings')).close());
   // Two more seahorses: three bots, three colours.
   const { createBot } = await import('../server/bots/team.js');
@@ -764,6 +798,192 @@ section('on a phone: the list, then the conversation, and back');
   await page.waitForTimeout(300);
   check('  and back goes to the list', await page.evaluate(() => getComputedStyle(document.querySelector('.botlist')).display !== 'none'));
   await page.setViewportSize({ width: 1360, height: 880 });
+}
+
+section('needs you, unread, pins, the row menu, pause, who is called, ask aside, quiet runs, team files (spec B)');
+{
+  // An earlier section loaded the page again: the record of what popped up starts again here.
+  await page.evaluate(() => {
+    if (window.__toasts) return;
+    window.__toasts = [];
+    const keep = new MutationObserver((list) => {
+      for (const m of list) for (const n of m.addedNodes) if (n.nodeType === 1) window.__toasts.push(n.textContent);
+    });
+    for (const id of ['toasts', 'toasts-alert']) keep.observe(document.getElementById(id), { childList: true });
+  });
+  const bots = await store.listBots(me.id);
+  const writer = bots.find((b) => b.name === 'Writer');
+  const blog = (await store.listBotGroups(me.id)).find((g) => g.name === 'Blog');
+  const reread = async () => {
+    await page.evaluate(() => (location.hash = '#bot'));
+    await page.click('#open-bots');
+    await page.waitForSelector('#bot-page:not([hidden]) .botrow');
+    await page.waitForTimeout(500);
+  };
+
+  // A scheduled run of Writer's that failed, and a line from Blog nobody has read — with Writer open, not Blog.
+  await page.click(`[data-row="bot:${writer.id}"]`);
+  await page.waitForTimeout(300);
+  const feed = await store.createTask(me.id, { id: 'task-feed', title: 'Feed', prompt: 'Check the feed', cron: '08:00', nextRunAt: new Date(Date.now() + 3600_000).toISOString(), botId: writer.id });
+  await store.finishTask(feed.id, { status: 'failed: The feed is down.', chatId: null, nextRunAt: new Date(Date.now() + 3600_000).toISOString() });
+  const log = await store.botChat(me.id, { groupId: blog.id, title: 'Blog' });
+  await store.markChatRead(me.id, log.id);
+  await store.appendMessage(me.id, log.id, { id: 'unread-line', role: 'assistant', bot: writer.id, text: 'A new draft is up.' });
+  await reread();
+  const seen = await page.evaluate(() => ({
+    rows: [...document.querySelectorAll('.botneeds .botneed')].map((r) => r.textContent.replace(/\s+/g, ' ').trim()),
+    count: document.querySelector('.botneeds__n')?.textContent,
+    writerNeeds: !!document.querySelector('[data-row^="bot:"] .botmark--needs'),
+    blogUnread: !!document.querySelector('[data-row^="group:"] .botmark--unread'),
+  }));
+  check('Needs you lists the failed run, with Retry, and counts it', seen.rows.length === 1 && /Feed failed: The feed is down\./.test(seen.rows[0]) && /Retry/.test(seen.rows[0]) && seen.count === '1', JSON.stringify(seen));
+  check('  the bot it belongs to wears the amber mark', seen.writerNeeds);
+  check('a group with a line nobody read wears the unread dot', seen.blogUnread);
+  await page.click(`[data-row="group:${blog.id}"]`);
+  await page.waitForFunction(() => !document.querySelector('[data-row^="group:"] .botmark--unread'), null, { timeout: 5000 }).catch(() => {});
+  check('  opening it reads it', !(await page.evaluate(() => !!document.querySelector('[data-row^="group:"] .botmark--unread'))));
+  await page.waitForTimeout(600);
+  check('  and the server knows', (await store.botPreviews(me.id)).find((p) => p.chat_id === log.id)?.unread === false);
+
+  // Who the message called, while the group works (followed from the server).
+  await store.setGroupPending(me.id, blog.id, { reason: 'running', queue: [], working: [], called: [{ bot: writer.id, how: 'answered' }, { bot: chiefId, how: 'called' }], at: new Date().toISOString() });
+  await page.click(`[data-row="bot:${writer.id}"]`);
+  await page.click(`[data-row="group:${blog.id}"]`);
+  await page.waitForSelector('.botcalled__chip', { timeout: 6000 }).catch(() => {});
+  const chips = await page.evaluate(() => [...document.querySelectorAll('.botcalled__chip')].map((c) => c.textContent.replace(/\s+/g, ' ').trim()));
+  check('who the message called shows above the box, with how each went', chips.some((c) => /Writer\s*answered/.test(c)) && chips.some((c) => /Chief\s*called/.test(c)), JSON.stringify(chips));
+  await store.setGroupPending(me.id, blog.id, null);
+  await page.waitForFunction(() => !document.querySelector('.botcalled__chip'), null, { timeout: 6000 }).catch(() => {});
+  check('  and goes when it is done', !(await page.evaluate(() => !!document.querySelector('.botcalled__chip'))));
+
+  // The row menu, from the keyboard.
+  await page.focus(`[data-row="bot:${writer.id}"]`);
+  await page.keyboard.press('Shift+F10');
+  await page.waitForSelector('[data-row-menu]:not([hidden])', { timeout: 3000 }).catch(() => {});
+  const menu = await page.evaluate(() => ({
+    items: [...document.querySelectorAll('[data-row-menu] [role="menuitem"]')].map((b) => b.dataset.rowAct),
+    focused: document.activeElement?.dataset?.rowAct,
+  }));
+  check('Shift+F10 opens the row menu with its focus on the first item', menu.items.join() === 'open,settings,pin,pause,duplicate,export,delete' && menu.focused === 'open', JSON.stringify(menu));
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  check('  arrows move through it', (await page.evaluate(() => document.activeElement?.dataset?.rowAct)) === 'pin');
+  await page.keyboard.press('Escape');
+  check('  Escape shuts it and gives focus back to the row', await page.evaluate((id) => document.querySelector('[data-row-menu]').hidden && document.activeElement?.dataset?.row === `bot:${id}`, writer.id));
+  await page.click(`[data-row-more="bot:${writer.id}"]`);
+  await page.click('[data-row-act="pin"]');
+  await page.waitForSelector(`[data-row="bot:${writer.id}"] .botrow__pin`, { timeout: 5000 }).catch(() => {});
+  check('Pin puts it first, marked', await page.evaluate((id) => document.querySelector('.botlist__rows [data-row]')?.dataset.row === `bot:${id}` && !!document.querySelector(`[data-row="bot:${id}"] .botrow__pin`), writer.id));
+
+  // Pause: said in its chat, and the box keeps what is typed.
+  await page.click(`[data-row-more="bot:${writer.id}"]`);
+  await page.click('[data-row-act="pause"]');
+  await page.waitForSelector(`[data-row="bot:${writer.id}"] .bottag--paused`, { timeout: 5000 }).catch(() => {});
+  await page.click(`[data-row="bot:${writer.id}"]`);
+  await page.waitForSelector('[data-paused]:not([hidden])', { timeout: 5000 }).catch(() => {});
+  const before = (await store.listMessages(me.id, (await store.botChat(me.id, { botId: writer.id, title: 'Writer' })).id)).length;
+  await page.fill('#input', 'Are you there?');
+  await page.press('#input', 'Enter');
+  await page.waitForTimeout(500);
+  const paused = await page.evaluate(() => ({ bar: document.querySelector('[data-paused]')?.textContent || '', box: document.getElementById('input').value }));
+  check('a paused bot says so above the box', /Writer is paused/.test(paused.bar), paused.bar);
+  const said = await toasted();
+  check('  and does not send: the words stay in the box', paused.box === 'Are you there?' && said.some((x) => /Writer is paused/.test(x)), JSON.stringify({ box: paused.box, toasts: said.slice(-3) }));
+  const writerChat = await store.botChat(me.id, { botId: writer.id, title: 'Writer' });
+  check('  nothing reached its chat', (await store.listMessages(me.id, writerChat.id)).length === before);
+  await page.click('[data-act="resume-open"]');
+  await page.waitForSelector('[data-paused][hidden]', { state: 'attached', timeout: 5000 }).catch(() => {});
+  check('Resume brings it back', await page.evaluate(() => document.querySelector('[data-paused]')?.hidden === true));
+  await page.fill('#input', '');
+
+  // A scheduled run with nothing new folds away.
+  await store.appendMessage(me.id, writerChat.id, { id: 'quiet-q', role: 'user', text: 'Check the feed', origin: 'task', quiet: true });
+  await store.appendMessage(me.id, writerChat.id, { id: 'quiet-a', role: 'assistant', text: 'Checked: nothing new.', quiet: true });
+  await page.click(`[data-row="group:${blog.id}"]`);
+  await page.click(`[data-row="bot:${writer.id}"]`);
+  await page.waitForSelector('.quietrun', { timeout: 6000 }).catch(() => {});
+  const fold = await page.evaluate(() => ({ head: document.querySelector('.quietrun__head')?.textContent, open: document.querySelector('.quietrun')?.open, holds: /nothing new\./.test(document.querySelector('.quietrun__body')?.textContent || '') }));
+  check('a quiet scheduled run is folded under one closed line', fold.head === 'Scheduled run · nothing new' && fold.open === false && fold.holds, JSON.stringify(fold));
+
+  // Ask aside: answered, kept nowhere.
+  const lines = (await store.listMessages(me.id, writerChat.id)).length;
+  await page.click('[data-act="aside"]');
+  await page.waitForSelector('.botaside [data-aside-text]', { timeout: 4000 }).catch(() => {});
+  await page.fill('.botaside [data-aside-text]', 'What did you draft last?');
+  await page.press('.botaside [data-aside-text]', 'Enter');
+  await page.waitForSelector('.botaside__a', { timeout: 10_000 }).catch(() => {});
+  const aside = await page.evaluate(() => ({ q: document.querySelector('.botaside__q')?.textContent, a: document.querySelector('.botaside__a')?.textContent?.trim() }));
+  check('a question asked aside is answered in the card', aside.q === 'What did you draft last?' && /Draft ready/.test(aside.a || ''), JSON.stringify(aside));
+  check('  and nothing is added to the conversation', (await store.listMessages(me.id, writerChat.id)).length === lines);
+  await page.keyboard.press('Escape');
+  check('  Escape shuts the card', await page.evaluate(() => document.querySelector('[data-aside]')?.hidden === true));
+
+  // Retry from Needs you runs the task again.
+  await page.click('.botneed--retry .botneed__act');
+  await page.waitForFunction(() => !document.querySelector('.botneed--retry'), null, { timeout: 5000 }).catch(() => {});
+  const retried = { line: await page.evaluate(() => !!document.querySelector('.botneed--retry')), toasts: (await toasted()).slice(-3) };
+  check('Retry runs it again, and the line goes', !retried.line && retried.toasts.some((x) => /Running Feed again/.test(x)), JSON.stringify(retried));
+  await store.deleteTask(me.id, 'task-feed');
+
+  // A colour chosen in the bot's form (spec B.5).
+  await page.click(`[data-row-more="bot:${writer.id}"]`);
+  await page.click('[data-row-act="settings"]');
+  await page.waitForSelector('#bot-settings .botform__hues', { timeout: 5000 }).catch(() => {});
+  const hues = await page.evaluate(() => document.querySelectorAll('#bot-settings .botform__hues input[name="hue"]').length);
+  check('the bot form offers twelve colours', hues === 12, String(hues));
+  await page.click('#bot-settings .botform__hue:has(input[value="210"])');
+  await page.click('#bot-settings [data-bot-form] button[type="submit"]');
+  await page.waitForTimeout(700);
+  check('  the chosen one is kept', Number((await store.getBot(me.id, writer.id)).hue) === 210, String((await store.getBot(me.id, writer.id)).hue));
+  await page.evaluate(() => /** @type {HTMLDialogElement} */ (document.getElementById('bot-settings'))?.close());
+
+  // A team file, pasted from another assistant: checked first, then added.
+  await page.click('[data-act="new"]');
+  await page.click('[data-act="team-files"]');
+  await page.waitForSelector('dialog.botport[open]', { timeout: 4000 }).catch(() => {});
+  await page.fill('.botport [data-port-text]', 'Sure:\n```json\n{"format":"synapsez-bots/1","bots":[{"name":"Pasted","role":"Notes","memory":["Prefers tea."]}]}\n```');
+  await page.click('.botport [data-port="check"]');
+  await page.waitForSelector('.botport__plan', { timeout: 5000 }).catch(() => {});
+  const plan = await page.evaluate(() => document.querySelector('.botport__plan')?.textContent.replace(/\s+/g, ' ').trim());
+  check('a pasted answer is read and what it adds is shown first', /Bot Pasted/.test(plan || '') && !(await store.listBots(me.id)).some((b) => b.name === 'Pasted'), plan);
+  await page.click('.botport [data-port="add"]');
+  await page.waitForFunction(() => /added/.test(document.querySelector('.botport__plan')?.textContent || ''), null, { timeout: 5000 }).catch(() => {});
+  await page.waitForSelector('.botrow__name:text("Pasted")', { timeout: 5000 }).catch(() => {});
+  check('  Add adds it, and the list shows it', (await store.listBots(me.id)).some((b) => b.name === 'Pasted') && (await page.evaluate(() => [...document.querySelectorAll('.botrow__name')].some((n) => /Pasted/.test(n.textContent)))));
+  await page.evaluate(() => document.querySelector('dialog.botport')?.close());
+}
+
+section('a first run makes its bots and their group, asking no model (spec B.7)');
+{
+  await store.createUser({ id: 'u-first', email: 'first@test.local', name: 'First', username: 'ui.first', passwordHash: await hashPassword(password), role: 'user' });
+  await setApiKey('u-first', 'openai', 'sk-test-key');
+  await setPrefs('u-first', { language: 'en', onboarded: true, qualityGate: false, defaultModel: 'openai/plain' });
+  const fresh = await browser.newPage({ viewport: { width: 1360, height: 880 } });
+  fresh.on('pageerror', (err) => pageErrors.push(`first: ${err.message}`));
+  await fresh.route('**/api/models/news*', (route) => (route.request().method() === 'GET' ? route.fulfill({ contentType: 'application/json', body: '{"model":null}' }) : route.continue()));
+  await fresh.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+  await fresh.waitForSelector('#gate:not([hidden])');
+  await fresh.fill('#gate-email', 'first@test.local');
+  await fresh.fill('#gate-password', password);
+  await fresh.click('#gate-submit');
+  await fresh.waitForSelector('#model-chip');
+  await fresh.waitForTimeout(600);
+  await fresh.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => /** @type {HTMLDialogElement} */ (d).close()));
+  await fresh.click('#open-bots');
+  await fresh.waitForSelector('.botfirst', { timeout: 8000 }).catch(() => {});
+  const calls = asked.length;
+  await fresh.check('.botfirst [data-goal="research"]');
+  await fresh.click('[data-act="first-create"]');
+  await fresh.waitForSelector('.botrow', { timeout: 8000 }).catch(() => {});
+  await fresh.waitForTimeout(500);
+  const firstUser = await store.getUserByEmail('first@test.local');
+  const made = (await store.listBots(firstUser.id)).map((b) => b.name).sort();
+  const groups = await store.listBotGroups(firstUser.id);
+  check('Create makes the bots it showed', made.join() === 'Chief,Researcher,Writer', made.join());
+  check('  and puts them in one group with Chief as its admin', groups.length === 1 && groups[0].members.length === 3 && groups[0].admin_bot_id === (await store.listBots(firstUser.id)).find((b) => b.is_main).id, JSON.stringify(groups.map((g) => g.name)));
+  check('  without asking a model anything', asked.length === calls, `${asked.length - calls} calls`);
+  check('  and the card is gone', await fresh.evaluate(() => document.querySelector('[data-first]')?.hidden === true));
+  await fresh.close();
 }
 
 section('leaving, and an old Bot link');

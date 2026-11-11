@@ -96,12 +96,12 @@ function tick(d, unit) {
 /**
  * Sum the rows into what the page draws.
  *
- * @param {{ bucket: string, bot: string, model: string, input: number, output: number, cacheRead: number, calls: number }[]} rows
+ * @param {{ bucket: string, bot: string, model: string, input: number, output: number, cacheRead: number, calls: number, cost?: number }[]} rows
  * @param {Date[]} buckets @param {'bot' | 'model'} by
  */
 export function summarise(rows, buckets, by) {
   const keys = buckets.map(keyOf);
-  const totals = { tokens: 0, input: 0, output: 0, cacheRead: 0, calls: 0 };
+  const totals = { tokens: 0, input: 0, output: 0, cacheRead: 0, calls: 0, cost: 0 };
   const perBot = new Map();
   const perModel = new Map();
   const cells = new Map();
@@ -112,6 +112,8 @@ export function summarise(rows, buckets, by) {
     totals.output += r.output;
     totals.cacheRead += r.cacheRead;
     totals.calls += r.calls;
+    // At the price charged (spec B.8): it is billed.
+    totals.cost += Number(r.cost) || 0;
     perBot.set(r.bot, (perBot.get(r.bot) || 0) + tokens);
     perModel.set(r.model, (perModel.get(r.model) || 0) + tokens);
     const series = by === 'bot' ? r.bot : r.model;
@@ -128,6 +130,50 @@ export function summarise(rows, buckets, by) {
     return { key, parts, other, total: parts.reduce((s, n) => s + n, 0) + other };
   });
   return { totals, bots: ranked(perBot), models: ranked(perModel), series, hasOther: rest.length > 0, bars };
+}
+
+/**
+ * The total against the span just before it (spec B.8): "+18%", "−5%", or null when there
+ * was nothing before to compare with.
+ *
+ * @param {number} now @param {number} before
+ */
+export function compareSpan(now, before) {
+  if (!before) return null;
+  const pct = Math.round(((now - before) / before) * 100);
+  return `${pct > 0 ? '+' : pct < 0 ? '−' : '±'}${Math.abs(pct)}%`;
+}
+
+/** Dollars as the Usage page writes them: four places under a dollar, two above. */
+export const money = (n) => new Intl.NumberFormat(localeTag(), { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: n < 1 && n > 0 ? 4 : 2 }).format(Number(n) || 0);
+
+/** What made a call and who started a turn, in the page's words; anything else as it is named. */
+const ROLE_KEYS = Object.freeze({ turn: 'bots.u.role.turn', memory_review: 'bots.u.role.memory_review', ask_aside: 'bots.u.role.ask_aside', compaction: 'bots.u.role.compaction', subagent: 'bots.u.role.subagent', research: 'bots.u.role.research' });
+const ORIGIN_KEYS = Object.freeze({ person: 'bots.u.origin.person', task: 'bots.u.origin.task', handoff: 'bots.u.origin.handoff', webhook: 'bots.u.origin.webhook', review: 'bots.u.origin.review' });
+
+/**
+ * One bot opened from its row (spec B.8): its tokens by kind, its models, the groups it
+ * worked in, scheduled against typed, and the memory reviews and questions asked aside
+ * as lines of their own.
+ *
+ * @param {any} d  GET /bots/:id/usage @param {{ groupOf: (id: string) => any }} lookups
+ */
+export function drillHtml(d, { groupOf }) {
+  const kinds = [
+    ['input', d.kinds.input],
+    ['cached', d.kinds.cached],
+    ['output', d.kinds.output],
+    ['reasoning', d.kinds.reasoning],
+  ];
+  const row = (label, value, sub = '') => `<li><span>${escapeHtml(label)}</span><span>${escapeHtml(value)}${sub ? ` <span class="botuse__sub">${escapeHtml(sub)}</span>` : ''}</span></li>`;
+  const list = (title, items) => (items.length ? `<section class="botuse__drillsec"><h4>${escapeHtml(title)}</h4><ul class="botusage">${items.join('')}</ul></section>` : '');
+  return `<div class="botuse__drill">
+    ${list(t('bots.u.kinds'), kinds.map(([k, n]) => row(t(`bots.u.kind.${k}`), compactCount(n))))}
+    ${list(t('bots.u.models'), d.models.map((m) => row(String(m.model).split('/').pop() || m.model, compactCount(m.tokens), money(m.cost))))}
+    ${list(t('bots.u.groups'), d.groups.map((g) => row(groupOf(g.groupId)?.name || t('bots.u.goneGroup'), compactCount(g.tokens))))}
+    ${list(t('bots.u.started'), d.origins.map((o) => row(ORIGIN_KEYS[o.origin] ? t(ORIGIN_KEYS[o.origin]) : o.origin, compactCount(o.tokens))))}
+    ${list(t('bots.u.made'), d.roles.map((r) => row(ROLE_KEYS[r.role] ? t(ROLE_KEYS[r.role]) : r.role, compactCount(r.tokens), money(r.cost))))}
+  </div>`;
 }
 
 /** A round top for the axis: 1, 2 or 5 times a power of ten. */
@@ -147,6 +193,10 @@ export function mountUsage(host, { team }) {
   let by = /** @type {'bot' | 'model'} */ ('bot');
   let turn = 0;
   const botOf = (id) => team?.bots.find((b) => b.id === id) || null;
+  const groupOf = (id) => team?.groups.find((g) => g.id === id) || null;
+  /** The bot whose row is open, and what was read for it in this range. */
+  let drilled = '';
+  let lastRange = /** @type {{ from: Date, to: Date } | null} */ (null);
   const inkFor = (id, i) => (by === 'bot' ? inkOf(botOf(id)) : MODEL_INKS[i % MODEL_INKS.length]);
   const rangeName = (id) => t(`bots.u.r.${id}`);
 
@@ -166,14 +216,19 @@ export function mountUsage(host, { team }) {
     const me = ++turn;
     const range = rangeOf(choice);
     let rows = [];
+    let before = /** @type {{ tokens: number, cost: number } | null} */ (null);
     try {
-      rows = (await api.botUsage({ from: range.from.toISOString(), to: range.to.toISOString(), unit: range.unit })).rows || [];
+      const read = await api.botUsage({ from: range.from.toISOString(), to: range.to.toISOString(), unit: range.unit });
+      rows = read.rows || [];
+      before = read.before || null;
     } catch (err) {
       view.innerHTML = `<p class="hint">${escapeHtml(err.message)}</p>`;
       return;
     }
     if (me !== turn) return;
+    lastRange = { from: range.from, to: range.to };
     const s = summarise(rows, range.buckets, by);
+    const compared = before ? compareSpan(s.totals.tokens, before.tokens) : null;
     const rate = s.totals.input ? Math.round((s.totals.cacheRead / s.totals.input) * 100) : 0;
     const last = choice.id === 'custom' ? `${choice.from} – ${choice.to}` : t('bots.u.last', { range: rangeName(choice.id) });
     const max = niceMax(Math.max(...s.bars.map((b) => b.total), 0));
@@ -208,14 +263,19 @@ export function mountUsage(host, { team }) {
     const botRows = s.bots
       .map(([id, n]) => {
         const b = botOf(id);
-        return `<li class="botuse__row">${faceHtml(b || '', 28)}<span class="botuse__label"><span>${escapeHtml(b?.name || t('bots.deletedBot'))}</span>${b?.role ? `<span class="botuse__sub">${escapeHtml(b.role)}</span>` : ''}<span class="botuse__bar"><span style="width:${share(n)}%;background:${inkOf(b?.avatar)}"></span></span></span><span class="botuse__num">${escapeHtml(compactCount(n))}<span class="botuse__sub">${share(n)}%</span></span></li>`;
+        // Each bot's row opens what it spent (spec B.8).
+        const label = `<span class="botuse__label"><span>${escapeHtml(b?.name || t('bots.deletedBot'))}</span>${b?.role ? `<span class="botuse__sub">${escapeHtml(b.role)}</span>` : ''}<span class="botuse__bar"><span style="width:${share(n)}%;background:${inkOf(b?.avatar)}"></span></span></span>`;
+        const num = `<span class="botuse__num">${escapeHtml(compactCount(n))}<span class="botuse__sub">${share(n)}%</span></span>`;
+        if (!b) return `<li class="botuse__row">${faceHtml('', 28)}${label}${num}</li>`;
+        return `<li><button class="botuse__row botuse__open" type="button" data-drill="${escapeHtml(id)}" aria-expanded="${drilled === id}" aria-controls="botuse-drill-${escapeHtml(id)}">${faceHtml(b, 28)}${label}${num}</button><div id="botuse-drill-${escapeHtml(id)}" data-drill-body="${escapeHtml(id)}"${drilled === id ? '' : ' hidden'}></div></li>`;
       })
       .join('');
     const modelRows = s.models
       .map(([id, n], j) => `<li class="botuse__row"><span class="botuse__mark" aria-hidden="true">${escapeHtml(String(id).split('/').pop()?.[0]?.toUpperCase() || '?')}</span><span class="botuse__label"><span>${escapeHtml(String(id).split('/').pop() || id)}</span><span class="botuse__sub">${escapeHtml(String(id).split('/')[0])}</span><span class="botuse__bar"><span style="width:${share(n)}%;background:${MODEL_INKS[j % MODEL_INKS.length]}"></span></span></span><span class="botuse__num">${escapeHtml(compactCount(n))}<span class="botuse__sub">${share(n)}%</span></span></li>`)
       .join('');
     view.innerHTML = `<div class="botuse__tiles">
-        <div class="botuse__tile botuse__tile--big"><span class="botuse__k">${escapeHtml(last)}</span><span class="botuse__v">${escapeHtml(compactCount(s.totals.tokens))}<span class="botuse__unit">${escapeHtml(t('bots.u.tokens'))}</span></span></div>
+        <div class="botuse__tile botuse__tile--big"><span class="botuse__k">${escapeHtml(last)}</span><span class="botuse__v">${escapeHtml(compactCount(s.totals.tokens))}<span class="botuse__unit">${escapeHtml(t('bots.u.tokens'))}</span></span>${choice.id === 'custom' ? '' : `<span class="botuse__cmp" data-compare>${escapeHtml(compared ? t('bots.u.compare', { pct: compared, range: rangeName(choice.id) }) : t('bots.u.compareNone'))}</span>`}</div>
+        <div class="botuse__tile"><span class="botuse__k">${escapeHtml(t('bots.u.cost'))}</span><span class="botuse__v" data-cost>${escapeHtml(money(s.totals.cost))}</span></div>
         <div class="botuse__tile"><span class="botuse__k">${escapeHtml(t('bots.u.cache'))}</span><span class="botuse__v">${rate}%</span></div>
         <div class="botuse__tile"><span class="botuse__k">${escapeHtml(t('bots.u.output'))}</span><span class="botuse__v">${escapeHtml(compactCount(s.totals.output))}</span></div>
         <div class="botuse__tile"><span class="botuse__k">${escapeHtml(t('bots.u.calls'))}</span><span class="botuse__v">${escapeHtml(String(s.totals.calls))}</span></div>
@@ -236,10 +296,41 @@ export function mountUsage(host, { team }) {
         <section class="botuse__card"><h3>${escapeHtml(t('bots.u.models'))} <span class="botuse__sub">${s.models.length}</span></h3><ul class="botuse__rows">${modelRows}</ul></section>
       </div>`;
     paintFaces(view);
+    if (drilled) void drill(drilled, false);
+  }
+
+  /** Open (or shut) one bot's breakdown under its row, read for the range on screen. */
+  async function drill(id, toggle = true) {
+    const button = /** @type {HTMLElement[]} */ ([...host.querySelectorAll('[data-drill]')]).find((n) => n.dataset.drill === id) || null;
+    const body = /** @type {HTMLElement[]} */ ([...host.querySelectorAll('[data-drill-body]')]).find((n) => n.dataset.drillBody === id) || null;
+    if (!button || !body || !lastRange) return;
+    if (toggle && drilled === id) {
+      drilled = '';
+      body.hidden = true;
+      button.setAttribute('aria-expanded', 'false');
+      return;
+    }
+    for (const other of host.querySelectorAll('[data-drill]')) other.setAttribute('aria-expanded', 'false');
+    for (const other of /** @type {NodeListOf<HTMLElement>} */ (host.querySelectorAll('[data-drill-body]'))) other.hidden = true;
+    drilled = id;
+    button.setAttribute('aria-expanded', 'true');
+    body.hidden = false;
+    if (!body.childElementCount) body.innerHTML = `<p class="hint" role="status">…</p>`;
+    try {
+      const d = await api.botUsageDetail(id, { from: lastRange.from.toISOString(), to: lastRange.to.toISOString() });
+      if (drilled === id) body.innerHTML = drillHtml(d, { groupOf });
+    } catch (err) {
+      body.innerHTML = `<p class="hint">${escapeHtml(err.message)}</p>`;
+    }
   }
 
   host.addEventListener('click', (event) => {
     const target = /** @type {HTMLElement} */ (event.target);
+    const open = /** @type {HTMLElement | null} */ (target.closest('[data-drill]'));
+    if (open) {
+      void drill(String(open.dataset.drill));
+      return;
+    }
     const range = /** @type {HTMLElement | null} */ (target.closest('[data-range]'));
     if (range) {
       for (const b of host.querySelectorAll('[data-range]')) {

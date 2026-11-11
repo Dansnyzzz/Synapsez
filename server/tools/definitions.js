@@ -26,6 +26,7 @@
 import { readArguments } from './validate.js';
 import { canonicalInput } from '../../public/js/tool-aliases.js';
 import { BOT_TOOL_NAMES, botToolRisk } from '../bots/tools.js';
+import { RUN_CONTROL_NAMES } from './runControl.js';
 import { THEME_NAMES as OFFICE_THEMES } from '../office/theme.js';
 
 /**
@@ -2168,7 +2169,7 @@ export const TOOLS = [
     scope: 'cloud',
     readOnly: false,
     description:
-      'Set work to run later, or every hour, day, weekday, week or month, without anyone watching. It runs as a fresh conversation the user can read afterwards. Use their words for the prompt — the future you has none of this context.',
+      'Set work to run later, or every hour, day, weekday, week or month, without anyone watching. It runs as a conversation the user can read afterwards. Use their words for the prompt — the future you has none of this context: say what to check, how, what to report, and when there is nothing to report (the run then calls no_update and nobody is told). In a bot\'s chat it is that bot\'s task; in a group chat, the group\'s.',
     parameters: {
       type: 'object',
       properties: {
@@ -2186,6 +2187,7 @@ export const TOOLS = [
             '"every 3 days 08:00", or a one-off "2026-10-01 09:00".',
         },
         repeat: { type: 'boolean', description: 'True to repeat on that schedule; false to run once. Defaults to true.' },
+        missed: { type: 'string', enum: ['once', 'skip'], description: 'A run the app could not start on time: "once" runs it as soon as it can (the default), "skip" lets it go — for work only worth doing at its hour.' },
         confirmed: {
           type: 'boolean',
           description:
@@ -3123,6 +3125,8 @@ export function assessRisk(name, rawInput = {}) {
    * they are named here rather than falling to the unknown-tool answer below.
    */
   if (!tool && BOT_TOOL_NAMES.has(name)) return botToolRisk(name);
+  // A scheduled run saying it has nothing new, or failed (tools/runControl.js): it changes nothing.
+  if (!tool && RUN_CONTROL_NAMES.has(name)) return 'safe';
   if (!tool) return 'sensitive';
   const input = asWillRun(tool, rawInput);
   // Before `readOnly`: a read of a URL is also a write of that URL to its host.
