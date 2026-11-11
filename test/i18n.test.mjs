@@ -38,6 +38,14 @@ section('the two dictionaries describe the same interface');
   check('every English key has a Vietnamese string', missingInVi.length === 0, missingInVi.join(', '));
   check('and every Vietnamese key has an English one', missingInEn.length === 0, missingInEn.join(', '));
   check('both hold the same number of strings', viKeys.length === enKeys.length, `${viKeys.length} vs ${enKeys.length}`);
+  // Owner, 2026-11-10: a step that failed said what it would have done ("Đã ghi nhớ" in red).
+  // Every step label the transcript can show has words for when it failed, in both languages.
+  const renderSource = fs.readFileSync(new URL('../public/js/render.js', import.meta.url), 'utf8');
+  const block = renderSource.slice(renderSource.indexOf('const STEP_VERBS = {'), renderSource.indexOf('};', renderSource.indexOf('const STEP_VERBS = {')));
+  const stepKeys = [...new Set([...block.matchAll(/'(step\.[a-z_]+)'/g)].map((m) => m[1]).concat('step.sandbox_python'))];
+  const noFailure = stepKeys.filter((key) => !en[`${key}.failed`] || !vi[`${key}.failed`]);
+  check(`every step label (${stepKeys.length}) has words for a step that failed`, stepKeys.length > 100 && noFailure.length === 0, noFailure.join(', '));
+  check('  and a plain one for a tool with none', !!en['step.failedGeneric'] && !!vi['step.failedGeneric']);
 
   // An empty string is worse than a missing one: it renders as nothing at all,
   // so a button loses its label rather than showing an obviously wrong one.

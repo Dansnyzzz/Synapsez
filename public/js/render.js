@@ -764,6 +764,19 @@ function browserDetail(i) {
 /** One fact asked for, in a few words. */
 const factAsked = (i) => [i?.kind, i?.location || i?.country || i?.timezone || (i?.base && `${i.base}→${i.quote || ''}`)].filter(Boolean).join(' · ');
 
+/**
+ * What a step that failed says, in place of what it would have done (owner, 2026-11-10:
+ * "Đã ghi nhớ" — "Saved to memory" — in red over a refusal; every tool did the same).
+ * Each step its own words (`step.<tool>.failed`, held complete by test/i18n.test.mjs); a
+ * tool with none — an MCP server's — says plainly that the step failed.
+ *
+ * @param {string} name  the tool, or 'sandbox_python' for the cloud computer's Python
+ */
+export function failedVerb(name) {
+  const key = name === 'sandbox_python' ? 'step.sandbox_python' : STEP_VERBS[name];
+  return t(key ? `${key}.failed` : 'step.failedGeneric');
+}
+
 export function describeStep(name, input = {}) {
   /*
    * A cloud-browser row says what it did — "Click #2", "Scroll down" — rather
@@ -2440,8 +2453,8 @@ export function assistantMessage() {
     const block = el('details', 'block tool plancard');
     block.dataset.planSteps = JSON.stringify(steps);
     const summary = el('summary');
-    const paint = (mark) => {
-      summary.innerHTML = `${mark}<span class="tool__name">${escapeHtml(change.headline)}</span>`;
+    const paint = (mark, headline = change.headline) => {
+      summary.innerHTML = `${mark}<span class="tool__name">${escapeHtml(headline)}</span>`;
       if (change.arg) summary.append(detailNode('tool__arg', change.arg, null));
     };
     paint(MARK_PENDING);
@@ -2455,7 +2468,7 @@ export function assistantMessage() {
     return {
       complete(result) {
         block.classList.toggle('tool--error', !!result.isError);
-        paint(doneMark(call.name, !!result.isError));
+        paint(doneMark(call.name, !!result.isError), result.isError ? failedVerb('update_plan') : change.headline);
         if (result.isError) {
           const why = el('pre');
           why.textContent = result.content || '';
@@ -2970,6 +2983,11 @@ export function assistantMessage() {
         running?.remove();
         live?.remove();
         item.classList.toggle('step--error', !!result.isError);
+        if (result.isError) {
+          const failed = failedVerb(call.name === 'sandbox_run' && !firstLine(call.input?.command) && firstLine(call.input?.python) ? 'sandbox_python' : call.name);
+          verbNode.textContent = failed;
+          entry.verb = failed;
+        }
         mark.innerHTML = '';
         // A row that went well needs no tick: its words say what was done, as
         // Claude's do — a browsing step as much as a command (owner,
@@ -3637,8 +3655,9 @@ export function assistantMessage() {
 
       // The headline is what was done; the function name and its arguments are
       // inside, one click away, for whoever wants them.
-      const { verb, detail: asked } = describeStep(call.name, call.input);
-      let detail = asked;
+      const said = describeStep(call.name, call.input);
+      let verb = said.verb;
+      let detail = said.detail;
       const href = stepLink(call.input);
       /**
        * Drawn in two halves: markup for the parts that are markup, and a real
@@ -3673,6 +3692,7 @@ export function assistantMessage() {
       return {
         complete(result) {
           block.classList.toggle('tool--error', !!result.isError);
+          if (result.isError) verb = failedVerb(call.name);
           // A call on a file made before this page was opened: its result knows the name.
           if (call.input?.file_id && !call.input?.question && result.file?.name) detail = clip(result.file.name);
           paintHead(
