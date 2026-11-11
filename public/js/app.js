@@ -3749,8 +3749,10 @@ $('composer').addEventListener('submit', async (event) => {
     let chatId = state.chatId;
     if (!chatId) {
       const project = state.pendingProject?.id || null;
-      const { chat } = await api.createChat(state.model, project, !project && state.incognito);
+      const { chat, removed } = await api.createChat(state.model, project, !project && state.incognito);
       chatId = chat.id;
+      // Past twenty, the oldest went to make room (server/chatLimit.js): said, not done silently.
+      if (removed > 0) toast(removed === 1 ? t('chat.limitOne') : t('chat.limitMany', { n: removed }));
       // Remembered so leaving it throws it away — see `leaveIncognito`.
       if (chat.incognito) state.incognitoChat = chat.id;
       // Only claimed for the screen if nobody went elsewhere meanwhile.

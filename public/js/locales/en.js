@@ -2547,6 +2547,8 @@ export const en = {
   'chat.delete': 'Delete',
   'chat.filesOne': '1 file',
   'chat.files': '{n} files',
+  'chat.limitOne': 'Your oldest conversation was deleted — an account keeps its 20 most recent. Pin one to keep it.',
+  'chat.limitMany': 'Your {n} oldest conversations were deleted — an account keeps its 20 most recent. Pin one to keep it.',
   'proj.created': 'Created "{name}".',
   'policy.menuTitle': 'Modes',
   'effort.named': 'Effort ({level})',

@@ -2533,6 +2533,8 @@ export const vi = {
   'chat.delete': 'Xoá',
   'chat.filesOne': '1 tệp',
   'chat.files': '{n} tệp',
+  'chat.limitOne': 'Đã xoá hội thoại cũ nhất — mỗi tài khoản giữ 20 hội thoại gần nhất. Ghim một hội thoại để giữ lại.',
+  'chat.limitMany': 'Đã xoá {n} hội thoại cũ nhất — mỗi tài khoản giữ 20 hội thoại gần nhất. Ghim một hội thoại để giữ lại.',
   'proj.created': 'Đã tạo "{name}".',
   'policy.menuTitle': 'Chế độ',
   'effort.named': 'Mức suy luận ({level})',
