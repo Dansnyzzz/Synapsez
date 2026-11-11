@@ -941,6 +941,9 @@ async function start() {
   renderSuggestions();
   renderTopbar();
   paintLegal();
+  suggestNotice = state.boot.suggestionNotice || null;
+  if (suggestNotice) knownRecommended = suggestNotice.version;
+  paintSuggestNotice();
   mascot.setPref(state.boot.prefs.mascot);
   void mascot.setCreature(state.boot.prefs.equippedTitle);
   // Signed in, so the scene may come up: nothing is drawn behind the sign-in page.
@@ -5076,8 +5079,10 @@ async function refreshWorker() {
   try {
     // A dedicated endpoint rather than the whole bootstrap payload: this runs
     // every twenty seconds, per open tab, to decide the colour of one dot.
-    const { worker } = await api.workerStatus();
+    const { worker, recommendedVersion } = await api.workerStatus();
     state.boot.worker = worker;
+    // The suggested models changed while this tab is open: said within the poll.
+    void checkSuggestNotice(recommendedVersion);
   } catch {
     /* transient — the indicator keeps its last state */
   }
@@ -5117,6 +5122,79 @@ $('legal-agree').addEventListener('click', async () => {
     state.boot.consent = consent;
     paintLegal();
     toast(t('legal.thanks'));
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+});
+
+/* ── the suggested models changed (owner, 2026-11-10) ───────────────────
+ *
+ * Said once per change to everyone: at the next visit (the boot data carries it), or
+ * within the twenty-second poll for a tab that is open (the poll carries the version
+ * of the suggestion, and one this tab has not met asks for the notice). Use it, Later
+ * or closing it is the answer; server/suggestionNotice.js remembers it. */
+
+/** @type {{ version: string, free: any, freeSecond: any, paid: any, suggestion: any } | null} */
+let suggestNotice = null;
+/** The version of the suggestion this tab last met. */
+let knownRecommended = /** @type {string | null} */ (null);
+
+function paintSuggestNotice() {
+  const notice = suggestNotice;
+  $('suggest-banner').hidden = !notice;
+  if (!notice) return;
+  const named = (m) => (m.id === 'auto' ? t('models.autoName') : m.label);
+  const parts = [
+    notice.free && t('suggestNotice.free', { model: named(notice.free) }),
+    notice.freeSecond && t('suggestNotice.free', { model: named(notice.freeSecond) }),
+    notice.paid && t('suggestNotice.paid', { model: named(notice.paid) }),
+  ].filter(Boolean);
+  $('suggest-banner-text').textContent = parts.length ? `${t('suggestNotice.title')} — ${parts.join(' · ')}` : t('suggestNotice.title');
+  const use = /** @type {HTMLButtonElement} */ ($('suggest-use'));
+  // "Use it" only when the account is not on the suggestion for its keys already.
+  const offer = !!notice.suggestion && state.model !== notice.suggestion.id;
+  use.hidden = !offer;
+  if (offer) use.textContent = t('suggestNotice.use', { model: named(notice.suggestion) });
+}
+
+/** Heard: hidden at once, remembered on the server. */
+async function settleSuggestNotice() {
+  const notice = suggestNotice;
+  suggestNotice = null;
+  paintSuggestNotice();
+  if (notice) await api.suggestionSeen(notice.version).catch(() => {});
+}
+
+/** The poll met a version of the suggestion this tab had not: ask for this account's notice. */
+async function checkSuggestNotice(version) {
+  if (!version || version === knownRecommended) return;
+  knownRecommended = version;
+  try {
+    const { notice } = await api.suggestionNotice();
+    if (notice) {
+      suggestNotice = notice;
+      paintSuggestNotice();
+    }
+  } catch {
+    /* the next poll asks again only on the next change; the next visit carries it anyway */
+  }
+}
+
+$('suggest-later').addEventListener('click', () => void settleSuggestNotice());
+$('suggest-use').addEventListener('click', async () => {
+  const button = /** @type {HTMLButtonElement} */ ($('suggest-use'));
+  button.disabled = true;
+  try {
+    const { prefs: saved, suggestion: used } = await api.useSuggestion();
+    state.boot.prefs = saved;
+    state.model = used.id;
+    state.boot.suggestion = { ...used, inUse: true };
+    renderTopbar();
+    refreshModelFacts();
+    toast(t('model.switched', { model: String(used.id).split('/').pop() }));
+    await settleSuggestNotice();
   } catch (err) {
     toast(err.message, 'error');
   } finally {

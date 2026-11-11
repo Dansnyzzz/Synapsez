@@ -360,6 +360,9 @@ export const api = {
   // A key pasted in Settings → Providers: recognised, checked and kept where it belongs (owner, 2026-11-02).
   intakeKey: (provider, apiKey) => request('POST', '/api/providers/intake', { provider, apiKey }),
   useSuggestion: () => request('POST', '/api/providers/suggestion/use'),
+  // The suggested models changed: this account's notice, and its answer (owner, 2026-11-10).
+  suggestionNotice: () => request('GET', '/api/models/suggestion/notice'),
+  suggestionSeen: (version) => request('POST', '/api/models/suggestion/seen', { version }),
   // The two models an administrator suggests to everyone.
   adminRecommended: () => request('GET', '/api/admin/recommended'),
   setRecommended: (body) => request('PUT', '/api/admin/recommended', body),

@@ -423,6 +423,14 @@
           <button class="btn btn--primary btn--small" id="legal-agree" type="button" data-i18n="legal.agree">I agree</button>
         </div>
 
+        <!-- The suggested models changed since this account last looked (owner,
+             2026-11-10): said once, under the header, never in the way of typing. -->
+        <div class="legal-banner suggest-banner" id="suggest-banner" role="region" aria-labelledby="suggest-banner-text" hidden>
+          <p class="legal-banner__text" id="suggest-banner-text"></p>
+          <button class="btn btn--primary btn--small" id="suggest-use" type="button" hidden></button>
+          <button class="btn btn--small" id="suggest-later" type="button" data-i18n="suggestNotice.later">Later</button>
+        </div>
+
         <!-- ── A full page, in the place the conversation normally is ──────
              Projects, Artifacts and Scheduled are shelves, not asides: you go
              to them, look through what is there, and pick one. A dialog over
