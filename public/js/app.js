@@ -3176,7 +3176,8 @@ function lendHome(slot, ids) {
         el.before(mark);
         lentHome.set(id, mark);
       }
-      slot.append(el);
+      // Moved only when it is not there already: moving a focused box blurs it.
+      if (el.parentElement !== slot) slot.append(el);
       el.hidden = false;
     } else if (lentHome.has(id)) {
       lentHome.get(id).replaceWith(el);

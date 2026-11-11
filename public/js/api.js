@@ -263,6 +263,9 @@ export const api = {
   /** What is new in a group after line `since`, who is at work, and whether its round goes on. */
   groupLive: (id, since) => request('GET', `/api/bot-groups/${encodeURIComponent(id)}/live?since=${encodeURIComponent(String(since))}`),
   setGroupModel: (id, model) => request('PATCH', `/api/bot-groups/${encodeURIComponent(id)}/model`, { model }),
+  /** Empty a bot's or a group's conversation; memory stays (owner, 2026-11-10). */
+  resetBot: (id) => request('POST', `/api/bots/${encodeURIComponent(id)}/reset`),
+  resetGroup: (id) => request('POST', `/api/bot-groups/${encodeURIComponent(id)}/reset`),
   botUsage: ({ from, to, unit }) => request('GET', `/api/bots/usage?${new URLSearchParams({ from, to, unit, tz: localZone() })}`),
 
   connectors: () => request('GET', '/api/connectors'),

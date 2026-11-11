@@ -373,7 +373,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       return;
     }
     const face = open?.kind === 'group' ? groupFaces(it) : faceHtml(it, 24);
-    pill.innerHTML = `${face}<span class="botchat__name">${escapeHtml(it.name)}</span><span class="botchat__chev" aria-hidden="true">${detailsOpen ? '→' : '←'}</span>`;
+    pill.innerHTML = `${face}<span class="botchat__name">${escapeHtml(it.name)}</span><span class="botchat__chev" aria-hidden="true">←</span>`;
     pill.setAttribute('aria-expanded', String(detailsOpen));
     pill.setAttribute('aria-label', t('bots.detailsOpen', { name: it.name }));
     home.setPlaceholder(t('bots.message', { name: it.name }));
@@ -445,30 +445,79 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     });
   }
 
+  /** What the panel last read, for the subject it was read for: drawn again at once, never a spinner where numbers were. */
+  let detailsData = /** @type {{ key: string, entries: any[], usage: any[], tasks: any[] } | null} */ (null);
+  let detailsTimer = /** @type {any} */ (null);
+  let detailsKey = '';
+
+  /**
+   * Open or close the panel (owner, 2026-11-10: smooth, no lag). It slides and fades in
+   * its own column while the conversation eases narrower; closed, it leaves the page
+   * once it has slid away. With reduced motion it is there or not, at once.
+   */
+  function showDetails(on) {
+    clearTimeout(detailsTimer);
+    if (on) {
+      if (!details.hidden && page.classList.contains('has-details')) return;
+      details.hidden = false;
+      details.inert = false;
+      // The closed state drawn first, so that opening is a change the browser can move through.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (detailsOpen) page.classList.add('has-details');
+      }));
+      return;
+    }
+    page.classList.remove('has-details');
+    details.inert = true;
+    const settle = () => {
+      if (!detailsOpen) details.hidden = true;
+    };
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) settle();
+    else detailsTimer = setTimeout(settle, 260);
+  }
+
   async function renderDetails() {
-    details.hidden = !detailsOpen;
-    page.classList.toggle('has-details', detailsOpen);
-    if (!detailsOpen) return;
+    if (!detailsOpen) {
+      showDetails(false);
+      return;
+    }
     const it = subject();
     if (!it) return;
+    showDetails(true);
     const isGroup = open?.kind === 'group';
     const kind = isGroup ? 'bot-groups' : 'bots';
+    const key = `${open?.kind}:${it.id}`;
     const turn = ++detailsTurn;
-    details.innerHTML = `<header class="botdetails__head"><button class="icon-btn" type="button" data-act="close-details" aria-label="${escapeHtml(t('action.close'))}" title="${escapeHtml(t('action.close'))}">✕</button></header>
+    // The heading only when the subject changed: the panel keeps its place and its focus otherwise.
+    if (detailsKey !== key || !details.querySelector('[data-body]')) {
+      detailsKey = key;
+      details.innerHTML = `<header class="botdetails__head"><button class="icon-btn" type="button" data-act="close-details" aria-label="${escapeHtml(t('action.close'))}" title="${escapeHtml(t('action.close'))}">✕</button></header>
       <div class="botdetails__who">
         ${isGroup ? groupFaces(it) : faceHtml(it, 88, 'botdetails__face')}
         <h2 class="botdetails__name">${escapeHtml(it.name)}</h2>
         ${!isGroup && it.role ? `<p class="botdetails__role">${escapeHtml(it.role)}</p>` : ''}
       </div>
       <div data-body><p class="botloading" role="status"><span class="spinner" aria-hidden="true"></span><span class="sr-only">${escapeHtml(t('bots.loading'))}</span></p></div>`;
-    paintFaces(details);
+      paintFaces(details);
+    }
+    if (detailsData?.key === key) drawDetailsBody(it, detailsData);
     const [memory, usage, tasks] = await Promise.all([
-      api.botMemory(kind, it.id).catch(() => ({ entries: [] })),
-      usageLine(isGroup ? it.members : [it.id]).catch(() => []),
-      isGroup ? { tasks: [] } : api.botTasks(it.id).catch(() => ({ tasks: [] })),
+      api.botMemory(kind, it.id).catch(() => ({ entries: detailsData?.key === key ? detailsData.entries : [] })),
+      usageLine(isGroup ? it.members : [it.id]).catch(() => (detailsData?.key === key ? detailsData.usage : [])),
+      isGroup ? { tasks: [] } : api.botTasks(it.id).catch(() => ({ tasks: detailsData?.key === key ? detailsData.tasks : [] })),
     ]);
     if (turn !== detailsTurn) return;
-    const body = /** @type {HTMLElement} */ (details.querySelector('[data-body]'));
+    detailsData = { key, entries: memory.entries || [], usage, tasks: tasks.tasks || [] };
+    drawDetailsBody(it, detailsData);
+  }
+
+  /** The panel's body, from what was read; drawn only when it would look different. */
+  let drawnBody = '';
+  function drawDetailsBody(it, data) {
+    const body = /** @type {HTMLElement | null} */ (details.querySelector('[data-body]'));
+    if (!body) return;
+    const isGroup = open?.kind === 'group';
+    const { entries, usage, tasks } = data;
     const parts = [];
     if (isGroup) {
       const admin = adminOf(it);
@@ -480,10 +529,10 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       // No model of its own: every bot answers on the model in the top bar (owner, 2026-11-10).
       parts.push(`<button class="botlink botlink--center" type="button" data-act="edit-bot">${escapeHtml(t(it.instructions ? 'bots.instructionsEdit' : 'bots.instructionsAdd'))}</button>`);
     }
-    const entries = memory.entries || [];
+    // Memory opens and closes where it is (owner, 2026-11-10): the list is always drawn, folded.
     parts.push(`<section class="botsec"><h3 class="botsec__label">${escapeHtml(t('bots.memory'))}</h3>
-      <button class="botcard" type="button" data-act="memory" aria-expanded="${memoryOpen}"><span>${escapeHtml(counted(entries.length, 'bots.entries'))}</span><span class="botcard__more">${escapeHtml(t('bots.manage'))} ›</span></button>
-      ${memoryOpen ? memoryHtml(entries) : ''}</section>`);
+      <button class="botcard" type="button" data-act="memory" aria-expanded="${memoryOpen}" aria-controls="botmemory-fold"><span data-memory-count>${escapeHtml(counted(entries.length, 'bots.entries'))}</span><span class="botcard__more">${escapeHtml(t('bots.manage'))}<span class="botcard__chev" aria-hidden="true">›</span></span></button>
+      <div class="botmemory-fold${memoryOpen ? ' is-open' : ''}" id="botmemory-fold" data-memory-fold${memoryOpen ? '' : ' inert'}><div class="botmemory-fold__in" data-memory-body>${memoryHtml(entries)}</div></div></section>`);
     const usageRows = usage
       .map((u) => {
         const b = botOf(u.id);
@@ -492,9 +541,100 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       .join('');
     parts.push(`<section class="botsec"><h3 class="botsec__label">${escapeHtml(t('bots.usage'))}</h3>${usage.some((u) => u.tokens) ? `<ul class="botusage">${usageRows}</ul>` : `<p class="hint">${escapeHtml(t('bots.usageNone'))}</p>`}</section>`);
     // A bot's own scheduled tasks, here and only here (owner, 2026-11-10).
-    if (!isGroup) parts.push(tasksHtml(tasks.tasks || []));
-    body.innerHTML = parts.join('');
+    if (!isGroup) parts.push(tasksHtml(tasks || []));
+    // Reset, at the foot: asked once more before anything goes (owner, 2026-11-10).
+    parts.push(`<section class="botsec botsec--reset"><button class="botlink botlink--danger" type="button" data-act="reset">${escapeHtml(t('bots.reset'))}</button></section>`);
+    const html = parts.join('');
+    if (html === drawnBody && body.childElementCount) return;
+    drawnBody = html;
+    // What is being typed in the memory box survives a redraw.
+    const typing = /** @type {HTMLInputElement | null} */ (body.querySelector('[data-memory-text]'));
+    const draft = typing?.value || '';
+    const hadFocus = !!typing && document.activeElement === typing;
+    body.innerHTML = html;
+    if (draft) {
+      const box = /** @type {HTMLInputElement | null} */ (body.querySelector('[data-memory-text]'));
+      if (box) {
+        box.value = draft;
+        if (hadFocus) box.focus();
+      }
+    }
     paintFaces(body);
+  }
+
+  /** Open or close the memory list where it is: no redraw, no request, the arrow turning with it. */
+  function toggleMemory() {
+    memoryOpen = !memoryOpen;
+    const button = details.querySelector('[data-act="memory"]');
+    const fold = /** @type {HTMLElement | null} */ (details.querySelector('[data-memory-fold]'));
+    button?.setAttribute('aria-expanded', String(memoryOpen));
+    if (fold) {
+      fold.classList.toggle('is-open', memoryOpen);
+      fold.inert = !memoryOpen;
+    }
+  }
+
+  /** The memory list and its count, drawn again from what is held, after an entry came or went. */
+  function paintMemory() {
+    const entries = detailsData?.entries || [];
+    const count = details.querySelector('[data-memory-count]');
+    if (count) count.textContent = counted(entries.length, 'bots.entries');
+    const list = /** @type {HTMLElement | null} */ (details.querySelector('[data-memory-body]'));
+    if (!list) return;
+    const box = /** @type {HTMLInputElement | null} */ (list.querySelector('[data-memory-text]'));
+    const draft = box?.value || '';
+    list.innerHTML = memoryHtml(entries);
+    const again = /** @type {HTMLInputElement | null} */ (list.querySelector('[data-memory-text]'));
+    if (again && draft) again.value = draft;
+    drawnBody = '';
+  }
+
+  /* ── reset ──────────────────────────────────────────────────────── */
+
+  const confirmBox = document.createElement('dialog');
+  confirmBox.className = 'botconfirm';
+  page.append(confirmBox);
+
+  /** Reset the open conversation, once the person says yes in a dialog that says what goes and what stays. */
+  function askReset() {
+    const it = subject();
+    if (!it || !open) return;
+    const target = { kind: open.kind, id: it.id };
+    const isGroup = target.kind === 'group';
+    confirmBox.innerHTML = `<form method="dialog" class="botconfirm__form">
+      <h2 class="botconfirm__title">${escapeHtml(t('bots.resetTitle', { name: it.name }))}</h2>
+      <p class="botconfirm__text">${escapeHtml(t(isGroup ? 'bots.resetBodyGroup' : 'bots.resetBody', { name: it.name }))}</p>
+      <div class="botconfirm__acts">
+        <button class="btn" type="submit" value="cancel" autofocus>${escapeHtml(t('action.cancel'))}</button>
+        <button class="btn btn--danger" type="submit" value="reset">${escapeHtml(t('bots.resetConfirm'))}</button>
+      </div>
+    </form>`;
+    confirmBox.returnValue = '';
+    confirmBox.addEventListener(
+      'close',
+      () => {
+        if (confirmBox.returnValue === 'reset') void doReset(target);
+      },
+      { once: true },
+    );
+    confirmBox.showModal();
+  }
+
+  async function doReset(target) {
+    try {
+      if (target.kind === 'group') await api.resetGroup(target.id);
+      else await api.resetBot(target.id);
+      if (target.kind === 'bot') chatIds.delete(target.id);
+      toast(t('bots.resetDone'), 'ok');
+      if (open && open.kind === target.kind && open.id === target.id) {
+        chat = null;
+        drawn = [];
+        await loadChat();
+      }
+      await readTeamNow();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
   }
 
   let taskFormOpen = false;
@@ -1007,7 +1147,14 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     }
   }, true);
   input.addEventListener('click', () => (inGroup() ? updatePicker() : undefined));
-  input.addEventListener('blur', () => setTimeout(closePicker, 150));
+  // Shut once the box has really been left. Opening a group moves the box, which blurs it for an
+  // instant; a close that ignored the focus coming back shut the picker the person had just opened
+  // by typing "@" (owner, 2026-11-11: found under load, where the 150 ms outlived the typing).
+  input.addEventListener('blur', () =>
+    setTimeout(() => {
+      if (document.activeElement !== input) closePicker();
+    }, 150),
+  );
   pickerBox.addEventListener('mousedown', (event) => {
     const item = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-pick]'));
     if (!item) return;
@@ -1094,8 +1241,16 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
         }, 3000);
         return;
       }
-      await api.deleteBotMemory(open?.kind === 'group' ? 'bot-groups' : 'bots', open?.id, forgetBtn.dataset.forget).catch((err) => toast(err.message, 'error'));
-      renderDetails();
+      const id = forgetBtn.dataset.forget;
+      const held = detailsData?.entries || [];
+      const before = [...held];
+      if (detailsData) detailsData.entries = held.filter((e) => e.id !== id);
+      paintMemory();
+      await api.deleteBotMemory(open?.kind === 'group' ? 'bot-groups' : 'bots', open?.id, id).catch((err) => {
+        if (detailsData) detailsData.entries = before;
+        paintMemory();
+        toast(err.message, 'error');
+      });
       return;
     }
     const act = /** @type {HTMLElement | null} */ (target.closest('[data-act]'))?.dataset.act;
@@ -1122,10 +1277,8 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       renderHead();
       renderDetails();
       pill.focus();
-    } else if (act === 'memory') {
-      memoryOpen = !memoryOpen;
-      renderDetails();
-    } else if (act === 'task-add') {
+    } else if (act === 'memory') toggleMemory();
+    else if (act === 'reset') askReset(); else if (act === 'task-add') {
       taskFormOpen = true;
       await renderDetails();
       /** @type {HTMLInputElement | null} */ (details.querySelector('[data-task-title]'))?.focus();
@@ -1168,11 +1321,19 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     const field = /** @type {HTMLInputElement} */ (form.querySelector('[data-memory-text]'));
     const text = field.value.trim();
     if (!text || !open) return;
+    const pending = { id: `new-${crypto.randomUUID()}`, text, source: 'user' };
+    if (detailsData) detailsData.entries = [...detailsData.entries, pending];
+    field.value = '';
+    paintMemory();
+    /** @type {HTMLInputElement | null} */ (details.querySelector('[data-memory-text]'))?.focus();
     try {
-      await api.addBotMemory(open.kind === 'group' ? 'bot-groups' : 'bots', open.id, text);
-      await renderDetails();
-      /** @type {HTMLInputElement | null} */ (details.querySelector('[data-memory-text]'))?.focus();
+      const answer = await api.addBotMemory(open.kind === 'group' ? 'bot-groups' : 'bots', open.id, text);
+      const saved = Array.isArray(answer?.entries) ? answer.entries : answer?.entry ? [answer.entry] : [];
+      if (detailsData) detailsData.entries = [...detailsData.entries.filter((e) => e !== pending && !saved.some((s) => s.id === e.id)), ...saved];
+      paintMemory();
     } catch (err) {
+      if (detailsData) detailsData.entries = detailsData.entries.filter((e) => e !== pending);
+      paintMemory();
       toast(err.message, 'error');
     }
   });

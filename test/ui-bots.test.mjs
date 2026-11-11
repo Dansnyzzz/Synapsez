@@ -342,6 +342,20 @@ section('a group chat: the same box, @ offers the members, the admin hands on, t
   });
   check('  the name that will call Writer is bold in the box, in its colour', bold.on && bold.name === '@Writer' && bold.stroke > 0 && /rgba\(0, 0, 0, 0\)|transparent/.test(bold.clear), JSON.stringify(bold));
   check('    drawn in the box\'s own type, exactly over its letters', bold.same && bold.words === bold.value && bold.off < 1, JSON.stringify(bold));
+  // Owner, 2026-11-11: opening a group moves the box, which blurs it; the close that blur
+  // asked for 150 ms later shut the picker the person had just opened by typing "@".
+  await page.fill('#input', '');
+  await page.evaluate(() => {
+    const box = /** @type {HTMLTextAreaElement} */ (document.getElementById('input'));
+    box.blur();
+    box.focus();
+  });
+  await page.fill('#input', 'Hey @Wr');
+  await page.dispatchEvent('#input', 'input');
+  await page.waitForTimeout(300);
+  const stays = await page.evaluate(() => ({ open: !document.querySelector('#bot-page [data-picker]')?.hidden, names: document.querySelectorAll('.atpick__name').length }));
+  check('  a blur the box came back from does not shut the picker a moment later', stays.open && stays.names === 1, JSON.stringify(stays));
+  await page.press('#input', 'Escape');
   await page.fill('#input', 'Can we get a first post?');
   const pressed = Date.now();
   await page.press('#input', 'Enter');
@@ -405,6 +419,36 @@ section('the details panel: no model of its own, memory, usage, its own schedule
     dots: /…/.test(document.querySelector('#bot-page [data-details]')?.textContent || ''),
   }));
   check('it opens beside the conversation, said on the pill', seen.expanded === 'true' && seen.name === 'Chief' && seen.role === 'Chief of Staff', JSON.stringify(seen));
+  const motion = await page.evaluate(() => {
+    const pageEl = document.getElementById('bot-page');
+    const panel = document.querySelector('#bot-page [data-details]');
+    const chev = document.querySelector('.botchat__pill .botchat__chev');
+    return {
+      grid: getComputedStyle(pageEl).transitionProperty,
+      panel: getComputedStyle(panel).transitionProperty,
+      chev: chev ? getComputedStyle(chev).transform : 'none',
+      width: Math.round(panel.getBoundingClientRect().width),
+    };
+  });
+  check('  it slides and fades in, the pill\'s arrow turned', /grid-template-columns/.test(motion.grid) && /transform/.test(motion.panel) && /opacity/.test(motion.panel) && motion.chev !== 'none' && motion.width >= 300, JSON.stringify(motion));
+  const asks = [];
+  const count = (r) => {
+    if (/\/api\/(bots|bot-groups)\/[^/]+\/(memory|tasks)|\/api\/bots\/usage/.test(r.url())) asks.push(r.url());
+  };
+  page.on('request', count);
+  await page.click('[data-act="memory"]');
+  await page.waitForTimeout(300);
+  const opened = await page.evaluate(() => ({
+    expanded: document.querySelector('[data-act="memory"]')?.getAttribute('aria-expanded'),
+    chev: (() => { const c = document.querySelector('[data-act="memory"] .botcard__chev'); return c ? getComputedStyle(c).transform : 'none'; })(),
+    shown: !!document.querySelector('.botmemory-fold.is-open [data-memory-text]'),
+    spinner: !!document.querySelector('#bot-page [data-details] .botloading'),
+  }));
+  page.off('request', count);
+  check('Manage opens the memory where it is: no request, no spinner, the arrow turned down', opened.expanded === 'true' && opened.shown && !opened.spinner && asks.length === 0 && opened.chev !== 'none', JSON.stringify({ ...opened, asks }));
+  await page.click('[data-act="memory"]');
+  await page.waitForTimeout(300);
+  check('  and closes again', (await page.evaluate(() => document.querySelector('[data-act="memory"]')?.getAttribute('aria-expanded'))) === 'false');
   check("  no model of the bot's own: it answers on the top bar's", !seen.model);
   check('  "Add instructions in Bot settings"', seen.link === 'Add instructions in Bot settings', seen.link);
   check('  memory with its count and Manage', /^0 entries\s*Manage/.test(seen.memory || ''), seen.memory);
@@ -427,6 +471,8 @@ section('the details panel: no model of its own, memory, usage, its own schedule
   check('  and not with the account\'s own on Automations', !tasks.some((t) => t.title === 'Morning digest') && (await store.listTasks(me.id, { botId: chiefId })).some((t) => t.title === 'Morning digest'));
   if (process.env.BOT_SHOTS) await page.screenshot({ path: path.join(process.env.BOT_SHOTS, 'bots-details.png') });
   await page.click('[data-act="close-details"]');
+  await page.waitForTimeout(400);
+  check('closing it slides it away and takes it out of the page', await page.evaluate(() => document.querySelector('#bot-page [data-details]')?.hidden === true));
 }
 
 section('incognito in the top bar holds with a bot');
@@ -442,6 +488,31 @@ section('incognito in the top bar holds with a bot');
   await page.click('#incognito-toggle');
   await page.waitForFunction(() => /Please think slowly/.test(document.getElementById('messages')?.textContent || ''), null, { timeout: 8000 }).catch(() => {});
   check('  off: back in Chief\'s own chat', /Please think slowly/.test(await messagesText()) && (await page.evaluate(() => document.getElementById('incognito-banner')?.hidden)));
+}
+
+section('Reset asks once more, empties the conversation and keeps the memory');
+{
+  await page.click('.botchief');
+  await page.waitForFunction(() => /Chief/.test(document.querySelector('.botchat__pill')?.textContent || ''));
+  await page.click('.botchat__pill');
+  await page.waitForSelector('#bot-page [data-details]:not([hidden]) [data-act="reset"]', { timeout: 8000 }).catch(() => {});
+  const chiefChat = (await store.botChat(me.id, { botId: chiefId, title: 'Chief' })).id;
+  check('Chief has a conversation to reset', (await store.listMessages(me.id, chiefChat)).length > 0);
+  await page.click('[data-act="reset"]');
+  await page.waitForSelector('dialog.botconfirm[open]', { timeout: 3000 }).catch(() => {});
+  const asked = await page.evaluate(() => document.querySelector('dialog.botconfirm[open]')?.textContent.replace(/\s+/g, ' ').trim() || '');
+  check('Reset asks once more, saying what goes and what stays', /Reset the conversation with Chief\?/.test(asked) && /deleted for good/.test(asked) && /memory/.test(asked), asked);
+  await page.click('dialog.botconfirm [value="cancel"]');
+  await page.waitForTimeout(200);
+  check('  Cancel keeps everything', (await store.listMessages(me.id, chiefChat)).length > 0);
+  await page.click('[data-act="reset"]');
+  await page.waitForSelector('dialog.botconfirm[open]', { timeout: 3000 }).catch(() => {});
+  await page.click('dialog.botconfirm [value="reset"]');
+  await page.waitForFunction(() => !(document.getElementById('messages')?.textContent || '').trim() || !document.querySelector('#messages .msg'), null, { timeout: 8000 }).catch(() => {});
+  const fresh = await store.botChat(me.id, { botId: chiefId, title: 'Chief' });
+  check('  Reset empties the conversation', fresh.id !== chiefChat && (await store.listMessages(me.id, fresh.id)).length === 0);
+  check('  and keeps the memory', (await store.listBotMemory(me.id, { botId: chiefId })).some((m) => m.text === 'The user writes in British English'));
+  await page.click('[data-act="close-details"]');
 }
 
 section('Bot settings: Bots, Group chats, Usage; a creature in use comes in another colour');
