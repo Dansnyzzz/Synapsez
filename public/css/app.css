@@ -12382,6 +12382,7 @@ html[data-scene] .gate { background: var(--bg); }
 .botlink--center { margin: -4px 0 14px; text-align: center; }
 .botlink--danger { color: var(--danger); }
 .botlink--danger:hover { color: var(--danger); text-decoration: underline; }
+.botnoticebox { display: -webkit-box; margin: 0; overflow: hidden; color: var(--text-dim); font-size: 13.5px; line-height: 1.5; white-space: pre-wrap; -webkit-box-orient: vertical; -webkit-line-clamp: 5; line-clamp: 5; }
 .botsec--reset { margin-top: 24px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
 .botconfirm { width: min(440px, calc(100vw - 32px)); padding: 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-elev); color: var(--text); box-shadow: var(--shadow); }
 .botconfirm::backdrop { background: rgb(0 0 0 / 0.45); }

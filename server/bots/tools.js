@@ -1,4 +1,5 @@
 import { getStore } from '../store/index.js';
+import { RUN_LEASE_STALE_MS } from '../store/pg.js';
 import { BotError, CREATURES, LIMITS, createBot, createGroup, updateBot, updateGroup, adminOf } from './team.js';
 import { forget, remember } from './memory.js';
 
@@ -63,6 +64,7 @@ const DEFS = {
         name: { type: 'string', description: 'Group name' },
         members: { type: 'array', items: { type: 'string' }, description: 'Exact names of the other bots to add; you are added yourself' },
         admin: { type: 'string', description: 'The member who leads it; defaults to you' },
+        notice: { type: 'string', description: `A standing note every member reads at every turn (at most ${LIMITS.notice} characters), when the user gives one` },
       },
       required: ['name', 'members'],
     },
@@ -78,6 +80,7 @@ const DEFS = {
         add_members: { type: 'array', items: { type: 'string' }, description: 'Exact names of bots to add' },
         remove_members: { type: 'array', items: { type: 'string' }, description: 'Exact names of bots to remove' },
         admin: { type: 'string', description: 'The member to make the admin' },
+        notice: { type: 'string', description: `Replace the group's standing note (at most ${LIMITS.notice} characters); "" clears it` },
       },
       required: ['group'],
     },
@@ -174,9 +177,19 @@ export async function runBotTool({ userId, chatId, name, input = {}, turnId = nu
 
     switch (name) {
       case 'list_bots': {
-        const groups = await store.listBotGroups(userId);
+        const [groups, previews] = await Promise.all([store.listBotGroups(userId), store.botPreviews(userId)]);
         const nameOf = new Map(bots.map((b) => [b.id, b.name]));
-        const lines = bots.map((b) => `- ${b.name}${b.is_main ? ' (main bot)' : ''}${b.role ? ` — ${b.role}` : ''}; creature ${b.avatar}${b.id === self.id ? ' — you' : ''}`);
+        // Who is at work now, and where (DS Bot and OpenBot, 2026-11-10): Chief stops handing
+        // work to a bot that is in the middle of something.
+        const fresh = (p) => !!p?.run_lock_at && Date.now() - new Date(p.run_lock_at).getTime() < RUN_LEASE_STALE_MS;
+        const busy = new Map();
+        for (const p of previews) if (p.bot_id && !p.bot_group_id && fresh(p)) busy.set(p.bot_id, 'busy in its own chat with the user');
+        for (const g of groups) {
+          const log = previews.find((p) => p.bot_group_id === g.id && !p.bot_id);
+          if (!fresh(log) || !g.pending) continue;
+          for (const w of g.pending.working || []) busy.set(w.bot, `answering in the group chat ${g.name}`);
+        }
+        const lines = bots.map((b) => `- ${b.name}${b.is_main ? ' (main bot)' : ''}${b.role ? ` — ${b.role}` : ''}; creature ${b.avatar}${b.id === self.id ? ' — you' : ''}${busy.has(b.id) ? ` — ${busy.get(b.id)}` : ''}`);
         // A bot sees the groups it is in; Chief sees every one (DS Bot's rule).
         const seen = groups.filter((g) => self.is_main || (g.members || []).includes(self.id));
         const glines = seen.map((g) => `- ${g.name}: ${(g.members || []).map((id) => `${nameOf.get(id) || '?'}${id === adminOf(g) ? ' (admin)' : ''}`).join(', ')}`);
@@ -205,7 +218,7 @@ export async function runBotTool({ userId, chatId, name, input = {}, turnId = nu
         const members = [self.id, ...names.map((n) => byName(n).id)];
         const admin = input.admin ? byName(input.admin) : self;
         if (!admin) return { isError: true, content: `There is no bot called ${input.admin}.` };
-        const group = await createGroup(userId, { name: input.name, members, admin: admin.id });
+        const group = await createGroup(userId, { name: input.name, members, admin: admin.id, notice: input.notice });
         return { isError: false, content: `Created the group chat ${group.name} with ${members.length} bots; ${admin.name} is its admin. It is on the Bot page now.` };
       }
       case 'update_group': {
@@ -223,6 +236,7 @@ export async function runBotTool({ userId, chatId, name, input = {}, turnId = nu
           ...(input.name !== undefined ? { name: input.name } : {}),
           ...(add.length || remove.size ? { members } : {}),
           ...(admin ? { admin: admin.id } : {}),
+          ...(input.notice !== undefined ? { notice: input.notice } : {}),
         });
         return { isError: false, content: `Updated the group chat ${changed.name}.` };
       }

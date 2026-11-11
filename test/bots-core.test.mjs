@@ -480,6 +480,56 @@ section('a round tells each turn who started it');
   check("  and the prompt itself says so, with other bots' lines marked", prompt?.origin === 'handoff' && prompt?.groupLines === true, JSON.stringify({ origin: prompt?.origin, groupLines: prompt?.groupLines }));
 }
 
+/* ── Task 10: a notice, who is busy, and bots that keep quiet ──── */
+
+section("a group's notice is read at the top of every member's turn");
+{
+  await cleanRoom();
+  await store.updateBotGroup(uid, room.id, { notice: 'Write in British English. Sources at the end.' });
+  const agent = fakeAgent({ Chief: '[PASS]' });
+  await roundOf({ text: 'hello', runAgent: agent.run });
+  check('the notice is in the round prompt', /Group notice[^\n]*\n?.*British English/s.test(agent.calls[0]?.prompt || ''), (agent.calls[0]?.prompt || '').slice(0, 300));
+  await store.updateBotGroup(uid, room.id, { notice: '' });
+}
+
+section('list_bots says who is busy, and where');
+{
+  await cleanRoom();
+  const chiefChat = (await store.botChat(uid, { botId: chief.id, title: 'Chief' })).id;
+  await store.setGroupPending(uid, room.id, { queue: [], handoffs: 0, segments: 1, reason: 'running', owed: {}, working: [{ bot: writer.id, tool: 'web_search' }], lastSeq: 0, at: new Date().toISOString() });
+  const log = await store.botChat(uid, { groupId: room.id, title: room.name });
+  const lease = id();
+  const seq = await store.claimChatRun(uid, log.id, lease);
+  const listed = await runBotTool({ userId: uid, chatId: chiefChat, name: 'list_bots', input: {} });
+  check('a bot at work in a group is shown as answering there', /Writer[^\n]*answering in the group chat Room/.test(listed.content), listed.content);
+  check('  one at rest is not', !/Quiet[^\n]*answering/.test(listed.content));
+  await store.releaseChatRun(uid, log.id, lease, seq);
+  await store.setGroupPending(uid, room.id, null);
+}
+
+section('bots keep quiet: no thanks between them, and no promise without the work');
+{
+  await cleanRoom();
+  const ack = fakeAgent({
+    Chief: ({ prompt }) => (/What you handed on/.test(prompt) ? 'Writer said nothing useful; I will do it myself.' : '@Writer draft it'),
+    Writer: 'Got it, thanks!',
+  });
+  const r1 = await roundOf({ text: 'Draft a post', runAgent: ack.run });
+  check('"Got it, thanks!" is not posted: it is a pass', !r1.posts.some((m) => /Got it/.test(m.text || '')), r1.posts.map((m) => m.text).join(' | '));
+  check('  and the asker hears that Writer gave no answer', /Writer gave no answer/.test(ack.calls.at(-1)?.prompt || ''));
+
+  await cleanRoom();
+  let tries = 0;
+  const promise = fakeAgent({
+    Chief: ({ prompt }) => (/What you handed on/.test(prompt) ? 'Done.' : '@Writer draft it'),
+    Writer: () => (tries++ === 0 ? "I'll draft it now." : 'Draft: Ten things about tea.'),
+  });
+  const r2 = await roundOf({ text: 'Draft a post', runAgent: promise.run });
+  check('a reply that only promises runs once more', promise.calls.filter((c) => c.name === 'Writer').length === 2, promise.calls.map((c) => c.name).join());
+  check('  told to do it now', /Do it now/i.test(promise.calls.filter((c) => c.name === 'Writer')[1]?.prompt || ''));
+  check('  and the work, not the promise, is posted', r2.posts.some((m) => m.text === 'Draft: Ten things about tea.') && !r2.posts.some((m) => /I'll draft/.test(m.text || '')), r2.posts.map((m) => m.text).join(' | '));
+}
+
 /* ── Task 3: carrying on in another invocation ─────────────────── */
 
 const { continueGroup, resumeGroupRounds } = await import('../server/bots/continue.js');

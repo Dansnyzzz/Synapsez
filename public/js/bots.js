@@ -525,6 +525,8 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
         ${run?.kind === 'group' && run.id === it.id ? `<button class="btn btn--small botsec__stop" type="button" data-act="stop">${escapeHtml(t('bots.stopAll'))}</button>` : ''}
         <ul class="botmembers">${membersOf(it).map((b) => `<li style="--ink:${inkOf(b)}">${faceHtml(b, 22)}<span>${escapeHtml(b.name)}</span>${b.id === admin ? `<span class="bottag">${escapeHtml(t('bots.admin'))}</span>` : ''}</li>`).join('')}</ul>
         <button class="botlink" type="button" data-act="edit-group">${escapeHtml(t('bots.groupSettings'))} ›</button></section>`);
+      // The group's standing note, folded to a few lines (owner, 2026-11-10).
+      if (String(it.notice || '').trim()) parts.push(`<section class="botsec"><h3 class="botsec__label">${escapeHtml(t('bots.g.notice'))}</h3><p class="botnoticebox">${escapeHtml(it.notice)}</p></section>`);
     } else {
       // No model of its own: every bot answers on the model in the top bar (owner, 2026-11-10).
       parts.push(`<button class="botlink botlink--center" type="button" data-act="edit-bot">${escapeHtml(t(it.instructions ? 'bots.instructionsEdit' : 'bots.instructionsAdd'))}</button>`);

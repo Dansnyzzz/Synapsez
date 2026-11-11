@@ -59,6 +59,14 @@ export const ROUND_BUDGET_MS = 285_000;
 export const MAX_SEGMENTS = 8;
 
 const PASS = /^\s*\[?PASS\]?\s*\.?\s*$/i;
+/**
+ * A post that only acknowledges — "Got it", "Thanks!", "On it" — said to another bot.
+ * It costs every member a line to read and tells nobody anything, so it is a pass
+ * (after dsh-superagent's communication rules, MIT; NOTICE).
+ */
+const ACK = /^(?:(?:ok(?:ay)?|got it|on it|noted|sure|thanks?|thank you|understood|will do|roger|đã rõ|rõ rồi|ok nhé|cảm ơn|nhận rồi|đã nhận|được rồi|mình làm ngay|đang làm)[\s,.!…]*)+$/iu;
+/** A reply that only promises the work ("I'll draft it now."), with no tool used for it. */
+const PROMISE = /^(?:i(?:'ll| will| am going to|'m going to)|let me|tôi sẽ|để tôi|mình sẽ|em sẽ)\b/iu;
 /** A message that only says "carry on" takes on what waits, rather than starting over. */
 const CONTINUE_WORDS = /^\s*(continue|go on|carry on|keep going|tiếp tục|làm tiếp|tiếp đi|tiếp)\s*[.!…]*\s*$/i;
 
@@ -82,6 +90,8 @@ export function roundPrompt({ group, self, lines, why, together = [], nameOf }) 
   const news = lines.filter((m) => m.bot !== self.id);
   const shown = news.slice(-LINES_SHOWN);
   const parts = [`[Group chat "${group.name}"]`];
+  // The group's standing note, from the user, at the top of every turn (owner, 2026-11-10).
+  if (String(group.notice || '').trim()) parts.push(`Group notice (the user wrote it; follow it here):\n${String(group.notice).trim()}`);
   parts.push(
     shown.length
       ? `New in the group since you last looked (oldest first)${news.length > shown.length ? `, the last ${shown.length} of ${news.length}` : ''}:\n${shown.map((m) => lineOf(m, nameOf, adminId)).join('\n')}`
@@ -327,8 +337,15 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
         return { message: null, outcome: 'failed' };
       }
     }
+    // Only a promise, no tool used, asked by another bot: once more, to do it now.
+    const used = after.some((m) => m.role === 'assistant' && lastUser && m.seq > lastUser.seq && m.toolCalls?.length);
+    if (answer && !made.length && !used && item.by && !item.retried && PROMISE.test(answer) && answer.split(/\s+/).length <= 40 && state.handoffs < HANDOFF_CEILING) {
+      state.handoffs += 1;
+      await store.appendMessage(userId, chat.id, { id: crypto.randomUUID(), role: 'user', text: 'You only said what you will do. Do it now, in this turn, and reply with the result.', origin: originOf(item) });
+      return memberTurn({ ...item, retried: true, seenTo: item.seenTo, since: item.since || since.toISOString() }, together);
+    }
     if (item.seenTo != null) await store.markGroupSeen(userId, groupId, self.id, item.seenTo);
-    if (!made.length && (!answer || PASS.test(answer))) return { message: null, outcome: 'passed' };
+    if (!made.length && (!answer || PASS.test(answer) || (item.by && ACK.test(answer)))) return { message: null, outcome: 'passed' };
     // A model that echoes the transcript's "Name: " in front of its reply.
     const clean = (PASS.test(answer) ? '' : answer).replace(new RegExp(`^${self.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*(\\(admin\\))?\\s*:\\s*`, 'i'), '');
     const files = made.map((f) => ({ id: f.id, name: f.name, mime: f.mime, size: Number(f.bytes) || 0 }));

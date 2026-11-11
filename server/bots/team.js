@@ -31,6 +31,8 @@ export const LIMITS = Object.freeze({
   role: 40,
   instructions: 4000,
   groupName: 60,
+  /** A group's standing note, read by every member at every turn (owner, 2026-11-10). */
+  notice: 2000,
   /** One memory entry: one fact. */
   entry: 300,
   /** Entries a bot, or a group, keeps. */
@@ -246,8 +248,10 @@ export async function createGroup(userId, input) {
   if (!members.length) throw new BotError('A group chat needs at least one of your bots in it.', 400, 'no_members');
   if (members.length > LIMITS.members) throw new BotError(`A group chat holds at most ${LIMITS.members} bots.`, 400, 'too_many_members');
   const admin = members.includes(String(input.admin || '')) ? String(input.admin) : members[0];
-  const group = await store.createBotGroup(userId, { id: crypto.randomUUID(), name, adminBotId: admin, members });
-  if (!group) throw new BotError(`There is already a group called ${name}.`, 409, 'name_taken');
+  const notice = cleanText(input.notice ?? '', LIMITS.notice, "A group's notice");
+  const made = await store.createBotGroup(userId, { id: crypto.randomUUID(), name, adminBotId: admin, members });
+  if (!made) throw new BotError(`There is already a group called ${name}.`, 409, 'name_taken');
+  const group = notice ? await store.updateBotGroup(userId, made.id, { notice }) : made;
   const nameOf = (botId) => bots.find((b) => b.id === botId)?.name || '';
   await sayInGroup(userId, group, [['made', { members, admin }, `Group chat made with ${members.map(nameOf).join(', ')}; ${nameOf(admin)} is the admin.`]]).catch(() => {});
   return group;
@@ -258,7 +262,8 @@ export async function createGroup(userId, input) {
  * members; removing the admin hands the role to the first who stays.
  *
  * @param {string} userId @param {string} id
- * @param {{ name?: unknown, members?: unknown, admin?: unknown }} input
+ * @param {{ name?: unknown, members?: unknown, admin?: unknown, notice?: unknown }} input  `notice`: the
+ *   group's standing note (at most LIMITS.notice), '' to clear it
  */
 export async function updateGroup(userId, id, input) {
   const store = getStore();
@@ -272,6 +277,7 @@ export async function updateGroup(userId, id, input) {
     if (groups.some((g) => g.id !== id && g.name.toLowerCase() === name.toLowerCase())) throw new BotError(`There is already a group called ${name}.`, 409, 'name_taken');
     patch.name = name;
   }
+  if (input.notice !== undefined) patch.notice = cleanText(input.notice ?? '', LIMITS.notice, "A group's notice");
   let members = group.members;
   if (input.members !== undefined) {
     const own = new Set((await store.listBots(userId)).map((b) => b.id));

@@ -14,16 +14,24 @@
  *     the longest name that fits wins: "@Writer Two" is Writer Two, not Writer.
  *   - Not when a letter, digit or one of `_ . /` stands right before the "@"
  *     (an e-mail address, "medium.com/@writer"), nor when the name runs on into a
- *     longer word ("@Writers" does not call Writer).
- *   - Not inside `code` or a ```fenced block```, which is quoted text.
+ *     longer word ("@Writers" does not call Writer), or a file ("@Docs.md").
+ *   - Not inside `code`, a ```fenced block``` or a Markdown [link](…), which are quoted.
  */
 
-/** A letter, digit, `_`, `-` or `/` right after the name means a longer word or a path. */
-const RUNS_ON = /^[\p{L}\p{N}_\-/]/u;
+/**
+ * Right after the name, a letter, digit, `_ - / \`, or a dot followed by a letter or
+ * digit, means a longer word, a path or a file ("@Docs.md"); a dot that ends the
+ * sentence ("…to you, @Coder.") does not.
+ */
+const RUNS_ON = /^(?:[\p{L}\p{N}_\-/\\]|\.[\p{L}\p{N}])/u;
 /** A letter, digit or `_ . /` right before "@" means an address. */
 const ADDRESS = /[\p{L}\p{N}_./]/u;
-/** Quoted text: fenced blocks and inline code. */
-const QUOTED = /```[\s\S]*?(?:```|$)|`[^`\n]*`/g;
+/**
+ * Quoted text: fenced blocks, inline code, and Markdown links — a link's words are an
+ * anchor on the page, which never colours a name inside one, so the server does not
+ * read one there either (DS Bot study, 2026-11-10).
+ */
+const QUOTED = /```[\s\S]*?(?:```|$)|`[^`\n]*`|\[[^\]\n]*\]\([^)\n]*\)/g;
 
 /** What a bot cannot be called, so that "@" always reads one way. */
 export const RESERVED_NAMES = Object.freeze(['all', 'everyone', 'user', 'you', 'me']);

@@ -194,6 +194,10 @@ section('"@Name" is read one way');
   check('spans mark where each call is', JSON.stringify(mentionSpans('x @Coder', bots).map((s) => [s.start, s.end])) === '[[2,8]]');
   check('names that read as the user or everyone are refused', nameProblem('all') && nameProblem('You') && nameProblem('a@b') && !nameProblem('Writer'));
   check('the picker sees an @ being typed', atQuery('hi @Wri', 7)?.query === 'Wri' && atQuery('a@b', 3) === null);
+  // Read the same on both sides (DS Bot study, 2026-11-10): the page never colours a link's words.
+  check('a name inside a Markdown link calls nobody', mentionedBots('see [@Writer](https://x.test/@Writer) and [notes](https://n.test)', bots).length === 0);
+  check('  nor a file name that starts with one', mentionedBots('open @Coder.md and @Writer\\notes', bots).length === 0);
+  check('  but a name at the end of a sentence still calls', mentionedBots('Over to you, @Coder. Thanks @Writer!', bots).map((b) => b.id).join() === 'c,w');
 }
 
 /* ── the team ───────────────────────────────────────────────────── */

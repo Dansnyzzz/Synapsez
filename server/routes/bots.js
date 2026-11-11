@@ -226,7 +226,7 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
     wrap(async (req, res) => {
       const b = req.body || {};
       try {
-        const group = await updateGroup(req.user.id, req.params.id, { name: b.name, members: b.members, admin: b.admin });
+        const group = await updateGroup(req.user.id, req.params.id, { name: b.name, members: b.members, admin: b.admin, notice: b.notice });
         res.json({ group: groupView(group) });
       } catch (err) {
         fail(res, err);
