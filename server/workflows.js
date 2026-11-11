@@ -160,6 +160,8 @@ async function runStep({ user, chatId, runId = null, modelId, instruction, resum
       id: crypto.randomUUID(),
       role: 'user',
       text: instruction,
+      // A workflow's step, not the person typing: some tools run only for the person (server/agent.js).
+      origin: 'task',
     });
   }
 

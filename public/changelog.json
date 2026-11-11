@@ -1,6 +1,44 @@
 {
   "entries": [
     {
+      "version": "1.20.0",
+      "date": "2026-11-11",
+      "new": {
+        "vi": [
+          "Nhóm bot làm việc xong trọn vẹn: việc dài được làm tiếp ở lượt sau, kể cả khi bạn rời trang hay đóng web; tệp bot tạo hiện ngay trong nhóm.",
+          "Công cụ tài chính: giá, lịch sử, báo cáo tài chính, tỷ giá, vàng, vĩ mô — Việt Nam trước, toàn cầu qua nguồn miễn phí, luôn ghi nguồn.",
+          "Bộ nhớ của bot: sửa, ghim, tìm lại mục cũ, hoàn tác khi quên; định kỳ tự ôn lại bằng mô hình miễn phí.",
+          "Khi quản trị đổi mô hình gợi ý, mọi người được báo một lần."
+        ],
+        "en": [
+          "A group of bots finishes its work: a long job carries on in the next run, even with the page left or closed; files a bot makes show in the group.",
+          "Finance tools: prices, history, statements, exchange rates, gold, the economy — Vietnam first, the world through free sources, always with the source.",
+          "A bot's memory: edit, pin, find older entries, undo a forget; a review now and then on the free model.",
+          "When an administrator changes the suggested models, everyone is told once."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Nhóm chat trông như khung chat chính; vòng xoay chạy đều; bảng chi tiết mở/đóng mượt; nút Đặt lại xoá cuộc trò chuyện nhưng giữ bộ nhớ.",
+          "Chỉ bạn mới thay đổi đội bot; bot trong nhóm im lặng khi không có gì để nói và hỏi bạn khi cần."
+        ],
+        "en": [
+          "Group chats look like the home chat; the ring turns evenly; the details panel slides; Reset deletes the conversation and keeps the memory.",
+          "Only you reshape the team; bots in a group keep quiet when they have nothing to say, and ask you when they need to."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Một bước lỗi giờ nói là lỗi (trước đây vẫn ghi \"Đã ghi nhớ\" màu đỏ); ghi chú dài được tách thay vì bị từ chối.",
+          "Danh sách @ trong nhóm không còn tự đóng ngay sau khi mở nhóm."
+        ],
+        "en": [
+          "A step that failed now says so (it used to read \"Saved to memory\" in red); a long note is split instead of refused.",
+          "The @ list in a group no longer shut itself a moment after the group opened."
+        ]
+      }
+    },
+    {
       "version": "1.19.0",
       "date": "2026-11-10",
       "new": {

@@ -174,6 +174,7 @@ export function openBotSettings(deps) {
         </fieldset>
         <p class="hint botform__note">${escapeHtml(t('bots.f.modelNote'))}</p>
         <label class="field"><span>${escapeHtml(t('bots.f.instructions'))}</span><textarea name="instructions" rows="6" maxlength="4000">${escapeHtml(bot?.instructions || '')}</textarea><small class="hint">${escapeHtml(t('bots.f.instructionsHint'))}</small></label>
+        <label class="field"><span>${escapeHtml(t('bots.f.review'))}</span><select name="reviewEvery">${[20, 40, 0].map((n) => `<option value="${n}" ${(bot?.reviewEvery ?? 20) === n ? 'selected' : ''}>${escapeHtml(n ? t('bots.f.reviewEvery', { n }) : t('bots.f.reviewOff'))}</option>`).join('')}</select><small class="hint">${escapeHtml(t('bots.f.reviewHint'))}</small></label>
         <p class="botform__error" role="alert" data-error></p>
         <div class="botform__acts">
           <button class="btn btn--primary" type="submit">${escapeHtml(t('action.save'))}</button>
@@ -198,7 +199,7 @@ export function openBotSettings(deps) {
         return;
       }
       error.textContent = '';
-      const body = { name: data.get('name'), role: data.get('role'), avatar: data.get('avatar'), instructions: data.get('instructions') };
+      const body = { name: data.get('name'), role: data.get('role'), avatar: data.get('avatar'), instructions: data.get('instructions'), reviewEvery: Number(data.get('reviewEvery') ?? 20) };
       busy(save, true);
       try {
         const saved = bot ? await api.updateBot(bot.id, body) : await api.createBot(body);
@@ -228,6 +229,7 @@ export function openBotSettings(deps) {
         <fieldset class="botform__members"><legend>${escapeHtml(t('bots.members'))}</legend>
           ${team.bots.map((b) => `<label class="botform__member">${`<input type="checkbox" name="members" value="${escapeHtml(b.id)}" ${members.has(b.id) ? 'checked' : ''} />`}${faceHtml(b, 22)}<span>${escapeHtml(b.name)}</span></label>`).join('')}
         </fieldset>
+        <label class="field"><span>${escapeHtml(t('bots.g.notice'))}</span><textarea name="notice" rows="3" maxlength="2000" placeholder="${escapeHtml(t('bots.g.noticePlaceholder'))}">${escapeHtml(group?.notice || '')}</textarea><small class="hint">${escapeHtml(t('bots.g.noticeHint'))}</small></label>
         <label class="field"><span>${escapeHtml(t('bots.g.admin'))}</span><select name="admin">${team.bots.map((b) => `<option value="${escapeHtml(b.id)}" ${b.id === (group?.admin || team.bots.find((x) => x.main)?.id) ? 'selected' : ''}>${escapeHtml(b.name)}</option>`).join('')}</select><small class="hint">${escapeHtml(t('bots.g.adminHint'))}</small></label>
         <p class="botform__error" role="alert" data-error></p>
         <div class="botform__acts">
@@ -251,7 +253,7 @@ export function openBotSettings(deps) {
       if (!picked.length) return void (error.textContent = t('bots.g.needMembers'));
       if (!picked.includes(admin)) return void (error.textContent = t('bots.g.adminMember'));
       error.textContent = '';
-      const body = { name: data.get('name'), members: picked, admin };
+      const body = { name: data.get('name'), members: picked, admin, notice: String(data.get('notice') || '').trim() };
       busy(save, true);
       try {
         const saved = group ? await api.updateGroup(group.id, body) : await api.createGroup(body);

@@ -41,6 +41,7 @@ import { publish, subscribe, poll, forget as forgetScreen } from './screenHub.js
 import { keyProviderMeta, CATALOG } from './providers/catalog.js';
 import { intakeKey } from './keyIntake.js';
 import { getRecommended, setRecommended, suggestionFor, recommendedWithLabels } from './recommend.js';
+import { suggestionNotice, markSuggestionSeen, recommendedVersion } from './suggestionNotice.js';
 import { isOwner, permissionsOf, cleanPermissions, mayActOn, requirePermission, requireOwner, can } from './adminRoles.js';
 import {
   browse,
@@ -78,6 +79,7 @@ import {
 } from './scheduler.js';
 import { runDueWorkflows } from './workflows.js';
 import { resumeCutOffTurns } from './resume.js';
+import { continueGroup, resumeGroupRounds } from './bots/continue.js';
 import { abortHere, holdRun, settledAfterStop, watchLease } from './liveRuns.js';
 import { redactSecrets } from './redact.js';
 import { clientError, fromTheDatabase, SERVER_TROUBLE } from './util/clientError.js';
@@ -567,8 +569,28 @@ export function createApp() {
     // Conversations whose turn the 300s limit cut off, finished with nobody
     // watching — see server/resume.js.
     const resumed = await resumeCutOffTurns({ budgetMs: remaining() }).catch(() => []);
-    return { ran, workflows, resumed };
+    // Group rounds a killed invocation left, or whose next segment was never asked
+    // for (server/bots/continue.js) — after the turns above, with what time is left.
+    const groups = await resumeGroupRounds({ budgetMs: remaining() }).catch(() => []);
+    return { ran, workflows, resumed, groups };
   }
+
+  /**
+   * The next segment of a group's round, asked for by the segment before it as that
+   * one ran short of time (server/bots/continue.js). The deployment's own secret, as
+   * the heartbeat's; answered at once, the segment held open by `waitUntil`.
+   */
+  app.post(
+    '/api/internal/bot-rounds/continue',
+    requireCron,
+    wrap(async (req, res) => {
+      const userId = String(req.body?.userId || '');
+      const groupId = String(req.body?.groupId || '');
+      if (!/^[\w-]{1,80}$/.test(userId) || !/^[\w-]{1,80}$/.test(groupId)) return res.status(400).json({ error: 'userId and groupId are needed.' });
+      waitUntil(continueGroup({ userId, groupId }).catch((err) => log.error('a group segment failed', err, { groupId })));
+      res.status(202).json({ accepted: true });
+    }),
+  );
 
   app.post(
     '/api/register',
@@ -965,6 +987,8 @@ export function createApp() {
         // the one for this account's keys (recommend.js, owner 2026-11-02).
         recommended,
         suggestion: suggestion ? { ...suggestion, inUse: !chose || prefs.defaultModel === suggestion.id } : null,
+        // The suggested models changed since this account last looked: said once (owner, 2026-11-10).
+        suggestionNotice: await suggestionNotice(req.user, { recommended, suggestion: suggestion ? { ...suggestion, inUse: !chose || prefs.defaultModel === suggestion.id } : null }).catch(() => null),
         library,
         tools: TOOLS.map(({ name, scope, readOnly, description }) => ({
           name,
@@ -1055,13 +1079,43 @@ export function createApp() {
     wrap(async (req, res) => {
       // A visible tab asks this every twenty seconds, which makes it the signal
       // that somebody is here — and that a paired machine should ask often.
-      const [worker] = await Promise.all([
+      const [worker, version] = await Promise.all([
         workerStatus(req.user, await getPrefs(req.user.id)),
+        recommendedVersion().catch(() => null),
         getStore()
           .markPresent(req.user.id)
           .catch(() => {}),
       ]);
-      res.json({ worker });
+      // When the suggested models last changed: a tab that has not seen this asks for its notice.
+      res.json({ worker, recommendedVersion: version });
+    }),
+  );
+
+  /** The suggested models' notice for this account, or null — asked by a tab the poll told of a change. */
+  api.get(
+    '/models/suggestion/notice',
+    wrap(async (req, res) => {
+      const providers = await providerStatus(req.user.id);
+      const [recommended, suggestion, prefs] = await Promise.all([
+        recommendedWithLabels(providers).catch(() => ({ free: null, freeSecond: null, paid: null })),
+        suggestionFor(providers).catch(() => null),
+        getPrefs(req.user.id),
+      ]);
+      const chose = !!((await getStore().getUserSetting(req.user.id, 'prefs').catch(() => null)) || {}).defaultModel;
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.json({ notice: await suggestionNotice(req.user, { recommended, suggestion: suggestion ? { ...suggestion, inUse: !chose || prefs.defaultModel === suggestion.id } : null }) });
+    }),
+  );
+  /** Heard: Use it, Later, or closed — not said again until the next change. */
+  api.post(
+    '/models/suggestion/seen',
+    wrap(async (req, res) => {
+      try {
+        await markSuggestionSeen(req.user.id, req.body?.version);
+        res.json({ ok: true });
+      } catch (err) {
+        res.status(err.status || 400).json({ error: translateMessage(clientError(err), languageOf(req)) });
+      }
     }),
   );
 
@@ -2615,7 +2669,10 @@ export function createApp() {
     requirePermission('models'),
     wrap(async (req, res) => {
       try {
-        res.json({ current: await setRecommended({ free: req.body?.free, freeSecond: req.body?.freeSecond, paid: req.body?.paid }) });
+        const current = await setRecommended({ free: req.body?.free, freeSecond: req.body?.freeSecond, paid: req.body?.paid });
+        // Whoever made the change has nothing to hear about it.
+        await markSuggestionSeen(req.user.id, current.version).catch(() => {});
+        res.json({ current });
       } catch (err) {
         res.status(err.status || 400).json({ error: translateMessage(clientError(err), languageOf(req)) });
       }

@@ -7,8 +7,9 @@ import { abortHere, holdRun, settledAfterStop, watchLease } from '../liveRuns.js
 import { log } from '../util/trace.js';
 import { clientError } from '../util/clientError.js';
 import { BotError, CREATURES, LIMITS, HANDOFF_CEILING, botView, groupView, createBot, createGroup, distinctFaces, ensureChief, removeBot, updateBot, updateGroup } from '../bots/team.js';
-import { listMemory, remember } from '../bots/memory.js';
+import { listMemory, pin, remember, undoForget } from '../bots/memory.js';
 import { runGroupRound } from '../bots/rounds.js';
+import { chainNext } from '../bots/continue.js';
 import { parseSchedule } from '../scheduler.js';
 
 /**
@@ -60,7 +61,10 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
         }),
         groups: groups.map((g) => {
           const p = last('bot_group_id', g.id);
-          return { ...groupView(g), last: preview(p), at: p?.updated_at || g.updated_at, running: running(p) };
+          // A round between two segments is still running; who is at work names the row's line.
+          const between = !!g.pending && ['time', 'running'].includes(g.pending.reason);
+          const busy = running(p) || between;
+          return { ...groupView(g), last: preview(p), at: p?.updated_at || g.updated_at, running: busy, working: busy ? (g.pending?.working || []).map((w) => w.bot) : [] };
         }),
         creatures: CREATURES,
         limits: { ...LIMITS, handoffs: HANDOFF_CEILING },
@@ -85,7 +89,7 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
     wrap(async (req, res) => {
       const b = req.body || {};
       try {
-        const bot = await updateBot(req.user.id, req.params.id, { name: b.name, role: b.role, instructions: b.instructions, avatar: b.avatar });
+        const bot = await updateBot(req.user.id, req.params.id, { name: b.name, role: b.role, instructions: b.instructions, avatar: b.avatar, reviewEvery: b.reviewEvery });
         res.json({ bot: botView(bot) });
       } catch (err) {
         fail(res, err);
@@ -174,7 +178,7 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       wrap(async (req, res) => {
         if (!(await exists(req))) return res.status(404).json({ error: 'Not found.' });
         const rows = await listMemory(req.user.id, scopeOf(req));
-        res.json({ entries: rows.map((r) => ({ id: r.id, text: r.text, source: r.source, createdAt: r.created_at })) });
+        res.json({ entries: rows.map((r) => ({ id: r.id, text: r.text, source: r.source, createdAt: r.created_at, pinned: !!r.pinned, pinnedBy: r.pinned_by || null })) });
       }),
     );
     api.post(
@@ -182,19 +186,47 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       wrap(async (req, res) => {
         if (!(await exists(req))) return res.status(404).json({ error: 'Not found.' });
         try {
-          const { saved, entry } = await remember(req.user.id, scopeOf(req), req.body?.text, 'user');
-          res.status(saved ? 201 : 200).json({ saved, entry: { id: entry.id, text: entry.text, source: entry.source, createdAt: entry.created_at } });
+          const { saved, entries } = await remember(req.user.id, scopeOf(req), req.body?.text, 'user');
+          const view = (e) => ({ id: e.id, text: e.text, source: e.source, createdAt: e.created_at });
+          // A long note may become several entries (cut at its sentence ends): all of them, the first as `entry`.
+          res.status(saved ? 201 : 200).json({ saved, entry: view(entries[0]), entries: entries.map(view) });
         } catch (err) {
           fail(res, err);
         }
       }),
     );
+    /** Edit an entry's words, or pin it (the person's pin, which a bot cannot take away). */
+    api.patch(
+      `${path}/memory/:entry`,
+      wrap(async (req, res) => {
+        if (!(await exists(req))) return res.status(404).json({ error: 'Not found.' });
+        try {
+          const scope = scopeOf(req);
+          let row = null;
+          if (typeof req.body?.text === 'string') row = (await remember(req.user.id, scope, req.body.text, 'user', { replace: req.params.entry })).entry;
+          if (typeof req.body?.pinned === 'boolean') row = await pin(req.user.id, scope, req.params.entry, req.body.pinned, 'user');
+          if (!row) return res.status(400).json({ error: 'Say what to change: text or pinned.' });
+          res.json({ entry: { id: row.id, text: row.text, source: row.source, createdAt: row.created_at, pinned: !!row.pinned, pinnedBy: row.pinned_by || null } });
+        } catch (err) {
+          fail(res, err);
+        }
+      }),
+    );
+    /** Forget: soft, so that Undo brings it back for thirty days (owner, 2026-11-10). */
     api.delete(
       `${path}/memory/:entry`,
       wrap(async (req, res) => {
-        const gone = await getStore().deleteBotMemory(req.user.id, req.params.entry, scopeOf(req));
+        const gone = await getStore().softDeleteBotMemory(req.user.id, req.params.entry, scopeOf(req));
         if (!gone) return res.status(404).json({ error: 'No such entry.' });
-        res.json({ ok: true });
+        res.json({ ok: true, undo: [req.params.entry] });
+      }),
+    );
+    api.post(
+      `${path}/memory/undo`,
+      wrap(async (req, res) => {
+        if (!(await exists(req))) return res.status(404).json({ error: 'Not found.' });
+        const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).map(String).slice(0, 50);
+        res.json({ restored: await undoForget(req.user.id, ids) });
       }),
     );
   };
@@ -220,7 +252,7 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
     wrap(async (req, res) => {
       const b = req.body || {};
       try {
-        const group = await updateGroup(req.user.id, req.params.id, { name: b.name, members: b.members, admin: b.admin });
+        const group = await updateGroup(req.user.id, req.params.id, { name: b.name, members: b.members, admin: b.admin, notice: b.notice });
         res.json({ group: groupView(group) });
       } catch (err) {
         fail(res, err);
@@ -245,7 +277,14 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       const group = await store.getBotGroup(req.user.id, req.params.id);
       if (!group) return res.status(404).json({ error: 'No such group chat.' });
       const chat = await store.botChat(req.user.id, { groupId: group.id, title: group.name });
-      res.json({ chatId: chat.id, running: running(chat), messages: await store.listMessages(req.user.id, chat.id) });
+      // Running: a segment holds it now, or it is between two (owner, 2026-11-10); `pending` says what waits.
+      const pending = group.pending || null;
+      res.json({
+        chatId: chat.id,
+        running: running(chat) || (!!pending && ['time', 'running'].includes(pending.reason)),
+        pending: pending ? { reason: pending.reason } : null,
+        messages: await store.listMessages(req.user.id, chat.id),
+      });
     }),
   );
 
@@ -263,14 +302,109 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       const chat = await store.botChat(req.user.id, { groupId: group.id, title: group.name });
       const stopped = await store.stopChatRun(req.user.id, chat.id);
       abortHere(req.user.id, chat.id);
+      // What was waiting goes too: a segment asked for before the stop finds nothing to carry on.
+      await store.setGroupPending(req.user.id, group.id, null);
       res.json({ stopped });
     }),
   );
 
   /**
-   * Write in a group and run its round, streamed as server-sent events: `post` for
-   * each line the group gains, `member_start` / `member_text` / `member_tool` /
-   * `member_end` while a bot works, `done` at the end.
+   * Reset a conversation (owner, 2026-11-10): a bot's own chat, or a group's log with
+   * every member's conversation for it. The rows are deleted, files and all, to free the
+   * space; memory, instructions, members and scheduled tasks stay. Not while it runs —
+   * or, for a group, while its round is between two segments: Stop first.
+   */
+  api.post(
+    '/bots/:id/reset',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const bot = await store.getBot(req.user.id, req.params.id);
+      if (!bot) return res.status(404).json({ error: 'No such bot.' });
+      const chat = await store.botChat(req.user.id, { botId: bot.id, title: bot.name });
+      if (running(chat)) return res.status(409).json({ error: 'This bot is answering. Stop it first, then reset.', code: 'running' });
+      const removed = await store.resetConversation(req.user.id, { botId: bot.id });
+      res.json({ reset: true, removed });
+    }),
+  );
+  api.post(
+    '/bot-groups/:id/reset',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const group = await store.getBotGroup(req.user.id, req.params.id);
+      if (!group) return res.status(404).json({ error: 'No such group chat.' });
+      const chat = await store.botChat(req.user.id, { groupId: group.id, title: group.name });
+      if (running(chat) || (group.pending && ['time', 'running'].includes(group.pending.reason))) {
+        return res.status(409).json({ error: 'This group is answering. Stop it first, then reset.', code: 'running' });
+      }
+      const removed = await store.resetConversation(req.user.id, { groupId: group.id });
+      res.json({ reset: true, removed });
+    }),
+  );
+
+  /**
+   * Stream one segment of a group's round as server-sent events: `post` for each line
+   * the group gains, `member_start` / `member_text` / `member_tool` / `member_end`
+   * while a bot works, `paused` when the segment hands the rest to the next one
+   * (the page then follows the group with `live`), `done` at the end. The segment
+   * holds the log's run lease; the next one is asked for only once it has let go.
+   */
+  async function streamRound(req, res, { group, chat, runId, runSeq, text = '', resume = false, fresh = false, model }) {
+    const store = getStore();
+    res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+    const emit = (event, data) => {
+      if (res.writableEnded || res.destroyed || res.closed) return;
+      try {
+        res.write('event: ' + event + '\ndata: ' + JSON.stringify(data ?? {}) + '\n\n');
+      } catch {
+        /* the socket went; the round's lines are saved anyway */
+      }
+    };
+    const controller = new AbortController();
+    const letGo = holdRun(req.user.id, chat.id, controller);
+    const lease = watchLease({ store, userId: req.user.id, chatId: chat.id, runId, seq: runSeq, controller, onRenew: () => emit('ping', { t: Date.now() }) });
+    // A closed socket is not a stop (the round's lines are written as they come); the lease decides.
+    res.on('close', () => {
+      if (!res.writableEnded) void lease.check();
+    });
+    let wantNext = false;
+    try {
+      const result = await runGroupRound({
+        user: req.user,
+        groupId: group.id,
+        text,
+        emit,
+        signal: controller.signal,
+        origin: origin(req),
+        model,
+        resume,
+        fresh,
+        chain: () => {
+          wantNext = true;
+        },
+      });
+      emit('done', result);
+    } catch (err) {
+      log.error('group round failed', err);
+      emit('error', { message: err instanceof BotError ? clientError(err) : 'The group could not answer. Try again in a moment.' });
+      emit('done', { stopReason: 'error' });
+    } finally {
+      lease.stop();
+      letGo();
+      await store.releaseChatRun(req.user.id, chat.id, runId, runSeq).catch(() => {});
+      await store.clearRunStop(req.user.id, chat.id).catch(() => {});
+      if (!res.writableEnded) res.end();
+    }
+    // After the lease is free: the next segment takes it at once.
+    if (wantNext) chainNext(req.user.id, group.id);
+  }
+
+  /** The chip's model as the request sends it, or undefined. */
+  const modelOf = (req) => (typeof req.body?.model === 'string' && /^[\w./:@-]{1,200}$/.test(req.body.model) ? req.body.model : undefined);
+
+  /**
+   * Write in a group and run its round. While another segment holds the group, the
+   * line is written and that segment answers it (owner, 2026-11-10: writing while the
+   * group works) — `{ joined: true }`, no stream.
    */
   api.post(
     '/bot-groups/:id/run',
@@ -283,42 +417,72 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       if (text.length > 20_000) return res.status(400).json({ error: 'That message is too long for a group chat.' });
       const chat = await store.botChat(req.user.id, { groupId: group.id, title: group.name });
       await settledAfterStop(store, req.user.id, chat.id);
+      const model = modelOf(req);
       const runId = /^[0-9a-f-]{36}$/i.test(String(req.body?.runId || '')) ? req.body.runId : crypto.randomUUID();
       const runSeq = await store.claimChatRun(req.user.id, chat.id, runId);
-      if (!runSeq) return res.status(409).json({ error: 'This group is already answering. Wait for it, or stop it.', code: 'already_running' });
-
-      res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-      const emit = (event, data) => {
-        if (res.writableEnded || res.destroyed || res.closed) return;
-        try {
-          res.write(`event: ${event}\ndata: ${JSON.stringify(data ?? {})}\n\n`);
-        } catch {
-          /* the socket went; the round's lines are saved anyway */
-        }
-      };
-      const controller = new AbortController();
-      const letGo = holdRun(req.user.id, chat.id, controller);
-      const lease = watchLease({ store, userId: req.user.id, chatId: chat.id, runId, seq: runSeq, controller, onRenew: () => emit('ping', { t: Date.now() }) });
-      // A closed socket is not a stop (the round's lines are written as they come); the lease decides.
-      res.on('close', () => {
-        if (!res.writableEnded) void lease.check();
-      });
-      try {
-        // The model on the header chip, as every turn sends it; none is the account's own.
-        const model = typeof req.body?.model === 'string' && /^[\w./:@-]{1,200}$/.test(req.body.model) ? req.body.model : undefined;
-        const result = await runGroupRound({ user: req.user, groupId: group.id, text, emit, signal: controller.signal, origin: origin(req), model });
-        emit('done', result);
-      } catch (err) {
-        log.error('group round failed', err);
-        emit('error', { message: err instanceof BotError ? clientError(err) : 'The group could not answer. Try again in a moment.' });
-        emit('done', { stopReason: 'error' });
-      } finally {
-        lease.stop();
-        letGo();
-        await store.releaseChatRun(req.user.id, chat.id, runId, runSeq).catch(() => {});
-        await store.clearRunStop(req.user.id, chat.id).catch(() => {});
-        if (!res.writableEnded) res.end();
+      if (!runSeq) {
+        const message = await store.appendMessage(req.user.id, chat.id, { id: crypto.randomUUID(), role: 'user', text });
+        if (model) await store.setGroupModel(req.user.id, group.id, model);
+        return res.json({ joined: true, message });
       }
+      await streamRound(req, res, { group, chat, runId, runSeq, text, model });
+    }),
+  );
+
+  /** Carry on what the group has waiting: the person's Continue, after the ceiling or a long round. */
+  api.post(
+    '/bot-groups/:id/continue',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const group = await store.getBotGroup(req.user.id, req.params.id);
+      if (!group) return res.status(404).json({ error: 'No such group chat.' });
+      if (!group.pending) return res.status(409).json({ error: 'There is nothing waiting to carry on.', code: 'nothing_pending' });
+      const chat = await store.botChat(req.user.id, { groupId: group.id, title: group.name });
+      await settledAfterStop(store, req.user.id, chat.id);
+      const runId = crypto.randomUUID();
+      const runSeq = await store.claimChatRun(req.user.id, chat.id, runId);
+      if (!runSeq) return res.status(409).json({ error: 'This group is already answering. Wait for it, or stop it.', code: 'already_running' });
+      const fresh = ['ceiling', 'segments'].includes(group.pending.reason);
+      await streamRound(req, res, { group, chat, runId, runSeq, resume: true, fresh, model: modelOf(req) });
+    }),
+  );
+
+  /**
+   * What is new in a group since `since` (a line's seq), who is at work and whether the
+   * round goes on — for a page that did not start the segment running now: another
+   * tab, the page opened again, a segment in a new invocation.
+   */
+  api.get(
+    '/bot-groups/:id/live',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const group = await store.getBotGroup(req.user.id, req.params.id);
+      if (!group) return res.status(404).json({ error: 'No such group chat.' });
+      const chat = await store.botChat(req.user.id, { groupId: group.id, title: group.name });
+      const since = Number.isFinite(Number(req.query?.since)) ? Number(req.query.since) : -1;
+      const pending = group.pending || null;
+      const held = running(chat);
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.json({
+        running: held || (!!pending && ['time', 'running'].includes(pending.reason)),
+        messages: await store.messagesSince(req.user.id, chat.id, since),
+        working: held ? pending?.working || [] : [],
+        pending: pending ? { reason: pending.reason } : null,
+      });
+    }),
+  );
+
+  /** The chip changed while a group is open: its next batch answers on that model. */
+  api.patch(
+    '/bot-groups/:id/model',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const group = await store.getBotGroup(req.user.id, req.params.id);
+      if (!group) return res.status(404).json({ error: 'No such group chat.' });
+      const model = modelOf(req);
+      if (!model) return res.status(400).json({ error: 'That is not a model id.' });
+      await store.setGroupModel(req.user.id, group.id, model);
+      res.json({ model });
     }),
   );
 

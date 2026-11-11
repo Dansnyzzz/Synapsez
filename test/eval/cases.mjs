@@ -97,6 +97,46 @@ export const CASES = [
       + 'the conversation for every figure checked — thirty-seven of them for one audit.',
   },
 
+  // -- finance: one tool, the right kind, in one call (2026-11-10) ----
+  // `call` is the one market_data call the case expects; the scripted run checks the
+  // tool's schema accepts it and the finance layer reads it as `reads` says.
+  {
+    id: 'tool-choice/vn-quote',
+    axis: 'tool-choice',
+    ask: 'Giá FPT hôm nay?',
+    situation: { workerOnline: false },
+    expect: {
+      prefers: 'market_data',
+      over: ['web_search', 'web_fetch'],
+      call: { kind: 'quote', market: 'vn', symbols: ['FPT'] },
+      reads: { kind: 'quote', market: 'vn', symbols: ['FPT'] },
+    },
+    why:
+      'A Vietnamese price from a search page has no reference, ceiling, floor, session or source line; '
+      + 'market_data has all of them, labelled, and says it is not advice.',
+  },
+  {
+    id: 'tool-choice/us-statement',
+    axis: 'tool-choice',
+    ask: "Apple's revenue for the last 4 years",
+    situation: { workerOnline: false },
+    expect: {
+      prefers: 'market_data',
+      over: ['web_search', 'web_fetch'],
+      call: { kind: 'statements', market: 'us', symbols: ['AAPL'], statement: 'income', period: 'year' },
+      reads: { kind: 'statements', market: 'us', symbols: ['AAPL'], statement: 'income', statementPeriod: 'year' },
+    },
+    why: 'Reported figures come from the filings (SEC), four years in one table, rather than from whichever article ranks first.',
+  },
+  {
+    id: 'tool-choice/sjc-gold',
+    axis: 'tool-choice',
+    ask: 'Giá vàng SJC',
+    situation: { workerOnline: false },
+    expect: { prefers: 'market_data', over: ['web_search', 'world_facts'], call: { kind: 'gold' }, reads: { kind: 'gold', market: 'vn' } },
+    why: "SJC's own posted buying and selling prices per lượng, not the world price per ounce and not a news article's figure from yesterday.",
+  },
+
   // -- stopping ------------------------------------------------------
   {
     id: 'refusal/sign-in-page',

@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
+import { waitUntil } from '@vercel/functions';
+import { maybeReview } from './bots/review.js';
 import { getPrefs, getPauses, usesSharedKey, providerStatus } from './settings.js';
 import { checkQuota, record as recordUsage, turnTokenLimit } from './usage.js';
 import { normaliseQuestions, askLayout } from './tools/askOptions.js';
@@ -979,12 +981,18 @@ export const PERSONAL_LEAVING_REASON =
  *
  * @param {Array<{ id: string, name: string, input?: any, unmasked?: string[] }>} toolCalls
  * @param {string} policy
- * @param {{ readOutside?: boolean }} [context]
+ * `groupOutside` (owner, 2026-11-10): the turn's prompt shows other bots' words in a group.
+ * A bot's line may carry what that bot read on a web page, so a save that outlives the
+ * group — the bot's own memory, the account's notes, a bot's instructions — asks first;
+ * the group's own memory, read only in that group, does not.
+ *
+ * @param {{ readOutside?: boolean, groupOutside?: boolean }} [context]
  */
-export function needsApproval(toolCalls, policy, { readOutside = false } = {}) {
+export function needsApproval(toolCalls, policy, { readOutside = false, groupOutside = false } = {}) {
   if (policy === 'auto' || policy === 'readonly' || policy === 'plan') return [];
   return toolCalls.filter((call) => {
     if (readOutside && policy === 'guarded' && MEMORY_WRITES.has(call.name)) return true;
+    if (groupOutside && policy === 'guarded' && MEMORY_WRITES.has(call.name) && !(call.name === 'remember' && call.input?.scope !== 'own')) return true;
     if (personalInAddress(call) || personalLeaving(call)) return true;
     const risk = assessRisk(call.name, call.input);
     if (risk === 'safe') return false;
@@ -1257,7 +1265,7 @@ export function repeatedRead(call, memo, counts) {
   return key ? { key } : null;
 }
 
-async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, policy, sent, origin = null, whereabouts = null, answers, memo = null, counts = {}, withhold = null, googleData = false, guard = null, canSee = true, masking = false, deadline = Infinity }) {
+async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, policy, sent, origin = null, whereabouts = null, answers, memo = null, counts = {}, withhold = null, googleData = false, guard = null, canSee = true, masking = false, deadline = Infinity, turnId = null, turnOrigin = null }) {
   /**
    * One call of the batch. Whether to run at all is decided first and draws
    * nothing: a call that would change nothing is not a step anybody needs to see.
@@ -1318,6 +1326,10 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         canSee: canSee && !masking,
         // What a command prints as it prints it, for the row that is running it.
         onProgress: progressFor(emit, call.id),
+        // What a bot saves in this turn is taken back if the turn is stopped or fails.
+        turnId,
+        // Who started the turn: some tools run only for the person (server/bots/tools.js).
+        turnOrigin,
       }));
       // Remembered before it is awaited, so a duplicate in the same batch waits
       // for this run instead of starting a second one. A failure is not kept:
@@ -1541,11 +1553,48 @@ export function readTheWeb(messages) {
 const TURN_BUDGET_MS = 270_000;
 
 /**
+ * Run one turn of a conversation — the agent loop (below, `runTurn`) — and, when the
+ * turn is stopped or fails, take back what a bot saved to its memory in it (owner,
+ * 2026-11-10, after OpenBot's staged memory writes): a half-finished turn must not leave
+ * a fact behind that the rest of the turn would have corrected.
+ *
+ * @param {Parameters<typeof runTurn>[0]} options
+ */
+export async function runAgent(options) {
+  const turnId = crypto.randomUUID();
+  let stopReason = '';
+  let failed = false;
+  /** Set by the turn: whether it was a bot's own conversation, which a memory review follows. */
+  const turnInfo = { botOwnChat: false };
+  const emit = (event, data) => {
+    if (event === 'done') stopReason = String(data?.stopReason || '');
+    else if (event === 'error') failed = true;
+    return options.emit?.(event, data);
+  };
+  try {
+    return await runTurn({ ...options, emit, turnId, turnInfo });
+  } catch (err) {
+    failed = true;
+    throw err;
+  } finally {
+    if (failed || stopReason === 'aborted' || stopReason === 'error' || options.signal?.aborted) {
+      await getStore()
+        .dropTurnMemory(options.userId, turnId)
+        .catch((err) => log.error('could not take back what a stopped turn saved', err, { chatId: options.chatId }));
+    } else if (turnInfo.botOwnChat && (stopReason === 'end_turn' || stopReason === 'max_steps')) {
+      // Every so many turns, a look over the bot's memory on the free model (server/bots/review.js),
+      // after the reply and never in its way.
+      waitUntil(maybeReview({ userId: options.userId, chatId: options.chatId }));
+    }
+  }
+}
+
+/**
  * @param stream  the provider call, injectable so the loop can be driven in a
  *   test with no network — see `compact()` and `runParallel` for the same seam.
  *   Defaults to the real `streamCompletion`.
  */
-export async function runAgent({ userId, user, chatId, modelId, decision, decisionFor, answers, handoff = false, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion, deadlineAt = Infinity }) {
+async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, answers, handoff = false, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion, deadlineAt = Infinity, turnId = null, turnOrigin: originGiven = null, turnInfo = null }) {
   const store = getStore();
   // This turn's deadline on this function, handed to every model call (HAR-015).
   // A group round runs several turns in one function's life, and hands each the time that is left (bots/rounds.js).
@@ -1573,6 +1622,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
    * was given before that day is kept in its row and no longer read.
    */
   const persona = chat.bot_id ? await botPersona(userId, chat) : null;
+  if (persona && turnInfo && !chat.bot_group_id && !chat.incognito) turnInfo.botOwnChat = true;
 
   /**
    * One model for the whole account, not one per conversation.
@@ -1589,6 +1639,17 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
    * the account's choice at the time they run.
    */
   let messages = await store.listMessages(userId, chatId);
+
+  /*
+   * Who started this turn (owner, 2026-11-10): the person, unless the message that started
+   * it says otherwise — a scheduled task's or a workflow's prompt ('task'), a round's
+   * prompt that another bot's hand-off wrote ('handoff'). A turn resumed after a cut-off
+   * reads it from the same message. And whether that prompt shows other bots' words in a
+   * group (`groupLines`), which a save that outlives the group may not take on unasked.
+   */
+  const startedBy = [...messages].reverse().find((m) => m.role === 'user' && m.id !== 'continue-note');
+  const turnOrigin = originGiven || startedBy?.origin || 'person';
+  const groupOutside = !!startedBy?.groupLines;
 
   /**
    * The account's own choice, moved to Auto first if its model has gone — so a
@@ -1705,8 +1766,9 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
   const withheldHere = () => {
     const out = withheldTools({ chat, prefs });
     if (persona) for (const name of MEMORY_WRITE_TOOLS) out.add(name);
-    // The Bot page draws no question cards yet: a bot asks in words (an Allow / Deny card it does draw).
-    if (persona) out.add('ask_options');
+    // A bot's own chat is the home chat, which draws question cards (owner, 2026-11-10); in a
+    // group nobody is there to press one — a member asks with ask_person instead.
+    if (persona && chat.bot_group_id) out.add('ask_options');
     return out;
   };
   let withhold = withheldHere();
@@ -1915,7 +1977,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // Re-check the policy rather than trusting that a decision was made. A run
     // cut short before it could ask must still ask on resume.
     const readOutside = turnReadOutside(messages);
-    const stillPending = needsApproval(last.toolCalls, policy, { readOutside });
+    const stillPending = needsApproval(last.toolCalls, policy, { readOutside, groupOutside });
 
     /**
      * A question still waiting for its answer.
@@ -1985,7 +2047,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
 
       await store.markToolCallsStarted(userId, chatId, last.id, run.map((c) => c.id));
       const ran = run.length
-        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: answered, memo: turnReads, counts: turnCounts, withhold, googleData: carriesGoogleData(messages), guard: stepGuard, canSee: entry?.vision !== false, masking, deadline })
+        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: answered, memo: turnReads, counts: turnCounts, withhold, googleData: carriesGoogleData(messages), guard: stepGuard, canSee: entry?.vision !== false, masking, deadline, turnId, turnOrigin })
         : { id: newId(), role: 'tool', results: [] };
 
       // Back into the order the model asked for them, which is the order it will
@@ -2821,7 +2883,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     }
 
     const readOutside = turnReadOutside(messages);
-    const pending = needsApproval(assistant.toolCalls, policy, { readOutside });
+    const pending = needsApproval(assistant.toolCalls, policy, { readOutside, groupOutside });
     const held = await monitorHolds({ toolCalls: assistant.toolCalls, pending, policy, readOutside, thought: assistant.thinking, prefs, entry, userId, chatId, messages, signal, googleData, stream });
     if (held.size) await store.holdToolCalls(userId, chatId, assistant.id, Object.fromEntries(held));
     if (pending.length || held.size) {
@@ -2843,7 +2905,7 @@ export async function runAgent({ userId, user, chatId, modelId, decision, decisi
     // No answers on this path: a well-formed question pauses above rather than
     // reaching here, so anything named `ask_options` that gets this far is a
     // malformed call on its way to becoming a tool error.
-    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: null, memo: turnReads, counts: turnCounts, withhold, googleData, guard: stepGuard, canSee: entry?.vision !== false, masking, deadline });
+    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: null, memo: turnReads, counts: turnCounts, withhold, googleData, guard: stepGuard, canSee: entry?.vision !== false, masking, deadline, turnId, turnOrigin });
     // See the resume path: a superseded run leaves the results to the run that
     // replaced it, rather than writing a second tool message for one turn.
     if (signal?.reason === 'superseded') {

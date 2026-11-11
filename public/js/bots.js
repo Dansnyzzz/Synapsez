@@ -1,4 +1,4 @@
-import { api, runGroup } from './api.js';
+import { api, runGroup, continueGroup } from './api.js';
 import { t, localeTag } from './i18n.js';
 import { escapeHtml, renderMarkdown } from './markdown.js';
 import { counted } from './format.js';
@@ -6,6 +6,7 @@ import { faceHtml, paintFaces, inkOf } from './bot-avatar.js';
 import { mentionSpans, atQuery } from './bot-mentions.js';
 import { openBotSettings, mergeTeam, changeLine } from './bots-settings.js';
 import { compactCount } from './bots-usage.js';
+import { fileCard, copyButton } from './render.js';
 
 /**
  * The Bot page (owner, 2026-11-09): the person's team of bots, led by Chief.
@@ -75,9 +76,11 @@ const timeOf = (iso) => {
  *     open: (chatId: string, options?: { incognito?: boolean }) => Promise<boolean>, blank: () => void,
  *     setHook: (hook: any) => void, refreshSend: () => void, incognito: () => boolean, model: () => string | undefined,
  *     setTitle: (text: string) => void, setPlaceholder: (text: string | null) => void },
- * }} deps  `home`: the home chat's transcript and box, lent to the Bot page (owner, 2026-11-10)
+ *   openFile?: (id: string) => void,
+ * }} deps  `home`: the home chat's transcript and box, lent to the Bot page (owner, 2026-11-10);
+ *   `openFile`: the home chat's viewer, for a file a bot made in a group
  */
-export function createBotPage({ toast, openSettings, openFeedback, openAutomations, onShow = () => {}, home }) {
+export function createBotPage({ toast, openSettings, openFeedback, openAutomations, onShow = () => {}, home, openFile = () => {} }) {
   const page = $('bot-page');
   /** @type {{ bots: any[], groups: any[], creatures: string[], limits: any } | null} */
   let team = null;
@@ -93,6 +96,13 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
   let memoryOpen = false;
   /** Which bots are working in the open group, and what each has said so far. */
   const working = new Map();
+  /**
+   * The open group's round as the server last said: running (a segment holds it, or it is
+   * between two) and what it has waiting — the Continue after the ceiling or a long round.
+   */
+  let groupState = /** @type {{ running: boolean, pending: { reason: string } | null }} */ ({ running: false, pending: null });
+  /** Following a round this tab did not start (another tab, another invocation): the poll's timer. */
+  let follow = /** @type {{ timer: any, target: any } | null} */ (null);
   let shown = false;
   let picker = /** @type {{ start: number, items: any[], index: number } | null} */ (null);
   /** Each bot's own conversation once known, so opening it again goes straight to the home chat. */
@@ -152,6 +162,11 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
   /* ── the list on the left ─────────────────────────────────────── */
 
   function previewOf(item, isGroup) {
+    // At work: who, rather than the last thing said (owner, 2026-11-10: what was that dot?).
+    if (item.running) {
+      const who = isGroup ? botOf(item.working?.[0])?.name : item.name;
+      return who ? t('bots.workingNow', { name: who }) : t('bots.busyNow');
+    }
     const last = item.last;
     if (!last?.text) return '';
     const who = last.role === 'user' ? t('bots.you') : isGroup ? botOf(last.bot)?.name || '' : '';
@@ -163,6 +178,9 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     return `<span class="botfaces" aria-hidden="true">${faces.map((b) => faceHtml(b, 20)).join('')}</span>`;
   }
 
+  /** A bot or group at work: the same small ring as its working line, saying so to a screen reader and on hover. */
+  const busyMark = () => `<span class="botbusy spinner" role="img" aria-label="${escapeHtml(t('bots.running'))}" title="${escapeHtml(t('bots.running'))}"></span>`;
+
   function renderList() {
     if (!team) return;
     const lead = chief();
@@ -172,7 +190,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
            <span class="botchief__star" aria-hidden="true">★</span>
            <span class="botchief__name">${escapeHtml(lead.name)}</span>
            <span class="botchief__role">${escapeHtml(lead.role || t('bots.mainTag'))}</span>
-           ${lead.running ? `<span class="botdot" aria-label="${escapeHtml(t('bots.running'))}"></span>` : ''}
+           ${lead.running ? busyMark() : ''}
          </button>`
       : '';
     const rows = [
@@ -186,7 +204,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
         return `<li><button class="botrow${isOpen ? ' is-open' : ''}" type="button" data-open="${kind}:${escapeHtml(item.id)}" aria-current="${isOpen ? 'true' : 'false'}">
           ${kind === 'group' ? groupFaces(item) : faceHtml(item, 36)}
           <span class="botrow__text"><span class="botrow__name">${escapeHtml(item.name)}</span>${preview ? `<span class="botrow__last">${escapeHtml(preview)}</span>` : ''}</span>
-          ${item.running ? `<span class="botdot" role="img" aria-label="${escapeHtml(t('bots.running'))}"></span>` : ''}
+          ${item.running ? busyMark() : ''}
         </button></li>`;
       })
       .join('');
@@ -228,38 +246,6 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     }
   }
 
-  /** A team tool's call as an event line: "Created [face] Writer". */
-  function eventLine(call, result) {
-    if (result?.isError) return '';
-    const input = call.input || {};
-    if (call.name === 'create_bot') {
-      const bot = team?.bots.find((b) => b.name.toLowerCase() === String(input.name || '').toLowerCase());
-      return `<p class="botevent">${escapeHtml(t('bots.created'))} ${bot ? faceHtml(bot, 18) : ''}<span>${escapeHtml(String(input.name || ''))}</span></p>`;
-    }
-    if (call.name === 'create_group') {
-      const group = team?.groups.find((g) => g.name.toLowerCase() === String(input.name || '').toLowerCase());
-      return `<p class="botevent">${escapeHtml(t('bots.createdGroup'))} ${group ? groupFaces(group) : ''}<span>${escapeHtml(String(input.name || ''))}</span></p>`;
-    }
-    if (call.name === 'remember' || call.name === 'forget') return `<p class="botevent">${escapeHtml(t('bots.remembered'))}</p>`;
-    return `<p class="botevent">${escapeHtml(t('bots.updated', { name: String(input.bot || input.group || input.name || '') }))}</p>`;
-  }
-
-  /** One message of a bot's own chat. */
-  function soloHtml(message, results, bot) {
-    if (message.role === 'user') return `<div class="botmsg botmsg--user"><div class="botmsg__bubble">${escapeHtml(message.text || '')}</div></div>`;
-    if (message.role !== 'assistant') return '';
-    const parts = [];
-    if (String(message.thinking || '').trim()) {
-      parts.push(`<details class="botthought"><summary>${escapeHtml(t('bots.thought'))}</summary><div class="botthought__text">${escapeHtml(message.thinking)}</div></details>`);
-    }
-    for (const call of message.toolCalls || []) {
-      const result = results.get(call.id);
-      parts.push(TEAM_EVENTS.has(call.name) ? eventLine(call, result) : `<p class="botstep">${escapeHtml(t('bots.used', { tool: call.name }))}</p>`);
-    }
-    if (String(message.text || '').trim()) parts.push(`<div class="botmsg botmsg--bot"><div class="botmsg__bubble prose" data-md>${renderMarkdown(message.text)}</div></div>`);
-    return parts.join('') || (bot ? '' : '');
-  }
-
   /**
    * A group's notice — made, joined, left, a new name, a new admin, stopped — a small line in
    * the middle, each bot it names by its face (owner, 2026-11-10, after DS Bot).
@@ -274,50 +260,110 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     else if (message.notice === 'renamed') html = escapeHtml(t('bots.notice.renamed', { name: p.name || '' }));
     else if (message.notice === 'botRenamed') html = fill('bots.notice.botRenamed', { from: p.from || '', name: SLOT }, named(botOf(p.bot), p.name));
     else html = fill(`bots.notice.${message.notice}`, { name: SLOT, n: p.n ?? '' }, named(botOf(p.bot), p.name));
-    return `<p class="botnotice">${html}</p>`;
+    // The round waits for the person here: Continue, on the newest such notice only.
+    const waits = (message.notice === 'ceiling' || message.notice === 'segments') && groupState.pending && ['ceiling', 'segments'].includes(groupState.pending.reason) && message === lastWaitNotice();
+    const go = waits && !run ? ` <button class="btn btn--small botnotice__go" type="button" data-act="continue">${escapeHtml(t('bots.continue'))}</button>` : '';
+    return `<p class="botnotice">${html}${go}</p>`;
   }
 
-  /** One line of a group's log. */
+  /** The newest ceiling or long-round notice in the open log: the one Continue belongs to. */
+  const lastWaitNotice = () => [...(chat?.messages || [])].reverse().find((m) => m.notice === 'ceiling' || m.notice === 'segments') || null;
+
+  /**
+   * One line of a group's log, drawn as the home chat draws its own (owner, 2026-11-10):
+   * a bot's reply is prose over the theme with no bubble, under its face and name; the
+   * person's line is the home chat's bubble; each with its time and Copy. Files the bot
+   * made go in `[data-files]` once the line is on the page.
+   */
   function groupHtml(message, group) {
     if (message.notice) return noticeHtml(message);
-    if (message.role === 'user') return `<div class="botmsg botmsg--user"><div class="botmsg__bubble">${escapeHtml(message.text || '')}</div></div>`;
+    const key = escapeHtml(String(message.id || message.seq || ''));
+    const time = message.createdAt ? `<span class="msg__time">${escapeHtml(timeOf(message.createdAt))}</span>` : '';
+    const actions = `<div class="msg__actions">${time}${copyButton()}</div>`;
+    const files = message.files?.length ? `<div class="botline__files" data-files="${key}"></div>` : '';
+    if (message.role === 'user') return `<div class="msg msg--user botline" data-line="${key}"><div class="bubble">${escapeHtml(message.text || '')}</div>${files}${actions}</div>`;
     const bot = botOf(message.bot);
     const admin = adminOf(group) === message.bot;
-    const ink = inkOf(bot);
-    return `<div class="botmsg botmsg--member" style="--ink:${ink}">
-      ${faceHtml(bot || '', 28, 'botmsg__face')}
-      <div class="botmsg__body">
-        <p class="botmsg__who"><span class="botmsg__name">${escapeHtml(bot?.name || t('bots.deletedBot'))}</span>${admin ? `<span class="bottag">${escapeHtml(t('bots.admin'))}</span>` : ''}</p>
-        <div class="botmsg__bubble prose" data-md>${renderMarkdown(message.text || '')}</div>
-      </div>
+    // A question a member asked the person (ask_person): marked as one (owner, 2026-11-10).
+    return `<div class="msg msg--assistant botline botline--bot${message.ask ? ' botline--ask' : ''}" data-line="${key}" style="--ink:${inkOf(bot)}">
+      <p class="botline__who">${faceHtml(bot || '', 22, 'botmsg__face')}<span class="botmsg__name">${escapeHtml(bot?.name || t('bots.deletedBot'))}</span>${admin ? `<span class="bottag">${escapeHtml(t('bots.admin'))}</span>` : ''}${message.ask ? `<span class="botline__asks">${escapeHtml(t('bots.asksYou'))}</span>` : ''}</p>
+      <div class="msg__body prose" data-md>${renderMarkdown(message.text || '')}</div>
+      ${files}${actions}
     </div>`;
   }
 
+  /** The lines on the page, in order, and the time of the last: what an added line is drawn after. */
+  let drawn = /** @type {string[]} */ ([]);
+  let drawnAt = 0;
+  const lineKey = (m) => String(m.id || m.seq || '');
+
+  /** Lines as markup, with a time stamp where half an hour has passed. */
+  function linesHtml(messages, group) {
+    const html = [];
+    for (const message of messages) {
+      const at = new Date(message.createdAt).getTime();
+      if (Number.isFinite(at) && at - drawnAt > 30 * 60_000) html.push(`<p class="botstamp">${escapeHtml(timeOf(message.createdAt))}</p>`);
+      if (Number.isFinite(at)) drawnAt = at;
+      html.push(groupHtml(message, group));
+    }
+    return html.join('');
+  }
+
+  /** What a new piece of the log needs once it is on the page: mentions, faces, file cards. */
+  function finishLines(root, messages, group) {
+    const bots = membersOf(group);
+    for (const bubble of /** @type {NodeListOf<HTMLElement>} */ (root.querySelectorAll('[data-md]'))) if (!bubble.dataset.marked) {
+      bubble.dataset.marked = '1';
+      markMentions(bubble, bots);
+    }
+    for (const message of messages) {
+      if (!message.files?.length) continue;
+      const slot = /** @type {HTMLElement[]} */ ([...root.querySelectorAll('[data-files]')]).find((node) => node.dataset.files === lineKey(message));
+      if (!slot || slot.childElementCount) continue;
+      for (const f of message.files) slot.append(fileCard({ id: f.id, name: f.name, bytes: f.size }));
+    }
+    paintFaces(root);
+  }
+
+  /**
+   * The open group's log. The first draw is the whole of it; after that only the lines
+   * that are new are added (owner, 2026-11-10: smooth while a round streams and polls),
+   * unless what is on the page no longer leads what is in `chat` (a line replaced).
+   */
   function renderLog() {
     const it = subject();
-    if (!it || !chat) {
+    if (!it || !chat || open?.kind !== 'group') {
       log.innerHTML = '';
+      drawn = [];
       return;
     }
-    const isGroup = open?.kind === 'group';
-    const results = new Map();
-    for (const m of chat.messages) if (m.role === 'tool') for (const r of m.results || []) results.set(r.toolCallId, r);
-    const html = [];
-    let lastAt = 0;
-    for (const message of chat.messages) {
-      const at = new Date(message.createdAt).getTime();
-      if (Number.isFinite(at) && at - lastAt > 30 * 60_000) html.push(`<p class="botstamp">${escapeHtml(timeOf(message.createdAt))}</p>`);
-      if (Number.isFinite(at)) lastAt = at;
-      html.push(isGroup ? groupHtml(message, it) : soloHtml(message, results, it));
+    const keys = chat.messages.map(lineKey);
+    const leads = drawn.length > 0 && drawn.length <= keys.length && drawn.every((k, i) => k === keys[i]);
+    const nearEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 120;
+    if (leads) {
+      const fresh = chat.messages.slice(drawn.length);
+      if (fresh.length) {
+        log.querySelector('.botempty')?.remove();
+        log.insertAdjacentHTML('beforeend', linesHtml(fresh, it));
+        finishLines(log, fresh, it);
+        if (nearEnd) log.scrollTop = log.scrollHeight;
+      }
+      // Continue comes and goes with what waits: the notices are drawn again, nothing else.
+      for (const node of log.querySelectorAll('.botnotice__go')) node.remove();
+      const waiting = lastWaitNotice();
+      if (waiting && groupState.pending && ['ceiling', 'segments'].includes(groupState.pending.reason) && !run) {
+        const notices = log.querySelectorAll('.botnotice');
+        const index = chat.messages.filter((m) => m.notice).indexOf(waiting);
+        notices[index]?.insertAdjacentHTML('beforeend', ` <button class="btn btn--small botnotice__go" type="button" data-act="continue">${escapeHtml(t('bots.continue'))}</button>`);
+      }
+      drawn = keys;
+      return;
     }
-    if (!chat.messages.length) {
-      const empty = isGroup ? t('bots.emptyGroup') : it.main ? t('bots.emptyChief') : t('bots.empty', { name: it.name });
-      html.push(`<p class="botempty">${escapeHtml(empty)}</p>`);
-    }
-    log.innerHTML = html.join('');
-    const bots = isGroup ? membersOf(it) : [];
-    for (const bubble of /** @type {NodeListOf<HTMLElement>} */ (log.querySelectorAll('[data-md]'))) markMentions(bubble, bots);
-    paintFaces(log);
+    drawnAt = 0;
+    const html = linesHtml(chat.messages, it);
+    log.innerHTML = chat.messages.length ? html : `<p class="botempty">${escapeHtml(t('bots.emptyGroup'))}</p>`;
+    finishLines(log, chat.messages, it);
+    drawn = keys;
     log.scrollTop = log.scrollHeight;
   }
 
@@ -328,7 +374,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       return;
     }
     const face = open?.kind === 'group' ? groupFaces(it) : faceHtml(it, 24);
-    pill.innerHTML = `${face}<span class="botchat__name">${escapeHtml(it.name)}</span><span class="botchat__chev" aria-hidden="true">${detailsOpen ? '→' : '←'}</span>`;
+    pill.innerHTML = `${face}<span class="botchat__name">${escapeHtml(it.name)}</span><span class="botchat__chev" aria-hidden="true">←</span>`;
     pill.setAttribute('aria-expanded', String(detailsOpen));
     pill.setAttribute('aria-label', t('bots.detailsOpen', { name: it.name }));
     home.setPlaceholder(t('bots.message', { name: it.name }));
@@ -341,16 +387,48 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     home.refreshSend();
   }
 
+  /**
+   * Who is at work in the open group: one line a bot, made once and kept while it works
+   * (owner, 2026-11-10: the ring stuttered because every streamed word made the line, and
+   * its ring, again). A word changes the line's text; the ring and the face stay the same
+   * elements, so the ring turns evenly. Drawn at most once a frame.
+   */
+  const workRows = new Map();
+  let workFrame = 0;
   function renderWorking() {
-    const rows = [...working.entries()].map(([id, state]) => {
-      const bot = botOf(id);
-      if (!bot) return '';
-      const doing = state.tool ? t('bots.using', { name: bot.name, tool: state.tool }) : state.thinking && !state.text ? t('bots.thinkingLive') : t('bots.working', { name: bot.name });
-      // A ring while it works, never a row of dots (owner, 2026-11-10).
-      return `<div class="botworking" style="--ink:${inkOf(bot)}"><span class="spinner" aria-hidden="true"></span>${faceHtml(bot, 20)}<span class="botworking__who">${escapeHtml(doing)}</span>${state.text ? `<span class="botworking__text">${escapeHtml(state.text.slice(-160))}</span>` : ''}</div>`;
+    if (workFrame) return;
+    workFrame = requestAnimationFrame(() => {
+      workFrame = 0;
+      drawWorking();
     });
-    workingBox.innerHTML = rows.join('');
-    paintFaces(workingBox);
+  }
+  function drawWorking() {
+    for (const [id, row] of workRows) {
+      if (working.has(id)) continue;
+      row.node.remove();
+      workRows.delete(id);
+    }
+    for (const [id, state] of working) {
+      const bot = botOf(id);
+      if (!bot) continue;
+      let row = workRows.get(id);
+      if (!row) {
+        const node = document.createElement('div');
+        node.className = 'botworking';
+        node.style.setProperty('--ink', inkOf(bot));
+        // A ring while it works, never a row of dots (owner, 2026-11-10).
+        node.innerHTML = `<span class="spinner" aria-hidden="true"></span>${faceHtml(bot, 20)}<span class="botworking__who"></span><span class="botworking__text" hidden></span>`;
+        workingBox.append(node);
+        paintFaces(node);
+        row = { node, who: /** @type {HTMLElement} */ (node.querySelector('.botworking__who')), text: /** @type {HTMLElement} */ (node.querySelector('.botworking__text')) };
+        workRows.set(id, row);
+      }
+      const doing = state.tool ? t('bots.using', { name: bot.name, tool: state.tool }) : state.thinking && !state.text ? t('bots.thinkingLive') : t('bots.working', { name: bot.name });
+      if (row.who.textContent !== doing) row.who.textContent = doing;
+      const tail = state.text ? state.text.slice(-160) : '';
+      if (row.text.textContent !== tail) row.text.textContent = tail;
+      row.text.hidden = !tail;
+    }
   }
 
   /* ── details on the right ─────────────────────────────────────── */
@@ -368,30 +446,79 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     });
   }
 
+  /** What the panel last read, for the subject it was read for: drawn again at once, never a spinner where numbers were. */
+  let detailsData = /** @type {{ key: string, entries: any[], usage: any[], tasks: any[] } | null} */ (null);
+  let detailsTimer = /** @type {any} */ (null);
+  let detailsKey = '';
+
+  /**
+   * Open or close the panel (owner, 2026-11-10: smooth, no lag). It slides and fades in
+   * its own column while the conversation eases narrower; closed, it leaves the page
+   * once it has slid away. With reduced motion it is there or not, at once.
+   */
+  function showDetails(on) {
+    clearTimeout(detailsTimer);
+    if (on) {
+      if (!details.hidden && page.classList.contains('has-details')) return;
+      details.hidden = false;
+      details.inert = false;
+      // The closed state drawn first, so that opening is a change the browser can move through.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (detailsOpen) page.classList.add('has-details');
+      }));
+      return;
+    }
+    page.classList.remove('has-details');
+    details.inert = true;
+    const settle = () => {
+      if (!detailsOpen) details.hidden = true;
+    };
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) settle();
+    else detailsTimer = setTimeout(settle, 260);
+  }
+
   async function renderDetails() {
-    details.hidden = !detailsOpen;
-    page.classList.toggle('has-details', detailsOpen);
-    if (!detailsOpen) return;
+    if (!detailsOpen) {
+      showDetails(false);
+      return;
+    }
     const it = subject();
     if (!it) return;
+    showDetails(true);
     const isGroup = open?.kind === 'group';
     const kind = isGroup ? 'bot-groups' : 'bots';
+    const key = `${open?.kind}:${it.id}`;
     const turn = ++detailsTurn;
-    details.innerHTML = `<header class="botdetails__head"><button class="icon-btn" type="button" data-act="close-details" aria-label="${escapeHtml(t('action.close'))}" title="${escapeHtml(t('action.close'))}">✕</button></header>
+    // The heading only when the subject changed: the panel keeps its place and its focus otherwise.
+    if (detailsKey !== key || !details.querySelector('[data-body]')) {
+      detailsKey = key;
+      details.innerHTML = `<header class="botdetails__head"><button class="icon-btn" type="button" data-act="close-details" aria-label="${escapeHtml(t('action.close'))}" title="${escapeHtml(t('action.close'))}">✕</button></header>
       <div class="botdetails__who">
         ${isGroup ? groupFaces(it) : faceHtml(it, 88, 'botdetails__face')}
         <h2 class="botdetails__name">${escapeHtml(it.name)}</h2>
         ${!isGroup && it.role ? `<p class="botdetails__role">${escapeHtml(it.role)}</p>` : ''}
       </div>
       <div data-body><p class="botloading" role="status"><span class="spinner" aria-hidden="true"></span><span class="sr-only">${escapeHtml(t('bots.loading'))}</span></p></div>`;
-    paintFaces(details);
+      paintFaces(details);
+    }
+    if (detailsData?.key === key) drawDetailsBody(it, detailsData);
     const [memory, usage, tasks] = await Promise.all([
-      api.botMemory(kind, it.id).catch(() => ({ entries: [] })),
-      usageLine(isGroup ? it.members : [it.id]).catch(() => []),
-      isGroup ? { tasks: [] } : api.botTasks(it.id).catch(() => ({ tasks: [] })),
+      api.botMemory(kind, it.id).catch(() => ({ entries: detailsData?.key === key ? detailsData.entries : [] })),
+      usageLine(isGroup ? it.members : [it.id]).catch(() => (detailsData?.key === key ? detailsData.usage : [])),
+      isGroup ? { tasks: [] } : api.botTasks(it.id).catch(() => ({ tasks: detailsData?.key === key ? detailsData.tasks : [] })),
     ]);
     if (turn !== detailsTurn) return;
-    const body = /** @type {HTMLElement} */ (details.querySelector('[data-body]'));
+    detailsData = { key, entries: memory.entries || [], usage, tasks: tasks.tasks || [] };
+    drawDetailsBody(it, detailsData);
+  }
+
+  /** The panel's body, from what was read; drawn only when it would look different. */
+  let drawnBody = '';
+  function drawDetailsBody(it, data) {
+    const body = /** @type {HTMLElement | null} */ (details.querySelector('[data-body]'));
+    if (!body) return;
+    const isGroup = open?.kind === 'group';
+    const { entries, usage, tasks } = data;
     const parts = [];
     if (isGroup) {
       const admin = adminOf(it);
@@ -399,14 +526,16 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
         ${run?.kind === 'group' && run.id === it.id ? `<button class="btn btn--small botsec__stop" type="button" data-act="stop">${escapeHtml(t('bots.stopAll'))}</button>` : ''}
         <ul class="botmembers">${membersOf(it).map((b) => `<li style="--ink:${inkOf(b)}">${faceHtml(b, 22)}<span>${escapeHtml(b.name)}</span>${b.id === admin ? `<span class="bottag">${escapeHtml(t('bots.admin'))}</span>` : ''}</li>`).join('')}</ul>
         <button class="botlink" type="button" data-act="edit-group">${escapeHtml(t('bots.groupSettings'))} ›</button></section>`);
+      // The group's standing note, folded to a few lines (owner, 2026-11-10).
+      if (String(it.notice || '').trim()) parts.push(`<section class="botsec"><h3 class="botsec__label">${escapeHtml(t('bots.g.notice'))}</h3><p class="botnoticebox">${escapeHtml(it.notice)}</p></section>`);
     } else {
       // No model of its own: every bot answers on the model in the top bar (owner, 2026-11-10).
       parts.push(`<button class="botlink botlink--center" type="button" data-act="edit-bot">${escapeHtml(t(it.instructions ? 'bots.instructionsEdit' : 'bots.instructionsAdd'))}</button>`);
     }
-    const entries = memory.entries || [];
+    // Memory opens and closes where it is (owner, 2026-11-10): the list is always drawn, folded.
     parts.push(`<section class="botsec"><h3 class="botsec__label">${escapeHtml(t('bots.memory'))}</h3>
-      <button class="botcard" type="button" data-act="memory" aria-expanded="${memoryOpen}"><span>${escapeHtml(counted(entries.length, 'bots.entries'))}</span><span class="botcard__more">${escapeHtml(t('bots.manage'))} ›</span></button>
-      ${memoryOpen ? memoryHtml(entries) : ''}</section>`);
+      <button class="botcard" type="button" data-act="memory" aria-expanded="${memoryOpen}" aria-controls="botmemory-fold"><span data-memory-count>${escapeHtml(counted(entries.length, 'bots.entries'))}</span><span class="botcard__more">${escapeHtml(t('bots.manage'))}<span class="botcard__chev" aria-hidden="true">›</span></span></button>
+      <div class="botmemory-fold${memoryOpen ? ' is-open' : ''}" id="botmemory-fold" data-memory-fold${memoryOpen ? '' : ' inert'}><div class="botmemory-fold__in" data-memory-body>${memoryHtml(entries)}</div></div></section>`);
     const usageRows = usage
       .map((u) => {
         const b = botOf(u.id);
@@ -415,9 +544,100 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       .join('');
     parts.push(`<section class="botsec"><h3 class="botsec__label">${escapeHtml(t('bots.usage'))}</h3>${usage.some((u) => u.tokens) ? `<ul class="botusage">${usageRows}</ul>` : `<p class="hint">${escapeHtml(t('bots.usageNone'))}</p>`}</section>`);
     // A bot's own scheduled tasks, here and only here (owner, 2026-11-10).
-    if (!isGroup) parts.push(tasksHtml(tasks.tasks || []));
-    body.innerHTML = parts.join('');
+    if (!isGroup) parts.push(tasksHtml(tasks || []));
+    // Reset, at the foot: asked once more before anything goes (owner, 2026-11-10).
+    parts.push(`<section class="botsec botsec--reset"><button class="botlink botlink--danger" type="button" data-act="reset">${escapeHtml(t('bots.reset'))}</button></section>`);
+    const html = parts.join('');
+    if (html === drawnBody && body.childElementCount) return;
+    drawnBody = html;
+    // What is being typed in the memory box survives a redraw.
+    const typing = /** @type {HTMLInputElement | null} */ (body.querySelector('[data-memory-text]'));
+    const draft = typing?.value || '';
+    const hadFocus = !!typing && document.activeElement === typing;
+    body.innerHTML = html;
+    if (draft) {
+      const box = /** @type {HTMLInputElement | null} */ (body.querySelector('[data-memory-text]'));
+      if (box) {
+        box.value = draft;
+        if (hadFocus) box.focus();
+      }
+    }
     paintFaces(body);
+  }
+
+  /** Open or close the memory list where it is: no redraw, no request, the arrow turning with it. */
+  function toggleMemory() {
+    memoryOpen = !memoryOpen;
+    const button = details.querySelector('[data-act="memory"]');
+    const fold = /** @type {HTMLElement | null} */ (details.querySelector('[data-memory-fold]'));
+    button?.setAttribute('aria-expanded', String(memoryOpen));
+    if (fold) {
+      fold.classList.toggle('is-open', memoryOpen);
+      fold.inert = !memoryOpen;
+    }
+  }
+
+  /** The memory list and its count, drawn again from what is held, after an entry came or went. */
+  function paintMemory() {
+    const entries = detailsData?.entries || [];
+    const count = details.querySelector('[data-memory-count]');
+    if (count) count.textContent = counted(entries.length, 'bots.entries');
+    const list = /** @type {HTMLElement | null} */ (details.querySelector('[data-memory-body]'));
+    if (!list) return;
+    const box = /** @type {HTMLInputElement | null} */ (list.querySelector('[data-memory-text]'));
+    const draft = box?.value || '';
+    list.innerHTML = memoryHtml(entries);
+    const again = /** @type {HTMLInputElement | null} */ (list.querySelector('[data-memory-text]'));
+    if (again && draft) again.value = draft;
+    drawnBody = '';
+  }
+
+  /* ── reset ──────────────────────────────────────────────────────── */
+
+  const confirmBox = document.createElement('dialog');
+  confirmBox.className = 'botconfirm';
+  page.append(confirmBox);
+
+  /** Reset the open conversation, once the person says yes in a dialog that says what goes and what stays. */
+  function askReset() {
+    const it = subject();
+    if (!it || !open) return;
+    const target = { kind: open.kind, id: it.id };
+    const isGroup = target.kind === 'group';
+    confirmBox.innerHTML = `<form method="dialog" class="botconfirm__form">
+      <h2 class="botconfirm__title">${escapeHtml(t('bots.resetTitle', { name: it.name }))}</h2>
+      <p class="botconfirm__text">${escapeHtml(t(isGroup ? 'bots.resetBodyGroup' : 'bots.resetBody', { name: it.name }))}</p>
+      <div class="botconfirm__acts">
+        <button class="btn" type="submit" value="cancel" autofocus>${escapeHtml(t('action.cancel'))}</button>
+        <button class="btn btn--danger" type="submit" value="reset">${escapeHtml(t('bots.resetConfirm'))}</button>
+      </div>
+    </form>`;
+    confirmBox.returnValue = '';
+    confirmBox.addEventListener(
+      'close',
+      () => {
+        if (confirmBox.returnValue === 'reset') void doReset(target);
+      },
+      { once: true },
+    );
+    confirmBox.showModal();
+  }
+
+  async function doReset(target) {
+    try {
+      if (target.kind === 'group') await api.resetGroup(target.id);
+      else await api.resetBot(target.id);
+      if (target.kind === 'bot') chatIds.delete(target.id);
+      toast(t('bots.resetDone'), 'ok');
+      if (open && open.kind === target.kind && open.id === target.id) {
+        chat = null;
+        drawn = [];
+        await loadChat();
+      }
+      await readTeamNow();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
   }
 
   let taskFormOpen = false;
@@ -441,9 +661,31 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
         : `<button class="botlink" type="button" data-act="task-add">${escapeHtml(t('bots.taskAdd'))} ›</button>`}</section>`;
   }
 
+  /** An entry being edited where it is, and one just forgotten (its Undo, for a few seconds). */
+  let editingEntry = '';
+  let forgotten = /** @type {{ id: string, text: string, timer: any } | null} */ (null);
+
+  /** One entry: its words (or the box to change them), Pin, Edit and Forget (owner, 2026-11-10). */
+  function entryHtml(e) {
+    const id = escapeHtml(e.id);
+    const what = escapeHtml(e.text.slice(0, 40));
+    if (editingEntry === e.id) {
+      return `<li class="is-editing"><form class="botmemory__edit" data-memory-edit="${id}"><input type="text" maxlength="300" data-edit-text value="${escapeHtml(e.text)}" aria-label="${escapeHtml(t('bots.memoryEdit'))}: ${what}" /><button class="btn btn--small btn--primary" type="submit">${escapeHtml(t('bots.memorySave'))}</button><button class="btn btn--small" type="button" data-edit-cancel>${escapeHtml(t('action.cancel'))}</button></form></li>`;
+    }
+    return `<li class="${e.pinned ? 'is-pinned' : ''}"><span class="botmemory__text">${e.pinned ? `<span class="botmemory__pin" aria-label="${escapeHtml(t('bots.memoryPinned'))}">📌</span>` : ''}${escapeHtml(e.text)}</span>
+      <span class="botmemory__acts">
+        <button class="botmemory__forget" type="button" data-pin="${id}" aria-pressed="${!!e.pinned}" aria-label="${escapeHtml(t(e.pinned ? 'bots.memoryUnpin' : 'bots.memoryPin'))}: ${what}">${escapeHtml(t(e.pinned ? 'bots.memoryUnpin' : 'bots.memoryPin'))}</button>
+        <button class="botmemory__forget" type="button" data-edit="${id}" aria-label="${escapeHtml(t('bots.memoryEdit'))}: ${what}">${escapeHtml(t('bots.memoryEdit'))}</button>
+        <button class="botmemory__forget" type="button" data-forget="${id}" aria-label="${escapeHtml(t('bots.forget'))}: ${what}">${escapeHtml(t('bots.forget'))}</button>
+      </span></li>`;
+  }
+
   function memoryHtml(entries) {
+    const undo = forgotten ? `<li class="botmemory__gone"><span>${escapeHtml(t('bots.memoryForgot'))}</span><button class="botmemory__forget" type="button" data-undo-forget="${escapeHtml(forgotten.id)}">${escapeHtml(t('bots.memoryUndo'))}</button></li>` : '';
+    // Pinned first, as the bot reads them.
+    const ordered = [...entries.filter((e) => e.pinned), ...entries.filter((e) => !e.pinned)];
     return `<div class="botmemory">
-      ${entries.length ? `<ul class="botmemory__list">${entries.map((e) => `<li><span class="botmemory__text">${escapeHtml(e.text)}</span><button class="botmemory__forget" type="button" data-forget="${escapeHtml(e.id)}" aria-label="${escapeHtml(t('bots.forget'))}: ${escapeHtml(e.text.slice(0, 40))}">${escapeHtml(t('bots.forget'))}</button></li>`).join('')}</ul>` : `<p class="hint">${escapeHtml(t('bots.memoryEmpty'))}</p>`}
+      ${entries.length || undo ? `<ul class="botmemory__list">${undo}${ordered.map(entryHtml).join('')}</ul>` : `<p class="hint">${escapeHtml(t('bots.memoryEmpty'))}</p>`}
       <form class="botmemory__add" data-memory-add>
         <input type="text" maxlength="300" data-memory-text aria-label="${escapeHtml(t('bots.memoryAdd'))}" placeholder="${escapeHtml(t('bots.memoryPlaceholder'))}" />
         <button class="btn btn--small" type="submit">${escapeHtml(t('bots.memoryAdd'))}</button>
@@ -522,7 +764,12 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       const data = await api.groupChat(open.id);
       if (open !== asked) return;
       chat = { chatId: data.chatId, messages: data.messages || [] };
+      groupState = { running: !!data.running, pending: data.pending || null };
+      drawn = [];
       renderLog();
+      // A round this tab did not start is running: follow it.
+      if (groupState.running && !run) followLive();
+      renderSend();
       return;
     }
     // A bot's own chat (or, with incognito on, one that is not kept), in the home chat. Its id
@@ -546,7 +793,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
   const groupHook = {
     send: (text) => sendGroup(text),
     stop: () => void stopRun(),
-    busy: () => !!run && run.kind === 'group',
+    busy: () => (!!run && run.kind === 'group') || !!follow,
   };
 
   /** @param {'bot' | 'group'} kind @param {string} id @param {{ focus?: boolean, chatting?: boolean }} [options] */
@@ -560,9 +807,12 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     if (changed) {
       chat = null;
       memoryOpen = false;
+      stopFollowing();
+      groupState = { running: false, pending: null };
       working.clear();
       renderWorking();
       log.innerHTML = '';
+      drawn = [];
     }
     // On a phone the list and the conversation take turns; the page opened from the rail starts on the list,
     // with nothing laid over it.
@@ -597,35 +847,69 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
 
   /** Write in the open group and follow its round. What was written shows at once. */
   async function sendGroup(text) {
-    if (!open || open.kind !== 'group' || run) return;
+    if (!open || open.kind !== 'group') return;
     closePicker();
     syncMentions();
     const target = open;
-    const controller = new AbortController();
-    run = { controller, kind: 'group', id: target.id, chatId: chat?.chatId };
-    renderSend();
-    const here = () => open && open.kind === target.kind && open.id === target.id;
-    /** Members whose turn used a team tool: the team is read when each is done. */
-    const touched = new Set();
-    const mine = { role: 'user', text, createdAt: new Date().toISOString() };
+    const mine = { id: `mine-${crypto.randomUUID()}`, role: 'user', text, createdAt: new Date().toISOString() };
     if (chat) {
       chat.messages.push(mine);
       renderLog();
     }
+    // The group is working already (here or elsewhere): the line joins that round.
+    if (run || follow) {
+      try {
+        const answer = await runGroup({ groupId: target.id, text, runId: crypto.randomUUID(), model: home.model(), signal: new AbortController().signal, onEvent: () => {} });
+        if (chat && answer.message) replaceLine(mine, answer.message);
+      } catch (err) {
+        toast(err.message || t('bots.failed'), 'error');
+      }
+      return;
+    }
+    await streamRun(target, (signal, onEvent) => runGroup({ groupId: target.id, text, runId: crypto.randomUUID(), model: home.model(), signal, onEvent }), mine);
+  }
+
+  /** The person's own line on screen, replaced by the stored one. */
+  function replaceLine(mine, saved) {
+    if (!chat) return;
+    const at = chat.messages.indexOf(mine);
+    if (at >= 0) chat.messages[at] = saved;
+    else if (!chat.messages.some((m) => m.id === saved.id)) chat.messages.push(saved);
+    renderLog();
+  }
+
+  /** Continue: carry on what the open group has waiting, and follow it. */
+  async function continueRun() {
+    if (!open || open.kind !== 'group' || run) return;
+    const target = open;
+    groupState = { ...groupState, pending: null };
+    renderLog();
+    await streamRun(target, (signal, onEvent) => continueGroup({ groupId: target.id, model: home.model(), signal, onEvent }), null);
+  }
+
+  /**
+   * Follow a segment this tab started, from its stream. A round that goes on past it in
+   * another invocation (`paused`), or a line that joined a round running elsewhere, is
+   * followed from then on with `followLive`.
+   */
+  async function streamRun(target, start, mine) {
+    const controller = new AbortController();
+    run = { controller, kind: 'group', id: target.id, chatId: chat?.chatId };
+    stopFollowing();
+    renderSend();
+    const here = () => open && open.kind === target.kind && open.id === target.id;
+    /** Members whose turn used a team tool: the team is read when each is done. */
+    const touched = new Set();
+    let goesOn = false;
     try {
-      await runGroup({
-        groupId: target.id,
-        text,
-        runId: crypto.randomUUID(),
-        model: home.model(),
-        signal: controller.signal,
-        onEvent: (event, data) => {
+      const answer = await start(controller.signal, (event, data) => {
           if (!here()) return;
+          if (event === 'paused') goesOn = true;
+          else if (event === 'done') goesOn = goesOn || (!!data?.pending && data?.stopReason === 'time');
           if (event === 'post' && chat) {
             // The person's own line is on screen already: the stored one takes its place.
-            const at = data.message.role === 'user' ? chat.messages.indexOf(mine) : -1;
-            if (at >= 0) chat.messages[at] = data.message;
-            else chat.messages.push(data.message);
+            if (data.message.role === 'user' && mine && chat.messages.includes(mine)) chat.messages[chat.messages.indexOf(mine)] = data.message;
+            else if (!chat.messages.some((m) => m.id === data.message.id)) chat.messages.push(data.message);
             if (data.message.bot) working.delete(data.message.bot);
             renderLog();
             renderWorking();
@@ -654,8 +938,12 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
             // What it made or changed shows now, and the group's own notices with it.
             if (touched.delete(data.bot)) readTeamNow().then(() => (here() ? loadChat() : undefined)).catch(() => {});
           } else if (event === 'error') toast(data.message || t('bots.failed'), 'error');
-        },
       });
+      // Another segment held the group: this line joined its round.
+      if (answer?.joined) {
+        if (mine && answer.message) replaceLine(mine, answer.message);
+        goesOn = true;
+      }
     } catch (err) {
       if (!controller.signal.aborted) toast(err.message || t('bots.failed'), 'error');
     } finally {
@@ -665,11 +953,66 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       renderSend();
       await readTeamNow();
       if (here()) await loadChat().catch(() => {});
+      if (goesOn && here() && !controller.signal.aborted) followLive();
       if (detailsOpen && here()) renderDetails();
     }
   }
 
+  /**
+   * Follow the open group's round from the server, every 1.5 s while the page shows and the
+   * round runs: new lines added, who is at work in the working lines (owner, 2026-11-10:
+   * leave the page, come back, and it is still going — and still visible). Nothing is asked
+   * while the tab is hidden; on its return the next look comes at once.
+   */
+  function followLive() {
+    stopFollowing();
+    if (!open || open.kind !== 'group' || run) return;
+    const target = open;
+    follow = { timer: null, target };
+    renderSend();
+    const again = (ms) => {
+      if (follow?.target === target) follow.timer = setTimeout(look, ms);
+    };
+    const look = async () => {
+      if (!follow || follow.target !== target) return;
+      if (!shown || open !== target || run) return stopFollowing();
+      if (document.hidden) return again(1500);
+      const since = Math.max(-1, ...(chat?.messages || []).map((m) => Number(m.seq)).filter(Number.isFinite));
+      try {
+        const data = await api.groupLive(target.id, since);
+        if (!follow || follow.target !== target || open !== target) return;
+        groupState = { running: !!data.running, pending: data.pending || null };
+        if (chat) for (const m of data.messages || []) if (!chat.messages.some((x) => x.id === m.id)) chat.messages.push(m);
+        working.clear();
+        for (const w of data.working || []) working.set(w.bot, { text: '', tool: w.tool || '', thinking: !w.tool });
+        renderLog();
+        renderWorking();
+        if (data.running) return again(1500);
+        stopFollowing();
+        await readTeamNow();
+        renderLog();
+      } catch {
+        again(4000);
+      }
+    };
+    again(0);
+  }
+  function stopFollowing() {
+    if (!follow) return;
+    clearTimeout(follow.timer);
+    follow = null;
+    working.clear();
+    renderWorking();
+    renderSend();
+  }
+
   async function stopRun() {
+    if (!run && follow) {
+      // A round running elsewhere: the server stops it; the next look sees it end.
+      const target = follow.target;
+      await api.stopGroup(target.id).catch((err) => toast(err.message, 'error'));
+      return;
+    }
     if (!run) return;
     const current = run;
     try {
@@ -829,7 +1172,14 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     }
   }, true);
   input.addEventListener('click', () => (inGroup() ? updatePicker() : undefined));
-  input.addEventListener('blur', () => setTimeout(closePicker, 150));
+  // Shut once the box has really been left. Opening a group moves the box, which blurs it for an
+  // instant; a close that ignored the focus coming back shut the picker the person had just opened
+  // by typing "@" (owner, 2026-11-11: found under load, where the 150 ms outlived the typing).
+  input.addEventListener('blur', () =>
+    setTimeout(() => {
+      if (document.activeElement !== input) closePicker();
+    }, 150),
+  );
   pickerBox.addEventListener('mousedown', (event) => {
     const item = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('[data-pick]'));
     if (!item) return;
@@ -878,6 +1228,13 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
 
   page.addEventListener('click', async (event) => {
     const target = /** @type {HTMLElement} */ (event.target);
+    // A file a bot made in the group opens as it does in the home chat; its download link is the browser's.
+    const fileOpener = /** @type {HTMLElement | null} */ (target.closest('[data-file]'));
+    if (fileOpener && !target.closest('a[download], [data-no-open]')) {
+      event.preventDefault();
+      openFile(String(fileOpener.dataset.file));
+      return;
+    }
     const opener = /** @type {HTMLElement | null} */ (target.closest('[data-open]'));
     if (opener) {
       const [kind, id] = String(opener.dataset.open).split(':');
@@ -896,6 +1253,48 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       renderDetails();
       return;
     }
+    const kindNow = open?.kind === 'group' ? 'bot-groups' : 'bots';
+    const pinBtn = /** @type {HTMLElement | null} */ (target.closest('[data-pin]'));
+    if (pinBtn && open && detailsData) {
+      const entry = detailsData.entries.find((e) => e.id === pinBtn.dataset.pin);
+      if (!entry) return;
+      const was = !!entry.pinned;
+      entry.pinned = !was;
+      paintMemory();
+      await api.editBotMemory(kindNow, open.id, entry.id, { pinned: !was }).catch((err) => {
+        entry.pinned = was;
+        paintMemory();
+        toast(err.message, 'error');
+      });
+      return;
+    }
+    const editBtn = /** @type {HTMLElement | null} */ (target.closest('[data-edit]'));
+    if (editBtn) {
+      editingEntry = String(editBtn.dataset.edit);
+      paintMemory();
+      /** @type {HTMLInputElement | null} */ (details.querySelector('[data-edit-text]'))?.focus();
+      return;
+    }
+    if (target.closest('[data-edit-cancel]')) {
+      editingEntry = '';
+      paintMemory();
+      return;
+    }
+    const undoBtn = /** @type {HTMLElement | null} */ (target.closest('[data-undo-forget]'));
+    if (undoBtn && open && forgotten) {
+      const back = forgotten;
+      clearTimeout(back.timer);
+      forgotten = null;
+      try {
+        await api.undoBotMemory(kindNow, open.id, [back.id]);
+        const { entries } = await api.botMemory(kindNow, open.id);
+        if (detailsData) detailsData.entries = entries || [];
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+      paintMemory();
+      return;
+    }
     const forgetBtn = /** @type {HTMLElement | null} */ (target.closest('[data-forget]'));
     if (forgetBtn) {
       if (forgetBtn.dataset.armed !== '1') {
@@ -909,8 +1308,26 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
         }, 3000);
         return;
       }
-      await api.deleteBotMemory(open?.kind === 'group' ? 'bot-groups' : 'bots', open?.id, forgetBtn.dataset.forget).catch((err) => toast(err.message, 'error'));
-      renderDetails();
+      const id = String(forgetBtn.dataset.forget);
+      const held = detailsData?.entries || [];
+      const before = [...held];
+      if (detailsData) detailsData.entries = held.filter((e) => e.id !== id);
+      // Undo, where it was, for eight seconds.
+      if (forgotten) clearTimeout(forgotten.timer);
+      forgotten = {
+        id,
+        text: held.find((e) => e.id === id)?.text || '',
+        timer: setTimeout(() => {
+          forgotten = null;
+          paintMemory();
+        }, 8000),
+      };
+      paintMemory();
+      await api.deleteBotMemory(open?.kind === 'group' ? 'bot-groups' : 'bots', open?.id, id).catch((err) => {
+        if (detailsData) detailsData.entries = before;
+        paintMemory();
+        toast(err.message, 'error');
+      });
       return;
     }
     const act = /** @type {HTMLElement | null} */ (target.closest('[data-act]'))?.dataset.act;
@@ -937,14 +1354,20 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       renderHead();
       renderDetails();
       pill.focus();
-    } else if (act === 'memory') {
-      memoryOpen = !memoryOpen;
-      renderDetails();
-    } else if (act === 'task-add') {
+    } else if (act === 'memory') toggleMemory();
+    else if (act === 'reset') askReset(); else if (act === 'task-add') {
       taskFormOpen = true;
       await renderDetails();
       /** @type {HTMLInputElement | null} */ (details.querySelector('[data-task-title]'))?.focus();
     } else if (act === 'stop') stopRun();
+    else if (act === 'continue') continueRun();
+    else if (act === 'copy') {
+      const line = /** @type {HTMLElement | null} */ (target.closest('[data-line]'));
+      const message = chat?.messages.find((m) => lineKey(m) === line?.dataset.line);
+      if (message) {
+        navigator.clipboard?.writeText(String(message.text || '')).then(() => toast(t('viewer.copied'), 'ok'), () => {});
+      }
+    }
     else if (act === 'automations') openAutomations('scheduled');
     else if (act === 'back') {
       page.classList.remove('is-chatting');
@@ -970,16 +1393,44 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       }
       return;
     }
+    if (form.matches('[data-memory-edit]') && open && detailsData) {
+      event.preventDefault();
+      const entry = detailsData.entries.find((e) => e.id === form.dataset.memoryEdit);
+      const box = /** @type {HTMLInputElement | null} */ (form.querySelector('[data-edit-text]'));
+      const text = box?.value.trim() || '';
+      editingEntry = '';
+      if (!entry || !text || text === entry.text) return void paintMemory();
+      const was = entry.text;
+      entry.text = text;
+      paintMemory();
+      try {
+        const { entry: saved } = await api.editBotMemory(open.kind === 'group' ? 'bot-groups' : 'bots', open.id, entry.id, { text });
+        Object.assign(entry, saved);
+      } catch (err) {
+        entry.text = was;
+        toast(err.message, 'error');
+      }
+      paintMemory();
+      return;
+    }
     if (!form.matches('[data-memory-add]')) return;
     event.preventDefault();
     const field = /** @type {HTMLInputElement} */ (form.querySelector('[data-memory-text]'));
     const text = field.value.trim();
     if (!text || !open) return;
+    const pending = { id: `new-${crypto.randomUUID()}`, text, source: 'user' };
+    if (detailsData) detailsData.entries = [...detailsData.entries, pending];
+    field.value = '';
+    paintMemory();
+    /** @type {HTMLInputElement | null} */ (details.querySelector('[data-memory-text]'))?.focus();
     try {
-      await api.addBotMemory(open.kind === 'group' ? 'bot-groups' : 'bots', open.id, text);
-      await renderDetails();
-      /** @type {HTMLInputElement | null} */ (details.querySelector('[data-memory-text]'))?.focus();
+      const answer = await api.addBotMemory(open.kind === 'group' ? 'bot-groups' : 'bots', open.id, text);
+      const saved = Array.isArray(answer?.entries) ? answer.entries : answer?.entry ? [answer.entry] : [];
+      if (detailsData) detailsData.entries = [...detailsData.entries.filter((e) => e !== pending && !saved.some((s) => s.id === e.id)), ...saved];
+      paintMemory();
     } catch (err) {
+      if (detailsData) detailsData.entries = detailsData.entries.filter((e) => e !== pending);
+      paintMemory();
       toast(err.message, 'error');
     }
   });
@@ -1015,6 +1466,8 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     hide() {
       if (!shown) return;
       shown = false;
+      // The round goes on without the page (owner, 2026-11-10); coming back follows it again.
+      stopFollowing();
       page.hidden = true;
       closePicker();
       syncMentions();
@@ -1025,6 +1478,10 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     /** The top bar's incognito switch changed: the bot on screen opens again, kept or not. */
     async incognitoChanged() {
       if (shown && open?.kind === 'bot') await loadChat();
+    },
+    /** The chip changed: an open group answers its next batch on that model, even mid-round. */
+    modelChanged(model) {
+      if (shown && open?.kind === 'group' && model) api.setGroupModel(open.id, model).catch(() => {});
     },
     /** A turn ended somewhere: the list shows what was said last, if it was a bot's chat. */
     turnEnded(chatId) {

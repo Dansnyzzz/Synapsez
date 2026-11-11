@@ -251,8 +251,12 @@ export function splitStatements(sql) {
  *      usage_events.bot_id — the Bot page
  *  43  bots.hue — a creature two bots share, told apart by its colour;
  *      scheduled_tasks.bot_id — a bot's own scheduled tasks; incognito chats with a bot
+ *  44  bot_groups.pending / notice / model — a round that runs in segments; bot_memory
+ *      pins, folded text, turn, soft delete; bots.instructions_prev / review_every;
+ *      chats.memory_snapshot — the Bot page core (server/bots/rounds.js, memory.js)
+ *  45  finance_cache — market data shared across accounts (server/finance/cache.js)
  */
-export const SCHEMA_VERSION = 43;
+export const SCHEMA_VERSION = 45;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -2111,6 +2115,23 @@ export function createPgStore(connectionString) {
         ],
       );
       return rows[0];
+    },
+    /**
+     * The files the assistant made or rewrote in one conversation since `since` —
+     * what a bot's turn in a group produced, so its post there can carry them.
+     * Names and sizes only, never the bytes.
+     */
+    async listMadeFiles(userId, chatId, since) {
+      return q(
+        `SELECT a.id, a.name, a.mime, a.bytes
+           FROM attachments a
+          WHERE a.user_id = $1 AND a.chat_id = $2 AND a.origin = 'generated'
+            AND (a.created_at >= $3::timestamptz
+                 OR EXISTS (SELECT 1 FROM attachment_versions v WHERE v.attachment_id = a.id AND v.created_at >= $3::timestamptz))
+          ORDER BY a.created_at, a.id
+          LIMIT 20`,
+        [userId, String(chatId ?? ''), since instanceof Date ? since.toISOString() : String(since)],
+      );
     },
     /** The small picture of one attachment, or null — never the file itself. */
     async getAttachmentThumb(userId, id) {
@@ -4483,7 +4504,18 @@ export function createPgStore(connectionString) {
      * in words.
      */
     async updateBot(userId, id, patch) {
-      const allowed = { name: 'name', role: 'role', avatar: 'avatar', model: 'model', instructions: 'instructions', hue: 'hue' };
+      const allowed = {
+        name: 'name',
+        role: 'role',
+        avatar: 'avatar',
+        model: 'model',
+        instructions: 'instructions',
+        hue: 'hue',
+        instructionsPrev: 'instructions_prev',
+        instructionsChangedBy: 'instructions_changed_by',
+        reviewEvery: 'review_every',
+        turnsSinceReview: 'turns_since_review',
+      };
       const sets = [];
       const params = [userId, String(id ?? '')];
       for (const [key, column] of Object.entries(allowed)) {
@@ -4552,6 +4584,10 @@ export function createPgStore(connectionString) {
         params.push(patch.adminBotId);
         sets.push(`admin_bot_id = (SELECT b.id FROM bots b WHERE b.user_id = $1 AND b.id = $${params.length})`);
       }
+      if (patch.notice !== undefined) {
+        params.push(String(patch.notice ?? ''));
+        sets.push(`notice = $${params.length}`);
+      }
       if (sets.length) {
         const rows = await q(`UPDATE bot_groups SET ${sets.join(', ')}, updated_at = NOW() WHERE user_id = $1 AND id = $2 RETURNING id`, params);
         if (!rows.length) return null;
@@ -4584,6 +4620,63 @@ export function createPgStore(connectionString) {
       const rows = await q('DELETE FROM bot_groups WHERE user_id = $1 AND id = $2 RETURNING id', [userId, String(id ?? '')]);
       return rows.length > 0;
     },
+    /**
+     * The round a group still has to run (server/bots/rounds.js), or null when it has
+     * none. Written after every batch, so what a killed invocation leaves is what the
+     * next segment starts from.
+     */
+    async setGroupPending(userId, groupId, pending) {
+      await q('UPDATE bot_groups SET pending = $3::jsonb WHERE user_id = $1 AND id = $2', [userId, String(groupId ?? ''), pending == null ? null : toJson(pending)]);
+    },
+    /** The chip's model as the person last sent it to this group; the round reads it before each batch. */
+    async setGroupModel(userId, groupId, model) {
+      await q('UPDATE bot_groups SET model = $3 WHERE user_id = $1 AND id = $2', [userId, String(groupId ?? ''), model || null]);
+    },
+    /**
+     * Rounds the heartbeat should carry on: saved for their next segment ('time'), or
+     * killed mid-segment ('running' with its lease gone stale), with segments to spare
+     * and asked for in the last six hours. A round waiting for the person's Continue is
+     * not one of them.
+     */
+    async listStaleGroupRounds({ staleMs = RUN_LEASE_STALE_MS, limit = 3, maxSegments = 8, withinMs = 6 * 3600_000 } = {}) {
+      return q(
+        `SELECT g.user_id, g.id AS group_id, c.id AS chat_id
+           FROM bot_groups g
+           JOIN chats c ON c.user_id = g.user_id AND c.bot_group_id = g.id AND c.bot_id IS NULL AND NOT c.incognito
+          WHERE g.pending IS NOT NULL
+            AND g.pending->>'reason' IN ('time', 'running')
+            AND COALESCE((g.pending->>'segments')::int, 0) < $3
+            AND COALESCE((g.pending->>'at')::timestamptz, NOW()) > NOW() - ($4 || ' milliseconds')::interval
+            AND (c.run_lock_by IS NULL OR c.run_lock_at <= NOW() - ($1 || ' milliseconds')::interval)
+          ORDER BY g.pending->>'at'
+          LIMIT $2`,
+        [String(staleMs), limit, maxSegments, String(withinMs)],
+      );
+    },
+    /**
+     * Empty a bot's own conversation (`botId`), or a group's (`groupId`): its log and
+     * every member's conversation for it, where each had read to, and the round it had
+     * pending. Rows are deleted, not hidden — the point is the space. Memory, members,
+     * instructions and scheduled tasks stay.
+     */
+    async resetConversation(userId, { botId = null, groupId = null }) {
+      const rows = groupId
+        ? await q('SELECT id FROM chats WHERE user_id = $1 AND bot_group_id = $2', [userId, String(groupId)])
+        : botId
+          ? await q('SELECT id FROM chats WHERE user_id = $1 AND bot_id = $2 AND bot_group_id IS NULL', [userId, String(botId)])
+          : [];
+      for (const row of rows) await this.deleteChat(userId, row.id);
+      if (groupId) {
+        await q(
+          `UPDATE bot_group_members m SET seen_seq = -1
+             FROM bot_groups g
+            WHERE m.group_id = g.id AND g.user_id = $1 AND g.id = $2`,
+          [userId, String(groupId)],
+        );
+        await q('UPDATE bot_groups SET pending = NULL WHERE user_id = $1 AND id = $2', [userId, String(groupId)]);
+      }
+      return rows.length;
+    },
     /** How far into the group's log a member has read; only ever forward. */
     async markGroupSeen(userId, groupId, botId, seq) {
       await q(
@@ -4594,23 +4687,121 @@ export function createPgStore(connectionString) {
       );
     },
 
-    /** A bot's memory (`botId`) or a group's (`groupId`), oldest first. */
+    /** A bot's memory (`botId`) or a group's (`groupId`), oldest first; what was forgotten is left out. */
     async listBotMemory(userId, { botId = null, groupId = null }) {
-      if (botId) return q('SELECT * FROM bot_memory WHERE user_id = $1 AND bot_id = $2 ORDER BY created_at, id', [userId, String(botId)]);
-      if (groupId) return q('SELECT * FROM bot_memory WHERE user_id = $1 AND group_id = $2 ORDER BY created_at, id', [userId, String(groupId)]);
+      if (botId) return q('SELECT * FROM bot_memory WHERE user_id = $1 AND bot_id = $2 AND deleted_at IS NULL ORDER BY created_at, id', [userId, String(botId)]);
+      if (groupId) return q('SELECT * FROM bot_memory WHERE user_id = $1 AND group_id = $2 AND deleted_at IS NULL ORDER BY created_at, id', [userId, String(groupId)]);
       return [];
     },
-    /** One entry, written only under a bot or group of this account; null when there is none such. */
-    async addBotMemory(userId, { id, botId = null, groupId = null, text, source = 'bot' }) {
+    /**
+     * One entry, written only under a bot or group of this account; null when there is
+     * none such. `turnId` is the turn that saved it, so a turn that is stopped or fails
+     * takes it back (`dropTurnMemory`); `textFolded` is the text for search.
+     */
+    async addBotMemory(userId, { id, botId = null, groupId = null, text, source = 'bot', turnId = null, pinned = false, pinnedBy = null, textFolded = null }) {
       const rows = await q(
-        `INSERT INTO bot_memory (id, user_id, bot_id, group_id, text, source)
-         SELECT $1, $2, $3, $4, $5, $6
+        `INSERT INTO bot_memory (id, user_id, bot_id, group_id, text, source, turn_id, pinned, pinned_by, text_folded)
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
           WHERE ($3::text IS NOT NULL AND $4::text IS NULL AND EXISTS (SELECT 1 FROM bots WHERE user_id = $2 AND id = $3))
              OR ($4::text IS NOT NULL AND $3::text IS NULL AND EXISTS (SELECT 1 FROM bot_groups WHERE user_id = $2 AND id = $4))
          RETURNING *`,
-        [id, userId, botId, groupId, text, source],
+        [id, userId, botId, groupId, text, source, turnId, !!pinned, pinned ? pinnedBy || source : null, textFolded],
       );
       return rows[0] ?? null;
+    },
+    /**
+     * Change an entry's words or its pin, in its own scope only; null when there is no such entry.
+     *
+     * @param {string} userId @param {string} id
+     * @param {{ botId?: string | null, groupId?: string | null }} [scope]
+     * @param {{ text?: string, textFolded?: string | null, pinned?: boolean, pinnedBy?: string | null }} [patch]
+     */
+    async updateBotMemory(userId, id, { botId = null, groupId = null } = {}, { text, textFolded, pinned, pinnedBy } = {}) {
+      const sets = [];
+      /** @type {any[]} */
+      const params = [userId, String(id ?? ''), botId, groupId];
+      if (text !== undefined) {
+        params.push(text);
+        sets.push(`text = $${params.length}`);
+        params.push(textFolded ?? null);
+        sets.push(`text_folded = $${params.length}`);
+      }
+      if (pinned !== undefined) {
+        params.push(!!pinned);
+        sets.push(`pinned = $${params.length}`);
+        params.push(pinned ? pinnedBy || 'user' : null);
+        sets.push(`pinned_by = $${params.length}`);
+      }
+      if (!sets.length) return null;
+      const rows = await q(
+        `UPDATE bot_memory SET ${sets.join(', ')}, updated_at = NOW()
+          WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL
+            AND ($3::text IS NULL OR bot_id = $3) AND ($4::text IS NULL OR group_id = $4)
+          RETURNING *`,
+        params,
+      );
+      return rows[0] ?? null;
+    },
+    /** Forget an entry so that Undo can bring it back; swept after 30 days. */
+    async softDeleteBotMemory(userId, id, { botId = null, groupId = null } = {}) {
+      const rows = await q(
+        `UPDATE bot_memory SET deleted_at = NOW()
+          WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL
+            AND ($3::text IS NULL OR bot_id = $3) AND ($4::text IS NULL OR group_id = $4)
+          RETURNING id`,
+        [userId, String(id ?? ''), botId, groupId],
+      );
+      return rows.length > 0;
+    },
+    /** Undo: bring forgotten entries back. */
+    async restoreBotMemory(userId, ids) {
+      const list = JSON.stringify((Array.isArray(ids) ? ids : []).map(String));
+      const rows = await q(
+        `UPDATE bot_memory SET deleted_at = NULL
+          WHERE user_id = $1 AND deleted_at IS NOT NULL AND id IN (SELECT jsonb_array_elements_text($2::jsonb))
+          RETURNING id`,
+        [userId, list],
+      );
+      return rows.length;
+    },
+    /** Forgotten entries that Undo can no longer reach, gone for good. */
+    async pruneForgottenMemory(days = 30) {
+      const rows = await q(`DELETE FROM bot_memory WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - ($1 || ' days')::interval RETURNING id`, [String(days)]);
+      return rows.length;
+    },
+    /** What one turn saved, taken back: the turn was stopped or failed. */
+    async dropTurnMemory(userId, turnId) {
+      if (!turnId) return 0;
+      const rows = await q('DELETE FROM bot_memory WHERE user_id = $1 AND turn_id = $2 RETURNING id', [userId, String(turnId)]);
+      return rows.length;
+    },
+    /**
+     * Entries holding every one of `words` (already folded: lower case, no diacritics),
+     * newest first. An entry saved before 44 has no folded text: its lower-cased text
+     * is searched instead, which still finds a word typed with its marks.
+     */
+    async searchBotMemory(userId, { botId = null, groupId = null }, words = [], limit = 20) {
+      const list = (Array.isArray(words) ? words : []).map((w) => String(w).trim()).filter(Boolean).slice(0, 8);
+      if (!list.length || (!botId && !groupId)) return [];
+      const params = [userId, botId, groupId];
+      const like = list.map((w) => {
+        params.push(`%${w.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+        return `COALESCE(text_folded, lower(text)) LIKE $${params.length}`;
+      });
+      params.push(limit);
+      return q(
+        `SELECT * FROM bot_memory
+          WHERE user_id = $1 AND deleted_at IS NULL
+            AND (($2::text IS NOT NULL AND bot_id = $2) OR ($3::text IS NOT NULL AND group_id = $3))
+            AND ${like.join(' AND ')}
+          ORDER BY created_at DESC, id
+          LIMIT $${params.length}`,
+        params,
+      );
+    },
+    /** The memory a conversation began with, kept so its prompt stays the same turn after turn. */
+    async setMemorySnapshot(userId, chatId, text) {
+      await q('UPDATE chats SET memory_snapshot = $3, memory_snapshot_at = NOW() WHERE user_id = $1 AND id = $2', [userId, String(chatId ?? ''), text == null ? null : String(text)]);
     },
     async deleteBotMemory(userId, id, { botId = null, groupId = null } = {}) {
       const rows = await q(
@@ -5199,6 +5390,45 @@ export function createPgStore(connectionString) {
     /** Housekeeping, so the table cannot grow without bound. */
     async pruneRateLimits() {
       await q('DELETE FROM rate_limits WHERE expires_at < NOW() - INTERVAL \'1 day\'');
+    },
+
+    // ── market data (schema 45) ─────────────────────────────────────
+    //
+    // Public prices and figures, one row per `source|kind|symbol|params`, shared
+    // by every account: nothing in a row is about a person (server/finance/cache.js).
+
+    /**
+     * A cached answer, expired or not — the caller decides what stale means.
+     *
+     * @returns {Promise<{ value: any, fetched_at: string, expires_at: string | null } | null>}
+     */
+    async financeGet(key) {
+      const rows = await q('SELECT value, fetched_at, expires_at FROM finance_cache WHERE key = $1', [String(key)]);
+      const row = rows[0];
+      if (!row) return null;
+      return {
+        value: typeof row.value === 'string' ? JSON.parse(row.value) : row.value,
+        fetched_at: new Date(row.fetched_at).toISOString(),
+        expires_at: row.expires_at ? new Date(row.expires_at).toISOString() : null,
+      };
+    },
+    /** Keep an answer until `expiresAt`, or for good when it is null. */
+    async financePut(key, value, expiresAt) {
+      await q(
+        `INSERT INTO finance_cache (key, value, fetched_at, expires_at) VALUES ($1, $2::jsonb, NOW(), $3::timestamptz)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, fetched_at = NOW(), expires_at = EXCLUDED.expires_at`,
+        [String(key), toJson(value), expiresAt ? new Date(expiresAt).toISOString() : null],
+      );
+    },
+    /** What expired over a day ago, and what was kept for good past 400 days. Returns how many went. */
+    async financeSweep() {
+      const rows = await q(
+        `DELETE FROM finance_cache
+          WHERE expires_at < NOW() - INTERVAL '1 day'
+             OR (expires_at IS NULL AND fetched_at < NOW() - INTERVAL '400 days')
+        RETURNING key`,
+      );
+      return rows.length;
     },
 
     // ── worker tokens ───────────────────────────────────────────────

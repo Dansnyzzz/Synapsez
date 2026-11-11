@@ -941,6 +941,9 @@ async function start() {
   renderSuggestions();
   renderTopbar();
   paintLegal();
+  suggestNotice = state.boot.suggestionNotice || null;
+  if (suggestNotice) knownRecommended = suggestNotice.version;
+  paintSuggestNotice();
   mascot.setPref(state.boot.prefs.mascot);
   void mascot.setCreature(state.boot.prefs.equippedTitle);
   // Signed in, so the scene may come up: nothing is drawn behind the sign-in page.
@@ -3176,7 +3179,8 @@ function lendHome(slot, ids) {
         el.before(mark);
         lentHome.set(id, mark);
       }
-      slot.append(el);
+      // Moved only when it is not there already: moving a focused box blurs it.
+      if (el.parentElement !== slot) slot.append(el);
       el.hidden = false;
     } else if (lentHome.has(id)) {
       lentHome.get(id).replaceWith(el);
@@ -3245,6 +3249,8 @@ const botPage = createBotPage({
   openSettings: (tab) => openSettings(tab),
   openFeedback: () => feedback.open(),
   openAutomations: (tab) => gotoShelf(tab),
+  // A file a bot made in a group opens as one made here does.
+  openFile: (id) => viewer.open({ id }),
   onShow: () => {
     projectPage.hide();
     pages.hide();
@@ -5073,8 +5079,10 @@ async function refreshWorker() {
   try {
     // A dedicated endpoint rather than the whole bootstrap payload: this runs
     // every twenty seconds, per open tab, to decide the colour of one dot.
-    const { worker } = await api.workerStatus();
+    const { worker, recommendedVersion } = await api.workerStatus();
     state.boot.worker = worker;
+    // The suggested models changed while this tab is open: said within the poll.
+    void checkSuggestNotice(recommendedVersion);
   } catch {
     /* transient — the indicator keeps its last state */
   }
@@ -5114,6 +5122,79 @@ $('legal-agree').addEventListener('click', async () => {
     state.boot.consent = consent;
     paintLegal();
     toast(t('legal.thanks'));
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+});
+
+/* ── the suggested models changed (owner, 2026-11-10) ───────────────────
+ *
+ * Said once per change to everyone: at the next visit (the boot data carries it), or
+ * within the twenty-second poll for a tab that is open (the poll carries the version
+ * of the suggestion, and one this tab has not met asks for the notice). Use it, Later
+ * or closing it is the answer; server/suggestionNotice.js remembers it. */
+
+/** @type {{ version: string, free: any, freeSecond: any, paid: any, suggestion: any } | null} */
+let suggestNotice = null;
+/** The version of the suggestion this tab last met. */
+let knownRecommended = /** @type {string | null} */ (null);
+
+function paintSuggestNotice() {
+  const notice = suggestNotice;
+  $('suggest-banner').hidden = !notice;
+  if (!notice) return;
+  const named = (m) => (m.id === 'auto' ? t('models.autoName') : m.label);
+  const parts = [
+    notice.free && t('suggestNotice.free', { model: named(notice.free) }),
+    notice.freeSecond && t('suggestNotice.free', { model: named(notice.freeSecond) }),
+    notice.paid && t('suggestNotice.paid', { model: named(notice.paid) }),
+  ].filter(Boolean);
+  $('suggest-banner-text').textContent = parts.length ? `${t('suggestNotice.title')} — ${parts.join(' · ')}` : t('suggestNotice.title');
+  const use = /** @type {HTMLButtonElement} */ ($('suggest-use'));
+  // "Use it" only when the account is not on the suggestion for its keys already.
+  const offer = !!notice.suggestion && state.model !== notice.suggestion.id;
+  use.hidden = !offer;
+  if (offer) use.textContent = t('suggestNotice.use', { model: named(notice.suggestion) });
+}
+
+/** Heard: hidden at once, remembered on the server. */
+async function settleSuggestNotice() {
+  const notice = suggestNotice;
+  suggestNotice = null;
+  paintSuggestNotice();
+  if (notice) await api.suggestionSeen(notice.version).catch(() => {});
+}
+
+/** The poll met a version of the suggestion this tab had not: ask for this account's notice. */
+async function checkSuggestNotice(version) {
+  if (!version || version === knownRecommended) return;
+  knownRecommended = version;
+  try {
+    const { notice } = await api.suggestionNotice();
+    if (notice) {
+      suggestNotice = notice;
+      paintSuggestNotice();
+    }
+  } catch {
+    /* the next poll asks again only on the next change; the next visit carries it anyway */
+  }
+}
+
+$('suggest-later').addEventListener('click', () => void settleSuggestNotice());
+$('suggest-use').addEventListener('click', async () => {
+  const button = /** @type {HTMLButtonElement} */ ($('suggest-use'));
+  button.disabled = true;
+  try {
+    const { prefs: saved, suggestion: used } = await api.useSuggestion();
+    state.boot.prefs = saved;
+    state.model = used.id;
+    state.boot.suggestion = { ...used, inUse: true };
+    renderTopbar();
+    refreshModelFacts();
+    toast(t('model.switched', { model: String(used.id).split('/').pop() }));
+    await settleSuggestNotice();
   } catch (err) {
     toast(err.message, 'error');
   } finally {
@@ -6848,6 +6929,9 @@ async function loadFreeTier() {
     const report = await api.freeTier();
     const locale = currentLanguage() === 'vi' ? 'vi-VN' : 'en-US';
     const day = (iso) => new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short' }).format(new Date(iso));
+    // A per-minute or per-hour ceiling (CoinGecko, FRED) starts again within the hour: its time, not its day.
+    const clock = (iso) => new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
+    const PER_LABEL = { month: 'freetier.perMonth', day: 'freetier.perDay', hour: 'freetier.perHour', minute: 'freetier.perMinute' };
     // Exa and E2B are counted in thousandths of a dollar; the rest in requests or credits.
     const amount = (s, n) => (s.service === 'exa' || s.service === 'e2b' ? `$${(n / 1000).toFixed(2)}` : Number(n).toLocaleString(locale));
     const rows = report.services
@@ -6856,8 +6940,8 @@ async function loadFreeTier() {
         const share = s.used == null || !s.limit ? 0 : Math.min(100, Math.round((s.used / s.limit) * 100));
         return `<div class="ctable__row" role="row">
           <span role="cell"><strong>${escapeHtml(t(`freetier.${s.service}`))}</strong></span>
-          <span role="cell" class="freetier__used"><span class="freetier__bar${share >= 90 ? ' is-near' : ''}" aria-hidden="true"><span style="width:${share}%"></span></span>${escapeHtml(used)} ${escapeHtml(t(s.per === 'month' ? 'freetier.perMonth' : 'freetier.perDay'))}</span>
-          <span role="cell" class="crow__desc">${escapeHtml(t('freetier.resets', { day: day(s.resets) }))}</span>
+          <span role="cell" class="freetier__used"><span class="freetier__bar${share >= 90 ? ' is-near' : ''}" aria-hidden="true"><span style="width:${share}%"></span></span>${escapeHtml(used)} ${escapeHtml(t(PER_LABEL[s.per] || 'freetier.perDay'))}</span>
+          <span role="cell" class="crow__desc">${escapeHtml(t('freetier.resets', { day: s.per === 'minute' || s.per === 'hour' ? clock(s.resets) : day(s.resets) }))}</span>
         </div>`;
       })
       .join('');
@@ -7186,6 +7270,8 @@ async function chooseModel(modelId) {
     state.model = modelId;
     renderTopbar();
     refreshModelFacts();
+    // A group open on the Bot page answers its next batch on it, mid-round too (owner, 2026-11-10).
+    if (previous !== modelId) botPage.modelChanged(modelId);
     /*
      * Changed while the last one is writing (owner, 2026-11-06): it stops being paid
      * for now, and the new one carries on from where it stopped once that is safely

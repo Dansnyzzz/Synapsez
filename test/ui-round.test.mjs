@@ -429,7 +429,9 @@ section('sums are one card, a call not run is no row, a rewritten file is one ca
   check('each figure is a row with its working and its answer, a list too', seen.rows.join('|') === '57*25744=1467408|1467408/12=122284|1+1=2|2+2=4|1/0=', seen.rows.join('|'));
   check('the card counts them', /4/.test(seen.summary), seen.summary);
   check('a sum that failed says why, in the same card', seen.error);
-  check('the failed write has its row', seen.headlines.filter((h) => /Rewrote|Viết lại|Toi uu/i.test(h)).length === 3, seen.headlines.join(' | '));
+  check('the failed write has its row', seen.headlines.filter((h) => /Rewrote|Viết lại|Toi uu|Couldn't rewrite|Không viết lại được/i.test(h)).length === 3, seen.headlines.join(' | '));
+  // A step that failed says so, never what it would have done (owner, 2026-11-10).
+  check('  saying it failed, not "Rewrote"', seen.headlines.some((h) => /^✗?(Couldn't rewrite the file|Không viết lại được tệp)/.test(h)) && !seen.headlines.some((h) => /^✗(Rewrote|Viết lại)/.test(h)), seen.headlines.join(' | '));
   check('the read that never ran has none', !seen.headlines.some((h) => /read back|Đọc lại/i.test(h)), seen.headlines.join(' | '));
   check('a file rewritten in the next step is one card', seen.fileCards === 1, String(seen.fileCards));
   check('the row says the file was checked, and shows what was looked at', seen.looked === 1 && seen.thumbs === 1, JSON.stringify([seen.looked, seen.thumbs]));

@@ -1359,7 +1359,8 @@ export function describeRate(data, base, quote, amount) {
   return (
     `${fmt(amount)} ${base} = ${fmt(value)} ${quote} (1 ${base} = ${fmt(rate)} ${quote}), ` +
     `rates updated ${data.time_last_update_utc || 'recently'}. ` +
-    'Source: open.er-api.com — a mid-market reference, not what a bank or exchange will quote.'
+    // open.er-api's terms ask for a link to exchangerate-api.com wherever its rate is shown.
+    'Source: open.er-api.com — a mid-market reference, not what a bank or exchange will quote. Rates By Exchange Rate API: https://www.exchangerate-api.com'
   );
 }
 

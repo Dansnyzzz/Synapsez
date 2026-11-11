@@ -342,6 +342,20 @@ section('a group chat: the same box, @ offers the members, the admin hands on, t
   });
   check('  the name that will call Writer is bold in the box, in its colour', bold.on && bold.name === '@Writer' && bold.stroke > 0 && /rgba\(0, 0, 0, 0\)|transparent/.test(bold.clear), JSON.stringify(bold));
   check('    drawn in the box\'s own type, exactly over its letters', bold.same && bold.words === bold.value && bold.off < 1, JSON.stringify(bold));
+  // Owner, 2026-11-11: opening a group moves the box, which blurs it; the close that blur
+  // asked for 150 ms later shut the picker the person had just opened by typing "@".
+  await page.fill('#input', '');
+  await page.evaluate(() => {
+    const box = /** @type {HTMLTextAreaElement} */ (document.getElementById('input'));
+    box.blur();
+    box.focus();
+  });
+  await page.fill('#input', 'Hey @Wr');
+  await page.dispatchEvent('#input', 'input');
+  await page.waitForTimeout(300);
+  const stays = await page.evaluate(() => ({ open: !document.querySelector('#bot-page [data-picker]')?.hidden, names: document.querySelectorAll('.atpick__name').length }));
+  check('  a blur the box came back from does not shut the picker a moment later', stays.open && stays.names === 1, JSON.stringify(stays));
+  await page.press('#input', 'Escape');
   await page.fill('#input', 'Can we get a first post?');
   const pressed = Date.now();
   await page.press('#input', 'Enter');
@@ -349,17 +363,36 @@ section('a group chat: the same box, @ offers the members, the admin hands on, t
   check('what was written is in the group at once', Date.now() - pressed < 1500 && /Can we get a first post/.test(await logText()), `${Date.now() - pressed} ms`);
   check('  a box with no name in it is as it was, nothing laid under it', await page.evaluate(() => !document.querySelector('.mentionlay') && !document.getElementById('input').classList.contains('has-mentions')));
   await idle();
-  await page.waitForFunction(() => document.querySelectorAll('#bot-page .botmsg--member').length >= 3, null, { timeout: 15_000 }).catch(() => {});
+  await page.waitForFunction(() => document.querySelectorAll('#bot-page .botline--bot').length >= 3, null, { timeout: 15_000 }).catch(() => {});
   const seen = await page.evaluate(() =>
-    [...document.querySelectorAll('#bot-page .botmsg--member')].map((m) => ({
+    [...document.querySelectorAll('#bot-page .botline--bot')].map((m) => ({
       name: m.querySelector('.botmsg__name')?.textContent.trim(),
       admin: m.querySelector('.bottag')?.textContent.trim() || '',
       face: !!m.querySelector('.botmsg__face'),
-      text: m.querySelector('.botmsg__bubble')?.textContent.trim(),
+      text: m.querySelector('.msg__body')?.textContent.trim(),
       mention: m.querySelector('.botmention')?.textContent.trim() || '',
       color: getComputedStyle(m.querySelector('.botmsg__name')).color,
     })),
   );
+  // As the home chat draws them (owner, 2026-11-10): a bot's reply over the theme with no bubble, the person's in the home bubble.
+  const look = await page.evaluate(() => {
+    const reply = document.querySelector('#bot-page .botline--bot .msg__body');
+    const mine = document.querySelector('#bot-page .msg--user .bubble');
+    const home = document.createElement('div');
+    home.className = 'msg msg--user';
+    home.innerHTML = '<div class="bubble">x</div>';
+    document.getElementById('messages')?.append(home);
+    const homeBubble = getComputedStyle(home.querySelector('.bubble')).backgroundColor;
+    home.remove();
+    return {
+      oldBubbles: document.querySelectorAll('#bot-page .botmsg__bubble').length,
+      replyBack: reply ? getComputedStyle(reply).backgroundColor : 'none',
+      mineBack: mine ? getComputedStyle(mine).backgroundColor : 'none',
+      homeBubble,
+    };
+  });
+  check('the group draws its lines as the home chat does: no bubble behind a reply', look.oldBubbles === 0 && /rgba\(0, 0, 0, 0\)|transparent/.test(look.replyBack), JSON.stringify(look));
+  check("  and the person's line in the home chat's own bubble", look.mineBack === look.homeBubble, JSON.stringify(look));
   check('Chief, the admin, answered first, tagged Admin', seen[0]?.name === 'Chief' && seen[0].admin === 'Admin', JSON.stringify(seen[0]));
   check('  its @Writer is drawn as a mention', seen[0]?.mention === '@Writer', seen[0]?.mention);
   check('Writer posted its work, with its face', seen[1]?.name === 'Writer' && seen[1].face && /Draft ready/.test(seen[1].text || ''), JSON.stringify(seen[1]));
@@ -386,6 +419,36 @@ section('the details panel: no model of its own, memory, usage, its own schedule
     dots: /…/.test(document.querySelector('#bot-page [data-details]')?.textContent || ''),
   }));
   check('it opens beside the conversation, said on the pill', seen.expanded === 'true' && seen.name === 'Chief' && seen.role === 'Chief of Staff', JSON.stringify(seen));
+  const motion = await page.evaluate(() => {
+    const pageEl = document.getElementById('bot-page');
+    const panel = document.querySelector('#bot-page [data-details]');
+    const chev = document.querySelector('.botchat__pill .botchat__chev');
+    return {
+      grid: getComputedStyle(pageEl).transitionProperty,
+      panel: getComputedStyle(panel).transitionProperty,
+      chev: chev ? getComputedStyle(chev).transform : 'none',
+      width: Math.round(panel.getBoundingClientRect().width),
+    };
+  });
+  check('  it slides and fades in, the pill\'s arrow turned', /grid-template-columns/.test(motion.grid) && /transform/.test(motion.panel) && /opacity/.test(motion.panel) && motion.chev !== 'none' && motion.width >= 300, JSON.stringify(motion));
+  const asks = [];
+  const count = (r) => {
+    if (/\/api\/(bots|bot-groups)\/[^/]+\/(memory|tasks)|\/api\/bots\/usage/.test(r.url())) asks.push(r.url());
+  };
+  page.on('request', count);
+  await page.click('[data-act="memory"]');
+  await page.waitForTimeout(300);
+  const opened = await page.evaluate(() => ({
+    expanded: document.querySelector('[data-act="memory"]')?.getAttribute('aria-expanded'),
+    chev: (() => { const c = document.querySelector('[data-act="memory"] .botcard__chev'); return c ? getComputedStyle(c).transform : 'none'; })(),
+    shown: !!document.querySelector('.botmemory-fold.is-open [data-memory-text]'),
+    spinner: !!document.querySelector('#bot-page [data-details] .botloading'),
+  }));
+  page.off('request', count);
+  check('Manage opens the memory where it is: no request, no spinner, the arrow turned down', opened.expanded === 'true' && opened.shown && !opened.spinner && asks.length === 0 && opened.chev !== 'none', JSON.stringify({ ...opened, asks }));
+  await page.click('[data-act="memory"]');
+  await page.waitForTimeout(300);
+  check('  and closes again', (await page.evaluate(() => document.querySelector('[data-act="memory"]')?.getAttribute('aria-expanded'))) === 'false');
   check("  no model of the bot's own: it answers on the top bar's", !seen.model);
   check('  "Add instructions in Bot settings"', seen.link === 'Add instructions in Bot settings', seen.link);
   check('  memory with its count and Manage', /^0 entries\s*Manage/.test(seen.memory || ''), seen.memory);
@@ -397,6 +460,25 @@ section('the details panel: no model of its own, memory, usage, its own schedule
   await page.waitForFunction(() => /^1 entry/.test(document.querySelector('[data-act="memory"]')?.textContent.trim() || ''), null, { timeout: 8000 }).catch(() => {});
   const after = await page.evaluate(() => ({ count: document.querySelector('[data-act="memory"]')?.textContent.trim(), entry: document.querySelector('.botmemory__text')?.textContent.trim() }));
   check('an entry added there is kept', /^1 entry/.test(after.count || '') && after.entry === 'The user writes in British English', JSON.stringify(after));
+  // Pin, edit, forget and Undo, where the entry is (owner, 2026-11-10).
+  await page.click('.botmemory__list li [data-pin]');
+  await page.waitForFunction(() => document.querySelector('.botmemory__list li')?.classList.contains('is-pinned'), null, { timeout: 5000 }).catch(() => {});
+  check('an entry can be pinned there', await page.evaluate(() => document.querySelector('.botmemory__list li')?.classList.contains('is-pinned')));
+  check('  and the server keeps the pin', (await store.listBotMemory(me.id, { botId: chiefId }))[0]?.pinned === true);
+  await page.click('.botmemory__list li [data-edit]');
+  await page.fill('.botmemory__list li [data-edit-text]', 'The user writes in Australian English');
+  await page.press('.botmemory__list li [data-edit-text]', 'Enter');
+  await page.waitForFunction(() => /Australian/.test(document.querySelector('.botmemory__text')?.textContent || ''), null, { timeout: 5000 }).catch(() => {});
+  const edited = (await store.listBotMemory(me.id, { botId: chiefId }))[0];
+  check('  edited in place, one entry still', edited?.text === 'The user writes in Australian English' && (await store.listBotMemory(me.id, { botId: chiefId })).length === 1, edited?.text);
+  await page.click('.botmemory__list li [data-forget]');
+  await page.click('.botmemory__list li [data-forget]');
+  await page.waitForSelector('[data-undo-forget]', { timeout: 5000 }).catch(() => {});
+  check('forgotten, it offers Undo where it was', !!(await page.$('[data-undo-forget]')) && (await store.listBotMemory(me.id, { botId: chiefId })).length === 0);
+  await page.click('[data-undo-forget]');
+  await page.waitForFunction(() => /Australian/.test(document.querySelector('.botmemory__text')?.textContent || ''), null, { timeout: 5000 }).catch(() => {});
+  check('  and Undo brings it back', (await store.listBotMemory(me.id, { botId: chiefId })).length === 1);
+  await store.updateBotMemory(me.id, edited.id, { botId: chiefId }, { text: 'The user writes in British English', textFolded: 'the user writes in british english' });
   await page.click('[data-act="task-add"]');
   await page.fill('[data-task-title]', 'Morning digest');
   await page.fill('[data-task-prompt]', 'Sum up the news for me.');
@@ -408,6 +490,8 @@ section('the details panel: no model of its own, memory, usage, its own schedule
   check('  and not with the account\'s own on Automations', !tasks.some((t) => t.title === 'Morning digest') && (await store.listTasks(me.id, { botId: chiefId })).some((t) => t.title === 'Morning digest'));
   if (process.env.BOT_SHOTS) await page.screenshot({ path: path.join(process.env.BOT_SHOTS, 'bots-details.png') });
   await page.click('[data-act="close-details"]');
+  await page.waitForTimeout(400);
+  check('closing it slides it away and takes it out of the page', await page.evaluate(() => document.querySelector('#bot-page [data-details]')?.hidden === true));
 }
 
 section('incognito in the top bar holds with a bot');
@@ -423,6 +507,31 @@ section('incognito in the top bar holds with a bot');
   await page.click('#incognito-toggle');
   await page.waitForFunction(() => /Please think slowly/.test(document.getElementById('messages')?.textContent || ''), null, { timeout: 8000 }).catch(() => {});
   check('  off: back in Chief\'s own chat', /Please think slowly/.test(await messagesText()) && (await page.evaluate(() => document.getElementById('incognito-banner')?.hidden)));
+}
+
+section('Reset asks once more, empties the conversation and keeps the memory');
+{
+  await page.click('.botchief');
+  await page.waitForFunction(() => /Chief/.test(document.querySelector('.botchat__pill')?.textContent || ''));
+  await page.click('.botchat__pill');
+  await page.waitForSelector('#bot-page [data-details]:not([hidden]) [data-act="reset"]', { timeout: 8000 }).catch(() => {});
+  const chiefChat = (await store.botChat(me.id, { botId: chiefId, title: 'Chief' })).id;
+  check('Chief has a conversation to reset', (await store.listMessages(me.id, chiefChat)).length > 0);
+  await page.click('[data-act="reset"]');
+  await page.waitForSelector('dialog.botconfirm[open]', { timeout: 3000 }).catch(() => {});
+  const asked = await page.evaluate(() => document.querySelector('dialog.botconfirm[open]')?.textContent.replace(/\s+/g, ' ').trim() || '');
+  check('Reset asks once more, saying what goes and what stays', /Reset the conversation with Chief\?/.test(asked) && /deleted for good/.test(asked) && /memory/.test(asked), asked);
+  await page.click('dialog.botconfirm [value="cancel"]');
+  await page.waitForTimeout(200);
+  check('  Cancel keeps everything', (await store.listMessages(me.id, chiefChat)).length > 0);
+  await page.click('[data-act="reset"]');
+  await page.waitForSelector('dialog.botconfirm[open]', { timeout: 3000 }).catch(() => {});
+  await page.click('dialog.botconfirm [value="reset"]');
+  await page.waitForFunction(() => !(document.getElementById('messages')?.textContent || '').trim() || !document.querySelector('#messages .msg'), null, { timeout: 8000 }).catch(() => {});
+  const fresh = await store.botChat(me.id, { botId: chiefId, title: 'Chief' });
+  check('  Reset empties the conversation', fresh.id !== chiefChat && (await store.listMessages(me.id, fresh.id)).length === 0);
+  check('  and keeps the memory', (await store.listBotMemory(me.id, { botId: chiefId })).some((m) => m.text === 'The user writes in British English'));
+  await page.click('[data-act="close-details"]');
 }
 
 section('Bot settings: Bots, Group chats, Usage; a creature in use comes in another colour');
@@ -573,6 +682,15 @@ section("Stop ends every member's turn");
   await page.waitForFunction(() => document.querySelectorAll('#bot-page .botworking').length === 2, null, { timeout: 10_000 }).catch(() => {});
   const working = await page.evaluate(() => [...document.querySelectorAll('#bot-page .botworking')].map((n) => ({ who: n.querySelector('.botworking__who')?.textContent.trim(), ring: !!n.querySelector('.spinner') })));
   check('both say they are working, each with a ring', working.length === 2 && working.every((w) => w.ring), JSON.stringify(working));
+  await page.evaluate(() => {
+    window.__ring = document.querySelector('#bot-page .botworking .spinner');
+  });
+  await page.waitForTimeout(700);
+  const ring = await page.evaluate(() => ({
+    same: document.querySelector('#bot-page .botworking .spinner') === window.__ring && window.__ring?.isConnected,
+    words: document.querySelector('#bot-page .botworking__text')?.textContent || '',
+  }));
+  check('  the ring is one element while words stream in, so it turns without a jump', ring.same && /w\d+ w\d+/.test(ring.words), JSON.stringify(ring));
   await page.waitForSelector('#stop:not([hidden])', { timeout: 5000 }).catch(() => {});
   const pressed = Date.now();
   await page.click('#stop');
@@ -583,6 +701,51 @@ section("Stop ends every member's turn");
   check("the box's own Stop cut both provider calls off", slow.length === 2 && slow.every((x) => x.closedAt > 0 && x.closedAt - pressed < 2000), slow.map((x) => x.closedAt - pressed).join());
   await page.waitForTimeout(500);
   check('the group says it stopped, and nothing says it is working', /Stopped\./.test(await logText()) && (await page.evaluate(() => document.querySelectorAll('#bot-page .botworking').length)) === 0);
+}
+
+section('a round running elsewhere is followed live; Continue carries one on; a file shows where it was made');
+{
+  const crypto = await import('node:crypto');
+  const { createBot, createGroup } = await import('../server/bots/team.js');
+  const helper = (await store.listBots(me.id)).find((b) => b.name === 'Writer') || (await createBot(me.id, { name: 'Writer', role: 'Editor' }));
+  const desk = await createGroup(me.id, { name: 'Elsewhere', members: [helper.id] });
+  const log = await store.botChat(me.id, { groupId: desk.id, title: desk.name });
+  // Another invocation holds the group and has work in hand.
+  const runId = crypto.randomUUID();
+  const seq = await store.claimChatRun(me.id, log.id, runId);
+  await store.appendMessage(me.id, log.id, { id: crypto.randomUUID(), role: 'user', text: 'Start on it' });
+  await store.setGroupPending(me.id, desk.id, { queue: [], handoffs: 0, segments: 1, reason: 'running', owed: {}, working: [{ bot: helper.id, tool: 'web_search', since: new Date().toISOString() }], lastSeq: 0, at: new Date().toISOString() });
+  await page.goto(`http://127.0.0.1:${PORT}/#bot/g/${desk.id}`);
+  await page.waitForFunction(() => /Elsewhere/.test(document.querySelector('.botchat__pill')?.textContent || ''), null, { timeout: 15_000 });
+  await page.waitForFunction(() => document.querySelectorAll('#bot-page .botworking').length === 1, null, { timeout: 5000 }).catch(() => {});
+  check('opening a group another invocation works on shows who is at work', (await page.evaluate(() => document.querySelectorAll('#bot-page .botworking').length)) === 1);
+  const made = await store.createAttachment(me.id, { id: crypto.randomUUID(), name: 'Plan.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', kind: 'document', bytes: 2048, data: 'eA==', origin: 'generated', chatId: log.id });
+  await store.appendMessage(me.id, log.id, { id: crypto.randomUUID(), role: 'assistant', bot: helper.id, text: 'Here is the plan.', files: [{ id: made.id, name: 'Plan.docx', mime: made.mime, size: 2048 }] });
+  const appeared = await page.waitForFunction(() => /Here is the plan/.test(document.querySelector('#bot-page [data-log]')?.textContent || ''), null, { timeout: 5000 }).then(() => true, () => false);
+  check('  a line it posts shows here within a couple of seconds, with no reload', appeared);
+  const card = await page.evaluate(() => {
+    const line = [...document.querySelectorAll('#bot-page .botline--bot')].find((n) => /Here is the plan/.test(n.textContent));
+    return { card: !!line?.querySelector('.filecard'), name: line?.querySelector('.filecard__name')?.textContent || '' };
+  });
+  check('  the document it made is on its post, to open or download', card.card && card.name === 'Plan.docx', JSON.stringify(card));
+  await store.setGroupPending(me.id, desk.id, null);
+  await store.releaseChatRun(me.id, log.id, runId, seq);
+  await page.waitForFunction(() => document.querySelectorAll('#bot-page .botworking').length === 0, null, { timeout: 6000 }).catch(() => {});
+  check('  when it is done, nothing says it is working', (await page.evaluate(() => document.querySelectorAll('#bot-page .botworking').length)) === 0);
+
+  // The ceiling stopped a round: its notice carries Continue.
+  await store.appendMessage(me.id, log.id, { id: crypto.randomUUID(), role: 'assistant', notice: 'ceiling', text: 'Stopped handing work on.', params: { n: 6 } });
+  await store.setGroupPending(me.id, desk.id, { queue: [{ botId: helper.id, by: null, report: null, person: 'named' }], handoffs: 6, segments: 1, reason: 'ceiling', owed: {}, working: [], lastSeq: 99, at: new Date().toISOString() });
+  await page.reload();
+  await page.waitForFunction(() => /Elsewhere/.test(document.querySelector('.botchat__pill')?.textContent || ''), null, { timeout: 15_000 });
+  await page.waitForSelector('#bot-page [data-act="continue"]', { timeout: 5000 }).catch(() => {});
+  const go = await page.$('#bot-page [data-act="continue"]');
+  check('a round stopped at the ceiling offers Continue', !!go);
+  if (go) await go.click();
+  await page.waitForFunction(() => /Draft ready/.test(document.querySelector('#bot-page [data-log]')?.textContent || ''), null, { timeout: 15_000 }).catch(() => {});
+  check('  pressing it carries the round on', /Draft ready/.test(await logText()));
+  await idle();
+  check('  and Continue is gone once it ran', !(await page.$('#bot-page [data-act="continue"]')));
 }
 
 section('on a phone: the list, then the conversation, and back');

@@ -34,6 +34,21 @@ import { log } from './util/trace.js';
  * And a fair share: an account may make FREE_TIER_USER_DAILY metered searches
  * a day (30 by default). Past that its searches go to the free engines, so one
  * person cannot spend everyone's month in an afternoon.
+ *
+ * Market data (checked 2026-11-10, docs/research/2026-11-10-finance-sources.md §4),
+ * counted by server/finance/http.js before each call:
+ *   - CoinGecko Demo: 10,000 credits a month and 100 a minute, no card — kept to
+ *     9,500 (COINGECKO_FREE_MONTHLY) and 90 a minute (COINGECKO_FREE_MINUTE). The
+ *     one metered market source.
+ *   - Polite caps on the keyless ones, which bill nothing and publish no limit, so
+ *     the deployment never leans on a source harder than an on-demand tool should:
+ *     Yahoo 5,000 a day (YAHOO_FREE_DAILY); VNDirect, KBS and Vietcap 3,000 a day
+ *     each (VNDIRECT_FREE_DAILY, KBS_FREE_DAILY, VIETCAP_FREE_DAILY); SEC 20,000 a
+ *     day (SEC_FREE_DAILY, under its 10 a second); FRED 100 a minute
+ *     (FRED_FREE_MINUTE, under its ~120).
+ * These go through `take` only, never the per-account fair share (`mayMeter`):
+ * a price is cached for everyone, so one account asking does not use another's.
+ * A ceiling reached moves the finance chain to its next source.
  */
 
 const numIn = (env, name, fallback) => {
@@ -99,6 +114,15 @@ const TIERS = {
       return e2bMonthCap({ usedBefore: Math.max(0, total - usedThisMonth), now });
     },
   },
+  // Market data (server/finance/http.js): see the header for each figure.
+  coingecko: { per: 'month', limit: () => num('COINGECKO_FREE_MONTHLY', 9_500) },
+  coingecko_minute: { per: 'minute', limit: () => num('COINGECKO_FREE_MINUTE', 90) },
+  yahoo: { per: 'day', limit: () => num('YAHOO_FREE_DAILY', 5_000) },
+  vndirect: { per: 'day', limit: () => num('VNDIRECT_FREE_DAILY', 3_000) },
+  kbs: { per: 'day', limit: () => num('KBS_FREE_DAILY', 3_000) },
+  vietcap: { per: 'day', limit: () => num('VIETCAP_FREE_DAILY', 3_000) },
+  sec: { per: 'day', limit: () => num('SEC_FREE_DAILY', 20_000) },
+  fred: { per: 'minute', limit: () => num('FRED_FREE_MINUTE', 100) },
 };
 
 export const FREE_SERVICES = Object.keys(TIERS);
@@ -106,14 +130,29 @@ export const FREE_SERVICES = Object.keys(TIERS);
 /** Whether the ceilings hold — they do unless FREE_TIER_ONLY says otherwise. */
 export const freeTierOnly = () => !/^(0|false|no|off)$/i.test(String(process.env.FREE_TIER_ONLY || '').trim());
 
-/** The period a moment falls in, in UTC — the month for monthly credit, the day for daily quotas — and when it ends. */
+/**
+ * The period a moment falls in, in UTC — the month for monthly credit, the day for
+ * daily quotas, the hour and the minute for the per-minute ones (CoinGecko, FRED) —
+ * and when it ends.
+ */
 export function periodOf(per, now = new Date()) {
   const y = now.getUTCFullYear();
   const m = now.getUTCMonth();
   const d = now.getUTCDate();
   const month = `${y}-${String(m + 1).padStart(2, '0')}`;
   if (per === 'month') return { key: month, ends: new Date(Date.UTC(y, m + 1, 1)) };
-  return { key: `${month}-${String(d).padStart(2, '0')}`, ends: new Date(Date.UTC(y, m, d + 1)) };
+  const day = `${month}-${String(d).padStart(2, '0')}`;
+  const pad = (n) => String(n).padStart(2, '0');
+  if (per === 'minute') {
+    const h = now.getUTCHours();
+    const mi = now.getUTCMinutes();
+    return { key: `${day}T${pad(h)}:${pad(mi)}`, ends: new Date(Date.UTC(y, m, d, h, mi + 1)) };
+  }
+  if (per === 'hour') {
+    const h = now.getUTCHours();
+    return { key: `${day}T${pad(h)}`, ends: new Date(Date.UTC(y, m, d, h + 1)) };
+  }
+  return { key: day, ends: new Date(Date.UTC(y, m, d + 1)) };
 }
 
 const bucketOf = (service, now) => {

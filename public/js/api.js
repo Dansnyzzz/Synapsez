@@ -255,11 +255,20 @@ export const api = {
   botMemory: (kind, id) => request('GET', `/api/${kind}/${encodeURIComponent(id)}/memory`),
   addBotMemory: (kind, id, text) => request('POST', `/api/${kind}/${encodeURIComponent(id)}/memory`, { text }),
   deleteBotMemory: (kind, id, entry) => request('DELETE', `/api/${kind}/${encodeURIComponent(id)}/memory/${encodeURIComponent(entry)}`),
+  /** Edit an entry (`{ text }`) or pin it (`{ pinned }`). */
+  editBotMemory: (kind, id, entry, patch) => request('PATCH', `/api/${kind}/${encodeURIComponent(id)}/memory/${encodeURIComponent(entry)}`, patch),
+  undoBotMemory: (kind, id, ids) => request('POST', `/api/${kind}/${encodeURIComponent(id)}/memory/undo`, { ids }),
   createGroup: (group) => request('POST', '/api/bot-groups', group),
   updateGroup: (id, patch) => request('PATCH', `/api/bot-groups/${encodeURIComponent(id)}`, patch),
   deleteGroup: (id) => request('DELETE', `/api/bot-groups/${encodeURIComponent(id)}`),
   groupChat: (id) => request('GET', `/api/bot-groups/${encodeURIComponent(id)}/chat`),
   stopGroup: (id) => request('POST', `/api/bot-groups/${encodeURIComponent(id)}/stop`),
+  /** What is new in a group after line `since`, who is at work, and whether its round goes on. */
+  groupLive: (id, since) => request('GET', `/api/bot-groups/${encodeURIComponent(id)}/live?since=${encodeURIComponent(String(since))}`),
+  setGroupModel: (id, model) => request('PATCH', `/api/bot-groups/${encodeURIComponent(id)}/model`, { model }),
+  /** Empty a bot's or a group's conversation; memory stays (owner, 2026-11-10). */
+  resetBot: (id) => request('POST', `/api/bots/${encodeURIComponent(id)}/reset`),
+  resetGroup: (id) => request('POST', `/api/bot-groups/${encodeURIComponent(id)}/reset`),
   botUsage: ({ from, to, unit }) => request('GET', `/api/bots/usage?${new URLSearchParams({ from, to, unit, tz: localZone() })}`),
 
   connectors: () => request('GET', '/api/connectors'),
@@ -354,6 +363,9 @@ export const api = {
   // A key pasted in Settings → Providers: recognised, checked and kept where it belongs (owner, 2026-11-02).
   intakeKey: (provider, apiKey) => request('POST', '/api/providers/intake', { provider, apiKey }),
   useSuggestion: () => request('POST', '/api/providers/suggestion/use'),
+  // The suggested models changed: this account's notice, and its answer (owner, 2026-11-10).
+  suggestionNotice: () => request('GET', '/api/models/suggestion/notice'),
+  suggestionSeen: (version) => request('POST', '/api/models/suggestion/seen', { version }),
   // The two models an administrator suggests to everyone.
   adminRecommended: () => request('GET', '/api/admin/recommended'),
   setRecommended: (body) => request('PUT', '/api/admin/recommended', body),
@@ -548,13 +560,35 @@ export async function readEvents(res, onEvent) {
   }
 }
 
-/** Write in a group chat and follow its round (server/routes/bots.js). */
+/**
+ * Write in a group and follow the round it starts. While another segment holds the
+ * group, the line is taken and answered in that round: no stream comes back, and this
+ * resolves to `{ joined: true, message }` (owner, 2026-11-10).
+ *
+ * @returns {Promise<{ joined: boolean, message?: any }>}
+ */
 export async function runGroup({ groupId, text, runId, model = undefined, signal, onEvent }) {
   const res = await fetch(`/api/bot-groups/${encodeURIComponent(groupId)}/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Language': currentLanguage() },
     // `model`: the header chip's, which every member answers on (owner, 2026-11-10).
     body: JSON.stringify({ text, runId, ...(model ? { model } : {}) }),
+    signal,
+  });
+  if (res.ok && /application\/json/.test(res.headers.get('content-type') || '')) {
+    const answer = await res.json();
+    return { joined: !!answer.joined, message: answer.message };
+  }
+  await readEvents(res, onEvent);
+  return { joined: false };
+}
+
+/** Carry on what a group has waiting — the Continue after the ceiling or a long round — and follow it. */
+export async function continueGroup({ groupId, model = undefined, signal, onEvent }) {
+  const res = await fetch(`/api/bot-groups/${encodeURIComponent(groupId)}/continue`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Language': currentLanguage() },
+    body: JSON.stringify({ ...(model ? { model } : {}) }),
     signal,
   });
   await readEvents(res, onEvent);

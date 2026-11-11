@@ -1266,3 +1266,48 @@ CREATE INDEX IF NOT EXISTS scheduled_bot_idx ON scheduled_tasks (user_id, bot_id
 -- incognito ones out.
 DROP INDEX IF EXISTS chats_bot_room_idx;
 CREATE UNIQUE INDEX IF NOT EXISTS chats_bot_room_idx ON chats (bot_id, COALESCE(bot_group_id, '')) WHERE bot_id IS NOT NULL AND NOT incognito;
+
+-- 44 (owner, 2026-11-10): a group round runs in segments and finishes what was asked.
+-- `pending` is the round still to run — the queue of member turns, the hand-offs and
+-- segments spent, why it paused ('running' while a segment holds it, 'time' for the
+-- next segment, 'ceiling' / 'segments' for the person's Continue) — written after
+-- every batch, so a killed invocation loses at most the batch it was in. `notice` is
+-- the group's standing note every member reads; `model` the chip's model last sent.
+ALTER TABLE bot_groups ADD COLUMN IF NOT EXISTS pending JSONB;
+ALTER TABLE bot_groups ADD COLUMN IF NOT EXISTS notice TEXT NOT NULL DEFAULT '';
+ALTER TABLE bot_groups ADD COLUMN IF NOT EXISTS model TEXT;
+CREATE INDEX IF NOT EXISTS bot_groups_pending_idx ON bot_groups ((pending->>'reason')) WHERE pending IS NOT NULL;
+-- Memory that keeps up: a pin the prompt keeps first (and a bot cannot undo when the
+-- person set it), the text without diacritics for search, the turn that saved it (so a
+-- stopped turn takes its saves back), and a soft delete that Undo reverses for 30 days.
+ALTER TABLE bot_memory ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE bot_memory ADD COLUMN IF NOT EXISTS pinned_by TEXT;
+ALTER TABLE bot_memory ADD COLUMN IF NOT EXISTS text_folded TEXT;
+ALTER TABLE bot_memory ADD COLUMN IF NOT EXISTS turn_id TEXT;
+ALTER TABLE bot_memory ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE bot_memory ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS bot_memory_turn_idx ON bot_memory (turn_id) WHERE turn_id IS NOT NULL;
+-- A bot's instructions before the last change (one step of Undo), who changed them,
+-- and how often its memory is reviewed (0 = never) with the turns since the last one.
+ALTER TABLE bots ADD COLUMN IF NOT EXISTS instructions_prev TEXT;
+ALTER TABLE bots ADD COLUMN IF NOT EXISTS instructions_changed_by TEXT;
+ALTER TABLE bots ADD COLUMN IF NOT EXISTS review_every INTEGER NOT NULL DEFAULT 20;
+ALTER TABLE bots ADD COLUMN IF NOT EXISTS turns_since_review INTEGER NOT NULL DEFAULT 0;
+-- The memory a bot's conversation began with, so its prompt stays the same turn after
+-- turn and the provider's cached prefix holds; later saves arrive as a short message.
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS memory_snapshot TEXT;
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS memory_snapshot_at TIMESTAMPTZ;
+
+-- 45 (owner, 2026-11-10): market data shared by every account and instance, so a
+-- price asked twice is fetched once. Only the fields the tool returns are kept:
+-- public prices and figures, never anything about a person. `expires_at` NULL is a
+-- row kept for good (a closed day's raw bar, a past day's rate); the sweep drops
+-- those after 400 days, and any row expired more than a day ago (server/finance/cache.js).
+-- Stands alone: nothing here depends on another table, or on version 44.
+CREATE TABLE IF NOT EXISTS finance_cache (
+  key        TEXT PRIMARY KEY,
+  value      JSONB NOT NULL,
+  fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS finance_cache_expires_idx ON finance_cache (expires_at);

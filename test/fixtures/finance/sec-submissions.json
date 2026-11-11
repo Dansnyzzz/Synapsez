@@ -1,0 +1,64 @@
+{
+  "cik": "0000320193",
+  "name": "Apple Inc.",
+  "tickers": [
+    "AAPL"
+  ],
+  "exchanges": [
+    "Nasdaq"
+  ],
+  "sicDescription": "Electronic Computers",
+  "fiscalYearEnd": "0926",
+  "filings": {
+    "recent": {
+      "accessionNumber": [
+        "0001354457-26-001062",
+        "0001140361-26-042798",
+        "0001140361-26-042505",
+        "0001140361-26-042173",
+        "0001140361-26-042149",
+        "0001140361-26-042046"
+      ],
+      "filingDate": [
+        "2026-11-09",
+        "2026-11-09",
+        "2026-11-06",
+        "2026-11-06",
+        "2026-11-05",
+        "2026-11-05"
+      ],
+      "form": [
+        "25-NSE",
+        "8-K",
+        "424B2",
+        "FWP",
+        "4",
+        "424B2"
+      ],
+      "primaryDocument": [
+        "xslF25X02/primary_doc.xml",
+        "ef20085077_8k.htm",
+        "ny20084621x2_424b2.htm",
+        "ny20084621x3_fwp.htm",
+        "xslF345X06/form4.xml",
+        "ny20084621x1_424b2.htm"
+      ],
+      "primaryDocDescription": [
+        "",
+        "",
+        "424B2",
+        "FWP",
+        "FORM 4",
+        "424B2"
+      ],
+      "items": [
+        "",
+        "8.01,9.01",
+        "",
+        "",
+        "",
+        ""
+      ]
+    }
+  }
+}

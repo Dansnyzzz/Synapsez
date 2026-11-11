@@ -395,6 +395,64 @@ section('one account is never answered from another account\'s results');
   check('  and neither saw the other\'s', !/B-ONLY/.test(results[a.id] || '') && !/A-ONLY/.test(results[b.id] || ''));
 }
 
+/*
+ * Market data (finance, 2026-11-10): the only hosts the finance layer may call,
+ * and only what was asked for in the URL. Exactly the spec's list — a new source
+ * is a deliberate line here, never a quiet addition.
+ */
+section('market data reaches only its listed hosts, with only the symbols and codes asked about');
+{
+  const FINANCE_HOSTS = new Set([
+    'query1.finance.yahoo.com', 'query2.finance.yahoo.com', 'fc.yahoo.com',
+    'api-finfo.vndirect.com.vn', 'dchart-api.vndirect.com.vn',
+    'kbbuddywts.kbsec.com.vn',
+    'iq.vietcap.com.vn', 'trading.vietcap.com.vn',
+    'data.sec.gov', 'www.sec.gov',
+    'api.coingecko.com',
+    'api.frankfurter.dev', 'data-api.ecb.europa.eu', 'open.er-api.com', 'www.vietcombank.com.vn',
+    'sjc.com.vn',
+    'api.worldbank.org', 'api.stlouisfed.org', 'pxweb.nso.gov.vn',
+    'api.fmarket.vn',
+  ]);
+  const fs = await import('node:fs');
+  const dir = path.join(import.meta.dirname, '..', 'server', 'finance');
+  const files = fs.readdirSync(dir, { recursive: true }).filter((f) => String(f).endsWith('.js'));
+  const written = new Set(files.flatMap((f) => [...fs.readFileSync(path.join(dir, String(f)), 'utf8').matchAll(/https:\/\/([a-z0-9.-]+\.[a-z]{2,})/gi)].map((m) => m[1].toLowerCase())));
+  // Links in comments and in what is shown (github.com, exchangerate-api.com's credit) are not calls.
+  const SHOWN = new Set(['github.com', 'www.exchangerate-api.com']);
+  const strays = [...written].filter((h) => !FINANCE_HOSTS.has(h) && !SHOWN.has(h));
+  check('every host written in server/finance is on the list', strays.length === 0, strays.join(', '));
+
+  process.env.FIN_PACE_SCALE = '0';
+  process.env.SEC_USER_AGENT = 'Synapsez ops@example.com';
+  const { marketData } = await import('../server/finance/index.js');
+  const urls = [];
+  const fetchImpl = async (url) => {
+    urls.push(String(url));
+    return new Response(JSON.stringify({ error: 'offline test' }), { status: 503 });
+  };
+  // A request carrying more than it should: only the fields the tool reads may leave.
+  const extra = { note: message, user: PII.email };
+  await marketData(
+    {
+      requests: [
+        { kind: 'quote', market: 'vn', symbols: ['FPT', 'SHS'], ...extra },
+        { kind: 'statements', market: 'us', symbols: ['AAPL'], statement: 'income', ...extra },
+        { kind: 'crypto', symbols: ['btc'], ...extra },
+        { kind: 'fx', symbols: ['USD'], vs: 'VND', ...extra },
+        { kind: 'gold', ...extra },
+        { kind: 'macro', market: 'vn', indicator: 'gdp', ...extra },
+      ],
+    },
+    { fetchImpl },
+  );
+  delete process.env.SEC_USER_AGENT;
+  const hosts = [...new Set(urls.map((u) => new URL(u).host))];
+  check('a batch across every market asked something', urls.length > 5, `${urls.length} calls`);
+  check('  and only hosts on the list', hosts.every((h) => FINANCE_HOSTS.has(h)), hosts.join(', '));
+  check('  with none of the person\'s words or details in any URL', urls.every((u) => !leaks(decodeURIComponent(u)).length && !/Testa|lời chào/.test(decodeURIComponent(u))), urls.find((u) => leaks(decodeURIComponent(u)).length) || '');
+}
+
 removeTemp(process.env.DATA_DIR);
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m` : '\n\x1b[32mAll egress checks passed.\x1b[0m');
 process.exit(failures ? 1 : 0);

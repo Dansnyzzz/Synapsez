@@ -87,7 +87,12 @@ const provider = http.createServer((req, res) => {
       res.write('data: [DONE]\n\n');
       res.end();
     };
-    if (record.who === 'slow') {
+    if (record.who === 'saver' && messages.at(-1)?.role !== 'tool') {
+      callN += 1;
+      send({ choices: [{ delta: { tool_calls: [{ index: 0, id: `call_${callN}`, type: 'function', function: { name: 'remember', arguments: JSON.stringify({ text: 'Saved in a turn that was stopped' }) } }] } }] });
+      return end('tool_calls');
+    }
+    if (record.who === 'slow' || record.who === 'saver') {
       let n = 0;
       const timer = setInterval(() => send({ choices: [{ delta: { content: `w${(n += 1)} ` } }] }), 80);
       res.on('close', () => {
@@ -189,6 +194,10 @@ section('"@Name" is read one way');
   check('spans mark where each call is', JSON.stringify(mentionSpans('x @Coder', bots).map((s) => [s.start, s.end])) === '[[2,8]]');
   check('names that read as the user or everyone are refused', nameProblem('all') && nameProblem('You') && nameProblem('a@b') && !nameProblem('Writer'));
   check('the picker sees an @ being typed', atQuery('hi @Wri', 7)?.query === 'Wri' && atQuery('a@b', 3) === null);
+  // Read the same on both sides (DS Bot study, 2026-11-10): the page never colours a link's words.
+  check('a name inside a Markdown link calls nobody', mentionedBots('see [@Writer](https://x.test/@Writer) and [notes](https://n.test)', bots).length === 0);
+  check('  nor a file name that starts with one', mentionedBots('open @Coder.md and @Writer\\notes', bots).length === 0);
+  check('  but a name at the end of a sentence still calls', mentionedBots('Over to you, @Coder. Thanks @Writer!', bots).map((b) => b.id).join() === 'c,w');
 }
 
 /* ── the team ───────────────────────────────────────────────────── */
@@ -366,7 +375,10 @@ section('[PASS] keeps a member quiet');
   const q = await alice.call('POST', '/api/bots', { name: 'Quiet', role: 'q' });
   const g = await alice.call('POST', '/api/bot-groups', { name: 'Hush', members: [q.body.bot.id] });
   const round = await alice.stream(`/api/bot-groups/${g.body.group.id}/run`, { text: 'anyone?' });
-  check('nothing is posted for a pass', round.events.filter((e) => e.event === 'post').length === 1);
+  const posts = round.events.filter((e) => e.event === 'post').map((e) => e.data.message);
+  check('nothing the bot says is posted for a pass', posts.filter((m) => !m.notice).length === 1);
+  // Owner, 2026-11-10: a round never ends in silence — the admin passing alone is said.
+  check('  and the group is told nobody answered', posts.some((m) => m.notice === 'nobody'), posts.map((m) => m.notice || m.role).join());
 }
 
 section('Stop ends every member\'s turn in a round');
@@ -541,6 +553,102 @@ section('a group says in its own log what changed in it');
   check('  and the list shows the last thing said, never a notice', !(team.groups.find((g) => g.id === made.id)?.last), JSON.stringify(team.groups.find((g) => g.id === made.id)?.last));
   await alice.call('DELETE', `/api/bot-groups/${made.id}`);
   await alice.call('DELETE', `/api/bots/${one.id}`);
+}
+
+section('a round that waits, joins, carries on and is watched (owner, 2026-11-10)');
+{
+  const ping = (await store.listBots(aliceId)).find((b) => b.name === 'Ping');
+  const pong = (await store.listBots(aliceId)).find((b) => b.name === 'Pong');
+  const loop = (await store.listBotGroups(aliceId)).find((g) => g.name === 'Loop');
+  const waiting = (await store.getBotGroup(aliceId, loop.id)).pending;
+  check('the ceiling left its queue for Continue', waiting?.reason === 'ceiling' && waiting.queue.length > 0, JSON.stringify(waiting));
+  const before = asked.length;
+  const pressed = await alice.stream(`/api/bot-groups/${loop.id}/continue`, {});
+  check('Continue carries it on, with a fresh allowance', pressed.events.find((e) => e.event === 'done')?.data?.handoffs > 0 && asked.length > before, JSON.stringify(pressed.events.find((e) => e.event === 'done')?.data));
+  check("  another account cannot press it", (await bob.call('POST', `/api/bot-groups/${loop.id}/continue`, {})).status === 404);
+  const log = (await alice.call('GET', `/api/bot-groups/${loop.id}/chat`)).body;
+  const since = log.messages.at(-1).seq;
+  const nothing = await alice.call('GET', `/api/bot-groups/${loop.id}/live?since=${since}`);
+  check('live: nothing new after the last line', nothing.status === 200 && nothing.body.messages.length === 0 && nothing.body.running === false, nothing.text.slice(0, 200));
+
+  // Another segment holds the group: what the person writes joins it.
+  const runId = crypto.randomUUID();
+  const seq = await store.claimChatRun(aliceId, log.chatId, runId);
+  const joined = await alice.call('POST', `/api/bot-groups/${loop.id}/run`, { text: '@Pong one more', model: 'openai/plain' });
+  check('writing while the group works is taken, not refused', joined.status === 200 && joined.body.joined === true && joined.body.message.text === '@Pong one more', joined.text.slice(0, 200));
+  const seenLive = await alice.call('GET', `/api/bot-groups/${loop.id}/live?since=${since}`);
+  check('  and shows at once to whoever watches', seenLive.body.running === true && seenLive.body.messages.some((m) => m.text === '@Pong one more'), seenLive.text.slice(0, 300));
+  check('  another account cannot watch it', (await bob.call('GET', `/api/bot-groups/${loop.id}/live?since=0`)).status === 404);
+  await store.releaseChatRun(aliceId, log.chatId, runId, seq);
+
+  const changed = await alice.call('PATCH', `/api/bot-groups/${loop.id}/model`, { model: 'openai/other' });
+  check('the chip changed while a group is open is the group\'s model', changed.status === 200 && (await store.getBotGroup(aliceId, loop.id)).model === 'openai/other');
+  check('  a model id is checked', (await alice.call('PATCH', `/api/bot-groups/${loop.id}/model`, { model: 'not a model; drop' })).status === 400);
+
+  await store.setGroupPending(aliceId, loop.id, { queue: [{ botId: ping.id }], handoffs: 0, segments: 1, reason: 'time', owed: {}, working: [], lastSeq: since, at: new Date().toISOString() });
+  await alice.call('POST', `/api/bot-groups/${loop.id}/stop`);
+  check('Stop lets go of what was waiting too', (await store.getBotGroup(aliceId, loop.id)).pending === null);
+  check('  nothing waiting: Continue says so', (await alice.call('POST', `/api/bot-groups/${loop.id}/continue`, {})).status === 409);
+
+  const internal = await fetch(`${base}/api/internal/bot-rounds/continue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: aliceId, groupId: loop.id }) });
+  check('the internal route for the next segment needs the deployment secret', internal.status === 401 || internal.status === 503, String(internal.status));
+  void pong;
+}
+
+section('a bot asks with question cards in its own chat, never in a group (2026-11-10)');
+{
+  const asker = (await alice.call('POST', '/api/bots', { name: 'Asker', role: 'a' })).body.bot;
+  const own = (await alice.call('GET', `/api/bots/${asker.id}/chat`)).body;
+  await alice.call('POST', `/api/chats/${own.chatId}/messages`, { text: 'hello there' });
+  await alice.stream(`/api/chats/${own.chatId}/run`, {});
+  const inOwn = asked.filter((a) => a.who === 'asker').at(-1);
+  check('its own chat offers ask_options: the home chat draws the card', inOwn?.tools.includes('ask_options'), JSON.stringify(inOwn?.tools?.filter((n) => /ask/.test(n))));
+  const room = (await alice.call('POST', '/api/bot-groups', { name: 'Ask Room', members: [asker.id] })).body.group;
+  await alice.stream(`/api/bot-groups/${room.id}/run`, { text: 'anyone?' });
+  const inGroup = asked.filter((a) => a.who === 'asker').at(-1);
+  check('  a group turn does not (nobody is there to press it)', !inGroup?.tools.includes('ask_options'));
+  check('  it has ask_person there instead', inGroup?.tools.includes('ask_person'), JSON.stringify(inGroup?.tools?.filter((n) => /ask/.test(n))));
+}
+
+section('a turn that is stopped takes back what it saved (owner, 2026-11-10)');
+{
+  const saver = (await alice.call('POST', '/api/bots', { name: 'Saver', role: 's' })).body.bot;
+  const own = (await alice.call('GET', `/api/bots/${saver.id}/chat`)).body;
+  await alice.call('POST', `/api/chats/${own.chatId}/messages`, { text: 'note something then keep going' });
+  const running = alice.stream(`/api/chats/${own.chatId}/run`, {});
+  const from = Date.now();
+  while (!(await store.listBotMemory(aliceId, { botId: saver.id })).length && Date.now() - from < 8000) await new Promise((r) => setTimeout(r, 50));
+  check('it saved while it worked', (await store.listBotMemory(aliceId, { botId: saver.id })).length === 1);
+  await new Promise((r) => setTimeout(r, 300));
+  await alice.call('POST', `/api/chats/${own.chatId}/stop`);
+  await running;
+  check('  and once stopped, that save is taken back', (await store.listBotMemory(aliceId, { botId: saver.id })).length === 0, JSON.stringify(await store.listBotMemory(aliceId, { botId: saver.id })));
+}
+
+section('reset empties a conversation and keeps the memory (owner, 2026-11-10)');
+{
+  const writer = (await alice.call('POST', '/api/bots', { name: 'Resetter', role: 'r' })).body.bot;
+  const own = (await alice.call('GET', `/api/bots/${writer.id}/chat`)).body;
+  await alice.call('POST', `/api/chats/${own.chatId}/messages`, { text: 'a line to reset' });
+  await alice.call('POST', `/api/bots/${writer.id}/memory`, { text: 'Kept across a reset' });
+  check('another account cannot reset it', (await bob.call('POST', `/api/bots/${writer.id}/reset`)).status === 404);
+  const done = await alice.call('POST', `/api/bots/${writer.id}/reset`);
+  const after = (await alice.call('GET', `/api/bots/${writer.id}/chat`)).body;
+  check("a bot's chat is emptied", done.status === 200 && after.messages.length === 0 && after.chatId !== own.chatId, done.text);
+  check('  its memory kept', (await alice.call('GET', `/api/bots/${writer.id}/memory`)).body.entries.some((e) => e.text === 'Kept across a reset'));
+
+  const blog = (await alice.call('POST', '/api/bot-groups', { name: 'Reset Room', members: [writer.id] })).body.group;
+  await alice.call('POST', `/api/bot-groups/${blog.id}/memory`, { text: 'Posts go out on Fridays' });
+  const log = (await alice.call('GET', `/api/bot-groups/${blog.id}/chat`)).body;
+  check('the group has lines to lose', log.messages.length > 0, String(log.messages.length));
+  const runId = crypto.randomUUID();
+  const seq = await store.claimChatRun(aliceId, log.chatId, runId);
+  check('a group at work is not reset under its feet', (await alice.call('POST', `/api/bot-groups/${blog.id}/reset`)).status === 409);
+  await store.releaseChatRun(aliceId, log.chatId, runId, seq);
+  const reset = await alice.call('POST', `/api/bot-groups/${blog.id}/reset`);
+  const empty = (await alice.call('GET', `/api/bot-groups/${blog.id}/chat`)).body;
+  check("a group's log is emptied", reset.status === 200 && empty.messages.length === 0, reset.text);
+  check('  its memory kept', (await alice.call('GET', `/api/bot-groups/${blog.id}/memory`)).body.entries.some((e) => /Fridays/.test(e.text)));
 }
 
 await new Promise((r) => server.close(r));

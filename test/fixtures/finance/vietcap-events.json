@@ -1,0 +1,54 @@
+{
+  "status": 200,
+  "successful": true,
+  "data": {
+    "content": [
+      {
+        "ticker": "FPT",
+        "eventCode": "ISS",
+        "eventTitleVi": "Phát hành cổ phiếu - Cổ phiếu thưởng tỉ lệ 10.0%",
+        "eventTitleEn": "Share Issue - Bonus Issue ratio 10.0%",
+        "publicDate": "2026-09-16T00:00:00",
+        "recordDate": "2026-09-22T00:00:00",
+        "exrightDate": "2026-09-21T00:00:00",
+        "exerciseRatio": 0.1,
+        "category": "DIVIDEND"
+      },
+      {
+        "ticker": "FPT",
+        "eventCode": "ISS",
+        "eventTitleVi": "Phát hành cổ phiếu - Phát hành cho CBCNV tỉ lệ 0.1%",
+        "eventTitleEn": "Share Issue - ESOP ratio 0.1%",
+        "publicDate": "2026-06-29T00:00:00",
+        "recordDate": "2026-06-24T00:00:00",
+        "exrightDate": "2026-06-24T00:00:00",
+        "exerciseRatio": 0.00135,
+        "category": "DIVIDEND"
+      },
+      {
+        "ticker": "FPT",
+        "eventCode": "ISS",
+        "eventTitleVi": "Phát hành cổ phiếu - Phát hành cho CBCNV tỉ lệ 0.5%",
+        "eventTitleEn": "Share Issue - ESOP ratio 0.5%",
+        "publicDate": "2026-06-29T00:00:00",
+        "recordDate": "2026-06-24T00:00:00",
+        "exrightDate": "2026-06-24T00:00:00",
+        "exerciseRatio": 0.00499,
+        "category": "DIVIDEND"
+      },
+      {
+        "ticker": "FPT",
+        "eventCode": "DIV",
+        "eventTitleVi": "Trả cổ tức bằng tiền mặt - Đợt 2 2025 - 1,000 VND",
+        "eventTitleEn": "Cash Dividend - Interim 2 2025 - 1,000 VND",
+        "publicDate": "2026-05-22T00:00:00",
+        "recordDate": "2026-05-29T00:00:00",
+        "exrightDate": "2026-05-28T00:00:00",
+        "payoutDate": "2026-06-10T00:00:00",
+        "valuePerShare": 1000,
+        "exerciseRatio": 0.1,
+        "category": "DIVIDEND"
+      }
+    ]
+  }
+}

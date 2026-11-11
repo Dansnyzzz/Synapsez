@@ -1,0 +1,495 @@
+{
+  "status": 200,
+  "successful": true,
+  "data": {
+    "INCOME_STATEMENT": [
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Sales",
+        "titleVi": "Doanh thu bán hàng và cung cấp dịch vụ",
+        "field": "isa1"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Sales deductions",
+        "titleVi": "Các khoản giảm trừ doanh thu",
+        "field": "isa2"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Net sales",
+        "titleVi": "Doanh thu thuần",
+        "field": "isa3"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Cost of sales",
+        "titleVi": "Giá vốn hàng bán",
+        "field": "isa4"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Gross Profit",
+        "titleVi": "Lợi nhuận gộp",
+        "field": "isa5"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Financial income",
+        "titleVi": "Doanh thu hoạt động tài chính",
+        "field": "isa6"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Financial expenses",
+        "titleVi": "Chi phí tài chính",
+        "field": "isa7"
+      },
+      {
+        "level": 2,
+        "parent": "ISA7",
+        "titleEn": "Interest expenses",
+        "titleVi": "Chi phí lãi vay",
+        "field": "isa8"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Gain/(loss) from joint ventures (from 2015)",
+        "titleVi": "Lãi/(lỗ) từ công ty liên doanh (từ năm 2015)",
+        "field": "isa102"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Selling expenses",
+        "titleVi": "Chi phí bán hàng",
+        "field": "isa9"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "General and admin expenses",
+        "titleVi": "Chi phí quản lý doanh nghiệp",
+        "field": "isa10"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Operating profit/(loss)",
+        "titleVi": "Lãi/(lỗ) từ hoạt động kinh doanh",
+        "field": "isa11"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Net other income/(expenses)",
+        "titleVi": "Thu nhập khác, ròng",
+        "field": "isa14"
+      },
+      {
+        "level": 2,
+        "parent": "ISA14",
+        "titleEn": "Other incomes",
+        "titleVi": "Thu nhập khác",
+        "field": "isa12"
+      },
+      {
+        "level": 2,
+        "parent": "ISA14",
+        "titleEn": "Other expenses",
+        "titleVi": "Chi phí khác",
+        "field": "isa13"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Income from investments in other entities",
+        "titleVi": "Lãi/(lỗ) từ công ty liên doanh",
+        "field": "isa15"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Net accounting profit/(loss) before tax",
+        "titleVi": "Lãi/(lỗ) trước thuế",
+        "field": "isa16"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Corporate income tax expenses",
+        "titleVi": "Chi phí thuế thu nhập doanh nghiệp",
+        "field": "isa19"
+      },
+      {
+        "level": 2,
+        "parent": "ISA19",
+        "titleEn": "Business income tax - current",
+        "titleVi": "Thuế thu nhập doanh nghiệp - hiện thời",
+        "field": "isa17"
+      },
+      {
+        "level": 2,
+        "parent": "ISA19",
+        "titleEn": "Business income tax - deferred",
+        "titleVi": "Thuế thu nhập doanh nghiệp - hoãn lại",
+        "field": "isa18"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Net profit/(loss) after tax",
+        "titleVi": "Lãi/(lỗ) thuần sau thuế",
+        "field": "isa20"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Minority interests",
+        "titleVi": "Lợi ích của cổ đông thiểu số",
+        "field": "isa21"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Attributable to parent company",
+        "titleVi": "Lợi nhuận của Cổ đông của Công ty mẹ",
+        "field": "isa22"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "EPS basic (VND)",
+        "titleVi": "Lãi cơ bản trên cổ phiếu (VND)",
+        "field": "isa23"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "EPS diluted (VND)",
+        "titleVi": "Lãi trên cổ phiếu pha loãng (VND)",
+        "field": "isa24"
+      }
+    ],
+    "BALANCE_SHEET": [
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "CURRENT ASSETS",
+        "titleVi": "TÀI SẢN NGẮN HẠN",
+        "field": "bsa1"
+      },
+      {
+        "level": 1,
+        "parent": "BSA1",
+        "titleEn": "Cash and cash equivalents",
+        "titleVi": "Tiền và tương đương tiền",
+        "field": "bsa2"
+      },
+      {
+        "level": 1,
+        "parent": "BSA1",
+        "titleEn": "Short-term investments",
+        "titleVi": "Đầu tư ngắn hạn",
+        "field": "bsa5"
+      },
+      {
+        "level": 1,
+        "parent": "BSA1",
+        "titleEn": "Accounts receivable",
+        "titleVi": "Các khoản phải thu",
+        "field": "bsa8"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Inventories, Net",
+        "titleVi": "Hàng tồn kho, ròng",
+        "field": "bsa15"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Other current assets",
+        "titleVi": "Tài sản lưu động khác",
+        "field": "bsa18"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "LONG-TERM ASSETS",
+        "titleVi": "TÀI SẢN DÀI HẠN",
+        "field": "bsa23"
+      },
+      {
+        "level": 1,
+        "parent": "BSA23",
+        "titleEn": "Long-term trade receivables",
+        "titleVi": "Phải thu dài hạn",
+        "field": "bsa24"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Fixed assets",
+        "titleVi": "Tài sản cố định",
+        "field": "bsa29"
+      },
+      {
+        "level": 1,
+        "parent": "BSA29",
+        "titleEn": "Tangible fixed assets",
+        "titleVi": "GTCL TSCĐ hữu hình",
+        "field": "bsa30"
+      },
+      {
+        "level": 1,
+        "parent": "BSA29",
+        "titleEn": "Finance lease assets",
+        "titleVi": "GTCL tài sản thuê tài chính",
+        "field": "bsa33"
+      },
+      {
+        "level": 1,
+        "parent": "BSA29",
+        "titleEn": "Intangible fixed assets",
+        "titleVi": "GTCL tài sản cố định vô hình",
+        "field": "bsa36"
+      },
+      {
+        "level": 1,
+        "parent": "BSA29",
+        "titleEn": "Construction in progress (before 2015)",
+        "titleVi": "Xây dựng cơ bản đang dang dở (trước 2015)",
+        "field": "bsa39"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Investment properties",
+        "titleVi": "Giá trị ròng tài sản đầu tư",
+        "field": "bsa40"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Long-term incomplete assets",
+        "titleVi": "Tài sản dở dang dài hạn",
+        "field": "bsa163"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Long-term investments",
+        "titleVi": "Đầu tư dài hạn",
+        "field": "bsa43"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Other long-term assets",
+        "titleVi": "Tài sản dài hạn khác",
+        "field": "bsa49"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Total Assets",
+        "titleVi": "TỔNG CỘNG TÀI SẢN",
+        "field": "bsa53"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Liabilities",
+        "titleVi": "NỢ PHẢI TRẢ",
+        "field": "bsa54"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Current liabilities",
+        "titleVi": "Nợ ngắn hạn",
+        "field": "bsa55"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Long-term liabilities",
+        "titleVi": "Nợ dài hạn",
+        "field": "bsa67"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Owner's Equity",
+        "titleVi": "Vốn chủ sở hữu",
+        "field": "bsa78"
+      },
+      {
+        "level": 1,
+        "parent": "BSA78",
+        "titleEn": "Capital and reserves",
+        "titleVi": "Vốn và các quỹ",
+        "field": "bsa79"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Budget sources and other funds",
+        "titleVi": "Vốn Ngân sách nhà nước và quỹ khác",
+        "field": "bsa92"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Bonus and welfare funds (Before 2010)",
+        "titleVi": "Quỹ khen thưởng, phúc lợi (trước 2010)",
+        "field": "bsa93"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Minority interests (Before 2015)",
+        "titleVi": "Lợi ích của cổ đông thiểu số",
+        "field": "bsa95"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Total resource",
+        "titleVi": "Tổng cộng nguồn vốn",
+        "field": "bsa96"
+      }
+    ],
+    "CASH_FLOW": [
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Net profit/(loss) before tax",
+        "titleVi": "Lợi nhuận/(lỗ) trước thuế",
+        "field": "cfa1"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Depreciation and amortization",
+        "titleVi": "Khấu hao TSCĐ và BĐSĐT",
+        "field": "cfa2"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Amortization of goodwill",
+        "titleVi": "Phân bổ lợi thế thương mại",
+        "field": "cfa103"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Provisions",
+        "titleVi": "Chi phí dự phòng",
+        "field": "cfa3"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Unrealized foreign exchange gain/(loss)",
+        "titleVi": "Lãi/lỗ chênh lệch tỷ giá hối đoái do đánh giá lại các khoản mục tiền tệ có gốc ngoại tệ",
+        "field": "cfa4"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Profit/loss from liquidating fixed assets",
+        "titleVi": "Lãi/(lỗ) từ thanh lý tài sản cố định",
+        "field": "cfa5"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Profit/loss from investing activities",
+        "titleVi": "(Lãi)/lỗ từ hoạt động đầu tư",
+        "field": "cfa6"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Interest expense",
+        "titleVi": "Chi phí lãi vay",
+        "field": "cfa7"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Interest income and dividend",
+        "titleVi": "Thu lãi và cổ tức",
+        "field": "cfa8"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Other adjustments",
+        "titleVi": "Các khoản điều chỉnh khác",
+        "field": "cfa104"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Net cash inflows/(outflows) from operating activities",
+        "titleVi": "Lưu chuyển tiền tệ ròng từ các hoạt động sản xuất kinh doanh",
+        "field": "cfa18"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Net cash inflows/(outflows) from investing activities",
+        "titleVi": "Lưu chuyển tiền thuần từ hoạt động đầu tư",
+        "field": "cfa26"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Net cash inflows/(outflows) from financing activities",
+        "titleVi": "Lưu chuyển tiền thuần từ hoạt động tài chính",
+        "field": "cfa34"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Net increase in cash and cash equivalents",
+        "titleVi": "Lưu chuyển tiền thuần trong kỳ",
+        "field": "cfa35"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Cash and cash equivalents at the beginning of period",
+        "titleVi": "Tiền và tương đương tiền đầu kỳ",
+        "field": "cfa36"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Effect of foreign exchange differences",
+        "titleVi": "Ảnh hưởng của thay đổi tỷ giá hối đoái quy đổi ngoại tệ",
+        "field": "cfa37"
+      },
+      {
+        "level": 1,
+        "parent": null,
+        "titleEn": "Cash and cash equivalents at the end of period",
+        "titleVi": "Tiền và tương đương tiền cuối kỳ",
+        "field": "cfa38"
+      }
+    ]
+  }
+}

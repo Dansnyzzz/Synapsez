@@ -996,7 +996,7 @@ section('every setting the server and worker read is in the README (CODE-047)');
   // document them, and which the server sets itself) — not things a person sets.
   const NOT_SETTINGS = new Set([
     'COMPUTERNAME', 'HOSTNAME', 'SHELL', 'DISPLAY', 'WAYLAND_DISPLAY', 'XDG_DATA_HOME', 'NODE_ENV',
-    'VERCEL_OIDC_TOKEN', 'VERCEL_PROJECT_PRODUCTION_URL', 'VERCEL_OBSERVABILITY_CLIENT_CONFIG',
+    'VERCEL_OIDC_TOKEN', 'VERCEL_PROJECT_PRODUCTION_URL', 'VERCEL_URL', 'VERCEL_OBSERVABILITY_CLIENT_CONFIG',
     'CHROME_PATH', 'SYNZ_KEY', 'SYNZ_KEY_FILE', 'SYNZ_PROFILE', 'SYNZ_LOCALE', 'SYNZ_MCP_KEY', 'SYNZ_MCP_KEY_FILE', 'SYNZ_WORKDIR', 'SYNZ_RUN_UID',
     'SYNZ_RUN_GID', 'SYNZ_RUN_HOME', 'SYNZ_PYTHON', 'SYNZ_KERNEL_PATH', 'SYNZ_TRACKERS', 'HOME', 'PATH', 'TMPDIR',
     // Set by the cloud browser service for the Python session: where the template's browsers are.
@@ -2464,7 +2464,7 @@ section('free tiers: one allowance per service for the whole deployment, a fair 
     check('FREE_TIER_ONLY=false: counted, not stopped', (await tiers.allowance('exa')).left === Infinity);
     delete process.env.FREE_TIER_ONLY;
     const report = await tiers.freeTierReport();
-    check("the administrators' view: each service, its use and ceiling, and when it starts again", report.enforced && report.services.length === 6 && report.services.find((s) => s.service === 'exa').used > 0 && report.userDaily === 30, JSON.stringify(report.services[0]));
+    check("the administrators' view: each service, its use and ceiling, and when it starts again", report.enforced && report.services.length === tiers.FREE_SERVICES.length && report.services.length === 14 && report.services.find((s) => s.service === 'exa').used > 0 && report.userDaily === 30, JSON.stringify(report.services[0]));
 
     // Exa's categories, its sense of where someone is, and the same said to the others.
     web({ 'api.exa.ai': exaAnswer });

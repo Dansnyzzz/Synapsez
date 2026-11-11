@@ -45,6 +45,8 @@ export async function getRecommended() {
     free: named(stored?.free, DEFAULT_RECOMMENDED.free),
     freeSecond: named(stored?.freeSecond, DEFAULT_RECOMMENDED.freeSecond),
     paid: named(stored?.paid, DEFAULT_RECOMMENDED.paid),
+    // When the choice last changed: what everyone is told about once (suggestionNotice.js).
+    version: named(stored?.version, null),
   };
 }
 
@@ -82,8 +84,12 @@ export async function setRecommended({ free, freeSecond, paid }) {
   }
   // The same model twice is one suggestion: a second choice that adds nothing is none.
   const value = { free: freeId, freeSecond: secondId === freeId ? null : secondId, paid: paidId };
-  await getStore().setSetting(SETTING, value);
-  return value;
+  // A new version only when the choice changed: saving the same three again tells nobody anything.
+  const before = await getStore().getSetting(SETTING).catch(() => null);
+  const same = !!before && before.free === value.free && (before.freeSecond || null) === value.freeSecond && (before.paid || null) === value.paid;
+  const version = same && before.version ? before.version : new Date().toISOString();
+  await getStore().setSetting(SETTING, { ...value, version });
+  return { ...value, version };
 }
 
 /** Whether this account's keys can run a model: Auto needs OpenRouter; anything else, its own provider. */

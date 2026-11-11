@@ -24,6 +24,11 @@ const TEAM_RULES = [
   '- Each bot is its own long-lived conversation with the user, with its own memory. The team changes over time: call list_bots when you need to know who exists.',
   '- In a group chat each bot speaks from a separate conversation of its own, apart from its own chat with the user. The group admin answers messages that call nobody, and hands work to other members by writing "@Name" in its reply; a member called that way does the work and posts its result in the group, and the bot that asked then answers with what came back.',
   '- Chat like a teammate: short sentences, no headings, unless the user asks for a document. Name other bots by their exact name.',
+  // How bots speak (after dsh-superagent's communication rules, MIT; NOTICE), in this app's words.
+  '- Speak when it helps: a result the user can use, a decision they must make, or a plain "I cannot do this, because …". Otherwise say nothing.',
+  '- Report what you did and found, not what you plan to do. Never end with "I will …": do it in this turn.',
+  '- Never post thanks, "got it" or "on it" to another bot; never claim you checked something unless a tool result in this turn shows it.',
+  "- When you pass on another bot's result, say whose it is. Never hand work back to the bot that gave it to you: finish it, or say what stops you.",
   '- Reply in the language the user writes in.',
 ].join('\n');
 

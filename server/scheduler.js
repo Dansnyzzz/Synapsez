@@ -586,6 +586,8 @@ async function runTask(task) {
       id: crypto.randomUUID(),
       role: 'user',
       text: task.prompt,
+      // A task's prompt, not the person typing: some tools run only for the person (server/agent.js).
+      origin: 'task',
     });
     // Known from the start, so the conversation shows as running in the sidebar.
     await store.markTaskChat(task.id, chatId);
@@ -808,6 +810,8 @@ export async function sweep() {
     // whole month of them before every single turn.
     store.pruneUsageEvents(),
     store.pruneOutcomes(),
+    // Market data expired over a day ago, and bars kept for good past 400 days (schema 45).
+    store.financeSweep(),
     // An event's theme came out: tell whoever has not been told, a batch or two a sweep (owner, 2026-11-08).
     sweepEventMail({ store }),
     // A task whose invocation was killed mid-run is stopped for a person rather
@@ -818,6 +822,8 @@ export async function sweep() {
     store.sweepIncognito(INCOGNITO_TTL_MS),
     // The security record keeps half a year, then lets go.
     store.pruneAudit(AUDIT_KEEP_DAYS),
+    // A bot's forgotten entries, once Undo can no longer bring them back (owner, 2026-11-10).
+    store.pruneForgottenMemory(FORGOTTEN_KEEP_DAYS),
     // Sign-ins a week after they could last be used — expired or signed out.
     store.pruneSessions(),
     // After retention has run, so a conversation it deletes takes its copy in
@@ -830,6 +836,8 @@ export async function sweep() {
 export const INCOGNITO_TTL_MS = 24 * 3600_000;
 /** How many days of the security record are kept. */
 export const AUDIT_KEEP_DAYS = 180;
+/** How long a bot's forgotten memory entry waits for Undo. */
+export const FORGOTTEN_KEEP_DAYS = 30;
 
 /**
  * Each account's own retention period, applied at most hourly per instance.

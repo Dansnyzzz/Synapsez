@@ -5797,6 +5797,14 @@ section('commands and files are one card, titled by what is happening now');
     b3.finish();
     out.oneFileNamed = head([...host.querySelectorAll('.steps')].pop()).title;
 
+    // Owner, 2026-11-10: "Đã ghi nhớ" — "Saved to memory" — in red over a refusal. A step
+    // that failed says so, on a card and on a row alike.
+    const b4 = block();
+    b4.startTool({ id: 'w8', name: 'remember', input: { text: 'A long note' } }).complete({ content: 'One sentence here is longer than 300 characters.', isError: true, ms: 619 });
+    b4.finish();
+    const failedCard = [...host.querySelectorAll('.block.tool')].pop();
+    out.failedCard = { name: failedCard?.querySelector('.tool__name')?.textContent || '', error: !!failedCard?.classList.contains('tool--error') };
+
     host.remove();
     return out;
   });
@@ -5820,6 +5828,8 @@ section('commands and files are one card, titled by what is happening now');
   check('finished, it says what was done, the failure with its kind', /^(Ran 2 commands \(1 failed\), read 2 files|Đã chạy 2 lệnh \(1 lỗi\), đọc 2 tệp)$/.test(out.done.title) && out.done.detail === '', JSON.stringify(out.done));
   check('  and counts nothing apart from the words', out.tally === '', out.tally);
   check('each row is named the same way', out.rows[0] === 'Loading the survey data' && /^(Read|Đọc)$/.test(out.rows[1]), out.rows.join(' | '));
+  check('  a row that failed says it failed, not what it would have done', /^(The command failed|Lệnh không chạy được)$/.test(out.rows[2]), out.rows.join(' | '));
+  check('a card that failed says so too: "Couldn\'t save to memory", never "Saved to memory"', out.failedCard.error && /^(Couldn't save to memory|Không ghi nhớ được)$/.test(out.failedCard.name), JSON.stringify(out.failedCard));
   check('  a file row names the whole file, with its path on hover', out.rowDetails[1] === 'bibliometrics_analysis_final_v2.py' && out.rowTip.startsWith('D:/research/'), `${out.rowDetails[1]} | ${out.rowTip}`);
   check("a row opens, like Claude Code's, on the code it ran and what it printed", out.rowIsDisclosure && /import pandas as pd/.test(out.rowCode) && out.rowOutput === 'loaded 120 rows', JSON.stringify({ code: out.rowCode, output: out.rowOutput }));
   check('  and a failed one is already open', out.failedRowOpen === true);

@@ -1,0 +1,60 @@
+[
+  {
+    "page": 1,
+    "pages": 1,
+    "per_page": 50,
+    "total": 3,
+    "sourceid": "2",
+    "lastupdated": "2026-10-08"
+  },
+  [
+    {
+      "indicator": {
+        "id": "NY.GDP.MKTP.KD.ZG",
+        "value": "GDP growth (annual %)"
+      },
+      "country": {
+        "id": "VN",
+        "value": "Viet Nam"
+      },
+      "countryiso3code": "VNM",
+      "date": "2025",
+      "value": 8.01882998978245,
+      "unit": "",
+      "obs_status": "",
+      "decimal": 1
+    },
+    {
+      "indicator": {
+        "id": "NY.GDP.MKTP.KD.ZG",
+        "value": "GDP growth (annual %)"
+      },
+      "country": {
+        "id": "VN",
+        "value": "Viet Nam"
+      },
+      "countryiso3code": "VNM",
+      "date": "2024",
+      "value": 7.03955197123018,
+      "unit": "",
+      "obs_status": "",
+      "decimal": 1
+    },
+    {
+      "indicator": {
+        "id": "NY.GDP.MKTP.KD.ZG",
+        "value": "GDP growth (annual %)"
+      },
+      "country": {
+        "id": "VN",
+        "value": "Viet Nam"
+      },
+      "countryiso3code": "VNM",
+      "date": "2023",
+      "value": 4.97865959483225,
+      "unit": "",
+      "obs_status": "",
+      "decimal": 1
+    }
+  ]
+]
