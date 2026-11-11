@@ -70,11 +70,40 @@ export const SOURCES = Object.keys(LABEL);
 const sourceOf = (name) => String(name || '').split(':')[0];
 export const sourceLabel = (name) => LABEL[sourceOf(name)] || String(name);
 
-/** False when `FIN_SOURCE_<NAME>=off` (or 0 / false / no) is set for it. */
-export function enabled(source) {
-  const name = sourceOf(source).toUpperCase();
-  return !/^(off|0|false|no|disabled)$/i.test(String(process.env[`FIN_SOURCE_${name}`] || '').trim());
+/**
+ * Sources that turn away the servers this app runs on, as measured from Vercel Sandboxes
+ * on 2026-11-11 (docs/research/2026-11-10-finance-probe-iad1.md): SJC sits behind a
+ * Cloudflare bot check that refuses every datacenter, in iad1 and sin1 alike, and is not
+ * to be got round; Vietcap answers a bare 400 to US addresses and 200 from Singapore. On
+ * such a server they are off unless `FIN_SOURCE_<NAME>=on` asks for them anyway — the
+ * owner's choice, 2026-11-11. Elsewhere (a machine in Vietnam) they are on.
+ */
+const REFUSES_THIS_SERVER = Object.freeze({
+  sjc: () => !!process.env.VERCEL,
+  vietcap: () => !!process.env.VERCEL && !/^(sin|hkg|hnd|kix|icn|bom)\d/i.test(String(process.env.VERCEL_REGION || '')),
+});
+
+/** What `FIN_SOURCE_<NAME>` says: 'off', 'on', or nothing. */
+function switchOf(name) {
+  const said = String(process.env[`FIN_SOURCE_${name.toUpperCase()}`] || '').trim();
+  if (/^(off|0|false|no|disabled)$/i.test(said)) return 'off';
+  if (/^(on|1|true|yes|enabled)$/i.test(said)) return 'on';
+  return '';
 }
+
+/**
+ * Whether a source may be asked here: `FIN_SOURCE_<NAME>` off or on decides; without it,
+ * every source is on except one that refuses this server (above).
+ */
+export function enabled(source) {
+  const name = sourceOf(source);
+  const said = switchOf(name);
+  if (said) return said === 'on';
+  return !REFUSES_THIS_SERVER[name]?.();
+}
+
+/** Sources whose bare 400 is a refusal of the asker, not a mistake in the request (Vietcap, outside Asia). */
+const REFUSES_WITH_400 = new Set(['vietcap']);
 
 const PACE_MS = { vndirect: 1000, kbs: 1000, vietcap: 1000, yahoo: 500, sec: 200, default: 0 };
 const ASIDE_MS = { yahoo: 15 * 60_000, vndirect: 60 * 60_000, kbs: 60 * 60_000, vietcap: 60 * 60_000, default: 10 * 60_000 };
@@ -146,7 +175,10 @@ const minutes = (ms) => Math.round(ms / 60_000);
 export async function getResponse(source, url, { headers = {}, timeoutMs = 8000, fetchImpl, signal = null, accept = 'application/json', okOnly = true } = {}) {
   const name = sourceOf(source);
   const label = sourceLabel(name);
-  if (!enabled(name)) throw new SourceError(name, `${label} is switched off on this deployment (FIN_SOURCE_${name.toUpperCase()}=off).`);
+  if (!enabled(name)) {
+    if (switchOf(name) === 'off') throw new SourceError(name, `${label} is switched off on this deployment (FIN_SOURCE_${name.toUpperCase()}=off).`);
+    throw new SourceError(name, `${label} turns away servers like this one, so it is not asked here (FIN_SOURCE_${name.toUpperCase()}=on asks anyway).`);
+  }
   const aside = standingAside(name);
   if (aside) throw new SourceError(name, `${label} refused a request recently, so it is left alone for about ${Math.max(1, minutes(aside - Date.now()))} more minutes.`, { standAside: true });
   const ua = userAgent(name);
@@ -171,7 +203,9 @@ export async function getResponse(source, url, { headers = {}, timeoutMs = 8000,
     const timedOut = limit.aborted || err?.name === 'TimeoutError';
     throw new SourceError(name, timedOut ? `${label} did not answer within ${Math.round(timeoutMs / 1000)} s.` : `${label} could not be reached (${err?.cause?.code || err?.name || 'network error'}).`);
   }
-  if (res.status === 403 || res.status === 429) {
+  // A bare 400 with next to nothing in it, from a source known to answer refusals that way.
+  const bare400 = res.status === 400 && REFUSES_WITH_400.has(name) && (await res.clone().text().catch(() => '')).trim().length <= 8;
+  if (res.status === 403 || res.status === 429 || bare400) {
     const ms = ASIDE_MS[name] ?? ASIDE_MS.default;
     asideUntil.set(name, Date.now() + ms);
     throw new SourceError(name, `${label} refused the request (HTTP ${res.status}), so it is left alone for ${minutes(ms)} minutes.`, { status: res.status, standAside: true });
