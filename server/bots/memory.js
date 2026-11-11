@@ -139,7 +139,7 @@ export async function remember(userId, scope, text, source = 'bot', { turnId = n
  */
 export async function forget(userId, scope, match) {
   const hit = await findOne(userId, scope, match);
-  // Soft: Undo brings it back for thirty days, then the sweep lets it go (scheduler.js).
+  // Soft: Undo brings it back for ten minutes, then it is deleted for good (FORGOTTEN_KEEP_MS in the store).
   await getStore().softDeleteBotMemory(userId, hit.id, scope);
   return hit;
 }

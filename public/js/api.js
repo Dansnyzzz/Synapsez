@@ -398,6 +398,7 @@ export const api = {
   archived: () => request('GET', '/api/chats/archived'),
   /** Whether scheduled work runs with the web closed — see the route. */
   heartbeat: () => request('GET', '/api/heartbeat'),
+  /** `removed`: the oldest conversations deleted to keep the account to its limit (server/chatLimit.js). */
   createChat: (model, projectId, incognito = false) =>
     request('POST', '/api/chats', { model, projectId, ...(incognito ? { incognito: true } : {}) }),
   /**

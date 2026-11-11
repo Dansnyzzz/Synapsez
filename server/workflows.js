@@ -7,6 +7,7 @@ import { redactSecrets } from './redact.js';
 import { clientError } from './util/clientError.js';
 import { TOOLS_BY_NAME } from './tools/definitions.js';
 import { abortHere, holdRun, watchStopped } from './liveRuns.js';
+import { keepNewest } from './chatLimit.js';
 
 /**
  * Work with several steps that depend on each other, run unattended.
@@ -309,6 +310,7 @@ export async function startRun(userId, workflow, { chatTitle } = {}) {
       // instructions and sources are what the steps answer from.
       projectId,
     });
+    await keepNewest(userId, store);
   }
 
   return store.createWorkflowRun(userId, {
@@ -446,6 +448,7 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
       model: prefs.defaultModel,
       projectId: await projectOf(user.id, workflow),
     });
+    await keepNewest(user, store);
     const earlier = state
       .slice(0, cursor)
       .map((s, i) => (s.summary ? `Step ${i + 1}: ${s.summary}` : ''))

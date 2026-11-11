@@ -820,15 +820,19 @@ async function missingFileNote(machine, path, signal) {
   return `${path} was not handed over: it does not exist on the computer, so the command above did not make it there.${listing ? `\nIn ${folder}:\n${String(listing).trim()}` : ''}`;
 }
 
+/** What a command leaves for the run after it: its result written, and the next step begun. */
+const AFTER_COMMAND_MS = 25_000;
+
 /**
  * Run one command, having written any files first, and hand back what it said
  * — plus, when asked, one file it made, saved into the conversation. Python for
  * the conversation's live session runs after the command, in the same folder.
  *
  * @param {{ command?: string, python?: string, python_reset?: boolean, files?: {path: string, content: string}[], download?: string, keep?: boolean, replaces?: string, bring?: string[], expose_port?: number, terminal?: any, checkpoint?: any, timeout_seconds?: number, as_root?: boolean }} input
- * @param {{ userId?: string, chatId?: string, signal?: AbortSignal, onProgress?: (text: string) => void }} [context]
+ * @param {{ userId?: string, chatId?: string, signal?: AbortSignal, onProgress?: (text: string) => void, deadline?: number }} [context]
+ *   `deadline`: when this function's run ends — a command stops before it (owner, 2026-11-11)
  */
-export async function runInSandbox(input, { userId, chatId, signal, onProgress } = {}) {
+export async function runInSandbox(input, { userId, chatId, signal, onProgress, deadline = Infinity } = {}) {
   const command = String(input?.command || '').trim();
   const python = typeof input?.python === 'string' ? input.python : '';
   const resetPython = input?.python_reset === true;
@@ -854,7 +858,18 @@ export async function runInSandbox(input, { userId, chatId, signal, onProgress }
   });
 
   await chargeCloud(String(userId));
-  const seconds = Math.min(300, Math.max(5, Number(input?.timeout_seconds) || COMMAND_MS / 1000));
+  /*
+   * Within what this run has left (owner, 2026-11-11: a script cut off by the function's
+   * own limit left a step "started" and never finished, which a resume will not repeat).
+   * Stopped in time, it comes back with what it printed and says why.
+   */
+  const room = Number.isFinite(deadline) ? Math.floor((deadline - Date.now() - AFTER_COMMAND_MS) / 1000) : Infinity;
+  if (command && room < 5) {
+    return { content: 'Not started: this run has no time left for a command. Run it again and it starts at the beginning of the next run.' };
+  }
+  const asked = Math.min(300, Math.max(5, Number(input?.timeout_seconds) || COMMAND_MS / 1000));
+  const seconds = Math.min(asked, room);
+  const capped = seconds < asked;
   // Python alone goes straight to the machine's helper; the control API — a
   // shared, rate-limited thing — is only asked for what needs it.
   let machine = writes.length || command || download || bring.length || port || terminal || checkpoint ? await machineForUser(String(userId), { signal }) : null;
@@ -891,7 +906,10 @@ export async function runInSandbox(input, { userId, chatId, signal, onProgress }
       ...(onProgress ? { onOutput: onProgress } : {}),
     });
     const [out, err] = await Promise.all([done.stdout(), done.stderr()]);
-    const meaning = exitMeaning(done.exitCode, machine.memMb);
+    // Stopped by this run's end rather than its own limit: said so, so it is run again, not given up.
+    const meaning = capped && done.exitCode === 124
+      ? `(stopped after ${seconds}s, where this run ends — not an error in the command. What it printed so far is above; run it again to finish it, in the background if it is long.)`
+      : exitMeaning(done.exitCode, machine.memMb);
     report.push(
       `$ ${command.length > 300 ? `${command.slice(0, 300)}…` : command}`,
       `exit ${done.exitCode} · ${((Date.now() - started) / 1000).toFixed(1)}s`,

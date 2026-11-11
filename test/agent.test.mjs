@@ -1589,6 +1589,17 @@ section('a resume does not repeat what may already have happened');
 
   const partly = resumableCalls(calls, ['c1']);
   check('only the calls that started are held back', partly.skipped.length === 1 && partly.run.length === 3);
+
+  // Owner, 2026-11-11: an update_file cut off mid-way was refused on resume ("Viết lại" in red).
+  const edits = [
+    { id: 'e1', name: 'update_file', input: { file_id: 'f', edits: [{ find: '13 giả thuyết', replace: '14 giả thuyết' }] } },
+    { id: 'e2', name: 'update_file', input: { file_id: 'f', edits: [{ find: '13', replace: '133' }] } },
+    { id: 'e3', name: 'update_file', input: { file_id: 'f', cells: [{ ref: 'A1', value: 1 }] } },
+  ];
+  const resumed = resumableCalls(edits, ['e1', 'e2', 'e3']);
+  check('a started find-and-replace runs again — what it already changed no longer matches, and fails saying so', resumed.run.some((c) => c.id === 'e1'));
+  check('  but not one whose new text holds its old text, which would apply twice', resumed.skipped.some((r) => r.toolCallId === 'e2'));
+  check('  nor a write of cells, which is not a find-and-replace', resumed.skipped.some((r) => r.toolCallId === 'e3'));
 }
 
 section('the modules in an import cycle can each be loaded first');

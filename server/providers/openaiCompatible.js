@@ -136,6 +136,18 @@ function toMessages(messages, system, { replayReasoning = false } = {}) {
 
 const REASONING = /^(o\d|gpt-5|.*\bthinking\b)/i;
 
+/**
+ * How each family takes the reasoning level (owner, 2026-11-11: "low thinks as long as
+ * max"). Measured that day with one question asked seven ways: OrcaRouter's DeepSeek V4.1
+ * Flash thought 22–37 tokens whatever `reasoning_effort` said, and none with
+ * `thinking: { type: "disabled" }`; an OpenRouter switch model thought ~200 tokens at
+ * effort low and none with `reasoning: { enabled: false }`. OpenAI, Anthropic, Google and
+ * xAI models take a real dial through OpenRouter (a level, or a budget OpenRouter works out).
+ */
+const DIAL_FAMILIES = /^(openai|anthropic|google|x-ai)\//i;
+/** Families whose thinking is on or off, by OrcaRouter's `thinking` switch. */
+const SWITCH_THINKING = /deepseek|glm|z-ai/i;
+
 /** The five rungs of the dial, lowest first. Anything else is read as `high`. */
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
@@ -157,10 +169,16 @@ export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
  */
 export function reasoningParams({ router, model, entry, effort }) {
   const level = EFFORTS.includes(effort) ? effort : 'high';
+  const id = String(model || '');
   if (router === 'openrouter') {
     if (entry?.reasoning === false) return {};
+    // A switch, not a dial (measured 2026-11-11): "low" left such a model thinking as long
+    // as "max". Low turns it off; the level words in the turn's note do the rest.
+    if (level === 'low' && !DIAL_FAMILIES.test(id)) return { reasoning: { enabled: false } };
     return { reasoning: { effort: level === 'max' ? 'xhigh' : level } };
   }
+  // OrcaRouter's DeepSeek ignores reasoning_effort and honours only this (measured 2026-11-11).
+  if (router === 'orcarouter' && SWITCH_THINKING.test(id)) return level === 'low' ? { thinking: { type: 'disabled' } } : {};
   // The model's own name, after any maker in front: OrcaRouter says "openai/gpt-5…",
   // and an anchored match on the whole id dropped the dial for every one (GAP-014).
   const own = String(model || '').split('/').pop();
@@ -180,7 +198,7 @@ export function reasoningParams({ router, model, entry, effort }) {
  */
 const acceptedEffort = new Map();
 // The level a request carries, or null; and its place on the dial, none below every rung.
-const effortOf = (params) => params.reasoning?.effort ?? params.reasoning_effort ?? null;
+const effortOf = (params) => params.reasoning?.effort ?? params.reasoning_effort ?? (params.reasoning?.enabled === false || params.thinking?.type === 'disabled' ? 'low' : null);
 const rungOf = (level) => (level == null ? -1 : EFFORTS.indexOf(level));
 
 /**
@@ -193,6 +211,15 @@ const rungOf = (level) => (level == null ? -1 : EFFORTS.indexOf(level));
  */
 export function stepDown(params) {
   const lower = { max: 'xhigh', xhigh: 'high' };
+  // A model that cannot think less than it does: the switch is dropped, and the turn goes on.
+  if (params.reasoning?.enabled === false) {
+    delete params.reasoning;
+    return true;
+  }
+  if (params.thinking) {
+    delete params.thinking;
+    return true;
+  }
   if (params.reasoning?.effort) {
     if (lower[params.reasoning.effort]) params.reasoning = { ...params.reasoning, effort: lower[params.reasoning.effort] };
     else delete params.reasoning;
@@ -217,7 +244,7 @@ export function stepDown(params) {
  * the problem before the real error was shown.
  */
 const EFFORT_REFUSAL =
-  /reasoning[_ .-]?effort|\beffort\b|thinking[_ .-]?budget|budget_tokens|\b(not supported|unsupported|does not support|doesn't support)\b[^.]*\breasoning\b|\breasoning\b[^.]*\b(not supported|unsupported)\b/i;
+  /reasoning[_ .-]?effort|\beffort\b|thinking[_ .-]?budget|budget_tokens|\bthinking\b[^.]*\b(type|disabled|not supported|unsupported|invalid)\b|\breasoning\b[^.]*\b(required|mandatory|cannot be disabled|enabled)\b|\b(not supported|unsupported|does not support|doesn't support)\b[^.]*\breasoning\b|\breasoning\b[^.]*\b(not supported|unsupported)\b/i;
 
 /** A 400 about the reasoning setting, as opposed to anything else wrong with the request. */
 export const refusedEffort = (err) =>

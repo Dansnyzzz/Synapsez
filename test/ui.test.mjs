@@ -8180,16 +8180,32 @@ section('the sidebar stays a list you can glance at');
 {
   // Twenty-five loose conversations, which is past where a list stops being
   // scannable and starts being something you scroll.
-  await page.evaluate(async () => {
-    const post = (url, body) =>
-      fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(
-        (r) => r.json(),
-      );
-    for (let i = 0; i < 25; i += 1) {
-      const { chat } = await post('/api/chats', {});
-      await post(`/api/chats/${chat.id}/messages`, { text: `filler ${i}` });
-    }
-  });
+  const fill = (n) =>
+    page.evaluate(async (count) => {
+      const post = (url, body) =>
+        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(
+          (r) => r.json(),
+        );
+      let removed = 0;
+      for (let i = 0; i < count; i += 1) {
+        const made = await post('/api/chats', {});
+        removed += made.removed || 0;
+        await post(`/api/chats/${made.chat.id}/messages`, { text: `filler ${i}` });
+      }
+      const listed = await fetch('/api/chats').then((r) => r.json());
+      return { removed, held: (listed.chats || []).filter((c) => !c.project_id && !c.bot_id && !c.bot_group_id).length };
+    }, n);
+
+  // A member's account keeps its twenty newest (owner, 2026-11-11; server/chatLimit.js).
+  const member = await fill(25);
+  check('a member\'s account is held to twenty, the oldest deleted as new ones begin', member.held <= 20 && member.removed >= 5, JSON.stringify(member));
+
+  // An administrator's is not — and the sidebar's long list is theirs to scroll.
+  const { getStore } = await import('../server/store/index.js');
+  const signedIn = await page.evaluate(() => fetch('/api/bootstrap').then((r) => r.json()));
+  await getStore().setUserRole(signedIn.user.id, 'admin');
+  const admin = await fill(6);
+  check('an administrator\'s is not held at all', admin.removed === 0 && admin.held > 20, JSON.stringify(admin));
 
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1600);
@@ -8244,6 +8260,8 @@ section('the sidebar stays a list you can glance at');
   });
   check('which shows them all', all.rows > list.rows, `${list.rows} → ${all.rows}`);
   check('and offers to fold them back', /fewer/i.test(all.more || ''), all.more);
+  // A member again, as the sections after this one expect.
+  await getStore().setUserRole(signedIn.user.id, 'user');
 
   /*
    * The transcript's scrollbar is not covered by the composer's gradient.

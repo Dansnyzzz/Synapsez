@@ -1032,7 +1032,25 @@ section('the effort dial reaches every model that reasons, in each wire\'s own w
   check('five rungs', EFFORTS.join() === 'low,medium,high,xhigh,max');
   const deepseek = { id: 'openrouter/deepseek/deepseek-r1:free', reasoning: true };
   check('OpenRouter: a reasoning model the old id-guess missed now gets the setting',
-    reasoningParams({ router: 'openrouter', model: 'deepseek/deepseek-r1:free', entry: deepseek, effort: 'low' }).reasoning?.effort === 'low');
+    reasoningParams({ router: 'openrouter', model: 'deepseek/deepseek-r1:free', entry: deepseek, effort: 'medium' }).reasoning?.effort === 'medium');
+  // Owner, 2026-11-11: low thought as long as max. Measured: a switch model ignores effort low.
+  check('OpenRouter: low turns a switch model\'s thinking off, rather than asking it for "low" it ignores',
+    reasoningParams({ router: 'openrouter', model: 'deepseek/deepseek-r1:free', entry: deepseek, effort: 'low' }).reasoning?.enabled === false
+      && reasoningParams({ router: 'openrouter', model: 'openrouter/free', entry: { reasoning: null }, effort: 'low' }).reasoning?.enabled === false);
+  check('  a family with a real dial gets low as low',
+    ['openai/gpt-5.6-terra', 'anthropic/claude-sonnet-4.5', 'google/gemini-3-pro', 'x-ai/grok-5'].every((m) => reasoningParams({ router: 'openrouter', model: m, entry: {}, effort: 'low' }).reasoning?.effort === 'low'));
+  check('OrcaRouter: DeepSeek and GLM, which ignore reasoning_effort, are switched off at low and left alone above it',
+    reasoningParams({ router: 'orcarouter', model: 'deepseek/deepseek-v4.1-flash-free', entry: {}, effort: 'low' }).thinking?.type === 'disabled'
+      && reasoningParams({ router: 'orcarouter', model: 'z-ai/glm-5.3-flash-free', entry: {}, effort: 'low' }).thinking?.type === 'disabled'
+      && Object.keys(reasoningParams({ router: 'orcarouter', model: 'deepseek/deepseek-v4.1-flash-free', entry: {}, effort: 'max' })).length === 0);
+  const off = { reasoning: { enabled: false } };
+  const offThinking = { thinking: { type: 'disabled' } };
+  check('  a model that refuses to stop thinking: the switch is dropped and the turn goes on', stepDown(off) && !off.reasoning && stepDown(offThinking) && !offThinking.thinking);
+  {
+    const { effortNote } = await import('../server/agent.js');
+    check('every model is told the level in words: low fast but exact, max thorough, high as it is',
+      /fast/.test(effortNote('low')) && /exact/.test(effortNote('low')) && /no more/.test(effortNote('medium')) && effortNote('high') === '' && /thoroughly/.test(effortNote('max')) && /verify/.test(effortNote('xhigh')));
+  }
   check('OpenRouter: max is asked as xhigh, the top of its scale',
     reasoningParams({ router: 'openrouter', model: 'x', entry: {}, effort: 'max' }).reasoning?.effort === 'xhigh');
   check('OpenRouter: a model known not to reason is sent nothing',

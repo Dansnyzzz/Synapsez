@@ -4,6 +4,7 @@ import { currentUser, parseCookies } from '../auth.js';
 import { faviconFor, cleanHost, siteOf } from '../favicon.js';
 import { proxiedImage, mapTile } from '../imageProxy.js';
 import { audit } from '../audit.js';
+import { keepNewest } from '../chatLimit.js';
 
 /**
  * A conversation shared by link.
@@ -561,6 +562,7 @@ export async function forkSharedChat(userId, token) {
   const messages = await publishedTranscript(store, chat, { placeholder: LEFT_OUT });
   const newChatId = crypto.randomUUID();
   await store.createChat(userId, { id: newChatId, title: chat.title, model: null });
+  await keepNewest(userId, store);
 
   const moved = new Map();
   for (const oldId of referencedFiles(messages)) {

@@ -364,6 +364,25 @@ export function sheetPlan(items, { maxSheets = 6, asked = false } = {}) {
 /* ── drawing, on whatever thread calls it ───────────────────────────── */
 
 /**
+ * Why the drawing library would not load on this server, once it has failed (owner,
+ * 2026-11-11: "This server could not draw …" said nothing about why, and the swallowed
+ * error left nothing in the logs either). Empty while it loads.
+ */
+let canvasProblem = '';
+export const drawingProblem = () => canvasProblem;
+
+/** The drawing library, or null — and when it is null, said once, in the log and in `drawingProblem`. */
+async function loadCanvas() {
+  try {
+    return await import('@napi-rs/canvas');
+  } catch (err) {
+    if (!canvasProblem) console.error('[office] the drawing library did not load:', err?.code || '', String(err?.message || err).slice(0, 300));
+    canvasProblem = `the drawing library did not load on this server (${String(err?.code || err?.message || err).slice(0, 80)})`;
+    return null;
+  }
+}
+
+/**
  * The whole look, on this thread: the worker's, or this one's where no worker can
  * load. Modules are imported by a literal path so the deployment tracer bundles them.
  *
@@ -372,12 +391,8 @@ export function sheetPlan(items, { maxSheets = 6, asked = false } = {}) {
  * @returns {Promise<any>} null when the canvas cannot load on this platform
  */
 export async function lookAtFileHere(bytes, options = {}) {
-  let canvasApi;
-  try {
-    canvasApi = await import('@napi-rs/canvas');
-  } catch {
-    return null;
-  }
+  const canvasApi = await loadCanvas();
+  if (!canvasApi) return null;
   const { drawLook } = await import('./draw/index.js');
   return drawLook(bytes, options, canvasApi, { lookableFormat, sheetPlan, strip: STRIP, caption: CAPTION });
 }
@@ -391,12 +406,8 @@ export async function lookAtFileHere(bytes, options = {}) {
  * @returns {Promise<any>} null when the canvas cannot load on this platform
  */
 export async function officeViewHere(job, bytes, options = {}) {
-  let canvasApi;
-  try {
-    canvasApi = await import('@napi-rs/canvas');
-  } catch {
-    return null;
-  }
+  const canvasApi = await loadCanvas();
+  if (!canvasApi) return null;
   const { drawPage, drawWorkbookModel, drawDrawing } = await import('./draw/index.js');
   if (job === 'page') return drawPage(bytes, options, canvasApi, { lookableFormat });
   if (job === 'workbook') return drawWorkbookModel(bytes, options, canvasApi);

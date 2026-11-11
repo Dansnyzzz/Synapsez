@@ -181,6 +181,7 @@ async function runViaWorker({ user, userId, name, input, chatId, timeoutMs, sign
  *   onProgress?: ((text: string) => void)|null,
  *   turnId?: string|null,
  *   turnOrigin?: string|null,
+ *   deadline?: number,
  * }} ToolCallArgs  `turnId`: the agent turn making the call — what a bot saves in it is
  *   taken back if the turn is stopped or fails (server/agent.js); `turnOrigin`: who started it,
  *   for the tools only a person's turn may run (server/bots/tools.js)
@@ -457,7 +458,7 @@ export function redactedOutput(name, content) {
  * @param {ToolCallArgs} args
  * @returns {Promise<ToolResult>}
  */
-async function runTool({ user, name, input, chatId, signal, deviceHint, deliverable, answers, origin = null, whereabouts = null, canSee = false, onProgress = null, turnId = null, turnOrigin = null }) {
+async function runTool({ user, name, input, chatId, signal, deviceHint, deliverable, answers, origin = null, whereabouts = null, canSee = false, onProgress = null, turnId = null, turnOrigin = null, deadline = Infinity }) {
   const userId = user.id;
 
   /**
@@ -503,7 +504,7 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
       // given this turn. Only `load_tools` reads it, and only so it stops
       // promising tools that will never arrive — see loadToolsTool.
       // `turnId`: what a tool that sends something keys its message by, so a turn run again sends it once (outbox.js).
-      const result = await impl(input || {}, { userId, user, chatId, signal, deliverable, answers, origin, whereabouts, canSee, onProgress, turnId });
+      const result = await impl(input || {}, { userId, user, chatId, signal, deliverable, answers, origin, whereabouts, canSee, onProgress, turnId, deadline });
 
       /**
        * A tool may hand back more than a sentence.

@@ -14,6 +14,7 @@ import { abortHere, holdRun, watchStopped } from './liveRuns.js';
 import { readCron, writeCron, readWhen, normTime, LIMITS, WEEK } from '../public/js/schedule-grammar.js';
 import { TASK_QUIET, TASK_SKIPPED, TASK_STOPPED } from '../public/js/automation-status.js';
 import { untrusted } from './tools/untrusted.js';
+import { keepNewest, sweepChatLimit } from './chatLimit.js';
 
 /**
  * Work that happens without anyone watching.
@@ -676,6 +677,7 @@ async function runTask(task) {
         // looks like it worked.
         projectId: task.project_id || null,
       });
+      await keepNewest(user, store);
     }
     const prompted = await store.appendMessage(user.id, chatId, {
       id: crypto.randomUUID(),
@@ -936,12 +938,17 @@ export async function sweep() {
     // The security record keeps half a year, then lets go.
     store.pruneAudit(AUDIT_KEEP_DAYS),
     // A bot's forgotten entries, once Undo can no longer bring them back (owner, 2026-11-10).
-    store.pruneForgottenMemory(FORGOTTEN_KEEP_DAYS),
+    store.pruneForgottenMemory(),
     // Sign-ins a week after they could last be used — expired or signed out.
     store.pruneSessions(),
     // After retention has run, so a conversation it deletes takes its copy in
     // feedback this sweep rather than the next. (Never shown once gone either way.)
     applyRetention(store).finally(() => store.forgetFeedbackTranscripts()),
+    // Twenty conversations an account keeps (owner, 2026-11-11) — what brings an account
+    // that held more before the rule down to twenty; each new one is kept to it as it is made.
+    sweepChatLimit(store),
+    // Jobs and research a conversation left behind from before every delete took them.
+    store.pruneOrphanChatRows(),
   ]);
 }
 
@@ -949,8 +956,6 @@ export async function sweep() {
 export const INCOGNITO_TTL_MS = 24 * 3600_000;
 /** How many days of the security record are kept. */
 export const AUDIT_KEEP_DAYS = 180;
-/** How long a bot's forgotten memory entry waits for Undo. */
-export const FORGOTTEN_KEEP_DAYS = 30;
 
 /**
  * Each account's own retention period, applied at most hourly per instance.

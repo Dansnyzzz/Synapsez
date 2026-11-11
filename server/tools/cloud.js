@@ -14,7 +14,7 @@ import { sniffPicture } from '../util/picture.js';
 import { cloudBrowser } from '../cloudBrowser/index.js';
 import { shareFile } from '../routes/share.js';
 import { see } from '../vision.js';
-import { lookableFormat } from '../office/look.js';
+import { drawingProblem, lookableFormat } from '../office/look.js';
 import { drawAndKeep, pictureNote } from '../fileLook.js';
 import { groundedImage } from '../imageGround.js';
 import { calculate } from './calc.js';
@@ -27,6 +27,7 @@ import { GOOGLE_IMPLEMENTATIONS } from './google.js';
 import { normaliseSteps } from '../workflows.js';
 import { CONNECTOR_CALLS } from '../connectors.js';
 import { sendTelegramNow } from '../outbox.js';
+import { checkDiagram } from '../widgetCheck.js';
 import { searchConnectorsTool, suggestConnectorsTool } from '../connectorDirectory.js';
 import { codeContextTool } from './codeContext.js';
 import { getPrefs, getApiKey, maskPersonalFor } from '../settings.js';
@@ -1132,7 +1133,7 @@ async function memoryRead({ key }, { userId, chatId }) {
  */
 const MAX_WIDGET_BYTES = 96 * 1024;
 
-async function showWidgetTool({ title, svg, html }) {
+async function showWidgetTool({ title, svg, html }, { userId = null, chatId = null } = {}) {
   const caption = String(title || '').trim();
   if (!caption) throw new Error('Give the picture a short title, so it is labelled.');
 
@@ -1180,11 +1181,29 @@ async function showWidgetTool({ title, svg, html }) {
     );
   }
 
+  /*
+   * What the reader would see wrong (owner, 2026-11-11: a faint title, a legend off its box,
+   * labels on each other, a Chinese word in Vietnamese) — told to the model to draw again;
+   * and the canvas it was drawn for, which the page gives it (server/widgetCheck.js).
+   */
+  const check = svg ? checkDiagram(markup) : { issues: [], canvas: null };
+  // A clean diagram is kept as a file of the conversation too, in its panel, to open,
+  // copy or download (owner, 2026-11-11). One with problems waits for its redraw.
+  let kept = null;
+  if (svg && !check.issues.length && userId) {
+    const name = `${caption.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Diagram'}.svg`;
+    kept = await saveGenerated(userId, { name, mime: 'image/svg+xml', data: Buffer.from(markup, 'utf8').toString('base64'), source: markup, chatId }).catch(() => null);
+  }
+  const content = check.issues.length
+    ? [
+        `Drew "${caption}" in the conversation, but the user will see these problems:`,
+        ...check.issues.map((s) => `- ${s}`),
+        'Draw it again with show_widget, fixed: each label short enough for its box (break a long one into <tspan x=… dy="1.2em"> lines), nothing outside the drawing, labels beside arrows rather than over boxes, text that stands out from what is behind it, and every word in the user\'s language.',
+      ].join('\n')
+    : `Drew "${caption}" in the conversation${kept ? ', and kept it as a file of the conversation' : ''}. The user can see it, so describe what it shows rather than listing the numbers again.`;
   return {
-    content:
-      `Drew "${caption}" in the conversation. The user can see it, so describe what it shows rather than ` +
-      'listing the numbers again.',
-    widget: { title: caption, markup, kind: svg ? 'svg' : 'html' },
+    content,
+    widget: { title: caption, markup, kind: svg ? 'svg' : 'html', ...(check.canvas ? { canvas: check.canvas } : {}) },
   };
 }
 
@@ -2842,7 +2861,8 @@ async function lookAtOffice({ bytes, name, pages, ask, source, userId, chatId = 
   } catch (err) {
     throw new Error(`${name} could not be drawn: ${String(err?.message || err).slice(0, 200)}. Read its text instead.`);
   }
-  if (!look?.pictures.length) throw new Error(`This server could not draw ${name}. Read its text instead.`);
+  // Why, when it is known — a library that did not load is the server's, not the file's.
+  if (!look?.pictures.length) throw new Error(`This server could not draw ${name}${drawingProblem() ? ` (${drawingProblem()})` : ''}. Read its text instead.`);
   const first = look.pictures[0];
   if (canSee) {
     return {

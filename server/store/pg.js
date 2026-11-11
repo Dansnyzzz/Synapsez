@@ -263,6 +263,9 @@ export function splitStatements(sql) {
  */
 export const SCHEMA_VERSION = 47;
 
+/** How long a forgotten bot memory entry waits for Undo before it is deleted for good. */
+export const FORGOTTEN_KEEP_MS = 10 * 60_000;
+
 /**
  * How long a run lease may go untouched before another run may take it.
  *
@@ -1238,6 +1241,9 @@ export function createPgStore(connectionString) {
            -- Its deep research too (PRV-030): research_runs.chat_id has no foreign key either.
            DELETE FROM research_runs r USING gone
             WHERE r.chat_id = gone.id AND r.user_id = gone.user_id
+         ), jobs AS (
+           DELETE FROM tool_jobs t USING gone
+            WHERE t.chat_id = gone.id AND t.user_id = gone.user_id
          )
          SELECT id FROM gone`,
         [cutoff],
@@ -1271,6 +1277,9 @@ export function createPgStore(connectionString) {
          ), research AS (
            DELETE FROM research_runs r USING gone
             WHERE r.chat_id = gone.id AND r.user_id = gone.user_id
+         ), jobs AS (
+           DELETE FROM tool_jobs t USING gone
+            WHERE t.chat_id = gone.id AND t.user_id = gone.user_id
          )
          SELECT id FROM gone`,
         [userId, n],
@@ -1823,19 +1832,85 @@ export function createPgStore(connectionString) {
       );
     },
     async deleteChat(userId, id) {
-      // The files go with it. `attachments.chat_id` carries no foreign key — it
-      // is set after the fact, when a message is sent — so nothing would cascade,
-      // and deleting a conversation would leave its photographs and documents in
-      // the database with nothing pointing at them. "Delete this conversation"
-      // has to mean what it says.
-      await q('DELETE FROM attachments WHERE user_id = $1 AND chat_id = $2', [userId, id]);
-      // So does any copy of it sent with feedback (33): the words and the title,
-      // not the feedback itself, which is the sender's own message.
-      await q('UPDATE feedback SET transcript = NULL, chat_title = NULL, answer = NULL WHERE user_id = $1 AND chat_id = $2', [userId, id]);
-      // And its deep research (PRV-030): the question, the debate and the report
-      // were the conversation's, and stayed 90 days after it.
-      await q('DELETE FROM research_runs WHERE user_id = $1 AND chat_id = $2', [userId, id]);
-      await q('DELETE FROM chats WHERE id = $1 AND user_id = $2', [id, userId]);
+      await this.purgeChats(userId, [id]);
+    },
+    /**
+     * Conversations deleted, and everything that was theirs with them (owner, 2026-11-11:
+     * "what the person deletes, the database deletes — one to one"). Messages cascade from
+     * the row. The rest carries a `chat_id` with no foreign key — set after the fact — so
+     * nothing would cascade, and each is deleted here: the files (and their versions and
+     * renderings, by their own keys), the deep research (PRV-030), the worker's jobs with
+     * their arguments and output, and any copy of the transcript sent with feedback (33)
+     * — the feedback itself is the sender's own message and stays. Every path that
+     * deletes conversations comes through here: one, a bot's or a group's, the oldest
+     * past the limit, the expired.
+     *
+     * @param {string} userId @param {string[]} ids
+     * @returns {Promise<number>} how many conversations went
+     */
+    async purgeChats(userId, ids) {
+      const list = [...new Set((ids || []).map(String).filter(Boolean))];
+      if (!list.length) return 0;
+      await q(
+        `DELETE FROM attachments WHERE user_id = $1 AND origin = 'rendered'
+            AND derived_from IN (SELECT id FROM attachments WHERE user_id = $1 AND chat_id = ANY($2::text[]))`,
+        [userId, list],
+      );
+      await q('DELETE FROM attachments WHERE user_id = $1 AND chat_id = ANY($2::text[])', [userId, list]);
+      await q('DELETE FROM research_runs WHERE user_id = $1 AND chat_id = ANY($2::text[])', [userId, list]);
+      await q('DELETE FROM tool_jobs WHERE user_id = $1 AND chat_id = ANY($2::text[])', [userId, list]);
+      await q('UPDATE feedback SET transcript = NULL, chat_title = NULL, answer = NULL WHERE user_id = $1 AND chat_id = ANY($2::text[])', [userId, list]);
+      const gone = await q('DELETE FROM chats WHERE user_id = $1 AND id = ANY($2::text[]) RETURNING id', [userId, list]);
+      return gone.length;
+    },
+    /**
+     * Keep the `keep` newest conversations of the home chat and delete the rest (owner,
+     * 2026-11-11: twenty, for everyone but administrators — the caller decides who).
+     * Newest by when each was last used. Never one at work, nor a pinned one: those stay,
+     * and count. The newest unpinned one always stays — with twenty pinned, the
+     * conversation just begun would otherwise be deleted as it was made. A bot's or a
+     * group's conversations are the Bot page's, not counted here.
+     *
+     * @returns {Promise<number>} how many went
+     */
+    async pruneChatsOver(userId, keep = 20, { staleMs = RUN_LEASE_STALE_MS } = {}) {
+      const rows = await q(
+        `SELECT id, pinned, run_lock_by, run_lock_at FROM chats
+          WHERE user_id = $1 AND bot_id IS NULL AND bot_group_id IS NULL AND NOT incognito
+          ORDER BY updated_at DESC, created_at DESC, id`,
+        [userId],
+      );
+      const unpinned = rows.filter((r) => !r.pinned);
+      const room = Math.max(Math.floor(Number(keep) || 0) - (rows.length - unpinned.length), 1);
+      const busy = (r) => r.run_lock_by && r.run_lock_at && Date.now() - new Date(r.run_lock_at).getTime() < staleMs;
+      return this.purgeChats(userId, unpinned.slice(room).filter((r) => !busy(r)).map((r) => r.id));
+    },
+    /**
+     * Accounts with home conversations `pruneChatsOver` would delete — over `keep`, and
+     * not only pinned ones past it — for the sweep that brings each down. An account
+     * whose extra conversations are all pinned is never listed, so it cannot take a
+     * place in the batch hour after hour. Administrators are never listed.
+     */
+    async accountsOverChats(keep = 20, limit = 200) {
+      const rows = await q(
+        `SELECT c.user_id FROM chats c JOIN users u ON u.id = c.user_id
+          WHERE c.bot_id IS NULL AND c.bot_group_id IS NULL AND NOT c.incognito AND u.role <> 'admin'
+          GROUP BY c.user_id
+         HAVING SUM(CASE WHEN c.pinned THEN 0 ELSE 1 END) > GREATEST($1::int - SUM(CASE WHEN c.pinned THEN 1 ELSE 0 END), 1)
+          LIMIT $2`,
+        [keep, limit],
+      );
+      return rows.map((r) => r.user_id);
+    },
+    /**
+     * Rows a conversation left behind that nothing points at any more — from before every
+     * delete went through `purgeChats` (a deleted bot's chats took their messages and left
+     * their jobs). Swept, so the database holds what the person holds. Files are
+     * `pruneUnreachableFiles`'s.
+     */
+    async pruneOrphanChatRows() {
+      await q('DELETE FROM tool_jobs t WHERE t.chat_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM chats c WHERE c.id = t.chat_id)');
+      await q('DELETE FROM research_runs r WHERE r.chat_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM chats c WHERE c.id = r.chat_id)');
     },
 
     // ── a conversation shared by link ───────────────────────────────
@@ -2339,6 +2414,7 @@ export function createPgStore(connectionString) {
         `DELETE FROM attachments WHERE id = $1 AND user_id = $2 AND origin = 'generated' RETURNING id`,
         [id, userId],
       );
+      if (rows[0]) await q(`DELETE FROM attachments WHERE user_id = $1 AND derived_from = $2 AND origin = 'rendered'`, [userId, id]);
       return rows.length > 0;
     },
 
@@ -4552,7 +4628,12 @@ export function createPgStore(connectionString) {
     },
     /** Never the main bot: Chief can be changed, not deleted. Its chats, memory and memberships go with it. */
     async deleteBot(userId, id) {
-      const rows = await q('DELETE FROM bots WHERE user_id = $1 AND id = $2 AND NOT is_main RETURNING id', [userId, String(id ?? '')]);
+      const bot = await this.getBot(userId, id);
+      if (!bot || bot.is_main) return false;
+      // Its conversations and everything theirs first: the cascade from the bot takes the rows and not their files.
+      const chats = await q('SELECT id FROM chats WHERE user_id = $1 AND bot_id = $2', [userId, bot.id]);
+      await this.purgeChats(userId, chats.map((c) => c.id));
+      const rows = await q('DELETE FROM bots WHERE user_id = $1 AND id = $2 AND NOT is_main RETURNING id', [userId, bot.id]);
       return rows.length > 0;
     },
 
@@ -4644,6 +4725,8 @@ export function createPgStore(connectionString) {
       );
     },
     async deleteBotGroup(userId, id) {
+      const chats = await q('SELECT id FROM chats WHERE user_id = $1 AND bot_group_id = $2', [userId, String(id ?? '')]);
+      await this.purgeChats(userId, chats.map((c) => c.id));
       const rows = await q('DELETE FROM bot_groups WHERE user_id = $1 AND id = $2 RETURNING id', [userId, String(id ?? '')]);
       return rows.length > 0;
     },
@@ -4769,8 +4852,10 @@ export function createPgStore(connectionString) {
       );
       return rows[0] ?? null;
     },
-    /** Forget an entry so that Undo can bring it back; swept after 30 days. */
+    /** Forget an entry so that Undo can bring it back; deleted for good ten minutes on (FORGOTTEN_KEEP_MS). */
     async softDeleteBotMemory(userId, id, { botId = null, groupId = null } = {}) {
+      // What this account forgot before, past its Undo, goes for good now (owner, 2026-11-11: delete 1:1).
+      await this.pruneForgottenMemory(FORGOTTEN_KEEP_MS, userId);
       const rows = await q(
         `UPDATE bot_memory SET deleted_at = NOW()
           WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL
@@ -4791,9 +4876,16 @@ export function createPgStore(connectionString) {
       );
       return rows.length;
     },
-    /** Forgotten entries that Undo can no longer reach, gone for good. */
-    async pruneForgottenMemory(days = 30) {
-      const rows = await q(`DELETE FROM bot_memory WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - ($1 || ' days')::interval RETURNING id`, [String(days)]);
+    /**
+     * Forgotten entries past their Undo, deleted for good — every account's (the sweep), or one
+     * account's (each forget). Undo shows for seconds on the page; the row waits a little
+     * longer, then goes (owner, 2026-11-11: what the person deletes, the database deletes).
+     */
+    async pruneForgottenMemory(olderThanMs = FORGOTTEN_KEEP_MS, userId = null) {
+      const rows = await q(
+        `DELETE FROM bot_memory WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - ($1 || ' milliseconds')::interval AND ($2::text IS NULL OR user_id = $2) RETURNING id`,
+        [String(Math.max(0, Number(olderThanMs) || 0)), userId],
+      );
       return rows.length;
     },
     /** What one turn saved, taken back: the turn was stopped or failed. */

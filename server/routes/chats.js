@@ -15,6 +15,7 @@ import { getPrefs } from '../settings.js';
 import { chosenSkills } from '../skills.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
 import { clientError } from '../util/clientError.js';
+import { keepNewest } from '../chatLimit.js';
 
 /**
  * Lifted out of server/app.js — see the note on mountWorkspaceRoutes for why.
@@ -115,7 +116,10 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
         projectId,
         incognito,
       });
-      res.status(201).json({ chat });
+      // Twenty conversations an account keeps, the oldest past that deleted (chatLimit.js) —
+      // and the page says how many went, so nobody finds them gone without a word.
+      const removed = incognito ? 0 : await keepNewest(req.user, store);
+      res.status(201).json({ chat, removed });
     }),
   );
 
