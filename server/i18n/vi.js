@@ -1446,4 +1446,12 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'A bot\'s name is at most 40 characters.': 'Tên bot tối đa 40 ký tự.',
   'A bot\'s name cannot contain @, `, < or > or a line break.': 'Tên bot không được có @, `, <, > hoặc xuống dòng.',
   'That word stands for the user or for everyone in a chat, so it cannot be a bot\'s name.': 'Từ này chỉ người dùng hoặc mọi người trong cuộc trò chuyện, nên không đặt làm tên bot được.',
+
+  // Market data (server/finance, 2026-11-10).
+  'kind is one of: {0}.': 'kind là một trong: {0}.',
+  'Name a symbol — e.g. FPT, VNM, SHS, VNINDEX for Vietnam; AAPL, ^GSPC, gold; BTC, ETH for crypto.': 'Hãy nêu một mã — ví dụ FPT, VNM, SHS, VNINDEX cho Việt Nam; AAPL, ^GSPC, vàng; BTC, ETH cho tiền mã hoá.',
+  '{0} is offered for {1} — not for {2}.{3}': '{0} có cho {1} — không có cho {2}.{3}',
+  'Vietcap lists no covered warrants or index futures{0}.': 'Vietcap không có chứng quyền hay hợp đồng tương lai chỉ số nào{0}.',
+  'macro needs an indicator: gdp, cpi (inflation), unemployment, rate, 10y, population — or a World Bank or FRED code.': 'macro cần một chỉ tiêu: gdp, cpi (lạm phát), unemployment (thất nghiệp), rate (lãi suất), 10y, population (dân số) — hoặc một mã của Ngân hàng Thế giới hay FRED.',
+  'There is no rate from {0} to {1} today: {2}': 'Hôm nay không có tỷ giá từ {0} sang {1}: {2}',
 };
