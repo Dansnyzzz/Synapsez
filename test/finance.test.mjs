@@ -530,5 +530,45 @@ section('7d vietcap.js: statements labelled by Vietcap, and its analysts\' views
   check('  an index has no board', (await vn.boardOf('VNINDEX', ctx)) === null);
 }
 
+const sec = await import('../server/finance/sources/sec.js');
+
+section('7e sec.js: one value per period, and nothing without SEC_USER_AGENT');
+{
+  await fresh();
+  const fetchImpl = serve([
+    ['company_tickers.json', 'sec-tickers.json'],
+    ['companyfacts/CIK0000320193', 'sec-companyfacts.json'],
+    ['submissions/CIK0000320193', 'sec-submissions.json'],
+    ['/frames/', 'sec-frames.json'],
+  ]);
+  const ctx = { fetchImpl };
+  const none = await refusal(sec.statements('AAPL', 'income', 'year', ctx));
+  check('no SEC_USER_AGENT: SEC is not asked, and the answer says what to set', none instanceof http.SourceError && /SEC_USER_AGENT/.test(none.message) && fetchImpl.calls.length === 0, none?.message);
+  process.env.SEC_USER_AGENT = 'Synapsez ops@example.com';
+  const id = await sec.cik('aapl', ctx);
+  check('ticker → CIK, ten digits', id.cik === '0000320193' && id.name === 'Apple Inc.');
+  const income = await sec.statements('AAPL', 'income', 'year', ctx);
+  const revenue = income.lines.find((l) => l.code === 'Revenues');
+  check('a period reported twice keeps one value — the one SEC framed, not the later amendment', income.periods.length === 3 && revenue.values[0] === 265_595_000_000 && !revenue.values.includes(1), JSON.stringify(revenue.values));
+  check('  newest first, labelled by fiscal year and its end, with SEC\'s own labels', /^FY 2018 \(to 2018-09-29\)$/.test(income.periods[0].label) && revenue.label_en === 'Revenues', income.periods[0].label);
+  check('  per-share lines say their unit', income.lines.find((l) => l.code === 'EarningsPerShareDiluted')?.unit === 'USD/shares');
+  const facts = fixture('sec-companyfacts.json').facts['us-gaap'].Revenues;
+  const byEnd = sec.factsByPeriod(facts, 'year');
+  check('factsByPeriod: three year-ends from four facts', byEnd.size === 3 && byEnd.get('2018-09-29').val === 265_595_000_000);
+  const r = await sec.ratios('AAPL', 350.69, ctx);
+  check('ratios worked out from the filing and a price, and said to be', r.computed && r.items.some((i) => i.key === 'pe') && r.items.some((i) => i.key === 'netMargin' && i.kind === 'fraction') && /Computed from SEC filings/.test(r.note), r.items.map((i) => i.key).join(','));
+  const list = await sec.filings('AAPL', 3, ctx);
+  check('filings: date, form, a link to the document on sec.gov', list.length === 3 && list[1].form === '8-K' && /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/320193\//.test(list[1].url), JSON.stringify(list[1]));
+  const ev = await sec.events('AAPL', ctx);
+  check('events: the 8-Ks only', ev.length >= 1 && ev.every((e) => /^8-K/.test(e.code)), JSON.stringify(ev[0]));
+  const p = await sec.profile('AAPL', ctx);
+  check('profile: name, exchange, industry, fiscal year end — no address or phone', p.name === 'Apple Inc.' && p.exchange === 'Nasdaq' && p.fiscalYearEnd === '09-26' && !('phone' in p) && !('addresses' in p), JSON.stringify(p));
+  const top = await sec.screen('assets', null, ctx, { now: new Date('2026-11-10T00:00:00Z') });
+  const frameUrl = fetchImpl.calls.find((c) => c.url.includes('/frames/'))?.url || '';
+  check('screen: one frames call — a balance figure at last year\'s end', /frames\/us-gaap\/Assets\/USD\/CY2025Q4I\.json$/.test(frameUrl) && top.rows.length === 5 && top.rows[0].value >= top.rows[1].value, frameUrl);
+  check('every SEC call carried the owner\'s contact', fetchImpl.calls.every((c) => c.headers['User-Agent'] === 'Synapsez ops@example.com'));
+  delete process.env.SEC_USER_AGENT;
+}
+
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll finance checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);
