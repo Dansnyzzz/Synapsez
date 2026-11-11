@@ -1985,7 +1985,7 @@ step, with the optional certificate and how to bring data over from another data
 | `COINGECKO_FREE_MONTHLY`, `COINGECKO_FREE_MINUTE`, `YAHOO_FREE_DAILY`, `VNDIRECT_FREE_DAILY`, `KBS_FREE_DAILY`, `VIETCAP_FREE_DAILY`, `SEC_FREE_DAILY`, `FRED_FREE_MINUTE` | optional | Market data ceilings, pooled for the deployment: CoinGecko 9500 a month and 90 a minute, Yahoo 5000 a day, each Vietnamese broker 3000 a day, SEC 20000 a day, FRED 100 a minute. |
 | `FIN_PACE_SCALE` | optional, tests | Scales the pause between two calls to one market data source (1 a second to a broker, 2 to Yahoo, 5 to SEC): `0` for none, as the test suites set it. Leave it unset. |
 | `ANTHROPIC_API_KEY` etc. | **usually leave blank** | A shared fallback every account without its own key spends against. See the warning above. |
-| `PUBLIC_URL` | recommended | Your deployment URL. Used to build links in emails (without it they are guessed from the request), and the address Settings → System → Address safety and `npm run domain:check` check. |
+| `PUBLIC_URL` | recommended | Your deployment URL. Used to build links in emails (without it they are guessed from the request), and the address Settings → System → Address safety and `npm run domain:check` check. Also the address a bot's webhook shows and Telegram to Chief is pointed at; Telegram needs it to be https. |
 | `INSIGHTS` | optional | `off` stops the app loading Vercel Web Analytics and Speed Insights. On by default on Vercel only — see below. |
 | `SPEED_INSIGHTS_SAMPLE_RATE` | optional | Share of page loads whose speed is sent, `0`–`1` (default `1`). Lower it if Speed Insights nears its free allowance. |
 

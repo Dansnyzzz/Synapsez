@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-11-11 — Work that starts outside the app (1.22.0)
+
+**A bot's task can wait for a request** (`server/hooks.js`; schema 47). Choose "When a request arrives" in its form: an address and a secret, the secret shown once. A request is `POST /api/hooks/<id>` with JSON `{ "type", "occurredAt"?, "data"? }` (≤ 64 KB) and three headers — `X-Synapsez-Timestamp` (seconds, within five minutes), `X-Synapsez-Delivery` (an id, used once), `X-Synapsez-Signature` (`sha256=` and the hex HMAC-SHA256 of `timestamp.delivery.body` with the secret). The signature is checked on the raw bytes, in constant time, before the body is read; a delivery seen before runs nothing; filters on the type and on values in the data (JSON Pointers, up to five). It is answered 202 at once and the bot's turn runs behind it, the request's data in front of it as data it must not obey, and nothing it says can change the team. Per hook 30 a minute and 500 a day; Send a test and Rotate (the old secret stops at once) on its panel, with its last deliveries and why one was ignored. The secret is kept encrypted, not hashed, because the signature is checked with it.
+
+**Waits.** A bot can park what it cannot settle now (`wait_for`: "tell me when the build ends"); its next scheduled run, or a request for it, is told each one and closes what it settles (`close_wait`). They are chips above its box, each closed with ✕, and under Needs you once a day old. A wait is a row, not something left running.
+
+**Telegram to Chief.** On the Telegram connector's page, "Let me message Chief from Telegram": your bot's webhook is pointed at an address of your account's own, with a second secret in Telegram's header (both kept as hashes). Send your bot the `/start` code shown there to link your Telegram; add up to five more people. Only a direct message, a mention of the bot or a reply to it reaches Chief — as a turn that cannot change the team — with 👀 while it works, the answer as a reply, ✅ or ❌ at the end; "stop" stops it. Files sent on Telegram are not read yet.
+
+**An outbox.** Replies, and the `telegram_send` tool, are written down before they are sent: a sent message is never sent again when the work behind it runs twice, a chat that is gone drops it with the reason, and anything else is tried again — 30 s, doubling to an hour, eight times — by the next request or the heartbeat.
+
+**Each bot tool only where it can act**: Chief's group post and `wait_for` in a bot's own chat, `ask_person` in a group, `close_wait` with a wait open. Every bot's prompt is smaller than before.
+
+**Finance, as the probe found**: SJC is off on Vercel (a bot check turns every datacenter away) and Vietcap is off on Vercel outside Asia (it refuses US addresses); `FIN_SOURCE_<NAME>=on` asks anyway. Vietcap's bare 400 stands it aside for an hour. Vietnamese financial statements are therefore not available from the deployed app yet — see `docs/research/2026-11-10-finance-probe-iad1.md`.
+
 ## 2026-11-11 — A team that runs itself and says what it needs (1.21.0)
 
 **Chief sets a group to work** (`post_to_group`, `server/bots/rounds.js`; schema 46). Asked by the person in Chief's own chat, Chief writes the message into the group and its round starts at once on its own (the same segments, ceiling and budget as the person's, picked up by the heartbeat if the start is lost); Chief's chat gets one line when it is done. Only a turn the person started may do it.
