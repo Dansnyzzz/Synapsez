@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { getStore } from '../store/index.js';
 import { RUN_LEASE_STALE_MS } from '../store/pg.js';
 import { BotError, CREATURES, LIMITS, createBot, createGroup, updateBot, updateGroup, adminOf } from './team.js';
-import { forget, remember } from './memory.js';
+import { forget, recall, remember } from './memory.js';
 
 /**
  * The tools a bot has besides the assistant's own (owner, 2026-11-09).
@@ -93,8 +93,19 @@ const DEFS = {
       properties: {
         text: { type: 'string', description: 'The fact, in the user\'s language, saying whom it is about' },
         scope: { type: 'string', enum: ['own', 'group'], description: 'In a group: "group" (the default) or "own"' },
+        replace: { type: 'string', description: 'Words of an entry this one replaces (it has changed), so the old one is not kept beside it' },
       },
       required: ['text'],
+    },
+  },
+  recall: {
+    readOnly: true,
+    description:
+      "Search all of your memory (in a group, the group's too) for entries holding some words — the prompt shows only the pinned and the newest. Search before saying you do not know something about the user.",
+    parameters: {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'A few words the entry would hold; marks optional ("da nang" finds "Đà Nẵng")' } },
+      required: ['query'],
     },
   },
   ask_person: {
@@ -252,10 +263,17 @@ export async function runBotTool({ userId, chatId, name, input = {}, turnId = nu
       }
       case 'remember': {
         const scope = groupId && input.scope !== 'own' ? { groupId } : { botId: self.id };
-        const { saved, entries } = await remember(userId, scope, input.text, 'bot', { turnId: turnId || null });
+        const { saved, entries } = await remember(userId, scope, input.text, 'bot', { turnId: turnId || null, replace: input.replace });
+        if (input.replace) return { isError: false, content: `Replaced it in ${scope.groupId ? "the group's memory" : 'your memory'}.` };
         const where = scope.groupId ? "the group's memory" : 'your memory';
         if (!saved) return { isError: false, content: `That is already in ${where}.` };
         return { isError: false, content: entries.length > 1 ? `Saved to ${where}, as ${entries.length} entries (one a sentence group).` : `Saved to ${where}.` };
+      }
+      case 'recall': {
+        const scopes = groupId ? [{ botId: self.id }, { groupId }] : [{ botId: self.id }];
+        const found = (await Promise.all(scopes.map((s) => recall(userId, s, input.query).then((rows) => rows.map((r) => ({ ...r, where: s.groupId ? 'group' : 'own' })))))).flat().slice(0, 20);
+        if (!found.length) return { isError: false, content: `Found nothing in memory holding "${String(input.query || '').slice(0, 80)}".` };
+        return { isError: false, content: [`Found ${found.length}:`, ...found.map((r) => `- ${r.text} (${r.where === 'group' ? 'group memory, ' : ''}${new Date(r.created_at).toISOString().slice(0, 10)})`)].join('\n') };
       }
       case 'ask_person': {
         // A question in the group, for the person (owner, 2026-11-10; dsh-superagent's "one

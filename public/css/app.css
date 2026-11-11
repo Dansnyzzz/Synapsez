@@ -12405,6 +12405,12 @@ html[data-scene] .gate { background: var(--bg); }
 .botmemory__text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .botmemory__forget { flex: none; min-height: 28px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 6px; background: none; color: var(--text-dim); font: inherit; font-size: 12px; cursor: pointer; }
 .botmemory__forget[data-armed="1"] { border-color: var(--danger); color: var(--danger); }
+.botmemory__acts { display: inline-flex; flex: none; flex-wrap: wrap; gap: 4px; }
+.botmemory__list li.is-pinned { box-shadow: inset 2px 0 0 var(--accent); }
+.botmemory__pin { margin-right: 4px; font-size: 12px; }
+.botmemory__gone { justify-content: space-between; color: var(--text-dim); }
+.botmemory__edit { display: flex; flex: 1; flex-wrap: wrap; gap: 6px; }
+.botmemory__edit input { flex: 1 1 160px; min-width: 0; min-height: 32px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; font-size: 13.5px; }
 .botmemory__add { display: flex; gap: 6px; }
 .botmemory__add input { flex: 1; min-width: 0; min-height: 36px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 13.5px; }
 .botusage, .botmembers { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 13.5px; }

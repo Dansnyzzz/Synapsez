@@ -7,7 +7,7 @@ import { abortHere, holdRun, settledAfterStop, watchLease } from '../liveRuns.js
 import { log } from '../util/trace.js';
 import { clientError } from '../util/clientError.js';
 import { BotError, CREATURES, LIMITS, HANDOFF_CEILING, botView, groupView, createBot, createGroup, distinctFaces, ensureChief, removeBot, updateBot, updateGroup } from '../bots/team.js';
-import { listMemory, remember } from '../bots/memory.js';
+import { listMemory, pin, remember, undoForget } from '../bots/memory.js';
 import { runGroupRound } from '../bots/rounds.js';
 import { chainNext } from '../bots/continue.js';
 import { parseSchedule } from '../scheduler.js';
@@ -178,7 +178,7 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       wrap(async (req, res) => {
         if (!(await exists(req))) return res.status(404).json({ error: 'Not found.' });
         const rows = await listMemory(req.user.id, scopeOf(req));
-        res.json({ entries: rows.map((r) => ({ id: r.id, text: r.text, source: r.source, createdAt: r.created_at })) });
+        res.json({ entries: rows.map((r) => ({ id: r.id, text: r.text, source: r.source, createdAt: r.created_at, pinned: !!r.pinned, pinnedBy: r.pinned_by || null })) });
       }),
     );
     api.post(
@@ -195,12 +195,38 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
         }
       }),
     );
+    /** Edit an entry's words, or pin it (the person's pin, which a bot cannot take away). */
+    api.patch(
+      `${path}/memory/:entry`,
+      wrap(async (req, res) => {
+        if (!(await exists(req))) return res.status(404).json({ error: 'Not found.' });
+        try {
+          const scope = scopeOf(req);
+          let row = null;
+          if (typeof req.body?.text === 'string') row = (await remember(req.user.id, scope, req.body.text, 'user', { replace: req.params.entry })).entry;
+          if (typeof req.body?.pinned === 'boolean') row = await pin(req.user.id, scope, req.params.entry, req.body.pinned, 'user');
+          if (!row) return res.status(400).json({ error: 'Say what to change: text or pinned.' });
+          res.json({ entry: { id: row.id, text: row.text, source: row.source, createdAt: row.created_at, pinned: !!row.pinned, pinnedBy: row.pinned_by || null } });
+        } catch (err) {
+          fail(res, err);
+        }
+      }),
+    );
+    /** Forget: soft, so that Undo brings it back for thirty days (owner, 2026-11-10). */
     api.delete(
       `${path}/memory/:entry`,
       wrap(async (req, res) => {
-        const gone = await getStore().deleteBotMemory(req.user.id, req.params.entry, scopeOf(req));
+        const gone = await getStore().softDeleteBotMemory(req.user.id, req.params.entry, scopeOf(req));
         if (!gone) return res.status(404).json({ error: 'No such entry.' });
-        res.json({ ok: true });
+        res.json({ ok: true, undo: [req.params.entry] });
+      }),
+    );
+    api.post(
+      `${path}/memory/undo`,
+      wrap(async (req, res) => {
+        if (!(await exists(req))) return res.status(404).json({ error: 'Not found.' });
+        const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).map(String).slice(0, 50);
+        res.json({ restored: await undoForget(req.user.id, ids) });
       }),
     );
   };

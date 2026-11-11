@@ -550,6 +550,39 @@ section("a bot asks the person in a group, and the person's next line goes to it
   check('  once answered, a plain line goes to the admin again', next.calls[0]?.name === 'Chief', next.calls.map((c) => c.name).join());
 }
 
+/* ── Task 7: memory that keeps up ──────────────────────────────── */
+
+section('memory: replace, pin, recall, and a forget that Undo brings back');
+{
+  const bot = await store.createBot(uid, { id: id(), name: 'Keeper', role: 'k', avatar: 'frog' });
+  const chat = (await store.botChat(uid, { botId: bot.id, title: 'Keeper' })).id;
+  const tool = (name, input) => runBotTool({ userId: uid, chatId: chat, name, input, turnOrigin: 'person' });
+  await tool('remember', { text: 'The client is in Hà Nội.' });
+  const moved = await tool('remember', { text: 'The client is in Đà Nẵng.', replace: 'Hà Nội' });
+  const rows = await store.listBotMemory(uid, { botId: bot.id });
+  check('remember with replace changes the entry rather than adding a second', !moved.isError && rows.length === 1 && rows[0].text === 'The client is in Đà Nẵng.', JSON.stringify(rows.map((r) => r.text)));
+  for (let i = 0; i < 60; i += 1) await memory.remember(uid, { botId: bot.id }, `Filler fact number ${i} about the weekly schedule and nothing else of note.`, 'bot');
+  const found = await tool('recall', { query: 'da nang' });
+  check('recall finds an entry by its words, without the marks', !found.isError && /Đà Nẵng/.test(found.content), found.content.slice(0, 200));
+  check('  and says when it found nothing', /nothing/i.test((await tool('recall', { query: 'zebra crossing' })).content));
+  const pinTarget = rows[0].id;
+  await memory.pin(uid, { botId: bot.id }, pinTarget, true, 'user');
+  const section1 = memory.memorySection(await store.listBotMemory(uid, { botId: bot.id }), '## Memory', 'about');
+  check('a pinned entry is first in the prompt, marked', /^## Memory\nabout\n- \(pinned\) The client is in Đà Nẵng\./.test(section1), section1.slice(0, 160));
+  check('  and the prompt says how many more a recall would find', /more entr(y|ies)[^\n]*recall/.test(section1), section1.slice(-160));
+  let refused = '';
+  try {
+    await memory.pin(uid, { botId: bot.id }, pinTarget, false, 'bot');
+  } catch (err) {
+    refused = err.message;
+  }
+  check("a bot cannot take away the person's pin", /person/i.test(refused), refused);
+  const gone = await tool('forget', { entry: 'Đà Nẵng' });
+  check('forget removes it from memory', !gone.isError && !(await store.listBotMemory(uid, { botId: bot.id })).some((r) => r.id === pinTarget));
+  check('  and Undo brings it back', (await memory.undoForget(uid, [pinTarget])) === 1 && (await store.listBotMemory(uid, { botId: bot.id })).some((r) => r.id === pinTarget));
+  await store.deleteBot(uid, bot.id);
+}
+
 /* ── Task 3: carrying on in another invocation ─────────────────── */
 
 const { continueGroup, resumeGroupRounds } = await import('../server/bots/continue.js');

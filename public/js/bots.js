@@ -661,9 +661,31 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
         : `<button class="botlink" type="button" data-act="task-add">${escapeHtml(t('bots.taskAdd'))} ›</button>`}</section>`;
   }
 
+  /** An entry being edited where it is, and one just forgotten (its Undo, for a few seconds). */
+  let editingEntry = '';
+  let forgotten = /** @type {{ id: string, text: string, timer: any } | null} */ (null);
+
+  /** One entry: its words (or the box to change them), Pin, Edit and Forget (owner, 2026-11-10). */
+  function entryHtml(e) {
+    const id = escapeHtml(e.id);
+    const what = escapeHtml(e.text.slice(0, 40));
+    if (editingEntry === e.id) {
+      return `<li class="is-editing"><form class="botmemory__edit" data-memory-edit="${id}"><input type="text" maxlength="300" data-edit-text value="${escapeHtml(e.text)}" aria-label="${escapeHtml(t('bots.memoryEdit'))}: ${what}" /><button class="btn btn--small btn--primary" type="submit">${escapeHtml(t('bots.memorySave'))}</button><button class="btn btn--small" type="button" data-edit-cancel>${escapeHtml(t('action.cancel'))}</button></form></li>`;
+    }
+    return `<li class="${e.pinned ? 'is-pinned' : ''}"><span class="botmemory__text">${e.pinned ? `<span class="botmemory__pin" aria-label="${escapeHtml(t('bots.memoryPinned'))}">📌</span>` : ''}${escapeHtml(e.text)}</span>
+      <span class="botmemory__acts">
+        <button class="botmemory__forget" type="button" data-pin="${id}" aria-pressed="${!!e.pinned}" aria-label="${escapeHtml(t(e.pinned ? 'bots.memoryUnpin' : 'bots.memoryPin'))}: ${what}">${escapeHtml(t(e.pinned ? 'bots.memoryUnpin' : 'bots.memoryPin'))}</button>
+        <button class="botmemory__forget" type="button" data-edit="${id}" aria-label="${escapeHtml(t('bots.memoryEdit'))}: ${what}">${escapeHtml(t('bots.memoryEdit'))}</button>
+        <button class="botmemory__forget" type="button" data-forget="${id}" aria-label="${escapeHtml(t('bots.forget'))}: ${what}">${escapeHtml(t('bots.forget'))}</button>
+      </span></li>`;
+  }
+
   function memoryHtml(entries) {
+    const undo = forgotten ? `<li class="botmemory__gone"><span>${escapeHtml(t('bots.memoryForgot'))}</span><button class="botmemory__forget" type="button" data-undo-forget="${escapeHtml(forgotten.id)}">${escapeHtml(t('bots.memoryUndo'))}</button></li>` : '';
+    // Pinned first, as the bot reads them.
+    const ordered = [...entries.filter((e) => e.pinned), ...entries.filter((e) => !e.pinned)];
     return `<div class="botmemory">
-      ${entries.length ? `<ul class="botmemory__list">${entries.map((e) => `<li><span class="botmemory__text">${escapeHtml(e.text)}</span><button class="botmemory__forget" type="button" data-forget="${escapeHtml(e.id)}" aria-label="${escapeHtml(t('bots.forget'))}: ${escapeHtml(e.text.slice(0, 40))}">${escapeHtml(t('bots.forget'))}</button></li>`).join('')}</ul>` : `<p class="hint">${escapeHtml(t('bots.memoryEmpty'))}</p>`}
+      ${entries.length || undo ? `<ul class="botmemory__list">${undo}${ordered.map(entryHtml).join('')}</ul>` : `<p class="hint">${escapeHtml(t('bots.memoryEmpty'))}</p>`}
       <form class="botmemory__add" data-memory-add>
         <input type="text" maxlength="300" data-memory-text aria-label="${escapeHtml(t('bots.memoryAdd'))}" placeholder="${escapeHtml(t('bots.memoryPlaceholder'))}" />
         <button class="btn btn--small" type="submit">${escapeHtml(t('bots.memoryAdd'))}</button>
@@ -1231,6 +1253,48 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       renderDetails();
       return;
     }
+    const kindNow = open?.kind === 'group' ? 'bot-groups' : 'bots';
+    const pinBtn = /** @type {HTMLElement | null} */ (target.closest('[data-pin]'));
+    if (pinBtn && open && detailsData) {
+      const entry = detailsData.entries.find((e) => e.id === pinBtn.dataset.pin);
+      if (!entry) return;
+      const was = !!entry.pinned;
+      entry.pinned = !was;
+      paintMemory();
+      await api.editBotMemory(kindNow, open.id, entry.id, { pinned: !was }).catch((err) => {
+        entry.pinned = was;
+        paintMemory();
+        toast(err.message, 'error');
+      });
+      return;
+    }
+    const editBtn = /** @type {HTMLElement | null} */ (target.closest('[data-edit]'));
+    if (editBtn) {
+      editingEntry = String(editBtn.dataset.edit);
+      paintMemory();
+      /** @type {HTMLInputElement | null} */ (details.querySelector('[data-edit-text]'))?.focus();
+      return;
+    }
+    if (target.closest('[data-edit-cancel]')) {
+      editingEntry = '';
+      paintMemory();
+      return;
+    }
+    const undoBtn = /** @type {HTMLElement | null} */ (target.closest('[data-undo-forget]'));
+    if (undoBtn && open && forgotten) {
+      const back = forgotten;
+      clearTimeout(back.timer);
+      forgotten = null;
+      try {
+        await api.undoBotMemory(kindNow, open.id, [back.id]);
+        const { entries } = await api.botMemory(kindNow, open.id);
+        if (detailsData) detailsData.entries = entries || [];
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+      paintMemory();
+      return;
+    }
     const forgetBtn = /** @type {HTMLElement | null} */ (target.closest('[data-forget]'));
     if (forgetBtn) {
       if (forgetBtn.dataset.armed !== '1') {
@@ -1244,10 +1308,20 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
         }, 3000);
         return;
       }
-      const id = forgetBtn.dataset.forget;
+      const id = String(forgetBtn.dataset.forget);
       const held = detailsData?.entries || [];
       const before = [...held];
       if (detailsData) detailsData.entries = held.filter((e) => e.id !== id);
+      // Undo, where it was, for eight seconds.
+      if (forgotten) clearTimeout(forgotten.timer);
+      forgotten = {
+        id,
+        text: held.find((e) => e.id === id)?.text || '',
+        timer: setTimeout(() => {
+          forgotten = null;
+          paintMemory();
+        }, 8000),
+      };
       paintMemory();
       await api.deleteBotMemory(open?.kind === 'group' ? 'bot-groups' : 'bots', open?.id, id).catch((err) => {
         if (detailsData) detailsData.entries = before;
@@ -1317,6 +1391,26 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       } catch (err) {
         toast(err.message, 'error');
       }
+      return;
+    }
+    if (form.matches('[data-memory-edit]') && open && detailsData) {
+      event.preventDefault();
+      const entry = detailsData.entries.find((e) => e.id === form.dataset.memoryEdit);
+      const box = /** @type {HTMLInputElement | null} */ (form.querySelector('[data-edit-text]'));
+      const text = box?.value.trim() || '';
+      editingEntry = '';
+      if (!entry || !text || text === entry.text) return void paintMemory();
+      const was = entry.text;
+      entry.text = text;
+      paintMemory();
+      try {
+        const { entry: saved } = await api.editBotMemory(open.kind === 'group' ? 'bot-groups' : 'bots', open.id, entry.id, { text });
+        Object.assign(entry, saved);
+      } catch (err) {
+        entry.text = was;
+        toast(err.message, 'error');
+      }
+      paintMemory();
       return;
     }
     if (!form.matches('[data-memory-add]')) return;

@@ -460,6 +460,25 @@ section('the details panel: no model of its own, memory, usage, its own schedule
   await page.waitForFunction(() => /^1 entry/.test(document.querySelector('[data-act="memory"]')?.textContent.trim() || ''), null, { timeout: 8000 }).catch(() => {});
   const after = await page.evaluate(() => ({ count: document.querySelector('[data-act="memory"]')?.textContent.trim(), entry: document.querySelector('.botmemory__text')?.textContent.trim() }));
   check('an entry added there is kept', /^1 entry/.test(after.count || '') && after.entry === 'The user writes in British English', JSON.stringify(after));
+  // Pin, edit, forget and Undo, where the entry is (owner, 2026-11-10).
+  await page.click('.botmemory__list li [data-pin]');
+  await page.waitForFunction(() => document.querySelector('.botmemory__list li')?.classList.contains('is-pinned'), null, { timeout: 5000 }).catch(() => {});
+  check('an entry can be pinned there', await page.evaluate(() => document.querySelector('.botmemory__list li')?.classList.contains('is-pinned')));
+  check('  and the server keeps the pin', (await store.listBotMemory(me.id, { botId: chiefId }))[0]?.pinned === true);
+  await page.click('.botmemory__list li [data-edit]');
+  await page.fill('.botmemory__list li [data-edit-text]', 'The user writes in Australian English');
+  await page.press('.botmemory__list li [data-edit-text]', 'Enter');
+  await page.waitForFunction(() => /Australian/.test(document.querySelector('.botmemory__text')?.textContent || ''), null, { timeout: 5000 }).catch(() => {});
+  const edited = (await store.listBotMemory(me.id, { botId: chiefId }))[0];
+  check('  edited in place, one entry still', edited?.text === 'The user writes in Australian English' && (await store.listBotMemory(me.id, { botId: chiefId })).length === 1, edited?.text);
+  await page.click('.botmemory__list li [data-forget]');
+  await page.click('.botmemory__list li [data-forget]');
+  await page.waitForSelector('[data-undo-forget]', { timeout: 5000 }).catch(() => {});
+  check('forgotten, it offers Undo where it was', !!(await page.$('[data-undo-forget]')) && (await store.listBotMemory(me.id, { botId: chiefId })).length === 0);
+  await page.click('[data-undo-forget]');
+  await page.waitForFunction(() => /Australian/.test(document.querySelector('.botmemory__text')?.textContent || ''), null, { timeout: 5000 }).catch(() => {});
+  check('  and Undo brings it back', (await store.listBotMemory(me.id, { botId: chiefId })).length === 1);
+  await store.updateBotMemory(me.id, edited.id, { botId: chiefId }, { text: 'The user writes in British English', textFolded: 'the user writes in british english' });
   await page.click('[data-act="task-add"]');
   await page.fill('[data-task-title]', 'Morning digest');
   await page.fill('[data-task-prompt]', 'Sum up the news for me.');

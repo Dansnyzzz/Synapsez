@@ -35,8 +35,8 @@ export const LIMITS = Object.freeze({
   notice: 2000,
   /** One memory entry: one fact. */
   entry: 300,
-  /** Entries a bot, or a group, keeps. */
-  entries: 60,
+  /** Entries a bot, or a group, keeps. Only the pinned and the newest go into a prompt; `recall` finds the rest. */
+  entries: 200,
 });
 
 /**

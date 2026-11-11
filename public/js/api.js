@@ -255,6 +255,9 @@ export const api = {
   botMemory: (kind, id) => request('GET', `/api/${kind}/${encodeURIComponent(id)}/memory`),
   addBotMemory: (kind, id, text) => request('POST', `/api/${kind}/${encodeURIComponent(id)}/memory`, { text }),
   deleteBotMemory: (kind, id, entry) => request('DELETE', `/api/${kind}/${encodeURIComponent(id)}/memory/${encodeURIComponent(entry)}`),
+  /** Edit an entry (`{ text }`) or pin it (`{ pinned }`). */
+  editBotMemory: (kind, id, entry, patch) => request('PATCH', `/api/${kind}/${encodeURIComponent(id)}/memory/${encodeURIComponent(entry)}`, patch),
+  undoBotMemory: (kind, id, ids) => request('POST', `/api/${kind}/${encodeURIComponent(id)}/memory/undo`, { ids }),
   createGroup: (group) => request('POST', '/api/bot-groups', group),
   updateGroup: (id, patch) => request('PATCH', `/api/bot-groups/${encodeURIComponent(id)}`, patch),
   deleteGroup: (id) => request('DELETE', `/api/bot-groups/${encodeURIComponent(id)}`),
