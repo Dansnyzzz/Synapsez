@@ -15,7 +15,7 @@ import { getPrefs } from '../settings.js';
 import { chosenSkills } from '../skills.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
 import { clientError } from '../util/clientError.js';
-import { keepNewest } from '../chatLimit.js';
+import { keepNewest, mayPin, PIN_LIMIT } from '../chatLimit.js';
 
 /**
  * Lifted out of server/app.js — see the note on mountWorkspaceRoutes for why.
@@ -306,6 +306,14 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
       if ('group' in (req.body || {})) {
         const name = String(req.body.group ?? '').trim().slice(0, 80);
         patch.group = name || null;
+      }
+
+      // Pinned conversations are never deleted by the limit, so their number is capped (chatLimit.js).
+      if (patch.pinned === true) {
+        const current = await store.getChat(req.user.id, req.params.id);
+        if (current && !current.pinned && !(await mayPin(req.user, store))) {
+          return res.status(409).json({ error: `You can pin up to ${PIN_LIMIT} conversations. Unpin one first.` });
+        }
       }
 
       const chat = await store.updateChat(req.user.id, req.params.id, patch);

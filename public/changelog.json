@@ -1,6 +1,18 @@
 {
   "entries": [
     {
+      "version": "1.23.1",
+      "date": "2026-11-11",
+      "improved": {
+        "vi": [
+          "Giới hạn 20 hội thoại giờ tính riêng cho từng nơi: 20 ở ngoài dự án và 20 trong mỗi dự án. Hội thoại ghim không bao giờ bị xoá và không tính vào 20; ghim được tối đa 10. Quản trị viên không giới hạn."
+        ],
+        "en": [
+          "The 20-conversation limit now counts each place on its own: 20 outside projects and 20 in each project. Pinned conversations are never deleted and do not count; up to 10 can be pinned. Administrators have no limit."
+        ]
+      }
+    },
+    {
       "version": "1.23.0",
       "date": "2026-11-11",
       "new": {
