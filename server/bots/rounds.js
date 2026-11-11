@@ -235,6 +235,9 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
     return parts.join(' ');
   };
 
+  /** The person's own call, or a bot's hand-off (and the turn reading what came back). */
+  const originOf = (item) => (item.person && !item.by && !item.report ? 'person' : 'handoff');
+
   const setWorking = async (botId, tool) => {
     state.working = (state.working || []).filter((w) => w.bot !== botId);
     if (tool !== null) state.working.push({ bot: botId, tool: tool || '', since: new Date().toISOString() });
@@ -255,7 +258,15 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
       const current = await store.getBotGroup(userId, groupId);
       const seen = Number(current?.seen?.[self.id] ?? -1);
       const lines = await store.messagesSince(userId, log.id, seen);
-      await store.appendMessage(userId, chat.id, { id: crypto.randomUUID(), role: 'user', text: roundPrompt({ group, self, lines, why: whyFor(item, self), together, nameOf }) });
+      await store.appendMessage(userId, chat.id, {
+        id: crypto.randomUUID(),
+        role: 'user',
+        text: roundPrompt({ group, self, lines, why: whyFor(item, self), together, nameOf }),
+        // Who started this turn, for the tools only a person's turn may run, and whether
+        // other bots' words are in it (server/agent.js, owner 2026-11-10).
+        origin: originOf(item),
+        groupLines: lines.some((m) => m.role === 'assistant' && m.bot && m.bot !== self.id && !m.notice),
+      });
       // From here on a cut-off continues this turn rather than prompting it again.
       item.resume = true;
       item.seenTo = lines.length ? Number(lines.at(-1).seq) : null;
@@ -279,6 +290,7 @@ export async function runGroupRound({ user, groupId, text = '', emit, signal, de
         deviceHint: undefined,
         // Nobody can answer a question card or press Connect inside a group.
         unattended: true,
+        turnOrigin: originOf(item),
         origin,
         signal,
         deadlineAt,

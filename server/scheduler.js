@@ -586,6 +586,8 @@ async function runTask(task) {
       id: crypto.randomUUID(),
       role: 'user',
       text: task.prompt,
+      // A task's prompt, not the person typing: some tools run only for the person (server/agent.js).
+      origin: 'task',
     });
     // Known from the start, so the conversation shows as running in the sidebar.
     await store.markTaskChat(task.id, chatId);

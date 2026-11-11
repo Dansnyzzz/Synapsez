@@ -132,7 +132,18 @@ const list = (value) => (Array.isArray(value) ? value.map((v) => String(v ?? '')
  *
  * @param {{ userId: string, chatId: string, name: string, input: any }} call
  */
-export async function runBotTool({ userId, chatId, name, input = {}, turnId = null }) {
+/** Tools that reshape the team: only a turn the person started may run them (owner, 2026-11-10). */
+const TEAM_CHANGING = new Set(['create_bot', 'create_group', 'update_group']);
+
+/** Who started a turn that may not change the team, in words for the refusal. */
+const STARTED_BY = { handoff: 'another bot', task: 'a scheduled task', webhook: 'a request from outside the app', review: 'a memory review' };
+
+/**
+ * @param {{ userId: string, chatId: string, name: string, input?: any, turnId?: string | null, turnOrigin?: string | null }} call
+ *   `turnOrigin`: who started the turn — 'person' (or none) when the person wrote it;
+ *   'handoff', 'task', 'webhook' or 'review' otherwise (server/agent.js)
+ */
+export async function runBotTool({ userId, chatId, name, input = {}, turnId = null, turnOrigin = null }) {
   try {
     const store = getStore();
     const chat = chatId ? await store.getChat(userId, chatId) : null;
@@ -144,6 +155,22 @@ export async function runBotTool({ userId, chatId, name, input = {}, turnId = nu
     const groupId = chat.bot_group_id || null;
     const bots = await store.listBots(userId);
     const byName = (n) => bots.find((b) => b.name.toLowerCase() === String(n ?? '').trim().toLowerCase());
+
+    /*
+     * Only a person reshapes the team (OpenBot's and DS Bot's lesson, owner 2026-11-10): a
+     * turn another bot started in a group, a scheduled task, a webhook or a review must not
+     * make bots or groups, change another bot, or rewrite a bot's own instructions — text
+     * one bot read on a web page could otherwise become another bot's standing orders. A
+     * bot may still rename itself or change its own role or face when a member asks.
+     */
+    if (turnOrigin && turnOrigin !== 'person') {
+      const target = name === 'update_bot' ? (input.bot ? byName(input.bot) : self) : null;
+      const reshapes = TEAM_CHANGING.has(name) || (name === 'update_bot' && (!target || target.id !== self.id || input.instructions !== undefined));
+      if (reshapes) {
+        const who = STARTED_BY[turnOrigin] || 'something other than the person';
+        return { isError: true, content: `Only the person changes the team, in a message they write themselves; this turn was started by ${who}. Say what you would change instead, and the person can ask you for it.` };
+      }
+    }
 
     switch (name) {
       case 'list_bots': {

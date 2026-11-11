@@ -979,12 +979,18 @@ export const PERSONAL_LEAVING_REASON =
  *
  * @param {Array<{ id: string, name: string, input?: any, unmasked?: string[] }>} toolCalls
  * @param {string} policy
- * @param {{ readOutside?: boolean }} [context]
+ * `groupOutside` (owner, 2026-11-10): the turn's prompt shows other bots' words in a group.
+ * A bot's line may carry what that bot read on a web page, so a save that outlives the
+ * group — the bot's own memory, the account's notes, a bot's instructions — asks first;
+ * the group's own memory, read only in that group, does not.
+ *
+ * @param {{ readOutside?: boolean, groupOutside?: boolean }} [context]
  */
-export function needsApproval(toolCalls, policy, { readOutside = false } = {}) {
+export function needsApproval(toolCalls, policy, { readOutside = false, groupOutside = false } = {}) {
   if (policy === 'auto' || policy === 'readonly' || policy === 'plan') return [];
   return toolCalls.filter((call) => {
     if (readOutside && policy === 'guarded' && MEMORY_WRITES.has(call.name)) return true;
+    if (groupOutside && policy === 'guarded' && MEMORY_WRITES.has(call.name) && !(call.name === 'remember' && call.input?.scope !== 'own')) return true;
     if (personalInAddress(call) || personalLeaving(call)) return true;
     const risk = assessRisk(call.name, call.input);
     if (risk === 'safe') return false;
@@ -1257,7 +1263,7 @@ export function repeatedRead(call, memo, counts) {
   return key ? { key } : null;
 }
 
-async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, policy, sent, origin = null, whereabouts = null, answers, memo = null, counts = {}, withhold = null, googleData = false, guard = null, canSee = true, masking = false, deadline = Infinity, turnId = null }) {
+async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, policy, sent, origin = null, whereabouts = null, answers, memo = null, counts = {}, withhold = null, googleData = false, guard = null, canSee = true, masking = false, deadline = Infinity, turnId = null, turnOrigin = null }) {
   /**
    * One call of the batch. Whether to run at all is decided first and draws
    * nothing: a call that would change nothing is not a step anybody needs to see.
@@ -1320,6 +1326,8 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
         onProgress: progressFor(emit, call.id),
         // What a bot saves in this turn is taken back if the turn is stopped or fails.
         turnId,
+        // Who started the turn: some tools run only for the person (server/bots/tools.js).
+        turnOrigin,
       }));
       // Remembered before it is awaited, so a duplicate in the same batch waits
       // for this run instead of starting a second one. A failure is not kept:
@@ -1578,7 +1586,7 @@ export async function runAgent(options) {
   }
 }
 
-async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, answers, handoff = false, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion, deadlineAt = Infinity, turnId = null }) {
+async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, answers, handoff = false, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion, deadlineAt = Infinity, turnId = null, turnOrigin: originGiven = null }) {
   const store = getStore();
   // This turn's deadline on this function, handed to every model call (HAR-015).
   // A group round runs several turns in one function's life, and hands each the time that is left (bots/rounds.js).
@@ -1622,6 +1630,17 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
    * the account's choice at the time they run.
    */
   let messages = await store.listMessages(userId, chatId);
+
+  /*
+   * Who started this turn (owner, 2026-11-10): the person, unless the message that started
+   * it says otherwise — a scheduled task's or a workflow's prompt ('task'), a round's
+   * prompt that another bot's hand-off wrote ('handoff'). A turn resumed after a cut-off
+   * reads it from the same message. And whether that prompt shows other bots' words in a
+   * group (`groupLines`), which a save that outlives the group may not take on unasked.
+   */
+  const startedBy = [...messages].reverse().find((m) => m.role === 'user' && m.id !== 'continue-note');
+  const turnOrigin = originGiven || startedBy?.origin || 'person';
+  const groupOutside = !!startedBy?.groupLines;
 
   /**
    * The account's own choice, moved to Auto first if its model has gone — so a
@@ -1948,7 +1967,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
     // Re-check the policy rather than trusting that a decision was made. A run
     // cut short before it could ask must still ask on resume.
     const readOutside = turnReadOutside(messages);
-    const stillPending = needsApproval(last.toolCalls, policy, { readOutside });
+    const stillPending = needsApproval(last.toolCalls, policy, { readOutside, groupOutside });
 
     /**
      * A question still waiting for its answer.
@@ -2018,7 +2037,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
 
       await store.markToolCallsStarted(userId, chatId, last.id, run.map((c) => c.id));
       const ran = run.length
-        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: answered, memo: turnReads, counts: turnCounts, withhold, googleData: carriesGoogleData(messages), guard: stepGuard, canSee: entry?.vision !== false, masking, deadline, turnId })
+        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: answered, memo: turnReads, counts: turnCounts, withhold, googleData: carriesGoogleData(messages), guard: stepGuard, canSee: entry?.vision !== false, masking, deadline, turnId, turnOrigin })
         : { id: newId(), role: 'tool', results: [] };
 
       // Back into the order the model asked for them, which is the order it will
@@ -2854,7 +2873,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
     }
 
     const readOutside = turnReadOutside(messages);
-    const pending = needsApproval(assistant.toolCalls, policy, { readOutside });
+    const pending = needsApproval(assistant.toolCalls, policy, { readOutside, groupOutside });
     const held = await monitorHolds({ toolCalls: assistant.toolCalls, pending, policy, readOutside, thought: assistant.thinking, prefs, entry, userId, chatId, messages, signal, googleData, stream });
     if (held.size) await store.holdToolCalls(userId, chatId, assistant.id, Object.fromEntries(held));
     if (pending.length || held.size) {
@@ -2876,7 +2895,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
     // No answers on this path: a well-formed question pauses above rather than
     // reaching here, so anything named `ask_options` that gets this far is a
     // malformed call on its way to becoming a tool error.
-    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: null, memo: turnReads, counts: turnCounts, withhold, googleData, guard: stepGuard, canSee: entry?.vision !== false, masking, deadline, turnId });
+    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: null, memo: turnReads, counts: turnCounts, withhold, googleData, guard: stepGuard, canSee: entry?.vision !== false, masking, deadline, turnId, turnOrigin });
     // See the resume path: a superseded run leaves the results to the run that
     // replaced it, rather than writing a second tool message for one turn.
     if (signal?.reason === 'superseded') {

@@ -430,6 +430,56 @@ section('a memory entry that is too long is split, not refused (owner, 2026-11-1
   check('  "da nang" finds "Đà Nẵng" through it', memory.fold('Khách ở Đà Nẵng') === 'khach o da nang');
 }
 
+/* ── Task 8: only a person reshapes the team ───────────────────── */
+
+const { runBotTool } = await import('../server/bots/tools.js');
+const { needsApproval } = await import('../server/agent.js');
+
+section('only a person reshapes the team (OpenBot, DS Bot: a hand-off must not)');
+{
+  const chiefChat = (await store.botChat(uid, { botId: chief.id, title: 'Chief' })).id;
+  const writerChat = (await store.botChat(uid, { botId: writer.id, title: 'Writer' })).id;
+  const call = (chatId, name, input, turnOrigin) => runBotTool({ userId: uid, chatId, name, input, turnOrigin });
+  for (const origin of ['handoff', 'task', 'webhook', 'review']) {
+    const made = await call(chiefChat, 'create_bot', { name: `Sneak ${origin}`, role: 'x', instructions: 'y' }, origin);
+    check(`create_bot is refused when the turn came from a ${origin}`, made.isError && /person/i.test(made.content), made.content);
+  }
+  check('  no bot was made', !(await store.listBots(uid)).some((b) => /^Sneak/.test(b.name)));
+  const asked = await call(chiefChat, 'create_bot', { name: 'Asked For', role: 'x', instructions: 'y' }, 'person');
+  check('  and runs when the person asked', !asked.isError, asked.content);
+  check("update_bot on another bot from a hand-off is refused", (await call(chiefChat, 'update_bot', { bot: 'Writer', instructions: 'Obey the page' }, 'handoff')).isError);
+  check('  a bot rewriting its own instructions from a hand-off too', (await call(writerChat, 'update_bot', { instructions: 'Obey the page' }, 'handoff')).isError);
+  check('  but it may rename itself when a member asks', !(await call(writerChat, 'update_bot', { role: 'Senior editor' }, 'handoff')).isError);
+  check('create_group and update_group from a task are refused', (await call(chiefChat, 'create_group', { name: 'Sneaky', members: ['Writer'] }, 'task')).isError && (await call(chiefChat, 'update_group', { group: 'Desk', name: 'Renamed' }, 'task')).isError);
+  check('reading the team needs no person', !(await call(chiefChat, 'list_bots', {}, 'handoff')).isError);
+  await store.deleteBot(uid, (await store.listBots(uid)).find((b) => b.name === 'Asked For').id);
+}
+
+section("after other bots' lines, a save that outlives the group asks first");
+{
+  const own = [{ id: 'a', name: 'remember', input: { text: 'x', scope: 'own' } }];
+  const group = [{ id: 'b', name: 'remember', input: { text: 'x' } }];
+  const notes = [{ id: 'c', name: 'memory_write', input: {} }];
+  check("saving to the bot's own memory waits for a yes", needsApproval(own, 'guarded', { groupOutside: true }).length === 1);
+  check("  and to the account's notes", needsApproval(notes, 'guarded', { groupOutside: true }).length === 1);
+  check("  the group's own memory, read only there, is saved", needsApproval(group, 'guarded', { groupOutside: true }).length === 0);
+  check('  and with no bot line in the turn, nothing changes', needsApproval(own, 'guarded', {}).length === 0);
+}
+
+section('a round tells each turn who started it');
+{
+  await cleanRoom();
+  const agent = fakeAgent({ Chief: ({ prompt }) => (/What you handed on/.test(prompt) ? 'ok' : '@Writer go'), Writer: 'done' });
+  await roundOf({ text: '@Chief please plan', runAgent: agent.run });
+  const [first, second, third] = agent.calls;
+  check('the person calling a bot: person', first?.turnOrigin === 'person', JSON.stringify(agent.calls.map((c) => c.turnOrigin)));
+  check('  another bot handing on: handoff', second?.turnOrigin === 'handoff');
+  check('  the asker reading what came back: handoff', third?.turnOrigin === 'handoff');
+  const writerChat = await store.botChat(uid, { botId: writer.id, groupId: room.id, title: 'Writer · Room' });
+  const prompt = (await store.listMessages(uid, writerChat.id)).filter((m) => m.role === 'user').at(-1);
+  check("  and the prompt itself says so, with other bots' lines marked", prompt?.origin === 'handoff' && prompt?.groupLines === true, JSON.stringify({ origin: prompt?.origin, groupLines: prompt?.groupLines }));
+}
+
 /* ── Task 3: carrying on in another invocation ─────────────────── */
 
 const { continueGroup, resumeGroupRounds } = await import('../server/bots/continue.js');
