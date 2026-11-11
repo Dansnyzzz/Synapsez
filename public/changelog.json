@@ -1,6 +1,40 @@
 {
   "entries": [
     {
+      "version": "1.23.0",
+      "date": "2026-11-11",
+      "new": {
+        "vi": [
+          "Mỗi tài khoản giữ 20 hội thoại dùng gần nhất: khi có hội thoại thứ 21, hội thoại cũ nhất không ghim bị xoá hẳn và trang báo cho bạn. Hội thoại ghim được giữ. Quản trị viên không giới hạn.",
+          "Sơ đồ được kiểm tra trước khi hiện (chữ tràn khung, nhãn chồng nhau, chữ khó đọc, chữ Trung lẫn vào), vẽ lại khi có lỗi, và được lưu thành tệp ở bảng bên phải."
+        ],
+        "en": [
+          "An account keeps its 20 most recently used conversations: when a 21st begins, the oldest unpinned one is deleted for good and the page tells you. Pinned ones are kept. Administrators have no limit.",
+          "Diagrams are checked before they are shown (text off its box, labels on each other, hard-to-read text, stray Chinese), drawn again when wrong, and kept as a file in the panel on the right."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Thứ bạn xoá bị xoá khỏi cơ sở dữ liệu ngay, cùng tệp, nghiên cứu và việc chạy của nó — cả khi xoá bot hoặc nhóm.",
+          "Mức suy luận thấp giờ thật sự nghĩ ít và trả lời nhanh, mà vẫn chính xác."
+        ],
+        "en": [
+          "What you delete is deleted from the database at once, with its files, research and jobs — deleting a bot or a group too.",
+          "Low reasoning now really thinks less and answers faster, and stays exact."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Bước chạy trên máy ảo không còn bị cắt giữa chừng rồi bị từ chối khi tiếp tục; lệnh sửa tìm-thay bị cắt được chạy lại; tệp gửi lên máy ảo có tên đúng.",
+          "Chữ Trung Quốc lẫn vào câu trả lời tiếng Việt được sửa lại."
+        ],
+        "en": [
+          "Sandbox steps are no longer cut off mid-way and refused on resume; a cut-off find-and-replace runs again; files sent to the sandbox get their names.",
+          "Chinese characters slipped into a Vietnamese answer are mended."
+        ]
+      }
+    },
+    {
       "version": "1.22.0",
       "date": "2026-11-11",
       "new": {
