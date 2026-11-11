@@ -281,6 +281,39 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
   );
 
   /**
+   * Reset a conversation (owner, 2026-11-10): a bot's own chat, or a group's log with
+   * every member's conversation for it. The rows are deleted, files and all, to free the
+   * space; memory, instructions, members and scheduled tasks stay. Not while it runs —
+   * or, for a group, while its round is between two segments: Stop first.
+   */
+  api.post(
+    '/bots/:id/reset',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const bot = await store.getBot(req.user.id, req.params.id);
+      if (!bot) return res.status(404).json({ error: 'No such bot.' });
+      const chat = await store.botChat(req.user.id, { botId: bot.id, title: bot.name });
+      if (running(chat)) return res.status(409).json({ error: 'This bot is answering. Stop it first, then reset.', code: 'running' });
+      const removed = await store.resetConversation(req.user.id, { botId: bot.id });
+      res.json({ reset: true, removed });
+    }),
+  );
+  api.post(
+    '/bot-groups/:id/reset',
+    wrap(async (req, res) => {
+      const store = getStore();
+      const group = await store.getBotGroup(req.user.id, req.params.id);
+      if (!group) return res.status(404).json({ error: 'No such group chat.' });
+      const chat = await store.botChat(req.user.id, { groupId: group.id, title: group.name });
+      if (running(chat) || (group.pending && ['time', 'running'].includes(group.pending.reason))) {
+        return res.status(409).json({ error: 'This group is answering. Stop it first, then reset.', code: 'running' });
+      }
+      const removed = await store.resetConversation(req.user.id, { groupId: group.id });
+      res.json({ reset: true, removed });
+    }),
+  );
+
+  /**
    * Stream one segment of a group's round as server-sent events: `post` for each line
    * the group gains, `member_start` / `member_text` / `member_tool` / `member_end`
    * while a bot works, `paused` when the segment hands the rest to the next one

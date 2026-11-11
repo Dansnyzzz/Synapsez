@@ -586,6 +586,32 @@ section('a round that waits, joins, carries on and is watched (owner, 2026-11-10
   void pong;
 }
 
+section('reset empties a conversation and keeps the memory (owner, 2026-11-10)');
+{
+  const writer = (await alice.call('POST', '/api/bots', { name: 'Resetter', role: 'r' })).body.bot;
+  const own = (await alice.call('GET', `/api/bots/${writer.id}/chat`)).body;
+  await alice.call('POST', `/api/chats/${own.chatId}/messages`, { text: 'a line to reset' });
+  await alice.call('POST', `/api/bots/${writer.id}/memory`, { text: 'Kept across a reset' });
+  check('another account cannot reset it', (await bob.call('POST', `/api/bots/${writer.id}/reset`)).status === 404);
+  const done = await alice.call('POST', `/api/bots/${writer.id}/reset`);
+  const after = (await alice.call('GET', `/api/bots/${writer.id}/chat`)).body;
+  check("a bot's chat is emptied", done.status === 200 && after.messages.length === 0 && after.chatId !== own.chatId, done.text);
+  check('  its memory kept', (await alice.call('GET', `/api/bots/${writer.id}/memory`)).body.entries.some((e) => e.text === 'Kept across a reset'));
+
+  const blog = (await alice.call('POST', '/api/bot-groups', { name: 'Reset Room', members: [writer.id] })).body.group;
+  await alice.call('POST', `/api/bot-groups/${blog.id}/memory`, { text: 'Posts go out on Fridays' });
+  const log = (await alice.call('GET', `/api/bot-groups/${blog.id}/chat`)).body;
+  check('the group has lines to lose', log.messages.length > 0, String(log.messages.length));
+  const runId = crypto.randomUUID();
+  const seq = await store.claimChatRun(aliceId, log.chatId, runId);
+  check('a group at work is not reset under its feet', (await alice.call('POST', `/api/bot-groups/${blog.id}/reset`)).status === 409);
+  await store.releaseChatRun(aliceId, log.chatId, runId, seq);
+  const reset = await alice.call('POST', `/api/bot-groups/${blog.id}/reset`);
+  const empty = (await alice.call('GET', `/api/bot-groups/${blog.id}/chat`)).body;
+  check("a group's log is emptied", reset.status === 200 && empty.messages.length === 0, reset.text);
+  check('  its memory kept', (await alice.call('GET', `/api/bot-groups/${blog.id}/memory`)).body.entries.some((e) => /Fridays/.test(e.text)));
+}
+
 await new Promise((r) => server.close(r));
 provider.closeAllConnections?.();
 provider.close();
