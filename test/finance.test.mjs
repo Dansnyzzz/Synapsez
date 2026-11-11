@@ -570,5 +570,31 @@ section('7e sec.js: one value per period, and nothing without SEC_USER_AGENT');
   delete process.env.SEC_USER_AGENT;
 }
 
+const coingecko = await import('../server/finance/sources/coingecko.js');
+
+section('7f coingecko.js: every result says "Powered by CoinGecko"');
+{
+  await fresh();
+  const fetchImpl = serve([
+    ['simple/price', 'coingecko-simple.json'],
+    ['/search?query=wif', { coins: [{ id: 'dogwifcoin', symbol: 'WIF' }] }],
+    ['market_chart', { prices: [[1794182400000, 74000], [1794268800000, 74779]], total_volumes: [[1794182400000, 3e10], [1794268800000, 2.9e10]] }],
+  ]);
+  const ctx = { fetchImpl };
+  const [btc] = await coingecko.quote(['btc'], 'vnd', ctx);
+  check('BTC in USD and VND', btc.price === 74_779 && btc.also?.currency === 'VND' && btc.also.price === 1_912_760_356 && btc.name === 'bitcoin', JSON.stringify(btc));
+  check('  with the attribution CoinGecko\'s terms require', btc.attribution?.includes('Powered by CoinGecko'));
+  const asked = fetchImpl.calls[0].url;
+  check('  asked by id, for USD and VND', /ids=bitcoin/.test(asked) && /vs_currencies=usd%2Cvnd/.test(asked), asked);
+  check('  without a Demo key, no key header', !('x-cg-demo-api-key' in fetchImpl.calls[0].headers));
+  check('a coin not in the list is searched for, once', (await coingecko.coinId('wif', ctx)) === 'dogwifcoin' && (await coingecko.coinId('wif', ctx)) === 'dogwifcoin' && fetchImpl.calls.filter((c) => c.url.includes('search')).length === 1);
+  process.env.COINGECKO_DEMO_KEY = 'CG-demo-test';
+  const h = await coingecko.history('btc', { days: 2 }, ctx);
+  check('with COINGECKO_DEMO_KEY, the key goes in its header', fetchImpl.calls.at(-1).headers['x-cg-demo-api-key'] === 'CG-demo-test');
+  delete process.env.COINGECKO_DEMO_KEY;
+  check('history: dated prices, attributed', h.bars.length === 2 && h.bars[1].c === 74_779 && h.bars[1].t === '2026-11-10' && h.attribution.includes('Powered by CoinGecko'), JSON.stringify(h.bars));
+  check('the old COINS map came along', coingecko.COINS.btc === 'bitcoin' && coingecko.COINS.sol === 'solana');
+}
+
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll finance checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);
