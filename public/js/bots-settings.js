@@ -64,6 +64,9 @@ export function mergeTeam(team, change) {
 export const changeLine = (change, made, name) =>
   t(`bots.toast.${change.kind}${change.removed ? 'Deleted' : made ? 'Created' : 'Saved'}`, { name });
 
+/** The twelve colours a creature can wear (server/bots/team.js HUES). */
+const HUES = Object.freeze([0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330]);
+
 /**
  * @param {{
  *   team: any, page: string, id: string | null,
@@ -172,6 +175,13 @@ export function openBotSettings(deps) {
         <fieldset class="botform__creatures"><legend>${escapeHtml(t('bots.f.creature'))}</legend>
           ${CREATURE_IDS.map((c) => `<label class="botform__creature" title="${escapeHtml(creatureName(c))}"><input type="radio" name="avatar" value="${escapeHtml(c)}" ${c === avatar ? 'checked' : ''} ${bot?.main && c !== avatar ? 'disabled' : ''} />${faceHtml(c, 40)}<span class="sr-only">${escapeHtml(creatureName(c))}</span></label>`).join('')}
         </fieldset>
+        ${
+          bot
+            ? `<fieldset class="botform__hues"><legend>${escapeHtml(t('bots.f.colour'))}</legend>
+          ${HUES.map((h, i) => `<label class="botform__hue" title="${escapeHtml(t('bots.f.colourN', { n: i + 1 }))}"><input type="radio" name="hue" value="${h}" ${h === (Number(bot.hue) || 0) ? 'checked' : ''} />${faceHtml({ ...bot, hue: h }, 32)}<span class="sr-only">${escapeHtml(t('bots.f.colourN', { n: i + 1 }))}</span></label>`).join('')}
+        </fieldset>`
+            : ''
+        }
         <p class="hint botform__note">${escapeHtml(t('bots.f.modelNote'))}</p>
         <label class="field"><span>${escapeHtml(t('bots.f.instructions'))}</span><textarea name="instructions" rows="6" maxlength="4000">${escapeHtml(bot?.instructions || '')}</textarea><small class="hint">${escapeHtml(t('bots.f.instructionsHint'))}</small></label>
         <label class="field"><span>${escapeHtml(t('bots.f.review'))}</span><select name="reviewEvery">${[20, 40, 0].map((n) => `<option value="${n}" ${(bot?.reviewEvery ?? 20) === n ? 'selected' : ''}>${escapeHtml(n ? t('bots.f.reviewEvery', { n }) : t('bots.f.reviewOff'))}</option>`).join('')}</select><small class="hint">${escapeHtml(t('bots.f.reviewHint'))}</small></label>
@@ -200,6 +210,8 @@ export function openBotSettings(deps) {
       }
       error.textContent = '';
       const body = { name: data.get('name'), role: data.get('role'), avatar: data.get('avatar'), instructions: data.get('instructions'), reviewEvery: Number(data.get('reviewEvery') ?? 20) };
+      // A colour the person chose (spec B.5); left as it was, the server keeps it apart from the others.
+      if (bot && data.get('hue') != null && Number(data.get('hue')) !== (Number(bot.hue) || 0)) body.hue = Number(data.get('hue'));
       busy(save, true);
       try {
         const saved = bot ? await api.updateBot(bot.id, body) : await api.createBot(body);

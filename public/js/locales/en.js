@@ -328,6 +328,8 @@ export const en = {
   'bots.u.byModel': 'By model',
   'bots.u.bots': 'Bots',
   'bots.u.models': 'Models',
+  'bots.f.colour': 'Colour',
+  'bots.f.colourN': 'Colour {n}',
   'bots.u.compare': '{pct} on the {range} before',
   'bots.u.compareNone': 'Nothing in the span before to compare',
   'bots.u.cost': 'Cost',

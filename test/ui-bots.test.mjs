@@ -925,6 +925,18 @@ section('needs you, unread, pins, the row menu, pause, who is called, ask aside,
   check('Retry runs it again, and the line goes', !retried.line && retried.toasts.some((x) => /Running Feed again/.test(x)), JSON.stringify(retried));
   await store.deleteTask(me.id, 'task-feed');
 
+  // A colour chosen in the bot's form (spec B.5).
+  await page.click(`[data-row-more="bot:${writer.id}"]`);
+  await page.click('[data-row-act="settings"]');
+  await page.waitForSelector('#bot-settings .botform__hues', { timeout: 5000 }).catch(() => {});
+  const hues = await page.evaluate(() => document.querySelectorAll('#bot-settings .botform__hues input[name="hue"]').length);
+  check('the bot form offers twelve colours', hues === 12, String(hues));
+  await page.click('#bot-settings .botform__hue:has(input[value="210"])');
+  await page.click('#bot-settings [data-bot-form] button[type="submit"]');
+  await page.waitForTimeout(700);
+  check('  the chosen one is kept', Number((await store.getBot(me.id, writer.id)).hue) === 210, String((await store.getBot(me.id, writer.id)).hue));
+  await page.evaluate(() => /** @type {HTMLDialogElement} */ (document.getElementById('bot-settings'))?.close());
+
   // A team file, pasted from another assistant: checked first, then added.
   await page.click('[data-act="new"]');
   await page.click('[data-act="team-files"]');

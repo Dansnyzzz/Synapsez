@@ -336,6 +336,8 @@ export const vi = {
   'bots.u.byModel': 'Theo mô hình',
   'bots.u.bots': 'Bot',
   'bots.u.models': 'Mô hình',
+  'bots.f.colour': 'Màu',
+  'bots.f.colourN': 'Màu {n}',
   'bots.u.compare': '{pct} so với {range} trước đó',
   'bots.u.compareNone': 'Khoảng trước đó không có gì để so sánh',
   'bots.u.cost': 'Chi phí',
