@@ -255,8 +255,11 @@ export function splitStatements(sql) {
  *      pins, folded text, turn, soft delete; bots.instructions_prev / review_every;
  *      chats.memory_snapshot — the Bot page core (server/bots/rounds.js, memory.js)
  *  45  finance_cache — market data shared across accounts (server/finance/cache.js)
+ *  46  bots.paused_at / pinned_at, bot_groups.pinned_at, chats.read_seq,
+ *      scheduled_tasks.bot_group_id / missed, usage_events.reasoning_tokens / origin
+ *      — the Bot page's team features (spec B)
  */
-export const SCHEMA_VERSION = 45;
+export const SCHEMA_VERSION = 46;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -706,9 +709,9 @@ export function createPgStore(connectionString) {
        */
       await q(
         `INSERT INTO usage_events
-           (id, user_id, chat_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, role, bot_id)
+           (id, user_id, chat_id, model, input_tokens, output_tokens, cost_usd, cache_read_tokens, role, bot_id, reasoning_tokens, origin)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
-                 COALESCE($10::text, (SELECT c.bot_id FROM chats c WHERE c.id = $3 AND c.user_id = $2)))`,
+                 COALESCE($10::text, (SELECT c.bot_id FROM chats c WHERE c.id = $3 AND c.user_id = $2)), $11, $12)`,
         [
           event.id,
           userId,
@@ -720,6 +723,9 @@ export function createPgStore(connectionString) {
           event.cacheReadTokens || 0,
           event.role || 'turn',
           event.botId ?? null,
+          // What the provider spent thinking, where it says (schema 46), and who started the turn.
+          event.reasoningTokens || 0,
+          event.origin ?? null,
         ],
       );
     },
@@ -3932,18 +3938,22 @@ export function createPgStore(connectionString) {
      * (the Bot page), or with `every` all of them (the data export). A bot's tasks are
      * never in the account's list (owner, 2026-11-10).
      *
-     * @param {string} userId @param {{ botId?: string | null, every?: boolean }} [scope]
+     * A group's tasks (`groupId`, schema 46) are its own too, shown in the group's details only.
+     *
+     * @param {string} userId @param {{ botId?: string | null, groupId?: string | null, every?: boolean }} [scope]
      */
-    async listTasks(userId, { botId = null, every = false } = {}) {
+    async listTasks(userId, { botId = null, groupId = null, every = false } = {}) {
       if (every) return q('SELECT * FROM scheduled_tasks WHERE user_id = $1 ORDER BY next_run_at', [userId]);
       if (botId) return q('SELECT * FROM scheduled_tasks WHERE user_id = $1 AND bot_id = $2 ORDER BY next_run_at', [userId, String(botId)]);
-      return q('SELECT * FROM scheduled_tasks WHERE user_id = $1 AND bot_id IS NULL ORDER BY next_run_at', [userId]);
+      if (groupId) return q('SELECT * FROM scheduled_tasks WHERE user_id = $1 AND bot_group_id = $2 ORDER BY next_run_at', [userId, String(groupId)]);
+      return q('SELECT * FROM scheduled_tasks WHERE user_id = $1 AND bot_id IS NULL AND bot_group_id IS NULL ORDER BY next_run_at', [userId]);
     },
     async createTask(userId, task) {
       const rows = await q(
-        `INSERT INTO scheduled_tasks (id, user_id, title, prompt, model, cron, next_run_at, tz, project_id, policy, bot_id)
-         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
-          WHERE $11::text IS NULL OR EXISTS (SELECT 1 FROM bots WHERE user_id = $2 AND id = $11)
+        `INSERT INTO scheduled_tasks (id, user_id, title, prompt, model, cron, next_run_at, tz, project_id, policy, bot_id, bot_group_id, missed, enabled)
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+          WHERE ($11::text IS NULL OR EXISTS (SELECT 1 FROM bots WHERE user_id = $2 AND id = $11))
+            AND ($12::text IS NULL OR EXISTS (SELECT 1 FROM bot_groups WHERE user_id = $2 AND id = $12))
          RETURNING *`,
         [
           task.id,
@@ -3959,6 +3969,9 @@ export function createPgStore(connectionString) {
           task.projectId ?? null,
           task.policy ?? null,
           task.botId || null,
+          task.botGroupId || null,
+          task.missed === 'skip' ? 'skip' : 'once',
+          task.enabled !== false,
         ],
       );
       return rows[0];
@@ -4002,6 +4015,7 @@ export function createPgStore(connectionString) {
         tz: 'tz',
         policy: 'policy',
         endsOn: 'ends_on',
+        missed: 'missed',
       };
       const sets = [];
       const values = [userId, id];
@@ -4054,6 +4068,8 @@ export function createPgStore(connectionString) {
           WHERE id = (SELECT id FROM scheduled_tasks
                        WHERE enabled AND next_run_at <= $1
                          AND ($2::text IS NULL OR user_id = $2)
+                         -- A paused bot's tasks wait (schema 46); resuming moves them on.
+                         AND (bot_id IS NULL OR NOT EXISTS (SELECT 1 FROM bots b WHERE b.id = scheduled_tasks.bot_id AND b.paused_at IS NOT NULL))
                          AND (run_state IS DISTINCT FROM 'running'
                               OR lease_until IS NULL
                               OR lease_until <= NOW())
@@ -4515,6 +4531,8 @@ export function createPgStore(connectionString) {
         instructionsChangedBy: 'instructions_changed_by',
         reviewEvery: 'review_every',
         turnsSinceReview: 'turns_since_review',
+        pausedAt: 'paused_at',
+        pinnedAt: 'pinned_at',
       };
       const sets = [];
       const params = [userId, String(id ?? '')];
@@ -4587,6 +4605,10 @@ export function createPgStore(connectionString) {
       if (patch.notice !== undefined) {
         params.push(String(patch.notice ?? ''));
         sets.push(`notice = $${params.length}`);
+      }
+      if (patch.pinnedAt !== undefined) {
+        params.push(patch.pinnedAt);
+        sets.push(`pinned_at = $${params.length}`);
       }
       if (sets.length) {
         const rows = await q(`UPDATE bot_groups SET ${sets.join(', ')}, updated_at = NOW() WHERE user_id = $1 AND id = $2 RETURNING id`, params);
@@ -4858,9 +4880,19 @@ export function createPgStore(connectionString) {
      * the left: one row a conversation, the newest message with words in it.
      */
     async botPreviews(userId) {
+      /*
+       * `unread` (schema 46): a line from a bot after the last one the person read. A
+       * group's notice and a scheduled run's quiet answer (`no_update`) are neither news
+       * nor the preview — the run had nothing to say (spec B.4).
+       */
       return q(
         `SELECT c.id AS chat_id, c.bot_id, c.bot_group_id, c.updated_at, c.run_lock_at,
-                last.role, last.content->>'text' AS text, last.content->>'bot' AS author
+                last.role, last.content->>'text' AS text, last.content->>'bot' AS author,
+                EXISTS (SELECT 1 FROM messages n
+                         WHERE n.chat_id = c.id AND n.role = 'assistant' AND n.seq > COALESCE(c.read_seq, -1)
+                           AND COALESCE(n.content->>'text', '') <> ''
+                           AND n.content->>'notice' IS NULL
+                           AND COALESCE(n.content->>'quiet', '') <> 'true') AS unread
            FROM chats c
            LEFT JOIN LATERAL (
                 SELECT m.role, m.content FROM messages m
@@ -4868,12 +4900,119 @@ export function createPgStore(connectionString) {
                    AND COALESCE(m.content->>'text', '') <> ''
                    -- A group's notice ("Writer joined the group.") is not its last message (2026-11-10).
                    AND m.content->>'notice' IS NULL
+                   AND COALESCE(m.content->>'quiet', '') <> 'true'
+                   -- Nor a scheduled task's prompt: the person did not type it.
+                   AND COALESCE(m.content->>'origin', '') <> 'task'
                  ORDER BY m.seq DESC LIMIT 1
            ) last ON TRUE
           WHERE c.user_id = $1
             AND ((c.bot_id IS NOT NULL AND c.bot_group_id IS NULL) OR (c.bot_id IS NULL AND c.bot_group_id IS NOT NULL))`,
         [userId],
       );
+    },
+    /** The person has read a conversation to its end (the Bot page's unread mark, schema 46). */
+    async markChatRead(userId, chatId) {
+      const rows = await q(
+        `UPDATE chats c SET read_seq = GREATEST(COALESCE(c.read_seq, -1), COALESCE((SELECT MAX(m.seq) FROM messages m WHERE m.chat_id = c.id), -1))
+          WHERE c.user_id = $1 AND c.id = $2 RETURNING c.id`,
+        [userId, String(chatId ?? '')],
+      );
+      return rows.length > 0;
+    },
+    /**
+     * What waits for the person on the Bot page (spec B.2), as rows the route words:
+     * `waiting` — a bot's own chat whose newest message is a step that stopped for a yes
+     * or a question (not while a run holds it); `asks` — a group whose newest question
+     * to the person (`ask_person`) has no line from them after it.
+     */
+    async botAttention(userId, { staleMs = RUN_LEASE_STALE_MS } = {}) {
+      const [waiting, asks] = await Promise.all([
+        q(
+          `SELECT c.id AS chat_id, c.bot_id, last.content->'toolCalls' AS tool_calls, last.content->'held' AS held
+             FROM chats c
+             JOIN LATERAL (SELECT m.role, m.content FROM messages m WHERE m.chat_id = c.id ORDER BY m.seq DESC LIMIT 1) last ON TRUE
+            WHERE c.user_id = $1 AND c.bot_id IS NOT NULL AND c.bot_group_id IS NULL AND NOT c.incognito
+              AND last.role = 'assistant' AND jsonb_typeof(last.content->'toolCalls') = 'array'
+              AND jsonb_array_length(last.content->'toolCalls') > 0
+              AND (c.run_lock_by IS NULL OR c.run_lock_at <= NOW() - ($2 || ' milliseconds')::interval)`,
+          [userId, String(staleMs)],
+        ),
+        q(
+          `SELECT c.bot_group_id AS group_id, a.id AS message_id, a.content->>'bot' AS bot, a.content->>'text' AS text
+             FROM chats c
+             JOIN LATERAL (SELECT m.id, m.seq, m.content FROM messages m
+                            WHERE m.chat_id = c.id AND m.role = 'assistant' AND m.content->>'ask' = 'true'
+                            ORDER BY m.seq DESC LIMIT 1) a ON TRUE
+            WHERE c.user_id = $1 AND c.bot_group_id IS NOT NULL AND c.bot_id IS NULL AND NOT c.incognito
+              AND NOT EXISTS (SELECT 1 FROM messages p
+                               WHERE p.chat_id = c.id AND p.role = 'user' AND p.seq > a.seq
+                                 AND p.content->>'notice' IS NULL AND COALESCE(p.content->>'origin', '') <> 'task')`,
+          [userId],
+        ),
+      ]);
+      return { waiting, asks };
+    },
+    /** The tasks of the account's bots and groups, for the Bot page's list of what failed. */
+    async listTeamTasks(userId) {
+      return q('SELECT * FROM scheduled_tasks WHERE user_id = $1 AND (bot_id IS NOT NULL OR bot_group_id IS NOT NULL) ORDER BY next_run_at', [userId]);
+    },
+    /** A duplicate's memory: every kept entry of one bot copied to another of the same account. */
+    async copyBotMemory(userId, fromBotId, toBotId) {
+      const rows = await q(
+        `INSERT INTO bot_memory (id, user_id, bot_id, text, source, created_at, pinned, pinned_by, text_folded)
+         SELECT gen_random_uuid()::text, m.user_id, $3, m.text, m.source, m.created_at, m.pinned, m.pinned_by, m.text_folded
+           FROM bot_memory m
+          WHERE m.user_id = $1 AND m.bot_id = $2 AND m.deleted_at IS NULL
+            AND EXISTS (SELECT 1 FROM bots b WHERE b.user_id = $1 AND b.id = $3)
+         RETURNING id`,
+        [userId, String(fromBotId ?? ''), String(toBotId ?? '')],
+      );
+      return rows.length;
+    },
+    /** All the bots spent between two instants: the span before, for the Usage page's comparison. */
+    async botUsageTotal(userId, { from, to }) {
+      const rows = await q(
+        `SELECT COALESCE(SUM(input_tokens + output_tokens), 0)::bigint AS tokens, COALESCE(SUM(cost_usd), 0) AS cost
+           FROM usage_events
+          WHERE user_id = $1 AND bot_id IS NOT NULL AND created_at >= $2::timestamptz AND created_at < $3::timestamptz`,
+        [userId, new Date(from).toISOString(), new Date(to).toISOString()],
+      );
+      return { tokens: Number(rows[0]?.tokens || 0), cost: Number(rows[0]?.cost || 0) };
+    },
+    /**
+     * One bot's spending, opened from its row on the Usage page (spec B.8): tokens by kind,
+     * by model, by group it worked in, by who started the turn (`origin`), and by what made
+     * the call (`role`: a turn, compaction, a memory review, an ask aside…).
+     */
+    async botUsageDetail(userId, botId, { from, to }) {
+      const params = [userId, String(botId ?? ''), new Date(from).toISOString(), new Date(to).toISOString()];
+      const where = 'u.user_id = $1 AND u.bot_id = $2 AND u.created_at >= $3::timestamptz AND u.created_at < $4::timestamptz';
+      const [kinds, models, groups, origins, roles] = await Promise.all([
+        q(
+          `SELECT COALESCE(SUM(u.input_tokens - u.cache_read_tokens), 0)::bigint AS input, COALESCE(SUM(u.cache_read_tokens), 0)::bigint AS cached,
+                  COALESCE(SUM(u.output_tokens), 0)::bigint AS output, COALESCE(SUM(u.reasoning_tokens), 0)::bigint AS reasoning
+             FROM usage_events u WHERE ${where}`,
+          params,
+        ),
+        q(`SELECT u.model, SUM(u.input_tokens + u.output_tokens)::bigint AS tokens, SUM(u.cost_usd) AS cost FROM usage_events u WHERE ${where} GROUP BY 1 ORDER BY 2 DESC LIMIT 12`, params),
+        q(
+          `SELECT c.bot_group_id AS group_id, SUM(u.input_tokens + u.output_tokens)::bigint AS tokens
+             FROM usage_events u JOIN chats c ON c.id = u.chat_id AND c.user_id = u.user_id
+            WHERE ${where} AND c.bot_group_id IS NOT NULL GROUP BY 1 ORDER BY 2 DESC LIMIT 12`,
+          params,
+        ),
+        q(`SELECT COALESCE(u.origin, 'person') AS origin, SUM(u.input_tokens + u.output_tokens)::bigint AS tokens FROM usage_events u WHERE ${where} GROUP BY 1 ORDER BY 2 DESC`, params),
+        q(`SELECT u.role, SUM(u.input_tokens + u.output_tokens)::bigint AS tokens, SUM(u.cost_usd) AS cost FROM usage_events u WHERE ${where} GROUP BY 1 ORDER BY 2 DESC`, params),
+      ]);
+      const num = (v) => Number(v || 0);
+      const k = kinds[0] || {};
+      return {
+        kinds: { input: Math.max(0, num(k.input)), cached: num(k.cached), output: num(k.output), reasoning: num(k.reasoning) },
+        models: models.map((r) => ({ model: r.model, tokens: num(r.tokens), cost: num(r.cost) })),
+        groups: groups.map((r) => ({ groupId: r.group_id, tokens: num(r.tokens) })),
+        origins: origins.map((r) => ({ origin: r.origin, tokens: num(r.tokens) })),
+        roles: roles.map((r) => ({ role: r.role, tokens: num(r.tokens), cost: num(r.cost) })),
+      };
     },
     /**
      * What the account's bots spent, by bucket, bot and model, between two

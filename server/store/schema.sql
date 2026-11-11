@@ -1311,3 +1311,24 @@ CREATE TABLE IF NOT EXISTS finance_cache (
   expires_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS finance_cache_expires_idx ON finance_cache (expires_at);
+
+-- 46 (owner, 2026-11-11): the Bot page's team features (spec B). A bot can be paused
+-- (its tasks wait, rounds pass it by) and a bot or a group pinned to the top of the
+-- list. `read_seq` is the last line the person read in a conversation, so the list can
+-- say what is new: the bot chats there were before it count as read up to now, and a
+-- conversation made later starts unread (-1). A scheduled task can belong to a group
+-- (its run is a round), and says what to do with a run the daily cron missed: 'once'
+-- runs it at the next nudge, 'skip' lets it go. Usage keeps the reasoning tokens a
+-- provider reports, and who started the turn (the person, a task, a hand-off).
+ALTER TABLE bots ADD COLUMN IF NOT EXISTS paused_at TIMESTAMPTZ;
+ALTER TABLE bots ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ;
+ALTER TABLE bot_groups ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ;
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS read_seq BIGINT;
+UPDATE chats c SET read_seq = COALESCE((SELECT MAX(m.seq) FROM messages m WHERE m.chat_id = c.id), -1)
+ WHERE c.read_seq IS NULL AND (c.bot_id IS NOT NULL OR c.bot_group_id IS NOT NULL);
+ALTER TABLE chats ALTER COLUMN read_seq SET DEFAULT -1;
+ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS bot_group_id TEXT REFERENCES bot_groups(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS scheduled_group_idx ON scheduled_tasks (user_id, bot_group_id) WHERE bot_group_id IS NOT NULL;
+ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS missed TEXT NOT NULL DEFAULT 'once';
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS reasoning_tokens BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS origin TEXT;
