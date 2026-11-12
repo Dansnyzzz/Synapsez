@@ -774,6 +774,60 @@ section('Usage, devices, feedback and what is new — from the account menu');
   check('  an administrator sees it in People, the conversation read only when opened', folded != null && !folded.includes('Word file') && /Turn this into a Word file/.test(opened || ''), JSON.stringify({ folded, opened }));
   await page.evaluate(() => document.getElementById('settings').close());
 
+  // Free allowances (key pools, owner 2026-11-12): every key of a pooled service, and the owner's controls.
+  // The providers' check calls answer from here; the browser's own calls to this server pass through.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => (String(url).includes('api.tavily.com') ? new Response('{}', { status: 200 }) : realFetch(url, init));
+  try {
+    await openSettings();
+    await page.waitForTimeout(400);
+    await page.click('#tab-admin');
+    await page.waitForSelector('#admin-free-tier [data-pool-toggle="tavily"]', { timeout: 5000 }).catch(() => {});
+    const row = '#admin-free-tier [data-pool="tavily"]';
+    const chip = await page.$eval(`${row} [data-pool-toggle]`, (el) => ({ expanded: el.getAttribute('aria-expanded'), controls: el.getAttribute('aria-controls') })).catch(() => null);
+    check('Free allowances: the Tavily row has a button that opens its keys (aria-expanded, aria-controls)', chip?.expanded === 'false' && !!chip.controls, JSON.stringify(chip));
+    await page.click(`${row} [data-pool-toggle]`).catch(() => {});
+    check('  it opens to the key area, with + Add key for the owner', (await page.$eval(`${row} [data-pool-toggle]`, (el) => el.getAttribute('aria-expanded')).catch(() => null)) === 'true' && !!(await page.$(`${row} [data-pool-add]`)));
+    await page.click(`${row} [data-pool-add]`).catch(() => {});
+    const typed = await page.$eval(`${row} [data-add-key]`, (el) => /** @type {HTMLInputElement} */ (el).type).catch(() => null);
+    check('  the key box is a password box', typed === 'password', String(typed));
+    await page.fill(`${row} [data-add-key]`, 'tavily-test-key-0042').catch(() => {});
+    await page.fill(`${row} [data-add-label]`, 'Second').catch(() => {});
+    await page.click(`${row} [data-add-save]`).catch(() => {});
+    await page.waitForSelector(`${row} [data-key-row]`, { timeout: 5000 }).catch(() => {});
+    const added = await page.$$eval(`${row} [data-key-row]`, (els) => els.map((el) => el.textContent || '')).catch(() => []);
+    check('  the new key shows by its last four characters, without a reload, and never whole', added.some((x) => x.includes('0042')) && !(await page.content()).includes('tavily-test-key-0042'), JSON.stringify(added));
+    const afterAdd = await page.$eval(`${row} [data-add-key]`, (el) => /** @type {HTMLInputElement} */ (el).value).catch(() => '');
+    check('  the key box was cleared', afterAdd === '');
+    const keyId = await page.$eval(`${row} [data-key-row][data-key-hint="0042"]`, (el) => el.getAttribute('data-key-id')).catch(() => null);
+    await page.click(`${row} input[data-paid-radio][value="${keyId}"]`).catch(() => {});
+    await page.waitForTimeout(500);
+    await page.click('#admin-free-tier [data-free-refresh]').catch(() => {});
+    await page.waitForTimeout(900);
+    const stillPaid = await page.$eval(`${row} input[data-paid-radio][value="${keyId}"]`, (el) => /** @type {HTMLInputElement} */ (el).checked).catch(() => false);
+    check('  chosen as the paid key, the radio stays after Refresh', keyId && stillPaid === true, String(keyId));
+    check('  and says the provider must allow going past the free amount', /past the free/i.test(await page.$eval(row, (el) => el.textContent || '').catch(() => '')));
+    await page.click(`${row} [data-key-remove="${keyId}"]`).catch(() => {});
+    await page.click(`${row} [data-key-remove="${keyId}"]`).catch(() => {});
+    await page.waitForTimeout(900);
+    check('  Remove (pressed twice to be sure) takes it away', !(await page.$(`${row} [data-key-row][data-key-hint="0042"]`)));
+    // An administrator who is not the owner is shown the keys and none of the controls.
+    await page.route('**/api/admin/free-tier', async (route) => {
+      const res = await route.fetch();
+      const json = await res.json();
+      await route.fulfill({ response: res, json: { ...json, owner: false } });
+    });
+    await page.click('#admin-free-tier [data-free-refresh]').catch(() => {});
+    await page.waitForTimeout(900);
+    await page.click(`${row} [data-pool-toggle]`).catch(() => {});
+    const controls = await page.$$eval('#admin-free-tier [data-pool-add], #admin-free-tier [data-key-remove], #admin-free-tier input[data-paid-radio], #admin-free-tier [data-key-check]', (els) => els.length);
+    check('  a non-owner administrator sees no Add, Remove, Check or paid radio', controls === 0, String(controls));
+    await page.unroute('**/api/admin/free-tier');
+    await page.evaluate(() => document.getElementById('settings').close());
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
   // What's new: the newest version, which is the app's own.
   await page.click('#account-button');
   await page.waitForTimeout(250);

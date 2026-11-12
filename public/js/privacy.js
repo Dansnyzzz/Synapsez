@@ -435,7 +435,7 @@ export function createPrivacy({ state, armed, onImported, savePrefs = api.savePr
     // one from before said yes to the privacy notice alone, and says so.
     const kind = event.kind === 'consent_given' && detail.terms ? 'consent_given_all' : event.kind;
     const what = t(`activity.${kind}`, {
-      provider: detail.provider || '',
+      provider: detail.provider || detail.service || '',
       n: String(detail.chats ?? detail.notes ?? ''),
     });
     const who = withAccount && event.email ? `${event.name || event.email} · ` : '';

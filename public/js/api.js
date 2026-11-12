@@ -151,6 +151,11 @@ export const api = {
   answerFeedback: (body) => request('POST', '/api/feedback/answer', body),
   // The deployment's free allowances this period (server/freeTier.js).
   freeTier: () => request('GET', '/api/admin/free-tier'),
+  // The owner's keys of the deployment's services (server/keyPool.js): add, check, remove, and the paid one.
+  addServiceKey: (body) => request('POST', '/api/admin/service-keys', body),
+  removeServiceKey: (id) => request('DELETE', `/api/admin/service-keys/${encodeURIComponent(id)}`),
+  checkServiceKey: (id) => request('POST', `/api/admin/service-keys/${encodeURIComponent(id)}/check`),
+  setPaidKey: (service, keyId, capMonthly) => request('PUT', '/api/admin/service-keys/paid', { service, keyId, capMonthly }),
   // The owner refusing the v1 credential envelope, or letting it in again (secretsCutover.js).
   secretsPolicy: (on) => request('POST', '/api/admin/secrets/refuse-v1', { on }),
   feedbackTranscript: (id) => request('GET', `/api/admin/feedback/${encodeURIComponent(id)}/transcript`),

@@ -11773,6 +11773,36 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
   .ctable--free .ctable__head, .ctable--free .ctable__row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); }
   .ctable--free [role="columnheader"]:last-child, .ctable--free .ctable__row > :last-child { display: none; }
 }
+/* The keys behind a service that takes several: a button on its row opens them (public/js/free-allowances.js). */
+.freepool__bar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
+.freepool__chip { margin-left: 6px; padding: 1px 8px; border-radius: 999px; background: var(--surface-2); font-size: 12px; }
+.freepool__toggle { margin-left: 6px; }
+.freepool__note { display: block; margin-top: 2px; font-weight: 400; }
+.freepool__keys { padding: 6px 0 14px 12px; border-bottom: 1px solid var(--line-soft); }
+.freepool__keys[hidden], .freepool__add[hidden] { display: none; }
+.freepool__set { margin: 0; padding: 0; border: 0; min-width: 0; }
+.freepool__list { margin: 0; padding: 0; list-style: none; }
+.freepool__key { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 0.9fr) auto; align-items: center; gap: 8px 12px; padding: 8px 0; border-top: 1px solid var(--line-soft); font-size: 13px; }
+.freepool__name, .freepool__state { min-width: 0; overflow-wrap: anywhere; }
+.freepool__plan { color: var(--text-faint); font-size: 12px; }
+.freepool__state.is-ok { color: var(--ok); }
+.freepool__state.is-invalid { color: var(--danger); }
+.freepool__state.is-exhausted, .freepool__state.is-cooling { color: var(--warn); }
+.freepool__acts { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+.freepool__paid, .freepool__cap { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.freepool__badge { padding: 1px 8px; border-radius: 999px; background: var(--ok-bg); color: var(--ok); font-size: 12px; }
+.freepool__paidbox { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; padding-top: 8px; border-top: 1px solid var(--line-soft); }
+.freepool__paidbox .hint { flex-basis: 100%; margin: 0; }
+.freepool__cap input { width: 8em; }
+.freepool__add { display: grid; grid-template-columns: max-content minmax(0, 24em); align-items: center; gap: 8px 12px; margin-top: 10px; }
+.freepool__add .freepool__acts { grid-column: 2; }
+.freepool__warn { color: var(--warn); }
+@media (max-width: 560px) {
+  .freepool__keys { padding-left: 0; }
+  .freepool__key { grid-template-columns: minmax(0, 1fr); }
+  .freepool__add { grid-template-columns: minmax(0, 1fr); }
+  .freepool__add .freepool__acts { grid-column: 1; }
+}
 
 /* ── Settings → Providers, redrawn (owner, 2026-11-02): a card per provider
    with its logo, what it is for and where it stands; each key with what its
