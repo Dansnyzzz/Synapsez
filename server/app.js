@@ -93,8 +93,10 @@ import { mountThemeRoutes } from './routes/themes.js';
 import { mountSceneAssets } from './sceneAssets.js';
 import { checkDomain } from './domainCheck.js';
 import { afterTurn, titleShown } from './themes.js';
-import { freeTierReport } from './freeTier.js';
-import { currentKeyId } from './crypto.js';
+import { freeTierReport, tavilyHint } from './freeTier.js';
+import { POOLED, envKeyOf, keysFor, checkKey, markKey, paidKeyOf, setPaidKey, bumpKeysVersion } from './keyPool.js';
+import { currentKeyId, encryptSecret, sha256 } from './crypto.js';
+import { serviceKeyContext } from './secretContexts.js';
 import { chainTurn, continueTurn } from './turnContinue.js';
 import { refreshSecretPolicy, cutoverStatus, setRefuseV1 } from './secretsCutover.js';
 import { firecrawlAccount } from './firecrawl.js';
@@ -2800,7 +2802,134 @@ export function createApp() {
       }
       // And where the move off the v1 envelope is (secretsCutover.js) — counts only.
       const secrets = await cutoverStatus().catch(() => null);
-      res.json({ ...(await freeTierReport()), firecrawl: await firecrawlAccount().catch(() => null), encryptionKeyId, secrets, owner: isOwner(req.user) });
+      const report = await freeTierReport();
+      res.json({ ...report, tavilyHint: await tavilyHint(report), firecrawl: await firecrawlAccount().catch(() => null), encryptionKeyId, secrets, owner: isOwner(req.user) });
+    }),
+  );
+
+  /**
+   * The keys of the deployment's services (keyPool.js): the owner's alone to add, check,
+   * remove or choose the paid one. A key is tried with its service before it is kept, sealed
+   * with its service and id, and never sent back: every answer and audit row carries its last
+   * four characters (`hint`) and nothing else.
+   */
+  const KEY_TRIES_PER_HOUR = 20;
+  admin.post(
+    '/service-keys',
+    requireOwner,
+    wrap(async (req, res) => {
+      const store = getStore();
+      const service = String(body(req).service ?? '');
+      const spec = POOLED[service];
+      const key = typeof body(req).key === 'string' ? body(req).key.trim() : '';
+      if (!spec) return res.status(400).json({ error: 'That service does not take keys here.' });
+      if (!key) return res.status(400).json({ error: 'Paste the key to add.' });
+      const label = typeof body(req).label === 'string' && body(req).label.trim() ? body(req).label.trim().slice(0, 60) : null;
+      const ceiling = body(req).ceiling == null || body(req).ceiling === '' ? null : Number(body(req).ceiling);
+      if (ceiling !== null && !(Number.isFinite(ceiling) && ceiling > 0)) return res.status(400).json({ error: 'A ceiling is a number above zero.' });
+      // The environment's key is one of the service's keys, and stored ones are counted as they are in the database.
+      const held = (await store.listServiceKeys(service)).length + (envKeyOf(service) ? 1 : 0);
+      if (held >= spec.maxKeys) {
+        return res.status(400).json({ error: spec.maxKeys === 1 ? 'This service takes one key.' : `This service already has ${spec.maxKeys} keys.` });
+      }
+      // Each try is a call to the provider, so tries are counted before it is made.
+      const counted = await store.hitRateLimit(`service-key:${req.user.id}`, KEY_TRIES_PER_HOUR, 60 * 60_000);
+      if (!counted.allowed) {
+        res.set('Retry-After', String(Math.ceil(counted.retryAfterMs / 1000)));
+        return res.status(429).json({ error: 'You have tried a lot of keys in the last hour. Try again a little later.' });
+      }
+      const checked = await checkKey(service, key);
+      const said = /** @type {{ reason?: string, plan?: string }} */ (checked);
+      if (!checked.ok) {
+        const error =
+          said.reason === 'template' ? 'The Synapsez template is not built in this E2B account.'
+          : said.reason === 'unreachable' ? `${spec.label} could not be reached to check it — try again.`
+          : `${spec.label} refused this key.`;
+        return res.status(422).json({ error });
+      }
+      const id = crypto.randomUUID();
+      const hint = key.slice(-4);
+      try {
+        await store.addServiceKey({ id, service, sealed: encryptSecret(key, serviceKeyContext(service, id)), fingerprint: sha256(`${service}:${key}`), hint, label, ceiling, addedBy: req.user.id });
+      } catch (err) {
+        if (err?.code === 'duplicate') return res.status(409).json({ error: 'That key is already in this service.' });
+        throw err;
+      }
+      await bumpKeysVersion();
+      await audit(req, req.user.id, 'service_key_added', { service, hint });
+      res.status(201).json({ id, hint });
+    }),
+  );
+
+  // Declared before the `:id` routes: "paid" is not a key.
+  admin.put(
+    '/service-keys/paid',
+    requireOwner,
+    wrap(async (req, res) => {
+      const service = String(body(req).service ?? '');
+      const keyId = body(req).keyId == null ? null : String(body(req).keyId);
+      if (!POOLED[service]) return res.status(400).json({ error: 'That service does not take keys here.' });
+      const capMonthly = body(req).capMonthly == null ? null : body(req).capMonthly;
+      try {
+        await setPaidKey(service, keyId, capMonthly);
+      } catch (err) {
+        if (err?.code === 'invalid') return res.status(400).json({ error: translateMessage(clientError(err), languageOf(req)) });
+        throw err;
+      }
+      const paid = await paidKeyOf(service);
+      const hint = paid ? (await keysFor(service, { fresh: true })).find((one) => one.id === paid.keyId)?.hint ?? '' : '';
+      await audit(req, req.user.id, 'service_paid_key_set', { service, hint, capMonthly: paid?.capMonthly ?? null });
+      res.json({ paid });
+    }),
+  );
+
+  admin.delete(
+    '/service-keys/:id',
+    requireOwner,
+    wrap(async (req, res) => {
+      const store = getStore();
+      const row = (await store.listServiceKeys()).find((one) => String(one.id) === req.params.id);
+      if (!row) return res.status(404).json({ error: 'No such key.' });
+      // A removed key is no longer the paid one: a choice pointing at nothing would spend nothing and say nothing.
+      if ((await paidKeyOf(row.service))?.keyId === String(row.id)) await setPaidKey(row.service, null);
+      await store.deleteServiceKey(row.id);
+      await bumpKeysVersion();
+      await audit(req, req.user.id, 'service_key_removed', { service: row.service, hint: row.hint });
+      res.json({ ok: true });
+    }),
+  );
+
+  admin.post(
+    '/service-keys/:id/check',
+    requireOwner,
+    wrap(async (req, res) => {
+      const store = getStore();
+      const asked = String(req.params.id);
+      const service = asked.startsWith('env:') ? asked.slice(4) : (await store.listServiceKeys()).find((one) => String(one.id) === asked)?.service;
+      const keyId = asked.startsWith('env:') ? 'env' : asked;
+      // The key object, not its id, goes to markKey: it can scrub and hint without a snapshot.
+      const key = service && POOLED[service] ? (await keysFor(service, { fresh: true })).find((one) => one.id === keyId) : null;
+      if (!key?.key) return res.status(404).json({ error: 'No such key.' });
+      const counted = await store.hitRateLimit(`service-key:${req.user.id}`, KEY_TRIES_PER_HOUR, 60 * 60_000);
+      if (!counted.allowed) {
+        res.set('Retry-After', String(Math.ceil(counted.retryAfterMs / 1000)));
+        return res.status(429).json({ error: 'You have tried a lot of keys in the last hour. Try again a little later.' });
+      }
+      const checked = await checkKey(service, key.key);
+      const said = /** @type {{ reason?: string, plan?: string }} */ (checked);
+      let state = key.state;
+      if (checked.ok) {
+        // A spent key checks as good, so only one set aside as refused is let back in by this.
+        if (state === 'invalid') {
+          await markKey(service, key, 'ok');
+          state = 'ok';
+        }
+      } else if (said.reason === 'refused') {
+        await markKey(service, key, 'invalid', { error: 'HTTP 401' });
+        state = 'invalid';
+      }
+      if (state !== key.state) await bumpKeysVersion();
+      res.json({ ok: checked.ok, state, ...(checked.ok ? {} : { reason: said.reason }), ...(checked.ok && said.plan ? { plan: said.plan } : {}) });
     }),
   );
 

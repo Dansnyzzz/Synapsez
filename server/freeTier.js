@@ -452,3 +452,38 @@ export async function freeTierReport(now = new Date()) {
   });
   return { enforced: freeTierOnly(), userDaily: num('FREE_TIER_USER_DAILY', 30), services: rows, pool };
 }
+
+/** The setting holding the months a pooled service ran past four fifths of its summed capacity. */
+const HIGH_MONTHS = 'pool_high_months';
+/** How many months are kept (the hint needs two). */
+const HIGH_KEEP = 3;
+
+/**
+ * Whether Tavily's Project plan is worth buying (owner, 2026-11-12): true once this month and
+ * the month before both ran past 80% of the summed capacity of its keys. The month is written
+ * when first seen past it, never twice; the last three are kept. Called for the administrators'
+ * page, from the report it has just built.
+ *
+ * @param {{ services?: Array<{ service: string, used: number|null, limit: number|null }> }} report
+ * @param {Date} [now]
+ * @returns {Promise<boolean>}
+ */
+export async function tavilyHint(report, now = new Date()) {
+  const row = (report?.services || []).find((one) => one.service === 'tavily');
+  const month = now.toISOString().slice(0, 7);
+  const before = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
+  try {
+    const store = getStore();
+    const saved = await store.getSetting(HIGH_MONTHS);
+    const months = Array.isArray(saved?.tavily) ? saved.tavily.map(String) : [];
+    if (row && Number(row.limit) > 0 && Number(row.used) > Number(row.limit) * 0.8 && !months.includes(month)) {
+      months.push(month);
+      months.sort();
+      await store.setSetting(HIGH_MONTHS, { ...(saved && typeof saved === 'object' ? saved : {}), tavily: months.slice(-HIGH_KEEP) });
+    }
+    return months.includes(month) && months.includes(before);
+  } catch (err) {
+    if (!noDatabase(err)) log.warn('free tier: the busy months were not read', { error: String(err?.message || err).slice(0, 160) });
+    return false;
+  }
+}
