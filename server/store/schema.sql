@@ -1403,3 +1403,12 @@ CREATE TABLE IF NOT EXISTS outbox (
 );
 CREATE INDEX IF NOT EXISTS outbox_due_idx ON outbox (due_at) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS outbox_done_idx ON outbox (created_at) WHERE status <> 'pending';
+
+-- ── Schema 48 ────────────────────────────────────────────────────────────────
+-- How far each model's thinking can be turned (owner, 2026-11-12): the effort levels
+-- it takes, as OpenRouter's catalogue says (`reasoning.supported_efforts`) — 'any' for
+-- every level, '' for none (a switch at most), else the list, NULL when the source did
+-- not say — and whether it must think. Measured that day: a level a model does not list
+-- came back as an empty answer, and "none" on one that needs to think as nonsense.
+ALTER TABLE shared_models ADD COLUMN IF NOT EXISTS efforts TEXT;
+ALTER TABLE shared_models ADD COLUMN IF NOT EXISTS reasoning_mandatory BOOLEAN;

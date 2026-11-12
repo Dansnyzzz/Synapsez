@@ -151,16 +151,40 @@ const SWITCH_THINKING = /deepseek|glm|z-ai/i;
 /** The five rungs of the dial, lowest first. Anything else is read as `high`. */
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
+/** OpenRouter's own scale, lowest first (docs, reasoning tokens, read 2026-11-12). */
+const OPENROUTER_SCALE = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+/**
+ * The level to ask a model for, from those it lists: the setting itself when listed,
+ * otherwise the nearest — the lower of two equally near for Low and Medium, which are
+ * asked for speed, the higher for the rest. Never "none": measured 2026-11-12, a model
+ * told not to think at all answered with nonsense where its own default answered right.
+ * Null when the model lists nothing but "none".
+ */
+export function effortFor(level, listed) {
+  const options = listed.filter((e) => e !== 'none' && OPENROUTER_SCALE.includes(e));
+  if (!options.length) return null;
+  if (options.includes(level)) return level;
+  const at = OPENROUTER_SCALE.indexOf(level);
+  const lowFirst = level === 'low' || level === 'medium';
+  return options
+    .map((e) => ({ e, d: Math.abs(OPENROUTER_SCALE.indexOf(e) - at), i: OPENROUTER_SCALE.indexOf(e) }))
+    .sort((a, b) => a.d - b.d || (lowFirst ? a.i - b.i : b.i - a.i))[0].e;
+}
+
 /**
  * The effort dial, in the words each wire understands.
  *
  * **OpenRouter** takes one `reasoning: { effort }` for every model it routes and
  * translates it itself — to `reasoning_effort` for OpenAI, a thinking budget for
- * Claude and Gemini, a switch for DeepSeek and Qwen. That is what reaches the
- * reasoning models the old id-guessing missed. Its scale stops at `xhigh`, so
- * `max` asks for that. A model the library knows does not reason is sent
- * nothing; one it knows nothing about (the Auto router, a hand-typed id) is sent
- * the setting, which OpenRouter ignores where it does not apply.
+ * Claude and Gemini (low a fifth of the output limit, minimal a tenth, max nearly all).
+ * Each model now says which levels it takes (schema 48, `efforts`), and is asked only
+ * for one of those — measured 2026-11-12, an unlisted level came back as an empty
+ * answer. A model with no levels is a switch at most: Low turns it off unless it must
+ * think. One the library knows nothing about (the Auto router, a hand-typed id) is sent
+ * the setting, as before; `max` is OpenRouter's own word now, and a model that refuses
+ * it is stepped down (`stepDown`). A model the library knows does not reason is sent
+ * nothing.
  *
  * **OpenAI and OrcaRouter** take `reasoning_effort`, which a non-reasoning model
  * refuses outright — so only where the model is known to reason. The full scale
@@ -172,13 +196,30 @@ export function reasoningParams({ router, model, entry, effort }) {
   const id = String(model || '');
   if (router === 'openrouter') {
     if (entry?.reasoning === false) return {};
+    const listed = entry?.efforts;
+    if (listed === 'any') return { reasoning: { effort: level } };
+    if (typeof listed === 'string' && listed) {
+      const pick = effortFor(level, listed.split(','));
+      return pick ? { reasoning: { effort: pick } } : {};
+    }
     // A switch, not a dial (measured 2026-11-11): "low" left such a model thinking as long
-    // as "max". Low turns it off; the level words in the turn's note do the rest.
+    // as "max". Low turns it off — unless it must think, when nothing is asked of it — and
+    // the level words in the turn's note do the rest.
+    if (listed === '') return level === 'low' && !entry?.reasoningMandatory ? { reasoning: { enabled: false } } : {};
     if (level === 'low' && !DIAL_FAMILIES.test(id)) return { reasoning: { enabled: false } };
-    return { reasoning: { effort: level === 'max' ? 'xhigh' : level } };
+    return { reasoning: { effort: level } };
   }
-  // OrcaRouter's DeepSeek ignores reasoning_effort and honours only this (measured 2026-11-11).
-  if (router === 'orcarouter' && SWITCH_THINKING.test(id)) return level === 'low' ? { thinking: { type: 'disabled' } } : {};
+  /*
+   * OrcaRouter's DeepSeek and GLM (measured 2026-11-12, DeepSeek V4.1 Flash free): the
+   * switch turns thinking off (0 reasoning tokens, half the time, answers still right —
+   * `reasoning_effort: "none"` did the same, "off" was a 400); the levels barely move it
+   * (minimal 110 tokens, low 162, unset 136, high 196). So Low turns it off, Extra high and
+   * Max ask "high" for the little more it gives, and the rest leave it as it is.
+   */
+  if (router === 'orcarouter' && SWITCH_THINKING.test(id)) {
+    if (level === 'low') return { thinking: { type: 'disabled' } };
+    return level === 'xhigh' || level === 'max' ? { reasoning_effort: 'high' } : {};
+  }
   // The model's own name, after any maker in front: OrcaRouter says "openai/gpt-5…",
   // and an anchored match on the whole id dropped the dial for every one (GAP-014).
   const own = String(model || '').split('/').pop();
@@ -468,8 +509,11 @@ export async function* streamOpenAICompatible({
   const filter = tools?.length ? textCallFilter() : null;
   /** OpenRouter's structured reasoning, kept whole so the next step can replay it. */
   const details = [];
+  /** The model that actually answered, as the router names it — a router picks one (Auto). */
+  let served = null;
 
   for await (const chunk of stream) {
+    if (!served && typeof chunk.model === 'string' && chunk.model) served = chunk.model.slice(0, 160);
     if (chunk.usage) usage = readUsage(chunk.usage);
     const choice = chunk.choices?.[0];
     if (!choice) continue;
@@ -571,6 +615,9 @@ export async function* streamOpenAICompatible({
     stop: normaliseStop(stopReason),
     toolCalls,
     usage: usage || { input: 0, output: 0 },
+    // Which model a router chose (owner, 2026-11-12: "show which model Auto answered with").
+    // Only when it is not the one asked for, which is every case but a router's.
+    ...(served && served !== model ? { servedModel: served } : {}),
     // Stored with the assistant turn and replayed on the next step — see
     // `replayReasoning`. Only where it can be replayed, and only when there is any.
     ...(router === 'openrouter' && details.length ? { raw: { openrouter: { reasoningDetails: details } } } : {}),

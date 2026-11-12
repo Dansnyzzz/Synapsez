@@ -260,8 +260,10 @@ export function splitStatements(sql) {
  *      — the Bot page's team features (spec B)
  *  47  scheduled_tasks.trigger, hook_routes, hook_receipts, bot_waits, telegram_inbound,
  *      outbox — work that starts outside the app (spec C)
+ *  48  shared_models.efforts / reasoning_mandatory — the effort levels each model takes,
+ *      so the reasoning dial asks a model only for what it lists (openaiCompatible.js)
  */
-export const SCHEMA_VERSION = 47;
+export const SCHEMA_VERSION = 48;
 
 /** How long a forgotten bot memory entry waits for Undo before it is deleted for good. */
 export const FORGOTTEN_KEEP_MS = 10 * 60_000;
@@ -5365,12 +5367,13 @@ export function createPgStore(connectionString) {
           `INSERT INTO shared_models
              (id, provider, model, family, label, description, context,
               price_in, price_out, is_free, released_at, added_by, vision,
-              max_output, expires_at, reasoning, hears, watches, refreshed_at)
+              max_output, expires_at, reasoning, hears, watches, efforts, reasoning_mandatory, refreshed_at)
            SELECT *, NOW() FROM unnest(
              $1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
              $7::bigint[], $8::double precision[], $9::double precision[],
              $10::boolean[], $11::timestamptz[], $12::text[], $13::boolean[], $14::int[],
-             $15::timestamptz[], $16::boolean[], $17::boolean[], $18::boolean[]
+             $15::timestamptz[], $16::boolean[], $17::boolean[], $18::boolean[],
+             $19::text[], $20::boolean[]
            )
            ON CONFLICT (id) DO UPDATE SET
              provider    = EXCLUDED.provider,
@@ -5389,6 +5392,8 @@ export function createPgStore(connectionString) {
              reasoning   = EXCLUDED.reasoning,
              hears       = EXCLUDED.hears,
              watches     = EXCLUDED.watches,
+             efforts     = EXCLUDED.efforts,
+             reasoning_mandatory = EXCLUDED.reasoning_mandatory,
              refreshed_at = NOW()`,
           [
             slice.map((m) => m.id),
@@ -5410,6 +5415,9 @@ export function createPgStore(connectionString) {
             slice.map((m) => (m.reasoning == null ? null : !!m.reasoning)),
             slice.map((m) => !!m.hears),
             slice.map((m) => !!m.watches),
+            // Null is "not said"; '' is "no levels"; 'any' every level (models.js `effortsOf`).
+            slice.map((m) => (m.efforts == null ? null : String(m.efforts))),
+            slice.map((m) => (m.reasoningMandatory == null ? null : !!m.reasoningMandatory)),
           ],
         );
       }
@@ -5591,6 +5599,10 @@ export function createPgStore(connectionString) {
           WHERE user_id = $1 AND id = $2 AND (config - 'tools') = ($4::jsonb - 'tools')`,
         [userId, id, toJson(tools ?? []), toJson(from ?? {})],
       );
+    },
+    /** The fingerprints of the tools the person approved on this server (registry.js `screenTools`). */
+    async setMcpApproved(userId, id, approved) {
+      await q(`UPDATE mcp_servers SET config = jsonb_set(config, '{approved}', $3::jsonb) WHERE user_id = $1 AND id = $2`, [userId, id, toJson(approved ?? {})]);
     },
     async setMcpServerEnabled(userId, id, enabled) {
       await q('UPDATE mcp_servers SET enabled = $3 WHERE user_id = $1 AND id = $2', [userId, id, !!enabled]);

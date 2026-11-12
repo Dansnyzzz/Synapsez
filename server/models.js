@@ -250,6 +250,21 @@ export function reasonsFor(entry) {
 }
 
 /**
+ * The effort levels a model takes, as OpenRouter's catalogue says in its `reasoning`
+ * block (read 2026-11-12): `supported_efforts` null means every level, absent means the
+ * model exposes none (a switch at most), a list means those. Kept as text — 'any', '', or
+ * 'low,medium,high' — and null when the source says nothing at all.
+ */
+export function effortsOf(entry) {
+  const meta = entry?.reasoning;
+  if (!meta || typeof meta !== 'object') return null;
+  if (!('supported_efforts' in meta)) return '';
+  if (meta.supported_efforts === null) return 'any';
+  if (!Array.isArray(meta.supported_efforts)) return null;
+  return meta.supported_efforts.map(String).filter((e) => /^[a-z]+$/.test(e)).join(',');
+}
+
+/**
  * The most output tokens this model will actually produce, when it says.
  *
  * Worth reading rather than assuming, because the assumption was wrong for a
@@ -325,6 +340,8 @@ function normalise(entry, provider = 'openrouter') {
     hears: takes(entry, 'audio'),
     watches: takes(entry, 'video'),
     reasoning: reasonsFor(entry),
+    efforts: effortsOf(entry),
+    reasoningMandatory: typeof entry.reasoning?.mandatory === 'boolean' ? entry.reasoning.mandatory : null,
     // `created` is a unix timestamp of when the model was published.
     releasedAt: entry.created ? new Date(entry.created * 1000).toISOString() : null,
     expiresAt: expiryOf(entry),

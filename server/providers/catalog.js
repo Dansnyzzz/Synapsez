@@ -354,6 +354,9 @@ export function resolveModel(id, sharedRow = null) {
       watches: !!sharedRow.watches,
       // True, false, or null for "the source did not say" — see `reasonsFor`.
       reasoning: sharedRow.reasoning == null ? null : !!sharedRow.reasoning,
+      // The levels it takes ('any', '', or a list) and whether it must think (schema 48).
+      efforts: sharedRow.efforts == null ? null : String(sharedRow.efforts),
+      reasoningMandatory: sharedRow.reasoning_mandatory == null ? null : !!sharedRow.reasoning_mandatory,
       tags: [...(sharedRow.is_free ? ['free'] : []), ...(sharedRow.reasoning ? ['reasoning'] : [])],
     };
   }
