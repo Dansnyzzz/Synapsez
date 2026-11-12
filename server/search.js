@@ -25,13 +25,20 @@
  *
  * `SEARCH_ORDER` overrides it — `SEARCH_ORDER=tavily,exa` is a complete answer
  * to "I would rather spend Tavily credits than anything else".
+ *
+ * Exa, Tavily and Brave each ask the deployment's key pool for their key
+ * (server/keyPool.js, spec A, owner 2026-11-12): Exa and Tavily may have several,
+ * Brave one. A key that is spent, refused or asked to wait hands over to the
+ * next of the same engine before the chain moves on. Google is not pooled.
  */
 
 import { untrusted } from './tools/untrusted.js';
 import { log } from './util/trace.js';
 import { googleDataInScope } from './googleData.js';
-import { allowance, spend, take, exhaust, mayMeter, countMetered, exaMills, exaSpent } from './freeTier.js';
+import { allowance, spend, take, mayMeter, countMetered, exaMills, exaSpent } from './freeTier.js';
 import { firecrawlSearch } from './firecrawl.js';
+import { poolHas, warmPools } from './keyPool.js';
+import { throughPool, chargeTo, refusal, refusesKey } from './keyCall.js';
 
 const DEFAULT_ORDER = ['exa', 'firecrawl', 'google', 'duckduckgo', 'tavily', 'brave'];
 
@@ -174,26 +181,6 @@ const trim = (text, limit = 400) => {
 };
 
 /**
- * Why a search provider refused, in its own words.
- *
- * "HTTP 422" is not a reason anybody can act on; "the provided subscription
- * token is invalid" is — it names the key to replace. These APIs all put the
- * real reason in the body and throw it away is exactly what a status-code-only
- * error message does.
- */
-async function refusal(label, res) {
-  let detail = '';
-  try {
-    const body = await res.text();
-    const json = JSON.parse(body);
-    detail = json?.error?.detail || json?.error?.message || json?.error || json?.message || body.slice(0, 200);
-  } catch {
-    /* not JSON, or already consumed — the status still says something */
-  }
-  return Object.assign(new Error(`${label} returned HTTP ${res.status}${detail ? `: ${trim(detail, 200)}` : ''}`), { status: res.status });
-}
-
-/**
  * Exa: neural search, and the reason it is first.
  *
  * `highlights` is the point — the passages that answer the query rather than
@@ -212,7 +199,10 @@ async function refusal(label, res) {
  * cost is what is counted. A category and the account's country (Exa's
  * `userLocation`) go with the query; company and people searches take no date.
  *
- * @param {{ count: number, plan: any, recency: string|null, sites: string[], category: string|null, country: string|null, mayMeter: boolean }} ask
+ * Each call asks the pool for a key with room for it; one Exa says is spent,
+ * refused or rate limited hands over to the next. Counted on the key that made it.
+ *
+ * @param {{ count: number, plan: any, recency: string|null, sites: string[], category: string|null, country: string|null, mayMeter: boolean, paid: boolean }} ask
  */
 async function searchExa(query, ask) {
   let type = ask.plan.exa;
@@ -220,7 +210,8 @@ async function searchExa(query, ask) {
   if (String(type).startsWith('deep') && room.left < room.limit / 4) type = 'auto';
   if (room.left < exaMills(type, ask.count)) type = 'lite';
   const dated = ask.recency && !['company', 'people'].includes(ask.category);
-  const body = {
+  // What is sent: a deep search that failed but for the key is `auto` from then on, on this key and any after it.
+  let sent = {
     query,
     type,
     numResults: ask.count,
@@ -230,28 +221,41 @@ async function searchExa(query, ask) {
     ...(ask.sites.length ? { includeDomains: ask.sites } : ask.category === 'github' ? { includeDomains: ['github.com'] } : {}),
     ...(dated ? { startPublishedDate: new Date(Date.now() - RECENCY_DAYS[ask.recency] * 86_400_000).toISOString() } : {}),
   };
-  const call = async (sent, timeoutMs) => {
-    const res = await fetch('https://api.exa.ai/search', {
-      method: 'POST',
-      headers: { 'x-api-key': process.env.EXA_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify(sent),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!res.ok) throw await refusal('Exa', res);
-    const json = await res.json();
-    await spend('exa', exaSpent(json, exaMills(sent.type, (json.results || []).length)));
-    return json;
-  };
-  let json;
-  try {
-    json = await call(body, ask.plan.timeoutMs);
-  } catch (err) {
-    if (!String(body.type).startsWith('deep') || [401, 402, 403].includes(err.status)) throw err;
-    // A deep search that ran out of time may still have been charged.
-    if (!err.status) await spend('exa', exaMills(body.type, ask.count));
-    // Kept short: the deep attempt has already spent its time, and a turn has five minutes in all.
-    json = await call({ ...body, type: 'auto' }, 20_000);
-  }
+  let timeoutMs = ask.plan.timeoutMs;
+  const json = await throughPool(
+    'exa',
+    exaMills(type, ask.count),
+    async (key, meta) => {
+      const bill = await chargeTo('exa', exaMills(sent.type, ask.count), meta);
+      let used = 0;
+      const call = async () => {
+        const res = await fetch('https://api.exa.ai/search', {
+          method: 'POST',
+          headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
+          body: JSON.stringify(sent),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (!res.ok) throw await refusal('Exa', res, key);
+        const answer = await res.json();
+        used += exaSpent(answer, exaMills(sent.type, (answer.results || []).length));
+        return answer;
+      };
+      try {
+        return await call();
+      } catch (err) {
+        if (!String(sent.type).startsWith('deep') || refusesKey('exa', err)) throw err;
+        // A deep search that ran out of time may still have been charged.
+        if (!err.status) used += exaMills(sent.type, ask.count);
+        // Kept short: the deep attempt has already spent its time, and a turn has five minutes in all.
+        sent = { ...sent, type: 'auto' };
+        timeoutMs = 20_000;
+        return await call();
+      } finally {
+        await bill.settle(used);
+      }
+    },
+    { paid: ask.paid },
+  );
 
   const results = (json.results || []).map((result) => ({
     title: result.title || result.url,
@@ -278,6 +282,7 @@ async function searchFirecrawl(query, ask) {
     category: ask.category,
     country: ask.country,
     timeoutMs: ask.plan.timeoutMs,
+    paid: ask.paid,
   });
   return results.map((r) => ({ ...r, snippet: trim(r.snippet, ask.plan.snippet) }));
 }
@@ -292,25 +297,38 @@ const TAVILY_TOPIC = { news: 'news', 'financial report': 'finance' };
 async function searchTavily(query, ask) {
   const room = await metered('tavily', ask, 1);
   const advanced = ask.plan.tavily === 'advanced' && room.left >= 2;
-  const res = await fetch('https://api.tavily.com/search', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.TAVILY_API_KEY}` },
-    body: JSON.stringify({
-      query,
-      max_results: ask.count,
-      search_depth: advanced ? 'advanced' : 'basic',
-      ...(advanced ? { chunks_per_source: 3 } : {}),
-      ...(TAVILY_TOPIC[ask.category] ? { topic: TAVILY_TOPIC[ask.category] } : {}),
-      ...(ask.recency ? { time_range: ask.recency } : {}),
-      ...(ask.sites.length ? { include_domains: ask.sites } : {}),
-      include_answer: false,
-    }),
-    signal: AbortSignal.timeout(ask.plan.timeoutMs),
-  });
-  if (!res.ok) throw await refusal('Tavily', res);
-  await spend('tavily', advanced ? 2 : 1);
-
-  const json = await res.json();
+  const cost = advanced ? 2 : 1;
+  const json = await throughPool(
+    'tavily',
+    cost,
+    async (key, meta) => {
+      const bill = await chargeTo('tavily', cost, meta);
+      let used = 0;
+      try {
+        const res = await fetch('https://api.tavily.com/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+          body: JSON.stringify({
+            query,
+            max_results: ask.count,
+            search_depth: advanced ? 'advanced' : 'basic',
+            ...(advanced ? { chunks_per_source: 3 } : {}),
+            ...(TAVILY_TOPIC[ask.category] ? { topic: TAVILY_TOPIC[ask.category] } : {}),
+            ...(ask.recency ? { time_range: ask.recency } : {}),
+            ...(ask.sites.length ? { include_domains: ask.sites } : {}),
+            include_answer: false,
+          }),
+          signal: AbortSignal.timeout(ask.plan.timeoutMs),
+        });
+        if (!res.ok) throw await refusal('Tavily', res, key);
+        used = cost;
+        return await res.json();
+      } finally {
+        await bill.settle(used);
+      }
+    },
+    { paid: ask.paid },
+  );
   return (json.results || []).map((result) => ({
     title: result.title,
     url: result.url,
@@ -322,23 +340,29 @@ async function searchTavily(query, ask) {
 /** Brave's freshness codes for the same spans. */
 const BRAVE_FRESHNESS = { day: 'pd', week: 'pw', month: 'pm', year: 'py' };
 
-/** Brave: a card on file and no cap of its own, so the count in freeTier.js is the cap. */
+/** Brave: a card on file and no cap of its own, so the count in freeTier.js is the cap. One key (owner, 2026-11-12). */
 async function searchBrave(query, ask) {
   await metered('brave', ask, 1);
-  // Counted before the call, whatever comes back — a refused call may still be a billed one.
-  if (!(await take('brave', 1))) throw standAside('brave: the free allowance for this period is used');
   const url = new URL('https://api.search.brave.com/res/v1/web/search');
   url.searchParams.set('q', keywordQuery(query, ask));
   url.searchParams.set('count', String(Math.min(ask.count, 20)));
   if (ask.recency) url.searchParams.set('freshness', BRAVE_FRESHNESS[ask.recency]);
 
-  const res = await fetch(url, {
-    headers: { Accept: 'application/json', 'X-Subscription-Token': process.env.BRAVE_API_KEY },
-    signal: AbortSignal.timeout(ask.plan.timeoutMs),
-  });
-  if (!res.ok) throw await refusal('Brave Search', res);
-
-  const json = await res.json();
+  const json = await throughPool(
+    'brave',
+    1,
+    async (key, meta) => {
+      // Counted before the call, whatever comes back — a refused call may still be a billed one.
+      if (!(await take('brave', 1, undefined, { keyId: meta.id, paid: meta.paid }))) throw standAside('brave: the free allowance for this period is used');
+      const res = await fetch(url, {
+        headers: { Accept: 'application/json', 'X-Subscription-Token': key },
+        signal: AbortSignal.timeout(ask.plan.timeoutMs),
+      });
+      if (!res.ok) throw await refusal('Brave Search', res, key);
+      return res.json();
+    },
+    { paid: ask.paid },
+  );
   return (json.web?.results || []).map((result) => ({
     title: result.title,
     url: result.url,
@@ -551,20 +575,27 @@ async function searchGoogle(query, ask) {
 
 /* ── the chain ──────────────────────────────────────────────────────── */
 
-/** `metered`: drawn from a free allowance the deployment shares (freeTier.js). */
+/**
+ * `pool`: the service whose keys it runs on (keyPool.js) — no key in it, or every one
+ * refused, and the engine is not in the chain. `metered`: drawn from a free allowance the
+ * deployment shares (freeTier.js).
+ */
 const ENGINES = {
-  exa: { label: 'Exa', run: searchExa, key: 'EXA_API_KEY', metered: true },
-  firecrawl: { label: 'Firecrawl', run: searchFirecrawl, key: 'FIRECRAWL_API_KEY', metered: true },
-  tavily: { label: 'Tavily', run: searchTavily, key: 'TAVILY_API_KEY', metered: true },
-  brave: { label: 'Brave', run: searchBrave, key: 'BRAVE_API_KEY', metered: true },
+  exa: { label: 'Exa', run: searchExa, pool: 'exa', metered: true },
+  firecrawl: { label: 'Firecrawl', run: searchFirecrawl, pool: 'firecrawl', metered: true },
+  tavily: { label: 'Tavily', run: searchTavily, pool: 'tavily', metered: true },
+  brave: { label: 'Brave', run: searchBrave, pool: 'brave', metered: true },
   // No key, so it is always available — which is what makes it a good middle
   // of the chain rather than a last resort.
-  duckduckgo: { label: 'DuckDuckGo', run: searchDuckDuckGo, key: null },
+  duckduckgo: { label: 'DuckDuckGo', run: searchDuckDuckGo, pool: null },
   // Keyed per account as well as per deployment, so it decides for itself.
-  google: { label: 'Google', run: searchGoogle, key: null },
+  google: { label: 'Google', run: searchGoogle, pool: null },
 };
 
-/** The engines to try, in order, skipping the ones with no key. */
+/**
+ * The engines to try, in order, skipping the ones with no key. From the keys this instance
+ * last read (keyPool.js `poolHas`; the environment's count at once) — `search` reads them first.
+ */
 export function searchChain() {
   const wanted = String(process.env.SEARCH_ORDER || '')
     .split(',')
@@ -574,7 +605,7 @@ export function searchChain() {
   const order = wanted.length ? wanted : DEFAULT_ORDER;
   return order
     .filter((name) => ENGINES[name])
-    .filter((name) => !ENGINES[name].key || process.env[ENGINES[name].key]);
+    .filter((name) => !ENGINES[name].pool || poolHas(ENGINES[name].pool));
 }
 
 /*
@@ -667,15 +698,21 @@ export function fuseResults(answered, count) {
  * is answered from memory and spends nothing; a metered engine runs only
  * inside its allowance and the account's share of the day.
  *
+ * `paid`: the search is charged, so a pooled engine may go on to the owner's
+ * paid key once every free key is full (keyPool.js) — false until spec B
+ * charges people.
+ *
  * @param {string} query
- * @param {{ count?: number, userId?: string|null, plan?: any, recency?: string|null, sites?: string[]|string, category?: string|null, country?: string|null }} [options]
+ * @param {{ count?: number, userId?: string|null, plan?: any, recency?: string|null, sites?: string[]|string, category?: string|null, country?: string|null, paid?: boolean }} [options]
  * @returns `{ engine, engines, results, attempts, answer }` — `attempts` records
  *   what was tried and why it did not answer, which is the difference between
  *   "there is nothing about this on the web" and "the search key expired last
  *   Tuesday"; `answer` is Exa's own summary when a deep search gave one.
  */
-export async function search(query, { count, userId = null, plan = SEARCH_LEVELS.medium, recency = null, sites = [], category = null, country = null } = {}) {
+export async function search(query, { count, userId = null, plan = SEARCH_LEVELS.medium, recency = null, sites = [], category = null, country = null, paid = false } = {}) {
   const wanted = Math.min(Math.max(Number(count) || plan.count || 8, 1), 20);
+  // The stored keys, read (at most every 30 s) before the chain asks which engines have one.
+  await warmPools();
   const chain = cooledChain(searchChain());
 
   if (!chain.length) {
@@ -696,6 +733,7 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
     country: /^[A-Z]{2}$/.test(String(country)) ? String(country) : null,
     userId,
     mayMeter: await mayMeter(userId),
+    paid: paid === true,
     // Set when a metered engine was asked, so the account's share is counted once.
     drew: false,
   };
@@ -738,8 +776,7 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
           continue;
         }
         noteEngine(chain[at], err);
-        // The service itself says its credit is spent: believed for the rest of the period.
-        if (engine.metered && [402, 432, 433].includes(err.status)) await exhaust(chain[at]);
+        // A key its service said is spent was counted spent for its period on the way (keyCall.js).
         attempts.push({ at, engine: engine.label, error: err.message });
       }
     }
@@ -847,25 +884,41 @@ export function formatResults(query, { engine, engines = [], results, attempts, 
  * site that turned this server away — a 403 to anything that is not a browser,
  * a rate limit, a page that is only script. Exa reads it from its own copy, or
  * fresh when it has none. Null with no key, or when Exa could not read it either.
+ * On a key from the pool, like a search; `paid` as `search` takes it.
  *
  * @param {string} url
- * @param {{ maxChars?: number, timeoutMs?: number }} [options]
+ * @param {{ maxChars?: number, timeoutMs?: number, paid?: boolean }} [options]
  * @returns {Promise<{ title: string, text: string } | null>}
  */
-export async function readThroughExa(url, { maxChars = 20_000, timeoutMs = 30_000 } = {}) {
-  if (!process.env.EXA_API_KEY) return null;
+export async function readThroughExa(url, { maxChars = 20_000, timeoutMs = 30_000, paid = false } = {}) {
+  await warmPools();
+  if (!poolHas('exa')) return null;
   try {
     // A thousandth of a dollar a page, inside the free month like a search.
     if ((await allowance('exa')).left < 1) return null;
-    const res = await fetch('https://api.exa.ai/contents', {
-      method: 'POST',
-      headers: { 'x-api-key': process.env.EXA_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ urls: [url], text: { maxCharacters: maxChars }, livecrawl: 'fallback' }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!res.ok) return null;
-    const json = await res.json();
-    await spend('exa', exaSpent(json, 1));
+    const json = await throughPool(
+      'exa',
+      1,
+      async (key, meta) => {
+        const bill = await chargeTo('exa', 1, meta);
+        let used = 0;
+        try {
+          const res = await fetch('https://api.exa.ai/contents', {
+            method: 'POST',
+            headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ urls: [url], text: { maxCharacters: maxChars }, livecrawl: 'fallback' }),
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+          if (!res.ok) throw await refusal('Exa', res, key);
+          const answer = await res.json();
+          used = exaSpent(answer, 1);
+          return answer;
+        } finally {
+          await bill.settle(used);
+        }
+      },
+      { paid },
+    );
     const hit = (json.results || [])[0];
     return hit?.text ? { title: String(hit.title || ''), text: String(hit.text) } : null;
   } catch {

@@ -233,6 +233,9 @@ try {
       ['firecrawl', { status: 432 }, null],
       ['firecrawl', { status: 402 }, 'exhausted'],
       ['firecrawl', { status: 429, body: { error: 'Rate limit exceeded' } }, 'cooling'],
+      // A site Firecrawl will not read is the page's refusal; a token it will not take is the key's.
+      ['firecrawl', { status: 403, body: { success: false, error: 'This website is no longer supported, please reach out to help@firecrawl.com' } }, null],
+      ['firecrawl', { status: 403, body: { success: false, error: 'Unauthorized: Invalid token' } }, 'invalid'],
       ['brave', { status: 429 }, 'cooling'],
       ['e2b', { status: 401, body: { code: 401, message: 'Invalid API key' } }, 'invalid'],
       ['exa', { status: 0, cause: { code: 'ECONNRESET' } }, 'transient'],

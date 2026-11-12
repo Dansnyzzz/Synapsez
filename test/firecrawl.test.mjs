@@ -12,7 +12,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { removeTemp } from './lib/tmp.mjs';
 
-process.env.ENCRYPTION_KEY ||= 'firecrawl-test-encryption-key';
+process.env.ENCRYPTION_KEY ||= 'firecrawl-test-encryption-key-long-enough';
 process.env.SESSION_SECRET ||= 'firecrawl-test-session-secret';
 process.env.DATA_DIR = path.join(os.tmpdir(), `ai-remote-firecrawl-test-${process.pid}`);
 delete process.env.DATABASE_URL;
@@ -39,16 +39,33 @@ await initStore({ driver: sql });
 const resetCounts = () => sql.query("DELETE FROM rate_limits WHERE bucket LIKE 'free:%'");
 
 const fc = await import('../server/firecrawl.js');
-const { allowance } = await import('../server/freeTier.js');
+const { allowance, periodOf } = await import('../server/freeTier.js');
+const pool = await import('../server/keyPool.js');
+const { encryptSecret, sha256 } = await import('../server/crypto.js');
+const { serviceKeyContext } = await import('../server/secretContexts.js');
+const store = (await import('../server/store/index.js')).getStore();
+const month = periodOf('month').key;
+/** Firecrawl's billing period, as its credit-usage says it: this month's end, so its figure is always the current one. */
+const periodEnd = periodOf('month').ends.toISOString();
 const used = async (service) => {
   const { left, limit } = await allowance(service);
   return limit - left;
 };
+let added = 0;
+/** A key stored as the owner's page stores it: sealed to its service and row (spec A). */
+const addKey = async (service, key) => {
+  const id = `sk${(added += 1)}`;
+  await store.addServiceKey({ id, service, sealed: encryptSecret(key, serviceKeyContext(service, id)), fingerprint: sha256(`${service}:${key}`), hint: key.slice(-4), label: null, ceiling: null, addedBy: null });
+  return id;
+};
+/** The one key a section set aside, back in use — as the owner's check, or a new month, would put it. */
+const heal = () => pool.markKey('firecrawl', 'env', 'ok');
 
 /* ── Firecrawl's API, answered here ─────────────────────────────────── */
 
 const calls = [];
-let left = 900;
+// A Free month barely begun: Firecrawl's own count (believed when lower than ours) is not what decides here.
+let left = 1000;
 /** Overrides by path, for a section that needs Firecrawl to answer otherwise. */
 const answer = new Map();
 const json = (body, status = 200, headers = {}) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
@@ -59,10 +76,10 @@ function firecrawlApi(url, init) {
   const method = init?.method || 'GET';
   calls.push({ path: decodeURIComponent(u.pathname), method, body, query: Object.fromEntries(u.searchParams), auth: init?.headers?.Authorization });
   const custom = answer.get(`${method} ${decodeURIComponent(u.pathname)}`);
-  if (custom) return custom({ u, body });
+  if (custom) return custom({ u, body, auth: init?.headers?.Authorization });
   switch (`${method} ${decodeURIComponent(u.pathname)}`) {
     case 'GET /v2/team/credit-usage':
-      return json({ success: true, data: { remainingCredits: left, planCredits: 1000, billingPeriodStart: null, billingPeriodEnd: '2026-12-01T00:00:00Z' } });
+      return json({ success: true, data: { remainingCredits: left, planCredits: 1000, billingPeriodStart: null, billingPeriodEnd: periodEnd } });
     case 'POST /v2/search':
       return json({
         success: true,
@@ -143,14 +160,16 @@ try {
     check('  so the next search does not ask it', callsTo('/v2/search').length === before);
     answer.delete('POST /v2/search');
     await resetCounts();
+    await heal();
 
     fc.resetFirecrawlState();
     left = 3;
     clearSearchCache();
     const low = await search('low', { plan: SEARCH_LEVELS.medium });
     check("Firecrawl's own count is believed when lower than ours: it stands aside", !low.results.length && callsTo('/v2/search').length === before, JSON.stringify(low.attempts));
-    left = 900;
+    left = 1000;
     fc.resetFirecrawlState();
+    await heal();
     delete process.env.SEARCH_ORDER;
     clearSearchCache();
   }
@@ -249,6 +268,53 @@ try {
     const out = await codeContextTool({ query: 'parse strict mode' }, { fetchImpl: quiet });
     check("issues and pull requests come back, said as Firecrawl's", /Firecrawl · issue/.test(out.content) && /parse\(x, \{ strict: true \}\)/.test(out.content), out.content.slice(0, 200));
     check('  2 credits of the "more" share', (await used('firecrawl_more')) === 2);
+    await resetCounts();
+  }
+
+  section('several keys: one asked to wait hands over to the next (spec A, owner 2026-11-12)');
+  {
+    const { search, SEARCH_LEVELS, clearSearchCache } = await import('../server/search.js');
+    const second = 'fc-second-key-7777';
+    const id = await addKey('firecrawl', second);
+    await pool.keysFor('firecrawl', { fresh: true });
+    const named = (auth) => (auth === `Bearer ${second}` ? 'second' : auth === 'Bearer fc-test-key' ? 'env' : 'other');
+    process.env.SEARCH_ORDER = 'firecrawl';
+    answer.set('POST /v2/search', ({ auth }) =>
+      auth === `Bearer ${second}`
+        ? json({ success: true, creditsUsed: 2, data: { web: [{ title: 'From the second key', url: 'https://example.com/second', description: 'b' }] } })
+        : json({ success: false, error: 'Rate limit exceeded' }, 429, { 'retry-after': '60' }),
+    );
+    clearSearchCache();
+    const before = callsTo('/v2/search').length;
+    const found = await search('two Firecrawl keys', { plan: SEARCH_LEVELS.medium });
+    const tried = callsTo('/v2/search').slice(before).map((c) => named(c.auth));
+    check('a 429 on key A: key B answers', found.engine === 'Firecrawl' && found.results[0]?.title === 'From the second key' && tried.join() === 'env,second', `${found.engine} — ${tried.join()}`);
+    const cooling = (await pool.keysFor('firecrawl')).find((k) => k.id === 'env');
+    const wait = (cooling?.retryAt || 0) - Date.now();
+    check('  A cools for what Firecrawl asked, a minute', cooling?.state === 'cooling' && wait > 50_000 && wait <= 60_000, `${cooling?.state} ${wait} ms`);
+    check('  the credits are counted on B, the key that spent them — none left on A', (await store.readCounter(`free:firecrawl@${id}:${month}`)) === 2 && (await store.readCounter(`free:firecrawl:${month}`)) === 0 && (await used('firecrawl_search')) === 2);
+    clearSearchCache();
+    const again = callsTo('/v2/search').length;
+    await search('two Firecrawl keys, again', { plan: SEARCH_LEVELS.medium });
+    check('  while A cools, the next search goes to B alone', callsTo('/v2/search').slice(again).map((c) => named(c.auth)).join() === 'second', callsTo('/v2/search').slice(again).map((c) => named(c.auth)).join());
+    answer.delete('POST /v2/search');
+
+    // Firecrawl turns some sites away with a 403 (2026-11): that is the page's, not the key's.
+    answer.set('POST /v2/scrape', () => json({ success: false, error: 'This website is no longer supported, please reach out to help@firecrawl.com for more info on how to activate it on your account.' }, 403));
+    const scraped = callsTo('/v2/scrape').length;
+    const refused = await fc.firecrawlScrape('https://social.example/post').then(() => 'read', (err) => err.status);
+    check("a 403 for a site Firecrawl does not read is the caller's, and leaves the key in use", refused === 403 && (await pool.keysFor('firecrawl')).find((k) => k.id === id)?.state === 'ok' && callsTo('/v2/scrape').length === scraped + 1, String(refused));
+    answer.delete('POST /v2/scrape');
+
+    const account = await fc.firecrawlAccount();
+    check("Firecrawl's own figures for the administrators, summed over both keys", account?.keys === 2 && account.plan === 2000 && account.remaining > 1900 && account.remaining <= 2000 && account.periodEnd === periodEnd, JSON.stringify(account));
+
+    await store.deleteServiceKey(id);
+    await pool.keysFor('firecrawl', { fresh: true });
+    await heal();
+    fc.resetFirecrawlState();
+    delete process.env.SEARCH_ORDER;
+    clearSearchCache();
     await resetCounts();
   }
 

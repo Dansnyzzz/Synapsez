@@ -101,7 +101,12 @@ const serviceOf = (id) => (POOLED[id] ? id : WINDOWS[id]?.of ?? null);
 const bindingOf = (service) => Object.keys(WINDOWS).filter((id) => WINDOWS[id].of === service && !WINDOWS[id].own);
 const hintOf = (key) => String(key || '').slice(-4);
 const asState = (state) => (KEY_STATES.includes(state) ? state : 'ok');
-const envKeyOf = (service) => {
+/**
+ * The key a service has in the environment, as set — '' when none. For a caller that must use
+ * that key and no other (E2B's machines are made with it, e2b.js `connection`); the rest ask
+ * `withKey`. Server-side only, like every key here.
+ */
+export const envKeyOf = (service) => {
   for (const name of POOLED[service]?.env || []) {
     const value = String(process.env[name] || '').trim();
     if (value) return value;
@@ -539,6 +544,9 @@ export function classify(service, err = {}) {
   if (id === 'exa' && /NO_MORE_CREDITS|_BUDGET_EXCEEDED/.test(said)) return 'exhausted';
   if (id === 'tavily' && (status === 432 || status === 433)) return 'exhausted';
   if (status === 402) return 'exhausted';
+  // Firecrawl turns some sites away with a 403 ("This website is no longer supported"): about the
+  // page, not the key, which it refuses with a 401 — else one such page would refuse every key in turn.
+  if (id === 'firecrawl' && status === 403 && !/token|api.?key|unauthori[sz]ed/i.test(said)) return null;
   if (status === 401 || status === 403) return 'invalid';
   if (id === 'exa' && /INVALID_API_KEY/.test(said)) return 'invalid';
   if (id === 'brave' && /SUBSCRIPTION_TOKEN_INVALID/.test(said)) return 'invalid';

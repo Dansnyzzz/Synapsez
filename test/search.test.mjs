@@ -14,9 +14,15 @@ process.env.DDG_MIN_INTERVAL_MS = '300';
 process.env.EXA_API_KEY = 'exa-test-key';
 process.env.TAVILY_API_KEY = 'tavily-test-key';
 process.env.BRAVE_API_KEY = 'brave-test-key';
+// Stored keys are sealed (the last section, spec A); the rest of the suite runs with no database.
+process.env.ENCRYPTION_KEY ||= 'search-test-encryption-key-long-enough-to-be-quiet';
 delete process.env.SEARCH_ORDER;
+delete process.env.FREE_TIER_ONLY;
 
 const { search, formatResults, searchChain, searchPlan, SEARCH_LEVELS, cleanSites, fuseResults, readThroughExa, clearSearchCache } = await import('../server/search.js');
+const pool = await import('../server/keyPool.js');
+/** A key a section had refused, put back in use, as the owner's check would — so the next section starts with every key. */
+const heal = () => Promise.all(['exa', 'tavily', 'brave'].map((service) => pool.markKey(service, 'env', 'ok')));
 // Google stands aside in these tests: with no Gemini key it skips itself.
 delete process.env.GEMINI_API_KEY;
 delete process.env.GOOGLE_API_KEY;
@@ -42,9 +48,9 @@ function stubFetch(plan) {
   clearSearchCache();
   globalThis.fetch = async (input, init) => {
     const url = String(input);
-    calls.push({ url, at: Date.now(), body: init?.body });
+    calls.push({ url, at: Date.now(), body: init?.body, headers: new Headers(init?.headers || {}) });
     for (const [fragment, respond] of Object.entries(plan)) {
-      if (url.includes(fragment)) return respond();
+      if (url.includes(fragment)) return respond(init);
     }
     throw new Error(`nothing stubbed for ${url}`);
   };
@@ -144,6 +150,8 @@ section('falling through to the next engine');
 
   const text = formatResults('anything', outcome);
   check('and the failover is said out loud', /after Exa, DuckDuckGo failed/.test(text), text.split('\n')[0]);
+  // Exa's 402 set its one key aside as spent until the month ends (keyPool.js).
+  await heal();
 }
 
 section('every engine refusing is an answer too');
@@ -160,6 +168,7 @@ section('every engine refusing is an answer too');
   const text = formatResults('anything', outcome);
   check('and the reply names every engine tried', /Exa.*DuckDuckGo.*Tavily.*Brave/s.test(text), text);
   check('with the reason for each', /subscription token is invalid/.test(text), text.slice(0, 200));
+  await heal();
 }
 
 // ── how far a search goes (owner, 2026-11-02) ───────────────────────
@@ -266,6 +275,7 @@ section('a deep search that fails is asked again the ordinary way');
   const refused = await search('anything', { plan: searchPlan('xhigh') });
   check('  but a refused key is not asked twice', calls.length === 1 && /invalid api key/.test(refused.attempts[0]?.error || ''), JSON.stringify(refused.attempts));
   delete process.env.SEARCH_ORDER;
+  await heal();
 }
 
 section('a page that turns the server away, read through Exa');
@@ -433,6 +443,85 @@ section('an engine having a bad afternoon goes to the back of the chain');
   noteEngine('exa', timeout, t0);
   check('an answer in between starts the count again', cooledChain(chain, t0 + 91_000).join() === chain.join());
   clearEngineTrouble();
+}
+
+/*
+ * Several keys (spec A, owner 2026-11-12): every Exa, Tavily and Brave call asks the pool
+ * (server/keyPool.js) for its key, so a key that is spent or refused hands over to the next.
+ * The only section with a database: the stored keys are rows, sealed as the owner's page seals them.
+ */
+section('several keys: a spent or refused key hands over to the next (spec A)');
+{
+  const { PGlite } = await import('@electric-sql/pglite');
+  const { initStore } = await import('../server/store/index.js');
+  const db = await PGlite.create();
+  const store = await initStore({ driver: { query: async (text, params = []) => (await db.query(text, params)).rows } });
+  const { encryptSecret, sha256 } = await import('../server/crypto.js');
+  const { serviceKeyContext } = await import('../server/secretContexts.js');
+  const { periodOf } = await import('../server/freeTier.js');
+  const month = periodOf('month').key;
+  let added = 0;
+  const addKey = async (service, key) => {
+    const id = `sk${(added += 1)}`;
+    await store.addServiceKey({ id, service, sealed: encryptSecret(key, serviceKeyContext(service, id)), fingerprint: sha256(`${service}:${key}`), hint: key.slice(-4), label: null, ceiling: null, addedBy: null });
+    return id;
+  };
+  const SECOND = { exa: 'exa-second-key-2222', tavily: 'tvly-second-key-3333' };
+  const ENV = { exa: process.env.EXA_API_KEY, tavily: process.env.TAVILY_API_KEY, brave: process.env.BRAVE_API_KEY };
+  const every = [...Object.values(SECOND), ...Object.values(ENV)];
+  /** What this section prints names a key by its last four characters, never more. */
+  const hints = (keys) => keys.map((k) => `…${String(k || '').slice(-4)}`).join(' ');
+  const keyless = (text) => !every.some((key) => String(text).includes(key));
+  const exaId = await addKey('exa', SECOND.exa);
+  const tavilyId = await addKey('tavily', SECOND.tavily);
+  await pool.keysFor('exa', { fresh: true });
+  const envOf = async (service) => (await pool.keysFor(service)).find((k) => k.id === 'env');
+
+  // Exa: the environment's key says its credit is gone (Exa's 402 NO_MORE_CREDITS), the stored one answers.
+  process.env.SEARCH_ORDER = 'exa';
+  const exaBy = (init) =>
+    new Headers(init?.headers).get('x-api-key') === SECOND.exa
+      ? json({ results: [{ title: 'Second', url: 'https://example.com/second', highlights: ['from the second key'] }], costDollars: { total: 0.009 } })
+      : json({ requestId: 'r1', error: 'You have run out of credits', tag: 'NO_MORE_CREDITS' }, 402);
+  stubFetch({ 'api.exa.ai/search': exaBy });
+  const spent = await search('two Exa keys', { plan: searchPlan('medium') });
+  const asked = calls.map((c) => c.headers.get('x-api-key'));
+  check('Exa: the first key answers 402, the result comes from the second', spent.engine === 'Exa' && spent.results[0]?.title === 'Second' && asked.length === 2 && asked[0] === ENV.exa && asked[1] === SECOND.exa && spent.attempts.length === 0, `${spent.engine} — ${hints(asked)}`);
+  const exaEnv = await envOf('exa');
+  check('  the first is set aside as spent until its month ends, and counted full', exaEnv?.state === 'exhausted' && exaEnv.retryAt === periodOf('month').ends.getTime() && (await store.readCounter(`free:exa:${month}`)) === 9_500, `${exaEnv?.state} ${await store.readCounter(`free:exa:${month}`)}`);
+  check('  what the second spent (the cost Exa said) is counted on the second', (await store.readCounter(`free:exa@${exaId}:${month}`)) === 9, String(await store.readCounter(`free:exa@${exaId}:${month}`)));
+  stubFetch({ 'api.exa.ai/search': exaBy });
+  await search('two Exa keys, asked again', { plan: searchPlan('medium') });
+  check('  the next search asks the second alone', calls.length === 1 && calls[0].headers.get('x-api-key') === SECOND.exa, hints(calls.map((c) => c.headers.get('x-api-key'))));
+  stubFetch({ 'api.exa.ai/contents': (init) => (new Headers(init?.headers).get('x-api-key') === SECOND.exa ? json({ results: [{ title: 'Page', text: 'Read with the second key.' }], costDollars: { total: 0.001 } }) : json({ tag: 'NO_MORE_CREDITS' }, 402)) });
+  const page = await readThroughExa('https://example.com/a');
+  check("  a page read through Exa's /contents goes to the second as well", page?.text === 'Read with the second key.' && calls.length === 1 && calls[0].headers.get('x-api-key') === SECOND.exa, hints(calls.map((c) => c.headers.get('x-api-key'))));
+
+  // Tavily: 432, its plan's limit, is the key spent; the stored key answers.
+  process.env.SEARCH_ORDER = 'tavily';
+  const tavilyBy = (init) =>
+    new Headers(init?.headers).get('authorization') === `Bearer ${SECOND.tavily}`
+      ? json({ results: [{ title: 'Tavily second', url: 'https://example.com/t2', content: 'b' }] })
+      : json({ detail: { error: "This request exceeds your plan's set usage limit." } }, 432);
+  stubFetch({ 'api.tavily.com': tavilyBy });
+  const tav = await search('two Tavily keys', { plan: searchPlan('medium') });
+  const tavAsked = calls.map((c) => c.headers.get('authorization'));
+  check('Tavily: a 432 on the first key, the second answers', tav.engine === 'Tavily' && tav.results[0]?.title === 'Tavily second' && tavAsked.length === 2 && tavAsked[1] === `Bearer ${SECOND.tavily}`, `${tav.engine} — ${tavAsked.length} asked`);
+  check('  the first set aside as spent, one credit counted on the second', (await envOf('tavily'))?.state === 'exhausted' && (await store.readCounter(`free:tavily@${tavilyId}:${month}`)) === 1, (await envOf('tavily'))?.state);
+
+  // Brave holds one key (owner, 2026-11-12): refused, it stands aside and the next engine answers.
+  process.env.SEARCH_ORDER = 'brave,duckduckgo';
+  const braveRefuses = () => json({ type: 'ErrorResponse', error: { status: 422, detail: `The provided API key ${ENV.brave} is invalid.`, code: 'SUBSCRIPTION_TOKEN_INVALID' } }, 422);
+  stubFetch({ 'api.search.brave.com': braveRefuses, 'duckduckgo.com': () => html(ddgPage(2)) });
+  const brave = await search('brave refused', { plan: searchPlan('medium') });
+  check('Brave 422 SUBSCRIPTION_TOKEN_INVALID: its key set aside as refused, the next engine answers, the reason said', brave.engine === 'DuckDuckGo' && (await envOf('brave'))?.state === 'invalid' && /HTTP 422/.test(brave.attempts[0]?.error || ''), `${brave.engine} ${(await envOf('brave'))?.state}`);
+  check('  a key a provider repeats back is not in the reason the model reads', keyless(brave.attempts[0]?.error) && /…/.test(brave.attempts[0]?.error || ''), keyless(brave.attempts[0]?.error) ? 'no key in it' : 'the key is in it');
+  stubFetch({ 'api.search.brave.com': braveRefuses, 'duckduckgo.com': () => html(ddgPage(2)) });
+  const after = await search('brave refused, asked again', { plan: searchPlan('medium') });
+  check('  and it is not asked again: Brave is out of the chain until the owner checks it', !calls.some((c) => c.url.includes('search.brave.com')) && !searchChain().includes('brave') && after.engine === 'DuckDuckGo', searchChain().join(','));
+
+  delete process.env.SEARCH_ORDER;
+  await heal();
 }
 
 console.log(

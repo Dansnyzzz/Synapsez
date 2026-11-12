@@ -2483,8 +2483,9 @@ section('free tiers: one allowance per service for the whole deployment, a fair 
     await search('after that', { plan: searchPlan('medium') });
     check('  and is not asked again', !calls.some((c) => c.url.includes('api.exa.ai')));
 
-    // A new month for Exa, as far as the count goes.
+    // A new month for Exa, as far as the count goes — and its key, which Exa's 402 set aside until the month ends (keyPool.js).
     await store.clearRateLimit(`free:exa:${tiers.periodOf('month').key}`);
+    await (await import('../server/keyPool.js')).markKey('exa', 'env', 'ok');
 
     // A fair share: one account's searches past its share go to the free engines.
     process.env.FREE_TIER_USER_DAILY = '1';

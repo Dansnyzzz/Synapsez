@@ -195,6 +195,12 @@ export async function take(service, amount, now = new Date(), { keyId = 'env', p
     const { bucket, ends } = countedIn(service, keyId, now);
     const total = await store.addToCounter(bucket, amount, ends);
     counted.push([bucket, ends]);
+    // E2B's whole credit too, as `spend` counts it — so `refund`, which takes it off, gives back only what was put on.
+    if (service === 'e2b') {
+      const credit = creditBucket(keyId);
+      await store.addToCounter(credit, amount, LIFETIME_END);
+      counted.push([credit, LIFETIME_END]);
+    }
     let fits;
     if (paidHere(service, paid)) {
       const apart = keyBucket(service, keyId, now, { paid: true });

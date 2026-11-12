@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { getStore } from './store/index.js';
-import { allowance, spend, refund, e2bAccountAllowance, e2bAccountSpend } from './freeTier.js';
+import { take, spend, refund, e2bAccountAllowance, e2bAccountSpend } from './freeTier.js';
+import { envKeyOf, pickKey, poolHas } from './keyPool.js';
 import { log } from './util/trace.js';
 
 /**
@@ -35,6 +36,13 @@ import { log } from './util/trace.js';
  * it keeps the machine awake; a machine pauses exactly when that time is up, so
  * what is counted is what E2B charges. An allowance that cannot cover it is
  * `E2BOutOfCredit`, and the work goes to the Vercel machine instead.
+ *
+ * **One key** (owner, 2026-11-12: "for E2B I have only one key"): the environment's,
+ * which every machine is made with (`connection`) — a machine stays on the account that
+ * made it, so several keys would need each machine kept to its own. It is in the key pool
+ * (server/keyPool.js) so it has a state and may be the owner's paid key: its time is
+ * counted through the pool on that key, and a charged start (`{ paid: true }`, spec B) may
+ * go past the free month on it, up to its monthly cap.
  */
 
 const SETTING = 'e2bMachine';
@@ -96,9 +104,13 @@ export class E2BSdkError extends Error {
   }
 }
 
-/** Whether there is a key to start an E2B machine with. */
+/**
+ * Whether there is a key to start an E2B machine with: the environment's, and not one the
+ * pool holds refused (keyPool.js). `env` given, whether that environment has one at all.
+ */
 export function e2bConfigured(env = process.env) {
-  return !!String(env.E2B_API_KEY || '').trim();
+  if (env !== process.env) return !!String(env.E2B_API_KEY || '').trim();
+  return !!envKeyOf('e2b') && poolHas('e2b');
 }
 
 /**
@@ -146,7 +158,8 @@ export const ONE_PIP = [
   "/usr/bin/printf '[global]\\nbreak-system-packages = true\\nno-cache-dir = true\\n' > /etc/pip.conf",
   '/usr/bin/chmod 644 /etc/pip.conf',
 ].join(' && ');
-const connection = () => ({ apiKey: process.env.E2B_API_KEY });
+/** Every machine is made, found and removed with the environment's key: E2B's one (see the header). */
+const connection = () => ({ apiKey: envKeyOf('e2b') });
 
 /**
  * The SDK's ES module build, named outright (SBX-001).
@@ -208,28 +221,43 @@ const exited = (err) => err?.name === 'CommandExitError';
 /** Thousandths of a dollar for keeping a machine of this size awake from `from` to `until`. */
 const priceOf = (size, from, until) => Math.ceil(((until - from) / 1000) * (size.cpu * VCPU_MILLS + (size.memMb / 1024) * GIB_MILLS));
 
+/** E2B's one key, which every machine is made with: what is paid is counted on it. */
+const E2B_KEY = 'env';
+
 /**
  * Pay for keeping a machine awake until `until`, from where it was last paid
- * to. Time already paid for is not paid again. Mutates `paid.paidUntil`.
+ * to. Time already paid for is not paid again. Mutates `record.paidUntil`.
  * An account's machine is paid from its share of the month too (HAR-007); a
  * scratch machine, which belongs to nobody, from the pool alone.
  *
- * @param {{ cpu: number, memMb: number, paidUntil?: number }} paid
+ * The pool says whether the key has room (keyPool.js `pickKey`). Past the free
+ * month, a charged start (`paid`) may go on the owner's paid key, held to its
+ * monthly cap before it runs (`take`) — and, being the person's own, not drawn
+ * from their share of the free month.
+ *
+ * @param {{ cpu: number, memMb: number, paidUntil?: number }} record
  * @param {number} until
  * @param {string} [userId]
+ * @param {{ paid?: boolean }} [options]
  */
-async function payUntil(paid, until, userId) {
-  const from = Math.max(Date.now(), Number(paid.paidUntil) || 0);
+async function payUntil(record, until, userId, { paid = false } = {}) {
+  const from = Math.max(Date.now(), Number(record.paidUntil) || 0);
   if (until <= from) return null;
-  const cost = priceOf(paid, from, until);
-  const { left } = await allowance('e2b');
-  if (cost > left) throw new E2BOutOfCredit();
-  if (userId && cost > (await e2bAccountAllowance(userId)).left) throw new E2BOutOfCredit();
-  await spend('e2b', cost);
-  if (userId) await e2bAccountSpend(userId, cost);
-  const before = paid.paidUntil;
-  paid.paidUntil = until;
-  return { cost, before, userId };
+  const cost = priceOf(record, from, until);
+  const pick = await pickKey('e2b', cost, { paid });
+  if (!pick || pick.key.id !== E2B_KEY) throw new E2BOutOfCredit();
+  const shared = userId && !pick.paid ? userId : undefined;
+  if (shared && cost > (await e2bAccountAllowance(shared)).left) throw new E2BOutOfCredit();
+  const counted = { keyId: E2B_KEY, paid: pick.paid };
+  if (pick.paid) {
+    if (!(await take('e2b', cost, undefined, counted))) throw new E2BOutOfCredit();
+  } else {
+    await spend('e2b', cost, undefined, counted);
+  }
+  if (shared) await e2bAccountSpend(shared, cost);
+  const before = record.paidUntil;
+  record.paidUntil = until;
+  return { cost, before, userId: shared, paid: pick.paid };
 }
 
 /**
@@ -237,13 +265,13 @@ async function payUntil(paid, until, userId) {
  * (HAR-010): with E2B's machines all busy, each failed start cost ten minutes
  * of the month's credit, and a few hundred closed E2B for the month.
  *
- * @param {{ paidUntil?: number }} paid
- * @param {{ cost: number, before?: number, userId?: string } | null} receipt
+ * @param {{ paidUntil?: number }} record
+ * @param {{ cost: number, before?: number, userId?: string, paid?: boolean } | null} receipt
  */
-async function giveBack(paid, receipt) {
+async function giveBack(record, receipt) {
   if (!receipt) return;
-  paid.paidUntil = receipt.before;
-  await refund('e2b', receipt.cost);
+  record.paidUntil = receipt.before;
+  await refund('e2b', receipt.cost, undefined, { keyId: E2B_KEY, paid: !!receipt.paid });
   if (receipt.userId) await e2bAccountSpend(receipt.userId, -receipt.cost);
 }
 
@@ -401,14 +429,14 @@ async function closeMachine(box, record = null) {
  * An E2B sandbox, in the shape the rest of the app drives a Vercel one.
  *
  * @param {any} box  the SDK's Sandbox
- * @param {{ userId?: string, record?: any }} [owner]  the account and its record; none for a scratch machine
+ * @param {{ userId?: string, record?: any, paid?: boolean }} [owner]  the account and its record; none for a scratch machine. `paid`: as it was started
  */
-function machine(box, { userId, record } = {}) {
+function machine(box, { userId, record, paid = false } = {}) {
   /** Awake for `ms` from now, paid for first. Only ever longer: a browser session may have asked for more. */
   const stayAwake = async (ms) => {
     if (record) {
       if (Number(record.paidUntil) >= Date.now() + ms) return;
-      await payUntil(record, Date.now() + ms, userId);
+      await payUntil(record, Date.now() + ms, userId, { paid });
       await getStore().setUserSetting(userId, SETTING, record);
     }
     await box.setTimeout(ms);
@@ -629,9 +657,12 @@ async function readRecord(userId) {
   return value && typeof value === 'object' && value.id ? value : null;
 }
 
-/** Resume a machine by id, paid for first; null when it no longer exists. */
-async function resume(Sandbox, userId, record) {
-  const receipt = await payUntil(record, Date.now() + IDLE_MS, userId);
+/**
+ * Resume a machine by id, paid for first; null when it no longer exists.
+ * @param {any} Sandbox @param {string} userId @param {any} record @param {{ paid?: boolean }} [options]
+ */
+async function resume(Sandbox, userId, record, { paid = false } = {}) {
+  const receipt = await payUntil(record, Date.now() + IDLE_MS, userId, { paid });
   let box;
   try {
     box = await Sandbox.connect(record.id, { ...connection(), timeoutMs: IDLE_MS });
@@ -642,7 +673,7 @@ async function resume(Sandbox, userId, record) {
   }
   await closeMachine(box, record);
   await getStore().setUserSetting(userId, SETTING, record);
-  return machine(box, { userId, record });
+  return machine(box, { userId, record, paid });
 }
 
 /**
@@ -699,9 +730,10 @@ const shouldMove = (record, now = Date.now()) =>
  * @param {string} name
  * @param {any} record
  * @param {any} old  the machine as `machine()` makes it
+ * @param {{ paid?: boolean }} [options]
  * @returns {Promise<any|null>} the new machine, or null when it stayed where it was
  */
-async function moveMachine(Sandbox, userId, name, record, old) {
+async function moveMachine(Sandbox, userId, name, record, old, { paid = false } = {}) {
   /** @type {any} */
   const next = { ...ASSUMED, id: '', paidUntil: record.paidUntil, checkpoints: record.checkpoints };
   let receipt = null;
@@ -718,7 +750,7 @@ async function moveMachine(Sandbox, userId, name, record, old) {
     const size = await old.fileSize(file);
     if (!size || size > MOVE_MAX_BYTES) throw new Error(`the home folder packs to ${size} bytes`);
 
-    receipt = await payUntil(next, Date.now() + IDLE_MS, userId);
+    receipt = await payUntil(next, Date.now() + IDLE_MS, userId, { paid });
     const made = await makeBox(Sandbox, name);
     box = made.box;
     // The template not being there is no reason to move: the new machine would be no bigger.
@@ -729,7 +761,7 @@ async function moveMachine(Sandbox, userId, name, record, old) {
     if (Number(info?.cpuCount) > 0) next.cpu = Number(info.cpuCount);
     if (Number(info?.memoryMB) > 0) next.memMb = Number(info.memoryMB);
     await closeMachine(box, next);
-    const arrived = machine(box, { userId, record: next });
+    const arrived = machine(box, { userId, record: next, paid });
     const unpacked = await arrived.runCommand({
       cmd: 'bash',
       args: ['--noprofile', '--norc', '-c', `curl -fsS --max-time ${Math.floor(MOVE_STEP_MS / 1000) - 5} "$SYNZ_FROM" | tar xzf - -C ${HOME}`],
@@ -755,30 +787,31 @@ async function moveMachine(Sandbox, userId, name, record, old) {
   }
 }
 
-async function open(userId, name) {
+/** @param {string} userId @param {string} name @param {{ paid?: boolean }} [options] */
+async function open(userId, name, { paid = false } = {}) {
   const { Sandbox } = await loadSdk();
   const known = await readRecord(userId);
   if (known) {
-    const resumed = await resume(Sandbox, userId, known);
+    const resumed = await resume(Sandbox, userId, known, { paid });
     if (resumed) {
       if (!shouldMove(known)) return resumed;
-      return (await moveMachine(Sandbox, userId, name, known, resumed)) || resumed;
+      return (await moveMachine(Sandbox, userId, name, known, resumed, { paid })) || resumed;
     }
   }
   // No record, or one for a machine that is gone: one made by another instance may be there under the name.
   const [existing] = await byName(Sandbox, name);
   if (existing) {
     const found = { ...ASSUMED, ...(known?.id === existing.sandboxId ? known : {}), id: existing.sandboxId, paidUntil: known?.paidUntil };
-    const resumed = await resume(Sandbox, userId, found);
+    const resumed = await resume(Sandbox, userId, found, { paid });
     if (resumed) {
       if (!shouldMove(found)) return resumed;
-      return (await moveMachine(Sandbox, userId, name, found, resumed)) || resumed;
+      return (await moveMachine(Sandbox, userId, name, found, resumed, { paid })) || resumed;
     }
   }
 
   /** @type {any} */
   const record = { ...ASSUMED, id: '', paidUntil: known?.paidUntil };
-  const receipt = await payUntil(record, Date.now() + IDLE_MS, userId);
+  const receipt = await payUntil(record, Date.now() + IDLE_MS, userId, { paid });
   /** @type {any} */
   let box;
   try {
@@ -809,7 +842,7 @@ async function open(userId, name) {
   }
   await closeMachine(box, record);
   await getStore().setUserSetting(userId, SETTING, record);
-  const made = machine(box, { userId, record });
+  const made = machine(box, { userId, record, paid });
   // A machine with nothing of this account's on it yet: see sandbox.js `machineForUser`.
   made.fresh = true;
   return made;
@@ -821,22 +854,28 @@ const starting = new Map();
 /**
  * The account's E2B machine, resumed or made, and paid for until it next
  * pauses. Throws `E2BOutOfCredit` when the month's allowance cannot pay, and
- * the SDK's own errors otherwise (see `e2bUnavailable`).
+ * the SDK's own errors otherwise (see `e2bUnavailable`). `paid`: the work is
+ * charged (spec B), for its start and every time it is kept awake — false
+ * until then.
  *
  * @param {string} userId
  * @param {string} name  the account's machine name (sandbox.js `sandboxName`)
+ * @param {{ paid?: boolean }} [options]
  */
-export async function e2bMachineFor(userId, name) {
-  if (!starting.has(userId)) starting.set(userId, open(userId, name).finally(() => starting.delete(userId)));
+export async function e2bMachineFor(userId, name, { paid = false } = {}) {
+  if (!starting.has(userId)) starting.set(userId, open(userId, name, { paid }).finally(() => starting.delete(userId)));
   return starting.get(userId);
 }
 
-/** The account's machine if it has one, resumed. Never makes one: for what is only tidying up. */
-export async function e2bExistingMachine(userId) {
+/**
+ * The account's machine if it has one, resumed. Never makes one: for what is only tidying up.
+ * @param {string} userId @param {{ paid?: boolean }} [options]
+ */
+export async function e2bExistingMachine(userId, { paid = false } = {}) {
   const known = await readRecord(userId);
   if (!known?.id) return null;
   const { Sandbox } = await loadSdk();
-  return resume(Sandbox, userId, known);
+  return resume(Sandbox, userId, known, { paid });
 }
 
 /** An account's machine and its checkpoints, gone with the account: E2B keeps a paused one for ever. */
@@ -853,13 +892,14 @@ export async function e2bForgetAccount(userId) {
 /**
  * A machine for one job and nobody's, killed when its time is up — paid for whole, first.
  *
- * @param {{ ms?: number, userId?: string, internet?: boolean, role?: string }} [options]
+ * @param {{ ms?: number, userId?: string, internet?: boolean, role?: string, paid?: boolean }} [options]
  *   `userId`: whose share pays for it, for a job somebody asked for.
  *   `internet: false`: for a stranger's file, which then has nowhere to call.
+ *   `paid`: the job is charged (spec B) — false until then.
  */
-export async function e2bScratch({ ms = SCRATCH_MS, userId, internet = true, role = 'mcp-check' } = {}) {
+export async function e2bScratch({ ms = SCRATCH_MS, userId, internet = true, role = 'mcp-check', paid = false } = {}) {
   const { Sandbox } = await loadSdk();
-  await payUntil({ ...ASSUMED }, Date.now() + ms, userId);
+  await payUntil({ ...ASSUMED }, Date.now() + ms, userId, { paid });
   const options = { ...connection(), timeoutMs: ms, metadata: { app: 'synapsez', role }, network: NETWORK, ...(internet ? {} : { allowInternetAccess: false }) };
   /** @type {any} */
   let box;

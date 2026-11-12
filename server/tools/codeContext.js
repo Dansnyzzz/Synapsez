@@ -2,6 +2,8 @@ import { untrusted } from './untrusted.js';
 import { search, SEARCH_LEVELS } from '../search.js';
 import { allowance, spend, exhaust, exaMills, exaSpent } from '../freeTier.js';
 import { developerSearch, firecrawlReady } from '../firecrawl.js';
+import { poolHas, warmPools } from '../keyPool.js';
+import { throughPool, chargeTo, refusal } from '../keyCall.js';
 
 /**
  * `code_context` — working code and documentation for a programming question,
@@ -9,7 +11,7 @@ import { developerSearch, firecrawlReady } from '../firecrawl.js';
  * library is actually called, an error's known fix, the shape of an API.
  *
  * Three sources, the best first:
- *   - **Exa**, when the deployment has its key — the same key web_search uses —
+ *   - **Exa**, when the deployment has a key — the same keys web_search uses —
  *     asked as Exa's own code tool asks: the passages that match the question
  *     (highlights focused on the query), from anywhere it has indexed code and
  *     documentation, not a fixed list of sites.
@@ -53,28 +55,46 @@ const clip = (text, n = MAX_CHARS_EACH) => (text.length > n ? `${text.slice(0, n
 /**
  * Exa, for code: `lite` on Low, `fast` above — Exa's own code tool asks fast,
  * and a deep search buys nothing for a snippet. Nothing without the
- * deployment's key, or once its free month is spent (freeTier.js).
+ * deployment's key, or once its free month is spent (freeTier.js). On a key
+ * from the pool, as web_search's are (keyPool.js): a refused or spent one
+ * hands over to the next.
  */
-async function fromExa(query, count, plan, { fetchImpl, signal }) {
-  if (!process.env.EXA_API_KEY) return [];
+async function fromExa(query, count, plan, { fetchImpl, signal, paid = false }) {
+  await warmPools();
+  if (!poolHas('exa')) return [];
   const type = plan.exa === 'lite' ? 'lite' : 'fast';
   // Two kinds of content a page: the passages, and the opening when there are none.
   const estimate = exaMills(type, count, 2);
   if ((await allowance('exa')).left < estimate) return [];
-  const res = await fetchImpl('https://api.exa.ai/search', {
-    method: 'POST',
-    headers: { 'x-api-key': process.env.EXA_API_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      query,
-      type,
-      numResults: count,
-      contents: { highlights: { query, maxCharacters: MAX_CHARS_EACH }, text: { maxCharacters: 300 } },
-    }),
-    signal,
-  });
-  if (!res.ok) return [];
-  const body = await res.json().catch(() => ({}));
-  await spend('exa', exaSpent(body, estimate));
+  const body = await throughPool(
+    'exa',
+    estimate,
+    async (key, meta) => {
+      const bill = await chargeTo('exa', estimate, meta);
+      let used = 0;
+      try {
+        const res = await fetchImpl('https://api.exa.ai/search', {
+          method: 'POST',
+          headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query,
+            type,
+            numResults: count,
+            contents: { highlights: { query, maxCharacters: MAX_CHARS_EACH }, text: { maxCharacters: 300 } },
+          }),
+          signal,
+        });
+        if (!res.ok) throw await refusal('Exa', res, key);
+        const answer = await res.json().catch(() => ({}));
+        used = exaSpent(answer, estimate);
+        return answer;
+      } finally {
+        await bill.settle(used);
+      }
+    },
+    { paid },
+  ).catch(() => null);
+  if (!body) return [];
   return (body.results || [])
     .filter((r) => r?.url && (r.highlights?.length || r.text))
     .map((r) => ({
@@ -90,9 +110,10 @@ async function fromExa(query, count, plan, { fetchImpl, signal }) {
 const DEVELOPER_KIND = { doc: 'documentation', issue: 'issue', pull_request: 'pull request', readme: 'README' };
 
 /** Firecrawl's Developer Index — nothing without its key, or once its share of the month is used. */
-async function fromFirecrawl(query, count, { signal }) {
+async function fromFirecrawl(query, count, { signal, paid = false }) {
+  await warmPools();
   if (!firecrawlReady()) return [];
-  const rows = await developerSearch(query, { k: count, signal });
+  const rows = await developerSearch(query, { k: count, signal, paid });
   return rows
     .filter((r) => r.text)
     .map((r) => ({ source: `Firecrawl · ${DEVELOPER_KIND[r.kind] || 'developer index'}`, title: r.title, url: r.url, text: clip(r.text) }));
@@ -143,10 +164,13 @@ async function fromStackOverflow(query, count, { fetchImpl, signal }) {
 }
 
 /**
+ * `paid`: charged, so Exa, Firecrawl and the web search may go on to the owner's paid key
+ * once every free key is full (keyPool.js) — false until spec B charges people.
+ *
  * @param {{ query: string, max_results?: number }} input
- * @param {{ userId?: string, signal?: AbortSignal, fetchImpl?: typeof fetch, plan?: any }} [context]
+ * @param {{ userId?: string, signal?: AbortSignal, fetchImpl?: typeof fetch, plan?: any, paid?: boolean }} [context]
  */
-export async function codeContextTool({ query, max_results }, { userId = null, signal, fetchImpl = fetch, plan = SEARCH_LEVELS.high } = {}) {
+export async function codeContextTool({ query, max_results }, { userId = null, signal, fetchImpl = fetch, plan = SEARCH_LEVELS.high, paid = false } = {}) {
   const asked = String(query ?? '').trim().slice(0, 300);
   if (!asked) throw new Error('Say what code or documentation to find — a library and what it should do, or an error message.');
   const count = Math.min(Math.max(Number(max_results) || plan.code || 4, 1), 8);
@@ -157,15 +181,15 @@ export async function codeContextTool({ query, max_results }, { userId = null, s
   const timed = signal ? AbortSignal.any([signal, limit]) : limit;
 
   const [exa, overflow] = await Promise.all([
-    fromExa(asked, count, plan, { fetchImpl, signal: timed }).catch(() => []),
+    fromExa(asked, count, plan, { fetchImpl, signal: timed, paid }).catch(() => []),
     fromStackOverflow(asked, count, { fetchImpl, signal: timed }).catch(() => []),
   ]);
   // Firecrawl only when Exa had nothing: its credits are the month's, and few.
-  const developer = exa.length ? [] : await fromFirecrawl(asked, count, { signal: timed }).catch(() => []);
+  const developer = exa.length ? [] : await fromFirecrawl(asked, count, { signal: timed, paid }).catch(() => []);
   let found = [...exa, ...developer, ...overflow];
   // Nothing from either: documentation pages from the ordinary search.
   if (!found.length) {
-    const web = await search(`${asked} documentation example`, { count, userId, plan }).catch(() => null);
+    const web = await search(`${asked} documentation example`, { count, userId, plan, paid }).catch(() => null);
     found = (web?.results || []).map((r) => ({ source: 'Web', title: String(r.title || r.url), url: String(r.url || ''), text: clip(String(r.snippet || r.content || '')) }));
   }
   if (!found.length) {
