@@ -37,6 +37,40 @@ const SCRIPT = /\.(sh|ps1|bat|py|js|mjs|cjs|ts|rb)$/i;
 const INVISIBLE = /[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]|[\u{E0000}-\u{E007F}]/u;
 const OVERRIDE = /\bignore (?:all |any |the )?(?:previous|prior|above|earlier) (?:instructions|rules)|\bdisregard (?:the |your )?(?:system|previous|prior) (?:prompt|instructions)|\byou are now in (?:developer|god|dan) mode/i;
 const SENDS = /\b(?:send|post|upload|forward|exfiltrate|transmit)\b[^.\n]{0,80}?(https?:\/\/[^\s)'"`<>]+)/i;
+/**
+ * Words that speak to an AI reading the text, in English or Vietnamese — "Note to the AI:",
+ * "If you are a language model", "bỏ qua mọi hướng dẫn trước". A plain "assistant" is not
+ * enough: a memo for somebody's assistant is a person's. Bounded by letters rather than
+ * `\b`, which ends at the first Vietnamese vowel with a mark on it.
+ */
+const TO_AN_AI = new RegExp(
+  [
+    '(?:note|message|instructions?|attention|reminder)\\s+(?:to|for)\\s+(?:the\\s+|any\\s+|all\\s+)?(?:ai|llms?|(?:large\\s+)?language\\s+models?|chatbots?)',
+    '(?:if|when)\\s+you\\s+are\\s+(?:an?\\s+)?(?:ai|llm|(?:large\\s+)?language\\s+model|chatbot)',
+    '(?:bỏ qua|phớt lờ|quên)\\s+(?:(?:mọi|tất cả|các|những)\\s+)?(?:hướng dẫn|chỉ dẫn|chỉ thị|lệnh)\\s+(?:trước|ở trên|cũ)',
+    'nếu bạn là\\s+(?:một\\s+)?(?:ai|trợ lý ảo|mô hình ngôn ngữ|chatbot)',
+  ]
+    .map((words) => `(?<![\\p{L}\\p{N}])${words}(?![\\p{L}\\p{N}])`)
+    .join('|'),
+  'iu',
+);
+
+/**
+ * Whether a passage of somebody's document speaks to an AI that reads it (2026-11-12):
+ * the override words the skill scan warns on, or a direct address. Used where documents
+ * come in — the folder index and a project's shelf — to mark the passage, never to drop it.
+ *
+ * Not the scan's "send to an address" check: in a skill that is an instruction to the
+ * assistant, but in a document "send the signed copy to https://…" is ordinary business
+ * prose, and marking half of somebody's correspondence would teach the model to ignore
+ * the mark.
+ *
+ * @param {string} text  read with invisible characters already removed
+ */
+export function addressedToAi(text) {
+  const body = String(text ?? '');
+  return OVERRIDE.test(body) || TO_AN_AI.test(body);
+}
 
 const unquote = (value) => {
   const v = value.trim();

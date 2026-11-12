@@ -36,8 +36,14 @@ const CLOSE = '</untrusted>';
 /**
  * Characters that show as nothing: zero-width spaces and joiners, bidi marks, the word
  * joiner and its kin, variation selectors, the BOM, the Hangul fillers and soft hyphen.
+ *
+ * And the Unicode tag characters, U+E0000\u2013U+E007F, written as their surrogate pair so
+ * this stays a non-`u` pattern (2026-11-12): each one mirrors an ASCII letter, so a whole
+ * sentence can ride along invisibly \u2014 and a model reads it. The skill scan already
+ * refused them (skillUpload.js); stripping indexed documents with this list without them
+ * would have left the best-known hiding place open.
  */
-export const INVISIBLE = /(?:[\u00AD\u061C\u115F\u1160\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFEFF\uFFA0]|\u034F|\u17B4|\u17B5|[\u180B-\u180F]|[\uFE00-\uFE0F])/g;
+export const INVISIBLE = /(?:[\u00AD\u061C\u115F\u1160\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFEFF\uFFA0]|\u034F|\u17B4|\u17B5|[\u180B-\u180F]|[\uFE00-\uFE0F]|\uDB40[\uDC00-\uDC7F])/g;
 
 /**
  * Stop the content from closing its own envelope.

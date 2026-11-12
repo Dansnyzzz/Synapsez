@@ -22,6 +22,10 @@
  *          useful but not part of the core loop. Dropped first when the model's
  *          context window is too small to hold the whole catalogue — see
  *          `availableTools`.
+ * follows  another tool's name: this one is withheld wherever that one is
+ *          (2026-11-12). `read_chat` goes where `search_chats` goes, `skill_edit`
+ *          where `skill_write` does — one rule in `withheldTools` (memory.js)
+ *          covers both, and each implementation still refuses on its own.
  */
 import { readArguments } from './validate.js';
 import { canonicalInput } from '../../public/js/tool-aliases.js';
@@ -2054,7 +2058,7 @@ export const TOOLS = [
     readOnly: true,
     description:
       'Search the user\'s earlier conversations for what was said — when they refer to something discussed before ("the plan we made last week", "what did I say about the deposit") and it is not in your notes. ' +
-      'Inside a project it searches that project\'s conversations; outside, conversations outside projects. With no query it lists the most recent ones. Never reaches incognito conversations.',
+      'Inside a project it searches that project\'s conversations; outside, conversations outside projects. With no query it lists the most recent ones. Never reaches incognito conversations. Each result has its id, for read_chat.',
     parameters: {
       type: 'object',
       properties: {
@@ -2062,6 +2066,24 @@ export const TOOLS = [
         queries: { type: 'array', items: { type: 'string' }, description: 'Several searches at once, in one call: a search per call is a wall of steps for the person watching.' },
         limit: { type: 'integer', description: 'How many conversations to return. Default 5, max 10.' },
       },
+    },
+  },
+  {
+    name: 'read_chat',
+    scope: 'cloud',
+    readOnly: true,
+    follows: 'search_chats',
+    description:
+      'Read more of one earlier conversation that search_chats found, when its excerpt is not enough: the messages around one it quoted, or from the start. ' +
+      'Same reach as search_chats — never this conversation, an incognito one or a bot\'s.',
+    parameters: {
+      type: 'object',
+      properties: {
+        chat_id: { type: 'string', description: 'The id search_chats showed beside the conversation.' },
+        around_seq: { type: 'integer', description: 'The # of a message search_chats quoted, to read around it. Omit to read from the start.' },
+        window: { type: 'integer', description: 'How many messages. Default 12, max 30.' },
+      },
+      required: ['chat_id'],
     },
   },
   /*
@@ -2176,7 +2198,7 @@ export const TOOLS = [
     scope: 'cloud',
     readOnly: false,
     description:
-      'Record a procedure so it survives this conversation. Use it when the user teaches you how they want something done, or explicitly asks you to remember a workflow. Saving the same name again refines it rather than adding a duplicate.',
+      'Record a procedure so it survives this conversation. Use it when the user teaches you how they want something done, or explicitly asks you to remember a workflow. Saving the same name again replaces its instructions rather than adding a duplicate — to change part of one, use skill_edit.',
     parameters: {
       type: 'object',
       properties: {
@@ -2187,8 +2209,27 @@ export const TOOLS = [
             'When this applies — this is what you will use later to decide whether to read it, so make it about the situation, not the steps.',
         },
         instructions: { type: 'string', description: 'The procedure itself, in as much detail as it needs.' },
+        replace: { type: 'boolean', description: 'Only when the user wants a saved skill made much shorter: without it, cutting one by more than 30% is refused.' },
       },
       required: ['name', 'description', 'instructions'],
+    },
+  },
+  {
+    name: 'skill_edit',
+    scope: 'cloud',
+    readOnly: false,
+    follows: 'skill_write',
+    description:
+      'Change one exact piece of text inside a saved skill\'s instructions, leaving the rest alone. ' +
+      'Use it to correct or add a step rather than rewriting the skill from memory. `old_string` must appear exactly once; read the skill first.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The skill, exactly as listed.' },
+        old_string: { type: 'string', description: 'The text to replace, matched exactly.' },
+        new_string: { type: 'string', description: 'What to put there instead.' },
+      },
+      required: ['name', 'old_string', 'new_string'],
     },
   },
   {
@@ -2818,6 +2859,8 @@ const ALWAYS_SENSITIVE = new Set([
   'schedule_task',
   'workflow_write',
   'skill_write',
+  // The same persistence as skill_write, one find-and-replace at a time.
+  'skill_edit',
   // Nothing about the arguments makes deleting safer, and the one thing that
   // cannot be undone deserves the one prompt nobody skips.
   'delete_file',
@@ -3630,6 +3673,14 @@ const INDEX_GROUPS = [
     names: ['memory_read', 'memory_edit', 'memory_delete', 'memory_search'],
     text: 'Saved notes: read one in full, correct part of one, delete a stale one, find notes about a subject.',
   },
+  {
+    names: ['search_chats', 'read_chat'],
+    text: "The user's earlier conversations: search what was said, then read more of one. Load them together.",
+  },
+  {
+    names: ['skill_read', 'skill_write', 'skill_edit'],
+    text: "The user's saved procedures (skills): read one in full, save one, change part of one.",
+  },
 ];
 
 /** One line per deferred tool, or per family when two or more of it are held. */
@@ -3706,7 +3757,7 @@ const DEFERRABLE = new Set([
   'send_email', 'slack_post', 'telegram_send', 'meta_page_post',
   'github', 'github_write', 'notion_search',
   // Standing machinery: defined once and then left alone for weeks.
-  'workflow_write', 'workflow_status', 'skill_write', 'skill_read',
+  'workflow_write', 'workflow_status', 'skill_write', 'skill_read', 'skill_edit',
   'schedule_task', 'list_tasks', 'cancel_task',
   // Composite fan-outs. Expensive to run and never the first thing tried.
   'deep_research', 'run_parallel',
@@ -3714,7 +3765,7 @@ const DEFERRABLE = new Set([
   // reading one back is rare, and correcting or deleting one is rarer; writing
   // stays loaded because noticing something worth keeping is a moment, not a
   // plan. Looking back through earlier conversations is a deliberate act.
-  'memory_read', 'memory_edit', 'memory_delete', 'memory_search', 'search_chats',
+  'memory_read', 'memory_edit', 'memory_delete', 'memory_search', 'search_chats', 'read_chat',
   // Finding a service to connect: the turn that needs one is told so in the prompt.
   'search_connectors', 'suggest_connectors',
   // Code and documentation for a programming question: a real job, and a rare one.
@@ -3830,6 +3881,8 @@ export function availableTools({
     // both halves of the same job is a decision it has to make for no reason.
     if (t.hidden) return false;
     if (withhold?.has(t.name)) return false;
+    // Withheld with the tool it follows, so neither is listed in `load_tools` for the asking.
+    if (t.follows && withhold?.has(t.follows)) return false;
     // Composite tools that themselves fan out — a sub-agent must never reach one,
     // or one job becomes an exponential tree of API calls.
     if (subagent && t.noSubagent) return false;

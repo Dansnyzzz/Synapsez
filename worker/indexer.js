@@ -90,19 +90,28 @@ async function send(payload) {
 
 // ── reading ───────────────────────────────────────────────────────────
 
-async function* walk(dir, depth = 0) {
+/**
+ * @param {string} dir
+ * @param {number} [depth]
+ * @param {{ partial: boolean }} [state]  set when a folder could not be read: then the
+ *   walk did not see everything there, and nothing may be forgotten on its word
+ */
+async function* walk(dir, depth = 0, state = { partial: false }) {
   if (depth > 12) return;
   let entries;
   try {
     entries = await fsp.readdir(dir, { withFileTypes: true });
   } catch {
-    return; // a folder we may not read is not a failure worth stopping for
+    // A folder we may not read is not a failure worth stopping for — but its files
+    // were not seen, so they must not look deleted.
+    state.partial = true;
+    return;
   }
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       if (SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
-      yield* walk(full, depth + 1);
+      yield* walk(full, depth + 1, state);
     } else if (entry.isFile() && !entry.name.startsWith('~$')) {
       yield full;
     }
@@ -226,12 +235,18 @@ export function chunk(text, { size = CHUNK_CHARS, overlap = CHUNK_OVERLAP } = {}
  * which is what makes re-indexing a large folder cheap enough to do casually —
  * embedding is billed per token, and re-reading an unchanged archive every time
  * would be a bill for nothing.
- */
-/**
+ *
+ * A file deleted or renamed since is forgotten (2026-11-12): after a walk that saw the
+ * whole folder, every path found there is sent as `prune`, and the server drops the
+ * source's others. Never after a partial walk — stopped by the person, cut at the
+ * file cap, or with a folder it could not read — because then a file not found is not
+ * a file that is gone.
+ *
  * @param {{ path?: string, reindex?: boolean }} input
- * @param {{ chatId?: string|null, signal?: AbortSignal }} [context]
+ * @param {{ chatId?: string|null, signal?: AbortSignal, maxFiles?: number }} [context]
+ *   `maxFiles` is for the suite, which cannot write 3,000 files to reach the cap
  */
-export async function indexFolder({ path: target = '.', reindex = false }, { signal } = {}) {
+export async function indexFolder({ path: target = '.', reindex = false }, { signal, maxFiles = MAX_FILES } = {}) {
   const root = resolveInWorkspace(target);
   const stat = await fsp.stat(root).catch(() => null);
   if (!stat) throw new Error(`There is nothing at ${target} on this computer.`);
@@ -245,7 +260,13 @@ export async function indexFolder({ path: target = '.', reindex = false }, { sig
   let skipped = 0;
   let unreadable = 0;
   let chunks = 0;
+  let flagged = 0;
+  let cleaned = 0;
   const failures = [];
+  /** Every file the walk found, whether or not it was read — what the folder still has. */
+  const kept = new Set();
+  const walked = { partial: false };
+  let cut = false;
 
   let batch = [];
   let batchChunks = 0;
@@ -255,21 +276,31 @@ export async function indexFolder({ path: target = '.', reindex = false }, { sig
     const result = await send({ op: 'ingest', source, files: batch });
     indexed += result?.files || 0;
     chunks += result?.chunks || 0;
+    flagged += result?.flagged || 0;
+    cleaned += result?.cleaned || 0;
     batch = [];
     batchChunks = 0;
   };
 
-  for await (const file of walk(root)) {
-    if (seen >= MAX_FILES) break;
+  for await (const file of walk(root, 0, walked)) {
+    if (seen >= maxFiles) {
+      // Only a file past the cap makes this a cut: a folder of exactly the cap is whole.
+      cut = true;
+      break;
+    }
     // Checked per file: stopping the turn stops the walk, and what was already
     // sent stays indexed rather than being half-undone (AUTO-009).
     if (signal?.aborted) break;
     seen += 1;
 
+    const key = file.split(path.sep).join('/');
+    // Kept before anything can skip it: an empty, huge or unreadable file is still
+    // there, and its passages go only when the file does.
+    kept.add(key);
+
     const info = await fsp.stat(file).catch(() => null);
     if (!info || info.size === 0 || info.size > MAX_FILE_BYTES) continue;
 
-    const key = file.split(path.sep).join('/');
     const mtime = Math.floor(info.mtimeMs);
     if (!reindex && known.stamps?.[key] && known.stamps[key] >= mtime) {
       skipped += 1;
@@ -300,12 +331,37 @@ export async function indexFolder({ path: target = '.', reindex = false }, { sig
   }
   await flush();
 
+  // Whole only if nothing cut it short. Asked after the last batch as well, for a stop
+  // that landed while it was being sent.
+  const whole = !cut && !walked.partial && !signal?.aborted;
+  let pruned = null;
+  let pruneFailed = '';
+  if (whole) {
+    try {
+      pruned = await send({ op: 'prune', source, keep: [...kept] });
+    } catch (err) {
+      // What was indexed stays indexed; only the tidy did not happen.
+      pruneFailed = err?.message || String(err);
+    }
+  }
+
   const lines = [
     `Indexed ${source}/ — ${indexed} file${indexed === 1 ? '' : 's'}, ${chunks} passage${chunks === 1 ? '' : 's'}.`,
   ];
   if (skipped) lines.push(`${skipped} unchanged since last time, so they were not re-read.`);
   if (unreadable) lines.push(`${unreadable} could not be read${failures.length ? `: ${failures.join('; ')}` : '.'}`);
-  if (seen >= MAX_FILES) lines.push(`Stopped at ${MAX_FILES} files. Index a narrower folder to reach the rest.`);
+  if (pruned?.files) {
+    lines.push(`${pruned.files} file${pruned.files === 1 ? '' : 's'} no longer in the folder ${pruned.files === 1 ? 'was' : 'were'} removed from the index.`);
+  }
+  if (pruneFailed) lines.push(`Files no longer in the folder could not be removed from the index: ${pruneFailed}`);
+  if (walked.partial) lines.push('Some folders in it could not be read, so files missing from them were left in the index.');
+  if (flagged) {
+    lines.push(
+      `${flagged} passage${flagged === 1 ? '' : 's'} ${flagged === 1 ? 'contains' : 'contain'} text addressed to an AI — indexed as written, and marked as such when found.`,
+    );
+  }
+  if (cleaned) lines.push(`Invisible characters were taken out of ${cleaned} passage${cleaned === 1 ? '' : 's'}.`);
+  if (cut) lines.push(`Stopped at ${maxFiles} files. Index a narrower folder to reach the rest.`);
   if (signal?.aborted) {
     // Said first and plainly. Without it a walk stopped on its first file fell
     // through to "nothing in there was a document this can read", which tells

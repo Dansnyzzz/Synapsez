@@ -3,7 +3,7 @@ import { getStore } from './store/index.js';
 import { classify, saveUpload, cleanThumb } from './attachments.js';
 import { extractPdfText } from './pdf.js';
 import { isLegacyOffice, officeFormat, readOfficeAsync } from './office/index.js';
-import { STOPWORDS } from './rag.js';
+import { STOPWORDS, markedPassage, visibleText } from './rag.js';
 import { untrusted } from './tools/untrusted.js';
 
 /**
@@ -15,8 +15,11 @@ import { untrusted } from './tools/untrusted.js';
  * `search_docs` read it and in a sub-agent's brief; sent whole here it went into
  * the system prompt bare, under "the ground truth … outranks anything".
  * Ground truth for facts, still never a source of instructions.
+ *
+ * And marked, inside the envelope, when it speaks to an AI (2026-11-12) — the same
+ * line whatever the question, so the cached briefing stays the same between turns.
  */
-const sourceBlock = (source) => ['', `### ${source.name}`, untrusted(`project source: ${source.name}`, source.text)];
+const sourceBlock = (source) => ['', `### ${source.name}`, untrusted(`project source: ${source.name}`, markedPassage(source.text, 'document'))];
 
 /**
  * Projects: standing instructions, a shelf of sources, and answers that stay on
@@ -184,7 +187,9 @@ export async function addSource(userId, projectId, { name, mime, data, thumb }) 
     text = Buffer.from(base64, 'base64').toString('utf8');
   }
 
-  text = text.replace(/\r\n/g, '\n').trim();
+  // Characters that draw nothing are taken out before the text is kept (2026-11-12):
+  // they can only hide words from the person who put the file here (rag.js `visibleText`).
+  text = visibleText(text.replace(/\r\n/g, '\n')).trim();
   if (!text) throw new Error(`${filename} has no text in it.`);
   if (text.length > MAX_FILE_CHARS) text = `${text.slice(0, MAX_FILE_CHARS)}\n\n[truncated]`;
 
@@ -688,7 +693,8 @@ export async function searchProject(userId, projectId, query, limit = 6) {
   // the model copies a checkable reference rather than composing one.
   const byId = new Map(files.map((f) => [f.id, f.text]));
   return (
-    hits.map((h) => `[${h.file}, ${passageLocation(byId.get(h.fileId), h.at, h.end)}]\n${h.text}`).join('\n\n---\n\n') +
+    // A passage that speaks to an AI says so under its reference (2026-11-12); the caller envelopes all of it.
+    hits.map((h) => `[${h.file}, ${passageLocation(byId.get(h.fileId), h.at, h.end)}]\n${markedPassage(h.text)}`).join('\n\n---\n\n') +
     '\n\nCite a passage by the reference above it, exactly as written.'
   );
 }

@@ -1527,4 +1527,24 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'No model can answer right now. Pick another in the top bar.': 'Hiện không mô hình nào trả lời được. Hãy chọn mô hình khác ở thanh trên cùng.',
   'The model did not answer: {0}': 'Mô hình không trả lời: {0}',
   'The model gave no answer. Try again, or another model.': 'Mô hình không đưa ra câu trả lời. Hãy thử lại, hoặc dùng mô hình khác.',
+  // Data rights and recall (owner, 2026-11-12): tidying the index, skill_edit and its guard, read_chat.
+  'Say which indexed folder to tidy.': 'Hãy nói thư mục đã lập chỉ mục nào cần dọn.',
+  'The list of files still in the folder is missing, so nothing was removed from the index.': 'Thiếu danh sách các tệp còn trong thư mục, nên chưa có gì bị gỡ khỏi chỉ mục.',
+  'A folder is tidied from at most {0} files, so nothing was removed from the index.': 'Mỗi lần dọn một thư mục chỉ tính tối đa {0} tệp, nên chưa có gì bị gỡ khỏi chỉ mục.',
+  'The skill "{0}" has {1} characters of instructions, and this would replace them with {2} — {3}% shorter. Change part of it with skill_edit, or send the whole procedure again; only if the person wants the shorter version, write it with replace: true.':
+    'Kỹ năng "{0}" có {1} ký tự hướng dẫn, và lần ghi này sẽ thay bằng {2} — ngắn hơn {3}%. Hãy sửa một phần bằng skill_edit, hoặc gửi lại toàn bộ quy trình; chỉ khi người dùng muốn bản ngắn hơn, hãy ghi với replace: true.',
+  '"{0}" is one of Synapsez\'s own skills, which cannot be changed. Save one of the person\'s own under a new name with skill_write.':
+    '"{0}" là một kỹ năng có sẵn của Synapsez, không sửa được. Hãy lưu một kỹ năng riêng của người dùng dưới tên mới bằng skill_write.',
+  'No skill of this account is called "{0}". Its skills: {1}.': 'Tài khoản này không có kỹ năng nào tên "{0}". Các kỹ năng của nó: {1}.',
+  'This account has no skills of its own to change.': 'Tài khoản này chưa có kỹ năng riêng nào để sửa.',
+  'That text is not in the instructions of "{0}". Read it with skill_read first — it must match exactly.': 'Đoạn này không có trong hướng dẫn của "{0}". Hãy đọc bằng skill_read trước — phải khớp chính xác.',
+  'That text appears {0} times in "{1}". Include more of the words around it so it matches once only.': 'Đoạn này xuất hiện {0} lần trong "{1}". Hãy lấy thêm chữ xung quanh để chỉ khớp một lần.',
+  'This skill has no earlier version to restore.': 'Kỹ năng này không có bản trước để khôi phục.',
+  'Give the id of the conversation to read — search_chats shows it beside each one.': 'Hãy cho mã của cuộc trò chuyện cần đọc — search_chats ghi mã bên cạnh từng cuộc.',
+  'That is this conversation, which is already in front of you.': 'Đó chính là cuộc trò chuyện này, vốn đã ở trước mặt bạn.',
+  'That conversation cannot be read from here. Only ones search_chats lists can be: in this project from inside one, outside projects from outside — never incognito or bot conversations.':
+    'Không đọc được cuộc trò chuyện đó từ đây. Chỉ đọc được những cuộc search_chats liệt kê: trong dự án này khi đang ở trong dự án, ngoài các dự án khi đang ở ngoài — không bao giờ là cuộc ẩn danh hay của bot.',
+  "That conversation holds data from the person's Google account, which is not quoted into a conversation that holds none.":
+    'Cuộc trò chuyện đó chứa dữ liệu từ tài khoản Google của người dùng, nên không được trích vào một cuộc trò chuyện không chứa dữ liệu như vậy.',
+  'This is an incognito conversation, so no skill is saved or changed from it.': 'Đây là cuộc trò chuyện ẩn danh, nên không lưu hay sửa kỹ năng nào từ đây.',
 };
