@@ -57,5 +57,8 @@ export const cloudBrowserContext = (userId, url) => ['cloud-browser', userId, `u
 /** The MCP bridge's key on the account's cloud computer, bound to its address. */
 export const mcpBridgeContext = (userId, url) => ['mcp-bridge', userId, `url:${String(url || '')}`];
 
+/** A key the owner added to a deployment service (schema 52, server/keyPool.js), bound to its service and row. */
+export const serviceKeyContext = (service, id) => ['service-key', service, id];
+
 /** Every kind a context may name, for `encryptSecret` to refuse anything else. */
-export const SECRET_KINDS = Object.freeze(['totp', 'connector', 'hook', 'provider-key', 'device-pairing', 'mcp-config', 'cloud-browser', 'mcp-bridge']);
+export const SECRET_KINDS = Object.freeze(['totp', 'connector', 'hook', 'provider-key', 'device-pairing', 'mcp-config', 'cloud-browser', 'mcp-bridge', 'service-key']);

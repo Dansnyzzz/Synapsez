@@ -712,6 +712,148 @@ section('the owner decides who administers, and what each may do');
   await store.deleteUser(later.id);
 }
 
+/**
+ * The deployment's service keys (keyPool.js): the owner's to add, check, remove and make
+ * the paid one; an administrator with `free_tier` only looks. Nothing sent back holds a key.
+ */
+section('the owner adds, checks and removes service keys');
+{
+  const aliceRow = await store.getUserByEmail('alice@example.com');
+  const bobRow = await store.getUserByEmail('bob@example.com');
+  const { tavilyHint } = await import('../server/freeTier.js');
+  const { POOLED } = await import('../server/keyPool.js');
+  for (const name of ['EXA_API_KEY', 'TAVILY_API_KEY', 'FIRECRAWL_API_KEY', 'BRAVE_API_KEY', 'E2B_API_KEY']) delete process.env[name];
+  await alice.call('PUT', `/api/admin/admins/${bobRow.id}`, { permissions: ['free_tier'] });
+
+  // The providers' check calls answer from here; the test's own calls to this server pass through.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    // Tavily's own figure for a key (keyPool.js `liveUsage`): its plan, and what it has used of it.
+    if (String(url).startsWith('https://api.tavily.com/usage')) return new Response(JSON.stringify({ key: { usage: 120, limit: 2000 }, account: { current_plan: 'Researcher', plan_usage: 300, plan_limit: 1000 } }), { status: 200 });
+    // E2B answers here too, so a key that should never be checked is never sent anywhere.
+    if (String(url).startsWith('https://api.e2b.app/')) return new Response('{}', { status: 200 });
+    if (!String(url).includes('api.exa.ai')) return realFetch(url, init);
+    const key = String(init?.headers?.['x-api-key'] || '');
+    if (key.startsWith('slow-')) throw Object.assign(new Error('timeout'), { name: 'TimeoutError' });
+    if (key.startsWith('bad-')) return new Response('{}', { status: 401 });
+    return new Response('{}', { status: 200 });
+  };
+  try {
+    const bodies = [];
+    const note = (res) => (bodies.push(JSON.stringify(res.json)), res);
+    const add = async (service, key, extra = {}) => note(await alice.call('POST', '/api/admin/service-keys', { service, key, ...extra }));
+
+    const writes = [
+      ['POST', '/api/admin/service-keys', { service: 'exa', key: 'nobody-good-key-0001' }],
+      ['DELETE', '/api/admin/service-keys/anything'],
+      ['POST', '/api/admin/service-keys/anything/check'],
+      ['PUT', '/api/admin/service-keys/paid', { service: 'exa', keyId: null }],
+    ];
+    for (const [method, url, data] of writes) check(`an administrator with free_tier cannot ${method} ${url}`, (await bob.call(method, url, data)).status === 403);
+    check('  but can look', (await bob.call('GET', '/api/admin/free-tier')).status === 200);
+    check('  and nothing was added', (await store.listServiceKeys()).length === 0);
+
+    check('an unknown service is a 400', (await add('google', 'some-long-key-value')).status === 400);
+    check('  so is a service not pooled', (await add('stackexchange', 'some-long-key-value')).status === 400);
+    check('  so is an empty key', (await add('exa', '   ')).status === 400);
+    // E2B's machines are made with the key in the server's settings (e2b.js `connection`): a stored one would do nothing.
+    const e2bAdded = await add('e2b', 'e2b-key-aaaa-0001');
+    check("  so is an E2B key: its one key is the server's setting", e2bAdded.status === 400 && e2bAdded.json?.error === "This service takes one key, from the server's settings." && (await store.listServiceKeys('e2b')).length === 0, JSON.stringify(e2bAdded.json));
+
+    const first = await add('exa', 'exa-key-aaaa-0001', { label: 'First' });
+    check('a good key is a 201 with an id and its last four', first.status === 201 && !!first.json?.id && first.json?.hint === '0001', JSON.stringify(first.json));
+    const row = (await store.listServiceKeys('exa'))[0];
+    check('  it is kept sealed, not as typed', !!row?.sealed && !String(row.sealed).includes('exa-key-aaaa-0001'));
+    const listed = await alice.call('GET', '/api/admin/free-tier');
+    const exa = listed.json?.pool?.find((p) => p.service === 'exa');
+    check('  the report lists it by hint only', exa?.keys?.some((k) => k.id === first.json.id && k.hint === '0001' && k.label === 'First'), JSON.stringify(exa?.keys));
+    check('  and the report carries neither key, seal nor fingerprint', !/exa-key-aaaa-0001|sealed|fingerprint/.test(JSON.stringify(listed.json)));
+
+    check('the same key again is a 409', (await add('exa', 'exa-key-aaaa-0001')).status === 409);
+    // The environment's key is key 1 of its service (final review, 2026-11-13): not a second key as well.
+    process.env.EXA_API_KEY = 'exa-env-key-aaaa-0000';
+    const envAgain = await add('exa', ' exa-env-key-aaaa-0000 ');
+    delete process.env.EXA_API_KEY;
+    check("  so is the environment's own key, added again as a stored one", envAgain.status === 409 && envAgain.json?.error === 'That key is already in this service.' && (await store.listServiceKeys('exa')).length === 1, JSON.stringify(envAgain.json));
+    const refused = await add('exa', 'bad-key-value-0002');
+    check('a key its service refuses is a 422 naming the service', refused.status === 422 && refused.json?.error === 'Exa refused this key.', JSON.stringify(refused.json));
+    const slow = await add('exa', 'slow-key-value-0003');
+    check('  one that could not be asked says to try again', slow.status === 422 && /could not be reached/.test(slow.json?.error || ''), JSON.stringify(slow.json));
+    check('  neither was kept', (await store.listServiceKeys('exa')).length === 1);
+
+    for (let i = 2; i <= 9; i += 1) await add('exa', `exa-key-aaaa-${String(i).padStart(4, '0')}`);
+    process.env.EXA_API_KEY = 'exa-env-key-aaaa-0000';
+    const tenth = await add('exa', 'exa-key-aaaa-0010');
+    delete process.env.EXA_API_KEY;
+    check("with the environment's key set it is one of the ten: the tenth stored Exa key is refused", tenth.status === 400 && /already has 10 keys/.test(tenth.json?.error || '') && (await store.listServiceKeys('exa')).length === 9, JSON.stringify(tenth.json));
+    await add('exa', 'exa-key-aaaa-0010');
+    const over = await add('exa', 'exa-key-aaaa-0011');
+    check('one past the most a service takes is a 400', over.status === 400 && /already has 10 keys/.test(over.json?.error || ''), JSON.stringify(over.json));
+    const braveOne = await add('brave', 'brave-key-aaaa-0001');
+    const braveTwo = await add('brave', 'brave-key-aaaa-0002');
+    check('a one-key service takes one', braveOne.status === 201 && braveTwo.status === 400 && braveTwo.json?.error === 'This service takes one key.', JSON.stringify(braveTwo.json));
+
+    // Tavily's own figure, asked when the page is, before the report is built (final review, 2026-11-13).
+    const tavilyAdded = await add('tavily', 'tvly-key-aaaa-0001');
+    const tavilyKey = (await alice.call('GET', '/api/admin/free-tier')).json?.pool?.find((p) => p.service === 'tavily')?.keys?.find((k) => k.id === tavilyAdded.json?.id);
+    check("a stored Tavily key shows Tavily's own figure in the next report: its plan, its limit and use, said to be the provider's", tavilyAdded.status === 201 && tavilyKey?.source === 'provider' && tavilyKey.limit === 2000 && tavilyKey.used === 120 && tavilyKey.plan === 'Researcher', JSON.stringify(tavilyKey));
+
+    // The paid key.
+    const paidSet = note(await alice.call('PUT', '/api/admin/service-keys/paid', { service: 'exa', keyId: first.json.id, capMonthly: 3000 }));
+    check('the paid key is chosen', paidSet.status === 200 && paidSet.json?.paid?.keyId === first.json.id && paidSet.json?.paid?.capMonthly === 3000, JSON.stringify(paidSet.json));
+    check('  and the report shows it', (await alice.call('GET', '/api/admin/free-tier')).json?.pool?.find((p) => p.service === 'exa')?.paid?.keyId === first.json.id);
+    check('  a key that is not the service\'s is a 400', (await alice.call('PUT', '/api/admin/service-keys/paid', { service: 'exa', keyId: 'no-such-id' })).status === 400);
+
+    // Checking.
+    const checkedOk = note(await alice.call('POST', `/api/admin/service-keys/${first.json.id}/check`));
+    check('a stored key can be checked', checkedOk.status === 200 && checkedOk.json?.ok === true && checkedOk.json?.state === 'ok', JSON.stringify(checkedOk.json));
+    check('  one that does not exist is a 404', (await alice.call('POST', '/api/admin/service-keys/no-such-id/check')).status === 404);
+    check('  and the environment key may be named', (process.env.EXA_API_KEY = 'bad-env-key-aaaa', (await alice.call('POST', '/api/admin/service-keys/env:exa/check')).json?.ok === false));
+    delete process.env.EXA_API_KEY;
+
+    // Removing.
+    const gone = await alice.call('DELETE', `/api/admin/service-keys/${first.json.id}`);
+    check('a removed key is gone from the report', gone.status === 200 && gone.json?.ok === true && !(await alice.call('GET', '/api/admin/free-tier')).json?.pool?.find((p) => p.service === 'exa')?.keys?.some((k) => k.id === first.json.id));
+    check('  and is no longer the paid key', (await alice.call('GET', '/api/admin/free-tier')).json?.pool?.find((p) => p.service === 'exa')?.paid == null);
+    check('  a second removal is a 404', (await alice.call('DELETE', `/api/admin/service-keys/${first.json.id}`)).status === 404);
+
+    // Tries are counted: twenty an hour per owner.
+    let limited = null;
+    for (let i = 0; i < 25 && !limited; i += 1) {
+      const tried = await alice.call('POST', '/api/admin/service-keys', { service: 'exa', key: `bad-key-try-${String(i).padStart(4, '0')}` });
+      if (tried.status === 429) limited = tried;
+    }
+    check('more than twenty tries an hour is a 429', limited?.status === 429 && !!limited.headers.get('retry-after'));
+    check('  with a key not yet counted, nothing stays', (await store.listServiceKeys('exa')).length === 9);
+
+    // What was said about it afterwards holds hints only.
+    const events = ((await alice.call('GET', '/api/admin/activity')).json?.events || []).filter((e) => /^service_/.test(e.kind));
+    const trail = JSON.stringify(events);
+    check('the record has the three kinds', ['service_key_added', 'service_key_removed', 'service_paid_key_set'].every((k) => events.some((e) => e.kind === k)), events.map((e) => e.kind).join());
+    check('  with hints and no key', /"hint":"0001"/.test(trail) && !/exa-key-aaaa|exa-env-key|brave-key-aaaa|tvly-key-aaaa/.test(trail), trail.slice(0, 200));
+    check('  and no response carried a key, a seal or a fingerprint', !bodies.some((b) => /exa-key-aaaa|exa-env-key|brave-key-aaaa|tvly-key-aaaa|e2b-key-aaaa|bad-env-key|sealed|fingerprint/.test(b)));
+
+    // Tavily's Project plan: asked after two busy months in a row (owner, 2026-11-12).
+    const busy = { services: [{ service: 'tavily', used: 900, limit: 1000 }] };
+    const calm = { services: [{ service: 'tavily', used: 100, limit: 1000 }] };
+    await store.setSetting('pool_high_months', null);
+    check('a calm month is no hint and records nothing', (await tavilyHint(calm, new Date('2026-10-10'))) === false && (await store.getSetting('pool_high_months')) == null);
+    check('one busy month is no hint', (await tavilyHint(busy, new Date('2026-10-10'))) === false);
+    check('  two in a row are', (await tavilyHint(busy, new Date('2026-11-10'))) === true);
+    check('  and a month already recorded is written once', (await tavilyHint(busy, new Date('2026-11-11'))) === true && (await store.getSetting('pool_high_months'))?.tavily?.join() === '2026-10,2026-11');
+    check('  a gap breaks it', (await tavilyHint(calm, new Date('2027-01-05'))) === false);
+    for (const month of ['2027-01-05', '2027-02-05']) await tavilyHint(busy, new Date(month));
+    check('  only the last three months are kept', (await store.getSetting('pool_high_months'))?.tavily?.join() === '2026-11,2027-01,2027-02');
+    check('  the report route answers with it', typeof (await alice.call('GET', '/api/admin/free-tier')).json?.tavilyHint === 'boolean');
+    check('(the pooled services are as agreed)', POOLED.exa.maxKeys === 10 && POOLED.e2b.maxKeys === 1);
+  } finally {
+    globalThis.fetch = realFetch;
+    for (const stored of await store.listServiceKeys()) await store.deleteServiceKey(stored.id);
+    await alice.call('DELETE', `/api/admin/admins/${bobRow.id}`);
+    check('(alice is still the owner)', (await store.getUserByEmail('alice@example.com')).id === aliceRow.id);
+  }
+}
+
 // ── one run per conversation ────────────────────────────────────────
 section('a conversation runs in one place at a time');
 {

@@ -61,6 +61,7 @@ import { contextPanel } from './context-panel.js';
 import { createModelNews } from './model-news.js';
 import { createTwoFactor } from './two-factor.js';
 import { createPrivacy } from './privacy.js';
+import { createFreeAllowances } from './free-allowances.js';
 import { watchSelects } from './picker.js';
 
 // Before anything is drawn. The language is guessed from storage and the browser
@@ -6987,85 +6988,11 @@ $('admin-feedback').addEventListener(
 );
 
 /**
- * Where the move off the old credential envelope is (server/secretsCutover.js, owner
- * 2026-11-12), in one line — counts only — and, for the owner, the switch on it.
- *
- * @param {any} secrets  `cutoverStatus()`
- * @param {boolean} owner
- * @param {(iso: string) => string} day
+ * The deployment's free allowances and the keys behind them (public/js/free-allowances.js):
+ * one row per service, shared by every account, and the owner's controls on the keys.
  */
-function secretsLine(secrets, owner, day) {
-  if (!secrets) return '';
-  const when = (iso) => (iso ? day(iso) : '—');
-  const count = secrets.lastCount;
-  let text;
-  if (secrets.refuseV1?.on || secrets.envRefuses) text = t('freetier.secretsRefused', { when: when(secrets.refuseV1?.at) });
-  else if (secrets.refuseV1?.by === 'owner') text = t('freetier.secretsHeld');
-  else if (!count) text = t('freetier.secretsPending');
-  else if (count.safe) text = t('freetier.secretsSafe');
-  else text = t('freetier.secretsMoving', { left: String(count.resealed || 0), stuck: String(count.unopenable || 0), when: when(count.at) });
-  const refused = secrets.refuseV1?.on === true;
-  const button = owner && !secrets.envRefuses
-    ? ` <button type="button" class="btn btn--ghost btn--small" data-secrets-policy="${refused ? 'allow' : 'refuse'}">${escapeHtml(t(refused ? 'freetier.secretsAllow' : 'freetier.secretsRefuse'))}</button>`
-    : '';
-  return `<p class="hint">${escapeHtml(text)}${button}</p>`;
-}
-
-/**
- * The deployment's free allowances this period (server/freeTier.js, owner
- * 2026-11-02): one per service, shared by every account — Exa in dollars,
- * the rest in requests or credits — and when each starts again.
- */
-async function loadFreeTier() {
-  const host = $('admin-free-tier');
-  try {
-    const report = await api.freeTier();
-    const locale = currentLanguage() === 'vi' ? 'vi-VN' : 'en-US';
-    const day = (iso) => new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short' }).format(new Date(iso));
-    // A per-minute or per-hour ceiling (CoinGecko, FRED) starts again within the hour: its time, not its day.
-    const clock = (iso) => new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
-    const PER_LABEL = { month: 'freetier.perMonth', day: 'freetier.perDay', hour: 'freetier.perHour', minute: 'freetier.perMinute' };
-    // Exa and E2B are counted in thousandths of a dollar; the rest in requests or credits.
-    const amount = (s, n) => (s.service === 'exa' || s.service === 'e2b' ? `$${(n / 1000).toFixed(2)}` : Number(n).toLocaleString(locale));
-    const rows = report.services
-      .map((s) => {
-        const used = s.used == null ? '—' : `${amount(s, s.used)} / ${amount(s, s.limit)}`;
-        const share = s.used == null || !s.limit ? 0 : Math.min(100, Math.round((s.used / s.limit) * 100));
-        return `<div class="ctable__row" role="row">
-          <span role="cell"><strong>${escapeHtml(t(`freetier.${s.service}`))}</strong></span>
-          <span role="cell" class="freetier__used"><span class="freetier__bar${share >= 90 ? ' is-near' : ''}" aria-hidden="true"><span style="width:${share}%"></span></span>${escapeHtml(used)} ${escapeHtml(t(PER_LABEL[s.per] || 'freetier.perDay'))}</span>
-          <span role="cell" class="crow__desc">${escapeHtml(t('freetier.resets', { day: s.per === 'minute' || s.per === 'hour' ? clock(s.resets) : day(s.resets) }))}</span>
-        </div>`;
-      })
-      .join('');
-    host.innerHTML = `<div class="ctable ctable--free" role="table" aria-label="${escapeHtml(t('freetier.title'))}">
-        <div class="ctable__head" role="row"><span role="columnheader">${escapeHtml(t('freetier.service'))}</span><span role="columnheader">${escapeHtml(t('freetier.used'))}</span><span role="columnheader">${escapeHtml(t('freetier.when'))}</span></div>
-        ${rows}
-      </div>
-      <p class="hint">${escapeHtml(report.enforced ? t('freetier.enforced', { n: String(report.userDaily) }) : t('freetier.off'))}</p>${
-        Number.isFinite(report.firecrawl?.remaining)
-          ? `<p class="hint">${escapeHtml(t('freetier.firecrawlLive', { left: Number(report.firecrawl.remaining).toLocaleString(locale), plan: report.firecrawl.plan == null ? '—' : Number(report.firecrawl.plan).toLocaleString(locale) }))}</p>`
-          : ''
-      }${
-        // The id `npm run secrets:reseal -- --apply --key-id` must be given (a hash, never the key).
-        report.encryptionKeyId ? `<p class="hint">${escapeHtml(t('freetier.keyId'))} <code>${escapeHtml(report.encryptionKeyId)}</code></p>` : ''
-      }${secretsLine(report.secrets, report.owner, day)}`;
-    // The owner's switch on the old envelope (secretsCutover.js).
-    host.querySelector('[data-secrets-policy]')?.addEventListener('click', async (event) => {
-      const button = /** @type {HTMLButtonElement} */ (event.currentTarget);
-      button.disabled = true;
-      try {
-        await api.secretsPolicy(button.dataset.secretsPolicy === 'refuse');
-        await loadFreeTier();
-      } catch (err) {
-        toast(err.message, 'error');
-        button.disabled = false;
-      }
-    });
-  } catch (err) {
-    host.textContent = err.message;
-  }
-}
+const freeAllowances = createFreeAllowances($('admin-free-tier'), { api, toast });
+const loadFreeTier = () => freeAllowances.load();
 
 /**
  * The models suggested to everyone (server/recommend.js, owner 2026-11-02 and

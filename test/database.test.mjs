@@ -255,5 +255,43 @@ section('db:copy merges an old account into the one with the same email');
   await target.close();
 }
 
+section('service keys (schema 52)');
+{
+  const { PGlite } = await import('@electric-sql/pglite');
+  const { createPgStore } = await import('../server/store/pg.js');
+  const db = new PGlite();
+  const store = createPgStore({ query: async (text, params = []) => (await db.query(text, params)).rows });
+  await store.init();
+  await store.createUser({ id: 'u-keys', email: 'keys@example.com', name: 'Keys', passwordHash: 'x', role: 'admin' });
+  const key = (id, over = {}) => ({ id, service: 'tavily', sealed: `v2.sealed-${id}`, fingerprint: `fp-${id}`, hint: '1234', label: null, ceiling: null, addedBy: 'u-keys', ...over });
+  const first = await store.addServiceKey(key('k1', { label: 'spare', ceiling: 500 }));
+  await store.addServiceKey(key('k2'));
+  await store.addServiceKey(key('k3', { service: 'brave' }));
+  const listed = await store.listServiceKeys('tavily');
+  check('two keys for a service come back in the order they were added', listed.map((k) => k.id).join() === 'k1,k2', listed.map((k) => k.id).join());
+  check('  with their label, ceiling and a healthy state', first.label === 'spare' && Number(listed[0].ceiling) === 500 && listed[0].state === 'ok' && listed[0].live === null, JSON.stringify(listed[0]));
+  check('  holding the sealed value and the hint, no plaintext', listed[0].sealed === 'v2.sealed-k1' && listed[0].hint === '1234' && !('key' in listed[0]));
+  check('another service is listed apart, and all together without a name', (await store.listServiceKeys('brave')).length === 1 && (await store.listServiceKeys()).length === 3);
+  const dup = await store.addServiceKey(key('k9', { fingerprint: 'fp-k1' })).catch((err) => err);
+  check('the same key added to the service twice is refused', dup?.code === 'duplicate' && /already in this service/.test(dup.message), String(dup?.message));
+  check('  but the same fingerprint under another service is not', !!(await store.addServiceKey(key('k8', { service: 'exa', fingerprint: 'fp-k1' }))));
+  check('  and the refused one was not stored', (await store.listServiceKeys('tavily')).length === 2);
+  const retry = new Date(Date.now() + 60_000);
+  await store.setServiceKeyState('k1', { state: 'cooling', retryAt: retry, lastError: '429' });
+  let row = (await store.listServiceKeys('tavily'))[0];
+  check('a state change round-trips, with when to try again and why', row.state === 'cooling' && row.last_error === '429' && new Date(row.retry_at).getTime() === retry.getTime() && row.state_at, JSON.stringify(row));
+  await store.setServiceKeyState('k1', { state: 'ok' });
+  row = (await store.listServiceKeys('tavily'))[0];
+  check('  and back to ok clears them', row.state === 'ok' && row.retry_at === null && row.last_error === null, JSON.stringify(row));
+  await store.setServiceKeyLive('k1', { left: 812, at: 1 });
+  row = (await store.listServiceKeys('tavily'))[0];
+  check('live usage round-trips as JSON', row.live?.left === 812, JSON.stringify(row.live));
+  await store.deleteUser('u-keys');
+  row = (await store.listServiceKeys('tavily'))[0];
+  check('deleting the person who added a key leaves the key, added_by empty', row?.id === 'k1' && row.added_by === null, JSON.stringify(row));
+  check('deleting a key says so, once', (await store.deleteServiceKey('k1')) === true && (await store.deleteServiceKey('k1')) === false);
+  await db.close();
+}
+
 console.log(failures === 0 ? '\n\x1b[32mAll database checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

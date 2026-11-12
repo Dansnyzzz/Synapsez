@@ -250,7 +250,7 @@ section("one machine per account, found again — and paid for before it runs");
   e2b.__testing.useSdk(sdk);
   const first = await e2b.e2bMachineFor('u-e2b', 'synz-a');
   const create = state.calls.find((c) => c.kind === 'create');
-  check('made from the template, named for the account, pausing when idle', create.template === e2b.TEMPLATE_NAME && create.opts.metadata.machine === 'synz-a' && create.opts.lifecycle?.onTimeout === 'pause' && create.opts.timeoutMs === 240_000, JSON.stringify(create.opts));
+  check('made from the template, named for the account, pausing when idle', create.template === e2b.TEMPLATE_NAME && create.opts.metadata.machine === 'synz-a' && create.opts.lifecycle?.onTimeout === 'pause' && create.opts.timeoutMs === 240_000, JSON.stringify({ ...create.opts, apiKey: undefined }));
   check("  its ports open to the person's browser, which cannot send E2B's traffic token (owner, 2026-11-02)", create.opts.network?.allowPublicTraffic === true);  const record = await store.getUserSetting('u-e2b', e2b.__testing.SETTING);
   check('  and written down with its size', record?.id === first.sandboxId && record.cpu === 2 && record.memMb === 1024, JSON.stringify(record));
   const paid = await store.readCounter(`free:e2b:${new Date().toISOString().slice(0, 7)}`);
@@ -818,6 +818,71 @@ section('the credit, split evenly among whoever is using it (owner, 2026-11-05)'
   check('a start given back was nobody\'s first of the day', (await peopleToday()) === 0, String(await peopleToday()));
   await tiers.e2bAccountSpend('u-e2b', 10, now);
   check('giving back does not count somebody twice', (await peopleToday()) === 1, String(await peopleToday()));
+}
+
+/*
+ * E2B holds one key (owner, 2026-11-12, spec A): the environment's, which every machine is
+ * made with. It is in the pool so it has a state and may be the owner's paid key, so a
+ * machine's time is counted through the pool on that key — and a charged one may go past the
+ * free month on it, up to its cap, once spec B charges people.
+ */
+section('E2B: one key, counted through the pool on the environment\'s (spec A, owner 2026-11-12)');
+{
+  const pool = await import('../server/keyPool.js');
+  const { state, sdk } = fakeSdk();
+  e2b.__testing.useSdk(sdk);
+  await resetCounters();
+  const thisMonth = new Date().toISOString().slice(0, 7);
+  const monthBucket = `free:e2b:${thisMonth}`;
+  const paidBucket = `paid:e2b@env:${thisMonth}`;
+  const counted = async () => ({ month: await store.readCounter(monthBucket), credit: await store.readCounter('free:e2b:total'), paid: await store.readCounter(paidBucket) });
+  // Six minutes of two vCPUs and 2 GiB, the size a scratch machine is assumed to be: 13.32 thousandths of a dollar, rounded up.
+  const SCRATCH = 14;
+
+  await pool.markKey('e2b', 'env', 'invalid');
+  check('a key the pool holds refused is no key to start a machine with', !e2b.e2bConfigured() && e2b.e2bConfigured({ E2B_API_KEY: 'k' }));
+  await pool.markKey('e2b', 'env', 'ok');
+  check('  and back in use, it is one again', e2b.e2bConfigured());
+
+  await e2b.e2bScratch();
+  const made = state.calls.find((c) => c.kind === 'create');
+  const first = await counted();
+  check("a machine is made with the environment's key, its time counted on that key's month and credit", made?.opts.apiKey === process.env.E2B_API_KEY && first.month === SCRATCH && first.credit === SCRATCH && first.paid === 0, JSON.stringify(first));
+
+  await tiers.exhaust('e2b');
+  const unpaid = await e2b.e2bScratch().then(() => 'started', (err) => err.name);
+  await pool.setPaidKey('e2b', 'env', 100);
+  const charged = await e2b.e2bScratch({ paid: true }).then((m) => m.provider, (err) => err.name);
+  const second = await counted();
+  check('the free month spent: an uncharged machine is refused, a charged one goes on the paid key', unpaid === 'E2BOutOfCredit' && charged === 'e2b' && second.paid === SCRATCH, `${unpaid} ${charged} ${JSON.stringify(second)}`);
+  check('  its time comes off the whole credit too, as every machine\'s does', second.credit === first.credit + SCRATCH, JSON.stringify(second));
+  const still = await e2b.e2bScratch().then(() => 'started', (err) => err.name);
+  check('  and an uncharged machine is still refused after it', still === 'E2BOutOfCredit', still);
+  await pool.setPaidKey('e2b', 'env', SCRATCH + 5);
+  const capped = await e2b.e2bScratch({ paid: true }).then(() => 'started', (err) => err.name);
+  check("  past the paid key's monthly cap a charged machine is refused too, and nothing of it stays counted", capped === 'E2BOutOfCredit' && (await counted()).paid === SCRATCH && (await counted()).credit === second.credit, `${capped} ${JSON.stringify(await counted())}`);
+
+  // An account's machine, charged: the option goes from the start to every extension of it.
+  await pool.setPaidKey('e2b', 'env', 1_000);
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
+  state.boxes.clear();
+  const before = await counted();
+  state.createError = named('RateLimitError', 'Rate limit exceeded', { statusCode: 429 });
+  const busy = await e2b.e2bMachineFor('u-e2b', 'synz-paid', { paid: true }).then(() => '', (err) => err.name);
+  state.createError = null;
+  const given = await counted();
+  check('a charged start that does not happen is given back — its paid count and the credit (HAR-010)', busy === 'RateLimitError' && given.paid === before.paid && given.credit === before.credit && given.month === before.month, JSON.stringify({ before, given }));
+  const mine = await e2b.e2bMachineFor('u-e2b', 'synz-paid', { paid: true }).catch((err) => ({ provider: err.name, extendTimeout: async () => {} }));
+  const started = await counted();
+  await mine.extendTimeout(15 * 60_000);
+  const kept = await counted();
+  check('  a charged machine started, then kept awake longer, pays on the paid key each time', mine.provider === 'e2b' && started.paid > before.paid && kept.paid > started.paid, JSON.stringify({ before, started, kept }));
+
+  await pool.setPaidKey('e2b', null);
+  await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
+  e2b.__testing.useSdk(null);
+  await resetCounters();
+  await memory.query("DELETE FROM rate_limits WHERE bucket LIKE 'paid:e2b%'");
 }
 
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll E2B checks passed.\x1b[0m\n');

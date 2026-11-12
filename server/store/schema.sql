@@ -1444,6 +1444,33 @@ CREATE INDEX IF NOT EXISTS bot_memory_closed_turn_idx ON bot_memory (closed_turn
 -- anyone else: the shared-skill queries name their columns.
 ALTER TABLE skills ADD COLUMN IF NOT EXISTS previous JSONB;
 
+-- ── Schema 52 ────────────────────────────────────────────────────────────────
+-- Several keys per deployment service (owner, 2026-11-12, server/keyPool.js): the
+-- environment's key is key 1 and is never stored; the owner adds the rest, up to the
+-- service's `maxKeys` with key 1 among them (keyPool.js POOLED: 10 for Exa, Tavily and
+-- Firecrawl, 1 for Brave and E2B), in Settings → People → Free allowances (in the
+-- Administration group). `sealed` is crypto v2 bound to
+-- ['service-key', service, id]; `fingerprint` is sha256(service:key) so the same key
+-- twice is refused; `hint` its last four characters — all the page ever shows.
+CREATE TABLE IF NOT EXISTS service_keys (
+  id          TEXT PRIMARY KEY,
+  service     TEXT NOT NULL,
+  sealed      TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  hint        TEXT NOT NULL,
+  label       TEXT,
+  ceiling     DOUBLE PRECISION,
+  state       TEXT NOT NULL DEFAULT 'ok',
+  state_at    TIMESTAMPTZ,
+  retry_at    TIMESTAMPTZ,
+  live        JSONB,
+  last_error  TEXT,
+  added_by    TEXT REFERENCES users(id) ON DELETE SET NULL,
+  added_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (service, fingerprint)
+);
+CREATE INDEX IF NOT EXISTS service_keys_service_idx ON service_keys (service, added_at);
+
 -- ── Schema 49 ────────────────────────────────────────────────────────────────
 -- Row-level security on every table here (harness audit, 2026-11-12). On Supabase the
 -- tables in `public` are what its Data API (PostgREST) serves, and anyone holding the

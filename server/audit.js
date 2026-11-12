@@ -30,6 +30,8 @@ export const AUDIT_KINDS = [
   'admin_theme_badge', 'admin_theme_given', 'admin_theme_taken',
   // The owner refusing the v1 credential envelope, or letting it in again (secretsCutover.js, 2026-11-12).
   'secrets_policy_changed',
+  // The owner adding or removing a key of a deployment service, or choosing its paid key (keyPool.js, hints only).
+  'service_key_added', 'service_key_removed', 'service_paid_key_set',
 ];
 
 /** The network a request came from, never the address itself. */
