@@ -233,7 +233,9 @@ export async function createPgliteStore(dataDir) {
 
   // `local` tells the tool layer this is the owner's own machine, so the admin
   // account can use the filesystem and shell without running a separate worker.
-  return { ...store, kind: 'pglite (local file)', local: true, close: shutdown };
+  // `rawQuery` for the scripts that work below the store — `npm run secrets:reseal` on a
+  // local install, under the same directory lock that keeps the app from opening it too.
+  return { ...store, kind: 'pglite (local file)', local: true, close: shutdown, rawQuery: async (text, params = []) => (await db.query(text, params)).rows };
 }
 
 /**

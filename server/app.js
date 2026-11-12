@@ -93,6 +93,7 @@ import { mountSceneAssets } from './sceneAssets.js';
 import { checkDomain } from './domainCheck.js';
 import { afterTurn, titleShown } from './themes.js';
 import { freeTierReport } from './freeTier.js';
+import { currentKeyId } from './crypto.js';
 import { firecrawlAccount } from './firecrawl.js';
 import { SECURITY_HEADERS, HSTS } from './securityHeaders.js';
 import { insightsConfig } from './insights.js';
@@ -2720,7 +2721,15 @@ export function createApp() {
     requirePermission('free_tier'),
     wrap(async (req, res) => {
       // Firecrawl's own count beside ours: its cycle need not start on the 1st (firecrawl.js).
-      res.json({ ...(await freeTierReport()), firecrawl: await firecrawlAccount().catch(() => null) });
+      // And the id of the key that seals stored credentials here — a hash, never the key —
+      // which `npm run secrets:reseal -- --apply` must be given (scripts/reseal-secrets.mjs).
+      let encryptionKeyId = null;
+      try {
+        encryptionKeyId = currentKeyId();
+      } catch {
+        /* no key here is said by the startup check */
+      }
+      res.json({ ...(await freeTierReport()), firecrawl: await firecrawlAccount().catch(() => null), encryptionKeyId });
     }),
   );
 

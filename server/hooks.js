@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { waitUntil } from '@vercel/functions';
 import { getStore, isServerless } from './store/index.js';
-import { decryptSecret, encryptSecret } from './crypto.js';
+import { openSecret, encryptSecret } from './crypto.js';
 import { consume as consumeLimit } from './ratelimit.js';
 import { log } from './util/trace.js';
 
@@ -39,8 +39,18 @@ export const newRouteId = () => crypto.randomBytes(18).toString('base64url');
  * @param {string} secret @param {{ userId: string, routeId: string }} owner
  */
 export const sealHookSecret = (secret, { userId, routeId }) => encryptSecret(secret, ['hook', userId, routeId]);
-/** The secret back, for a route row. */
-const hookSecretOf = (route) => decryptSecret(route.secret_enc, ['hook', route.user_id, route.id]);
+/**
+ * The secret back, for a route row — or null when it will not open (a key since rotated
+ * away, v1 refused, a copy bound to another account). Never "": an HMAC with an empty key
+ * is one anybody can make, and `decryptSecret`'s "" for a value that will not open let any
+ * such signature through, starting the owner's task (security review, 2026-11-12).
+ */
+const hookSecretOf = (route) => {
+  const opened = openSecret(route.secret_enc, ['hook', route.user_id, route.id]);
+  return opened.state === 'ok' && opened.value ? opened.value : null;
+};
+/** Said when a route's secret will not open: nothing it receives can be checked. */
+const UNCHECKABLE = Object.freeze({ status: 503, body: { error: 'This hook cannot be checked. Rotate its secret.' } });
 
 /**
  * The signature a sender puts in `X-Synapsez-Signature`: HMAC-SHA256 with the secret over
@@ -52,8 +62,9 @@ export function signHook(secret, { timestamp, delivery, body }) {
   return `sha256=${crypto.createHmac('sha256', secret).update(`${timestamp}.${delivery}.`).update(body).digest('hex')}`;
 }
 
-/** Whether a signature is the one `signHook` makes, compared in constant time. */
+/** Whether a signature is the one `signHook` makes, compared in constant time. Never for an empty secret. */
 export function signatureMatches(secret, { timestamp, delivery, body, signature }) {
+  if (typeof secret !== 'string' || !secret) return false;
   const said = String(signature ?? '').trim();
   const want = Buffer.from(signHook(secret, { timestamp, delivery, body }));
   const got = Buffer.from(said.startsWith('sha256=') ? said : `sha256=${said}`);
@@ -144,8 +155,9 @@ export async function acceptHook({ routeId, raw, headers, req = null, now = Date
   try {
     secret = hookSecretOf(route);
   } catch {
-    return { status: 500, body: { error: 'This hook cannot be checked. Rotate its secret.' } };
+    secret = null;
   }
+  if (!secret) return UNCHECKABLE;
   if (!signatureMatches(secret, { timestamp, delivery, body, signature })) return { status: 401, body: { error: 'The signature does not match.' } };
 
   // Only now is the body read.
@@ -202,6 +214,9 @@ export async function sendTestHook({ userId, taskId, start = startHookRun }) {
   const body = Buffer.from(JSON.stringify({ type: 'test', occurredAt: new Date().toISOString(), data: { test: true, note: 'A test sent from Synapsez.' } }));
   const timestamp = String(Math.floor(Date.now() / 1000));
   const delivery = `test-${crypto.randomUUID()}`;
-  const signature = signHook(hookSecretOf(route), { timestamp, delivery, body });
+  // A secret that will not open is said, never signed over as "" and reported a success.
+  const secret = hookSecretOf(route);
+  if (!secret) return UNCHECKABLE;
+  const signature = signHook(secret, { timestamp, delivery, body });
   return acceptHook({ routeId: route.id, raw: body, headers: { 'x-synapsez-timestamp': timestamp, 'x-synapsez-delivery': delivery, 'x-synapsez-signature': signature }, start });
 }

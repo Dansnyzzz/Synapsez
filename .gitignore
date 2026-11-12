@@ -1,6 +1,9 @@
 node_modules/
 data/
 .env
+# The local .env.example holds real values here and was taken out of git (8253179); ignored
+# so that one `git add -A` cannot commit it (security review, 2026-11-12).
+.env.example
 # Local MCP server config — may hold tokens or a database URL.
 # .mcp.json.example is the committed, valueless version.
 .mcp.json

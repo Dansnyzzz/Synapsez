@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getStore } from '../store/index.js';
 import { encryptSecret, decryptSecret } from '../crypto.js';
+import { mcpBridgeContext } from '../secretContexts.js';
 import { readCapped } from '../util/safeFetch.js';
 import { chargeCloud, machineForUser, portAddress, sandboxConfigured, scratchMachine, discardMachine, shellFor, MCP_PORT } from '../sandbox.js';
 
@@ -179,14 +180,15 @@ export async function startBridge(machine, { signal } = {}) {
 async function readBridge(userId) {
   const value = await getStore().getUserSetting(userId, SETTING);
   if (!value || typeof value !== 'object' || !value.url || !value.key) return null;
-  const key = decryptSecret(value.key, ['mcp-bridge', userId]);
+  const key = decryptSecret(value.key, mcpBridgeContext(userId, value.url));
   return key ? { ...value, key } : null;
 }
 
 async function saveBridge(userId, conn) {
   // The key drives programs on the account's machine, so it is sealed like a
-  // provider key — a database dump alone does not hand it over.
-  await getStore().setUserSetting(userId, SETTING, { ...conn, key: encryptSecret(conn.key, ['mcp-bridge', userId]) });
+  // provider key — a database dump alone does not hand it over — and bound to
+  // the bridge's own address (secretContexts.js).
+  await getStore().setUserSetting(userId, SETTING, { ...conn, key: encryptSecret(conn.key, mcpBridgeContext(userId, conn.url)) });
 }
 
 /** Starts in progress on this instance, by account, so parallel calls share one. */

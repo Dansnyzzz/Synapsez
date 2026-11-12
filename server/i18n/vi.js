@@ -410,6 +410,9 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'Give the address to send to — this account has no email of its own on record.':
     'Hãy cho biết địa chỉ cần gửi tới — tài khoản này không có email riêng được lưu.',
   'That is {0} recipients; {1} is the limit for one email.': 'Đó là {0} người nhận; mỗi email tối đa {1} người.',
+  'not a sealed value': 'không phải giá trị đã được khoá',
+  'A stored credential needs to know whose it is and what it is for — part of that was missing, so it was not saved.':
+    'Thông tin đăng nhập được lưu cần biết nó thuộc về ai và dùng vào việc gì — thiếu một phần, nên chưa được lưu.',
   'The email was NOT sent: the mail provider refused it ({0}). Say so plainly.':
     'Email CHƯA được gửi: dịch vụ gửi thư đã từ chối ({0}).',
   'your own account address': 'địa chỉ email tài khoản của bạn',

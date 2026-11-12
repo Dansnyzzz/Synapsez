@@ -634,6 +634,7 @@ section('a server added once is ready for the next account, offered without star
   const { initStore } = await import('../server/store/index.js');
   const store = await initStore();
   const { hashPassword, encryptSecret } = await import('../server/crypto.js');
+  const { mcpBridgeContext } = await import('../server/secretContexts.js');
   const registry = await import('../server/mcp/registry.js');
   const { createApp } = await import('../server/app.js');
   const config = { transport: 'stdio', command: process.execPath, args: [STUB] };
@@ -669,7 +670,7 @@ section('a server added once is ready for the next account, offered without star
     check('  and neither started a machine nor asked one anything', requests === 0, `${requests} requests`);
 
     // The first call is what starts it — here the account's bridge is the local one above.
-    await store.setUserSetting(user.id, cloud.__testing.SETTING, { url: conn.url, key: encryptSecret(conn.key, ['mcp-bridge', user.id]), build: cloud.__testing.bridgeSource().build });
+    await store.setUserSetting(user.id, cloud.__testing.SETTING, { url: conn.url, key: encryptSecret(conn.key, mcpBridgeContext(user.id, conn.url)), build: cloud.__testing.bridgeSource().build });
     const result = await registry.callMcpTool(user.id, 'mcp__stub__echo', { message: 'lần đầu' }, 30_000);
     check('the first call starts it on the account\'s own computer, and it answers', result.text === 'echo: lần đầu', result.text);
 
@@ -779,7 +780,7 @@ section('a server added once is ready for the next account, offered without star
       await new Promise((r) => lossy.listen(lossyPort, '127.0.0.1', r));
       try {
         const lossyKey = 'lossy-bridge-key'.padEnd(32, 'k');
-        await store.setUserSetting(memberRow.id, cloud.__testing.SETTING, { url: `http://127.0.0.1:${lossyPort}`, key: encryptSecret(lossyKey, ['mcp-bridge', memberRow.id]), build: cloud.__testing.bridgeSource().build });
+        await store.setUserSetting(memberRow.id, cloud.__testing.SETTING, { url: `http://127.0.0.1:${lossyPort}`, key: encryptSecret(lossyKey, mcpBridgeContext(memberRow.id, `http://127.0.0.1:${lossyPort}`)), build: cloud.__testing.bridgeSource().build });
         const transport = cloud.cloudTransport({ command: process.execPath, args: [STUB] }, { userId: memberRow.id });
         let lost = '';
         await transport.request('tools/call', { name: 'echo', arguments: { message: 'once' } }, 5000).catch((err) => (lost = err.message));
@@ -802,7 +803,7 @@ section('a server added once is ready for the next account, offered without star
       await new Promise((r) => huge.listen(hugePort, '127.0.0.1', r));
       try {
         const hugeKey = 'huge-bridge-key'.padEnd(32, 'k');
-        await store.setUserSetting(memberRow.id, cloud.__testing.SETTING, { url: `http://127.0.0.1:${hugePort}`, key: encryptSecret(hugeKey, ['mcp-bridge', memberRow.id]), build: cloud.__testing.bridgeSource().build });
+        await store.setUserSetting(memberRow.id, cloud.__testing.SETTING, { url: `http://127.0.0.1:${hugePort}`, key: encryptSecret(hugeKey, mcpBridgeContext(memberRow.id, `http://127.0.0.1:${hugePort}`)), build: cloud.__testing.bridgeSource().build });
         const transport = cloud.cloudTransport({ command: process.execPath, args: [STUB] }, { userId: memberRow.id });
         let told = '';
         await transport.request('tools/call', { name: 'echo', arguments: { message: 'big' } }, 10_000).catch((err) => (told = err.message));

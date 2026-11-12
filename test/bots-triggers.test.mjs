@@ -154,6 +154,60 @@ section('rotate: the old secret stops at once; a test is sent from the server');
   check('  not for another account\'s task', (await hooks.sendTestHook({ userId: other.id, taskId: hookTask.id, start })).status === 404);
 }
 
+/*
+ * A secret that will not open must never become "" — an HMAC with an empty key is one anybody
+ * can make (security review, 2026-11-12). Each way a stored secret stops opening: v1 refused at
+ * the cutover, a key dropped from ENCRYPTION_KEY_PREVIOUS, a copy bound to another account.
+ */
+section('a secret that will not open refuses everything, and is never signed over as ""');
+{
+  const nodeCrypto = await import('node:crypto');
+  const forged = (raw, timestamp, delivery) => hooks.signHook('', { timestamp, delivery, body: raw });
+  const tryEmpty = async (routeRowId) => {
+    const raw = Buffer.from(JSON.stringify({ type: 'build.done' }));
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const delivery = id();
+    return hooks.acceptHook({ routeId: routeRowId, raw, headers: { 'x-synapsez-timestamp': timestamp, 'x-synapsez-delivery': delivery, 'x-synapsez-signature': forged(raw, timestamp, delivery) }, start });
+  };
+  check('signatureMatches never matches for an empty secret', !hooks.signatureMatches('', { timestamp: '1', delivery: 'd', body: Buffer.from('x'), signature: hooks.signHook('', { timestamp: '1', delivery: 'd', body: Buffer.from('x') }) }));
+  const before = started.length;
+  const control = await tryEmpty(route.id);
+  check('  control: a route whose secret opens refuses the empty-key signature (401)', control.status === 401, JSON.stringify(control));
+
+  // v1 left behind, then the cutover refuses v1.
+  const v1Task = await store.createTask(uid, { id: id(), title: 'Old hook', prompt: 'x', botId: scout.id, trigger: 'hook' });
+  const v1Id = hooks.newRouteId();
+  const key = nodeCrypto.createHash('sha256').update(`ai-remote:keys:${process.env.ENCRYPTION_KEY}`).digest();
+  const iv = nodeCrypto.randomBytes(12);
+  const c = nodeCrypto.createCipheriv('aes-256-gcm', key, iv);
+  const bodyV1 = Buffer.concat([c.update('whsec_old', 'utf8'), c.final()]);
+  await store.createHookRoute(uid, { id: v1Id, taskId: v1Task.id, secretEnc: `v1.${iv.toString('base64url')}.${c.getAuthTag().toString('base64url')}.${bodyV1.toString('base64url')}` });
+  process.env.ENCRYPTION_REFUSE_V1 = 'true';
+  const refusedV1 = await tryEmpty(v1Id);
+  delete process.env.ENCRYPTION_REFUSE_V1;
+  check('v1 refused at the cutover: 503 "cannot be checked", nothing started', refusedV1.status === 503 && /cannot be checked/.test(refusedV1.body.error), JSON.stringify(refusedV1));
+
+  // A copy bound to another account (what a merge without the key leaves).
+  const boundTask = await store.createTask(uid, { id: id(), title: 'Moved hook', prompt: 'x', botId: scout.id, trigger: 'hook' });
+  const boundId = hooks.newRouteId();
+  await store.createHookRoute(uid, { id: boundId, taskId: boundTask.id, secretEnc: hooks.sealHookSecret('whsec_elsewhere', { userId: 'someone-else', routeId: boundId }) });
+  const moved = await tryEmpty(boundId);
+  check('  a secret bound to another account: 503 too', moved.status === 503, JSON.stringify(moved));
+
+  // A key dropped from ENCRYPTION_KEY_PREVIOUS.
+  const was = process.env.ENCRYPTION_KEY;
+  process.env.ENCRYPTION_KEY = 'a-key-the-route-was-sealed-with-and-then-dropped';
+  const goneTask = await store.createTask(uid, { id: id(), title: 'Rotated hook', prompt: 'x', botId: scout.id, trigger: 'hook' });
+  const goneId = hooks.newRouteId();
+  await store.createHookRoute(uid, { id: goneId, taskId: goneTask.id, secretEnc: hooks.sealHookSecret('whsec_gone', { userId: uid, routeId: goneId }) });
+  process.env.ENCRYPTION_KEY = was;
+  const unknown = await tryEmpty(goneId);
+  check('  sealed by a key this server no longer has: 503 too', unknown.status === 503, JSON.stringify(unknown));
+  check('none of them started a run', started.length === before);
+  const test = await hooks.sendTestHook({ userId: uid, taskId: goneTask.id, start });
+  check('"Gửi thử" on such a route says it cannot be checked, rather than signing with "" and reporting success', test.status === 503 && started.length === before, JSON.stringify(test));
+}
+
 section('rate limits per route');
 {
   const busy = await store.createTask(uid, { id: id(), title: 'Busy', prompt: 'x', botId: scout.id, trigger: 'hook' });

@@ -221,6 +221,27 @@ section('db:copy merges an old account into the one with the same email');
   check("a merged account's stored credentials open under the account they joined", decryptSecret(token, ['connector', 'u-supabase', 'github']) === 'ghp_from_neon' && decryptSecret(keys?.[0]?.cipher, ['provider-key', 'u-supabase', 'openrouter']) === 'sk-or-v1-from-neon', JSON.stringify({ token: !!token, keys: keys?.length }));
   check('  and no longer under the old id', decryptSecret(token, ['connector', 'u-neon', 'github']) === '');
   check('  said, with nothing left that would not open', said.some((l) => /2 stored credential\(s\) of merged accounts sealed again/.test(l)) && !said.some((l) => /could not be opened/.test(l)), said.filter((l) => /credential/.test(l)).join(' | '));
+
+  // Security review, 2026-11-12: without the key that sealed them, a merge's credentials would
+  // be carried across unopenable — and a second run skips rows already there. So it stops first.
+  const source2 = new PGlite();
+  const target2 = new PGlite();
+  const old2 = createPgStore(driverOf(source2));
+  const now2 = createPgStore(driverOf(target2));
+  await old2.init();
+  await now2.init();
+  await old2.createUser({ id: 'u-old-2', email: 'two@example.com', name: 'Two', passwordHash: 'x', role: 'user' });
+  await old2.createChat('u-old-2', { id: 'c-old-2', title: 'Kept back', model: 'auto' });
+  const keyHere = process.env.ENCRYPTION_KEY;
+  process.env.ENCRYPTION_KEY = 'the-deployments-own-key-not-in-this-environment';
+  await old2.saveConnector('u-old-2', 'github', encryptSecret('ghp_unreachable', ['connector', 'u-old-2', 'github']), 'o');
+  process.env.ENCRYPTION_KEY = keyHere;
+  await now2.createUser({ id: 'u-new-2', email: 'two@example.com', name: 'Two', passwordHash: 'y', role: 'user' });
+  const stopped = await copyDatabase(driverOf(source2), driverOf(target2), { say: () => {}, merge: ['two@example.com'] }).then(() => '', (e) => e.message);
+  check('a merge whose credentials cannot be opened here stops before the first row, saying which key it needs', /cannot be opened here/.test(stopped) && /ENCRYPTION_KEY/.test(stopped) && /Nothing was copied/.test(stopped), stopped);
+  check('  and indeed nothing was copied', (await now2.getChat('u-new-2', 'c-old-2')) == null);
+  await source2.close();
+  await target2.close();
   await source.close();
   await target.close();
 }

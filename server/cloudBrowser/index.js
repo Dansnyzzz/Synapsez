@@ -6,6 +6,7 @@ import { getStore } from '../store/index.js';
 import { saveGenerated } from '../attachments.js';
 import { BROWSER_PORT, ROOT_BROWSER_PORT, browserAddress, chargeCloud, machineForUser, portAddress, shellFor } from '../sandbox.js';
 import { encryptSecret, decryptSecret } from '../crypto.js';
+import { cloudBrowserContext } from '../secretContexts.js';
 import { readCapped } from '../util/safeFetch.js';
 import { untrusted } from '../tools/untrusted.js';
 
@@ -249,12 +250,12 @@ export function panelToken(secret, scope, ttl = TOKEN_MS, now = Date.now()) {
 async function readConnection(userId) {
   const value = await getStore().getUserSetting(userId, SETTING);
   if (!value || typeof value !== 'object' || !value.url || !value.key) return null;
-  const secret = decryptSecret(value.key, ['cloud-browser', userId]);
+  const secret = decryptSecret(value.key, cloudBrowserContext(userId, value.url));
   return secret ? { ...value, key: secret } : null;
 }
 
 async function saveConnection(userId, value) {
-  await getStore().setUserSetting(userId, SETTING, { ...value, key: encryptSecret(value.key, ['cloud-browser', userId]) });
+  await getStore().setUserSetting(userId, SETTING, { ...value, key: encryptSecret(value.key, cloudBrowserContext(userId, value.url)) });
 }
 
 /**

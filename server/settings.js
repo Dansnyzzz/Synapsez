@@ -1,5 +1,5 @@
 import { getStore } from './store/index.js';
-import { encryptSecret, decryptSecret } from './crypto.js';
+import { encryptSecret, decryptSecret, needsReseal } from './crypto.js';
 import { CATALOG } from './providers/catalog.js';
 import { PLUGIN_IDS } from '../public/js/plugins.js';
 import { suggestionFor } from './recommend.js';
@@ -404,6 +404,31 @@ async function storedKeys(userId) {
 }
 
 /**
+ * One provider's keys as they are about to be written back, each still in the v1 envelope
+ * or under an older key sealed again first (crypto.js v2). The paths below write back what
+ * they read: had `npm run secrets:reseal` sealed the row again in between, writing the old
+ * values back undid it after the reseal had counted the row done — and a cutover on its word
+ * then lost the key (security review, 2026-11-12). Sealed again here, the race is harmless.
+ */
+function freshList(userId, provider, list) {
+  const context = ['provider-key', userId, provider];
+  return list.map((entry) => {
+    if (!entry?.cipher || !needsReseal(entry.cipher)) return entry;
+    const plain = decryptSecret(entry.cipher, context);
+    return plain ? { ...entry, cipher: encryptSecret(plain, context) } : entry;
+  });
+}
+
+/** Every provider's keys, freshened the same way, before the whole set is written back. */
+function freshKeys(userId, keys) {
+  for (const [provider, held] of Object.entries(keys)) {
+    if (Array.isArray(held)) keys[provider] = freshList(userId, provider, held);
+    else if (typeof held === 'string') keys[provider] = freshList(userId, provider, [{ cipher: held }])[0].cipher;
+  }
+  return keys;
+}
+
+/**
  * One provider's keys, as a list.
  *
  * Stored as a single encrypted string until keys could be stacked, so a stored
@@ -667,7 +692,7 @@ export async function setKeyMeta(userId, provider, key, meta) {
   if (JSON.stringify(merged) === JSON.stringify(list[index])) return;
   list[index] = merged;
   // This provider's list only, so a change to another's is not undone.
-  await getStore().mergeUserSetting(userId, KEYS_KEY, { [provider]: list });
+  await getStore().mergeUserSetting(userId, KEYS_KEY, { [provider]: freshList(userId, provider, list) });
 }
 
 /** Replace whatever is stored with this single key, or clear it. */
@@ -676,7 +701,7 @@ export async function setApiKey(userId, provider, value, meta = {}) {
   const keys = await storedKeys(userId);
   if (value) keys[provider] = [{ cipher: encryptSecret(value, ['provider-key', userId, provider]), hint: hintFor(value), addedAt: new Date().toISOString(), ...keyMeta(meta) }];
   else delete keys[provider];
-  await getStore().setUserSetting(userId, KEYS_KEY, keys);
+  await getStore().setUserSetting(userId, KEYS_KEY, freshKeys(userId, keys));
   cursor.delete(cursorKey(userId, provider));
   // Whatever was wrong with the old keys is not necessarily wrong with these.
   clearKeyRest(userId, provider);
@@ -698,7 +723,7 @@ export async function addApiKey(userId, provider, value, meta = {}) {
 
   list.push({ cipher: encryptSecret(clean, ['provider-key', userId, provider]), hint: hintFor(clean), addedAt: new Date().toISOString(), ...keyMeta(meta) });
   keys[provider] = list;
-  await getStore().setUserSetting(userId, KEYS_KEY, keys);
+  await getStore().setUserSetting(userId, KEYS_KEY, freshKeys(userId, keys));
   return list.length;
 }
 
@@ -724,7 +749,7 @@ export async function removeApiKey(userId, provider, index) {
   if (list.length) keys[provider] = list;
   else delete keys[provider];
 
-  await getStore().setUserSetting(userId, KEYS_KEY, keys);
+  await getStore().setUserSetting(userId, KEYS_KEY, freshKeys(userId, keys));
   cursor.delete(cursorKey(userId, provider));
   // Whatever was wrong with the old keys is not necessarily wrong with these.
   clearKeyRest(userId, provider);

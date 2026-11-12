@@ -144,6 +144,43 @@ check('tampered ciphertext yields nothing', decryptSecret(`${cipher}xyz`) === ''
     }
   }
   check('an empty value is empty, not an error', crypto.openSecret('').state === 'empty' && crypto.openSecret(null).state === 'empty');
+
+  // Security review, 2026-11-12. Node opens GCM with a tag cut to 4 bytes unless told its
+  // length: a short tag is a guessable forgery, and the binding is what it would defeat.
+  const [v, kid, iv, tag, body] = mine.split('.');
+  const cut = (n) => [v, kid, iv, Buffer.from(tag, 'base64url').subarray(0, n).toString('base64url'), body].join('.');
+  check('a tag cut to 12, 8 or 4 bytes does not open', [12, 8, 4].every((n) => crypto.openSecret(cut(n), ['provider-key', 'u-alice', 'openrouter']).state === 'undecryptable'));
+  check('  nor a nonce of another length', crypto.openSecret([v, kid, Buffer.alloc(16).toString('base64url'), tag, body].join('.'), ['provider-key', 'u-alice', 'openrouter']).state === 'undecryptable');
+  let empty = '';
+  try {
+    crypto.encryptSecret('sk', ['provider-key', '', 'openrouter']);
+  } catch (err) {
+    empty = err.message;
+  }
+  check('sealing with an owner left empty is refused, not bound to nobody', /whose it is/.test(empty), empty);
+  const saved = { key: process.env.ENCRYPTION_KEY, token: process.env.ACCESS_TOKEN };
+  delete process.env.ENCRYPTION_KEY;
+  delete process.env.ACCESS_TOKEN;
+  let noKey;
+  try {
+    noKey = crypto.openSecret(mine, ['provider-key', 'u-alice', 'openrouter']);
+  } finally {
+    if (saved.key !== undefined) process.env.ENCRYPTION_KEY = saved.key;
+    if (saved.token !== undefined) process.env.ACCESS_TOKEN = saved.token;
+  }
+  check('with no key in the environment at all, it says so rather than throwing', noKey?.state === 'no-key' && noKey.value === '', JSON.stringify(noKey));
+
+  // Where a secret is sent is part of its binding (secretContexts.js).
+  const { mcpConfigContext, cloudBrowserContext } = await import('../server/secretContexts.js');
+  const config = { transport: 'http', url: 'https://mcp.example.com/mcp' };
+  const headers = crypto.encryptSecret('{"Authorization":"Bearer t"}', mcpConfigContext('u-alice', 'headers', config));
+  check("an MCP server's headers open at their own address", crypto.decryptSecret(headers, mcpConfigContext('u-alice', 'headers', config)).includes('Bearer t'));
+  check('  and not once the row is pointed at another host', crypto.decryptSecret(headers, mcpConfigContext('u-alice', 'headers', { ...config, url: 'https://attacker.example/mcp' })) === '');
+  const stdio = { transport: 'stdio', command: 'npx', args: ['-y', 'server-a'], place: 'cloud' };
+  const env = crypto.encryptSecret('{"TOKEN":"x"}', mcpConfigContext('u-alice', 'env', stdio));
+  check("  a program's environment does not open for another program or its arguments", crypto.decryptSecret(env, mcpConfigContext('u-alice', 'env', { ...stdio, args: ['-y', 'server-b'] })) === '' && crypto.decryptSecret(env, mcpConfigContext('u-alice', 'env', stdio)) === '{"TOKEN":"x"}');
+  const browser = crypto.encryptSecret('cb', cloudBrowserContext('u-alice', 'https://cb-1.example'));
+  check("  the cloud browser's key does not open for another address", crypto.decryptSecret(browser, cloudBrowserContext('u-alice', 'https://cb-2.example')) === '' && crypto.decryptSecret(browser, cloudBrowserContext('u-alice', 'https://cb-1.example')) === 'cb');
 }
 
 // ── chats ───────────────────────────────────────────────────────────

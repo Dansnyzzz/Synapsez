@@ -1978,10 +1978,10 @@ step, with the optional certificate and how to bring data over from another data
 | `DATABASE_URL` | **yes** | Supabase's Transaction pooler string (port 6543), or any Postgres. See [docs/database.md](docs/database.md). |
 | `DATABASE_CA_CERT` | recommended | The database's CA certificate, so the connection is verified as well as encrypted. |
 | `SESSION_SECRET` | **yes** | Signs session cookies. Long and random. Changing it signs everyone out. |
-| `ENCRYPTION_KEY` | **yes** | Encrypts every stored credential — provider keys, connector and OAuth tokens, the TOTP seed, MCP headers, hook secrets — each bound to its owner and purpose (the v2 envelope, `server/crypto.js`). To rotate it: set the new value, put the old one in `ENCRYPTION_KEY_PREVIOUS`, run `npm run secrets:reseal -- --apply` against the database, then remove the old value. Use 32 characters or more. |
-| `ENCRYPTION_KEY_PREVIOUS` | optional | Earlier encryption keys, comma-separated, still able to open what they sealed — only during a rotation, until `npm run secrets:reseal -- --apply` has run. |
-| `ENCRYPTION_REFUSE_V1` | optional | `true` refuses credentials still in the v1 envelope (unbound, from before 1.26.0). Set it once `npm run secrets:reseal` reports nothing left to reseal. |
+| `ENCRYPTION_KEY` | **yes** | Encrypts every stored credential — provider keys, connector and OAuth tokens, the TOTP seed, MCP headers, hook secrets — each bound to its owner, its purpose and, for the ones sent to a server, where it is sent (the v2 envelope, `server/crypto.js`). Use 32 characters or more. Rotating it is under "Rotating the encryption key" below. |
 | `ACCESS_TOKEN` | legacy | One value standing in for both of the above, from before they were separate. Still honoured — the two keys are derived apart from it — but it cannot be rotated in halves, so the server warns at boot. Set `SESSION_SECRET` and `ENCRYPTION_KEY` instead. |
+| `ENCRYPTION_KEY_PREVIOUS` | optional | Earlier encryption keys, comma-separated, still able to open what they sealed — only during a rotation, until `npm run secrets:reseal` says the cutover is safe. |
+| `ENCRYPTION_REFUSE_V1` | optional | `true` refuses credentials still in the v1 envelope (unbound, from before 1.26.0). Set it only once `npm run secrets:reseal` says "Safe to set ENCRYPTION_REFUSE_V1 … yes". |
 | `CRON_SECRET` | **yes** | Authenticates the cron endpoints — the scheduler and the model-library refresh. Any long random string. Without it both refuse every call, so scheduled tasks never run. |
 | `GMAIL_USER` + `GMAIL_APP_PASSWORD`, **or** `RESEND_API_KEY`, **or** `SMTP_*` | optional | Sends password-reset codes and the assistant's emails. Without one, reset links go to the server log and `send_email` says it cannot send. |
 | `EVENT_MAIL_BATCH`, `EVENT_MAIL_DAILY` | optional | The email announcing an event's theme (server/eventMail.js) goes in batches, every address in Bcc: how many a message (default 50, at most 90) and how many a day (default 400), under Gmail's own limits. It goes through Gmail when Gmail is set up, Resend or not. |
@@ -2016,6 +2016,24 @@ step, with the optional certificate and how to bring data over from another data
 
 Worker tokens are not environment variables: each person generates their own in the app, under
 **Settings → Worker**.
+
+**Rotating the encryption key** (1.26.0). Every stored credential carries the id of the key that
+sealed it, so a key can change without anyone losing what they saved:
+
+1. Set the new `ENCRYPTION_KEY` on the deployment and move the old one into `ENCRYPTION_KEY_PREVIOUS`.
+   Redeploy. Both now open what they sealed; new writes use the new key.
+2. With the deployment's environment (its `DATABASE_URL`, `ENCRYPTION_KEY`, `ENCRYPTION_KEY_PREVIOUS`),
+   run `npm run secrets:reseal` — a dry run: what is due, what will not open, and which key sealed how
+   many. Then `npm run secrets:reseal -- --apply --key-id <id>`, with the id Settings → Admin →
+   Free tier shows; it refuses any other, so a laptop holding a different key cannot write.
+3. It counts again after writing and ends with "Safe to set ENCRYPTION_REFUSE_V1=true and drop older
+   keys …: yes" or "no" (exit code 1 on "no"). Only on "yes" remove the old key from
+   `ENCRYPTION_KEY_PREVIOUS` — and, the first time, set `ENCRYPTION_REFUSE_V1=true`.
+
+A value that will not open is never overwritten: it is counted, and either the key that sealed it goes
+back into `ENCRYPTION_KEY_PREVIOUS` or the person enters it again. **No going back below 1.26.0**
+once it has written anything: 1.25.0 reads every v2 value as "not configured" (keys, two-step codes,
+hooks), so a rollback past it means re-entering them.
 
 **Page views and page speed.** On Vercel the app loads Vercel Web Analytics and Speed Insights
 (`@vercel/analytics`, `@vercel/speed-insights`, copied into `public/vendor/vercel` by

@@ -311,6 +311,12 @@ export function contextBytes(context = []) {
  * @param {Array<string|number|null|undefined>} [context] e.g. ['provider-key', userId, provider]
  */
 export function encryptSecret(plaintext, context = []) {
+  // A binding with a part left empty — an owner forgotten — would open for anything sealed
+  // the same way without one (security review, 2026-11-12): refused when sealing, not found later.
+  const parts = Array.isArray(context) ? context : [context];
+  if (parts.length > 1 && parts.slice(1).some((part) => part == null || String(part) === '')) {
+    throw new Error('A stored credential needs to know whose it is and what it is for — part of that was missing, so it was not saved.');
+  }
   const key = keyring()[0];
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', key.v2, iv);
@@ -319,7 +325,11 @@ export function encryptSecret(plaintext, context = []) {
   return `v2.${key.id}.${iv.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}.${body.toString('base64url')}`;
 }
 
-/** Which envelope a stored value is in, and which key sealed it (v2 only). */
+/**
+ * Which envelope a stored value is in, and which key sealed it (v2 only).
+ *
+ * @returns {{ version: 'v1'|'v2'|null, keyId: string|null }}
+ */
 export function secretVersion(payload) {
   const parts = String(payload ?? '').split('.');
   if (parts[0] === 'v2' && parts.length === 5) return { version: 'v2', keyId: parts[1] };
@@ -330,10 +340,19 @@ export function secretVersion(payload) {
 /** v1 refused outright, once every stored value has been re-sealed (ENCRYPTION_REFUSE_V1). */
 const refusingV1 = () => /^(1|true|yes|on)$/i.test(String(process.env.ENCRYPTION_REFUSE_V1 || '').trim());
 
+/**
+ * One AES-256-GCM open, with the nonce and tag at the lengths sealing writes and nothing
+ * shorter: Node accepts a GCM tag cut to 4 bytes unless told its length, and a short tag
+ * is a forgery an attacker who can write the database may simply guess — then a value
+ * moved into another context opens (security review, 2026-11-12, measured on Node 22.16).
+ */
 function openGcm(key, ivB64, tagB64, bodyB64, aad) {
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivB64, 'base64url'));
+  const iv = Buffer.from(ivB64, 'base64url');
+  const tag = Buffer.from(tagB64, 'base64url');
+  if (iv.length !== 12 || tag.length !== 16) throw new Error('not a sealed value');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv, { authTagLength: 16 });
   if (aad) decipher.setAAD(aad);
-  decipher.setAuthTag(Buffer.from(tagB64, 'base64url'));
+  decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(Buffer.from(bodyB64, 'base64url')), decipher.final()]).toString('utf8');
 }
 
@@ -356,13 +375,20 @@ function reportOnce(state, version, context) {
  *
  * @param {string} payload
  * @param {Array<string|number|null|undefined>} [context] the same context it was sealed with
- * @returns {{ value: string, state: 'ok'|'empty'|'undecryptable'|'unknown-key'|'refused-v1', version: 'v1'|'v2'|null, current: boolean }}
+ * @returns {{ value: string, state: 'ok'|'empty'|'undecryptable'|'unknown-key'|'refused-v1'|'no-key', version: 'v1'|'v2'|null, current: boolean }}
  */
 export function openSecret(payload, context = []) {
   const text = String(payload ?? '');
   if (!text) return { value: '', state: 'empty', version: null, current: false };
   const parts = text.split('.');
-  const keys = keyring();
+  let keys;
+  try {
+    keys = keyring();
+  } catch {
+    // No ENCRYPTION_KEY here at all — a script run without the deployment's environment.
+    // Said as its own state, never thrown at a caller that only wanted "" (as v1 gave).
+    return { value: '', state: 'no-key', version: secretVersion(text).version, current: false };
+  }
   if (parts[0] === 'v2' && parts.length === 5) {
     const key = keys.find((k) => k.id === parts[1]);
     if (!key) {

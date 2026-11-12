@@ -26,7 +26,7 @@
  */
 import { pathToFileURL } from 'node:url';
 import { createPgStore } from '../server/store/pg.js';
-import { credentialOwner, rebindRow } from '../server/secretsReseal.js';
+import { credentialOwner, rebindRow, rebindPreflight } from '../server/secretsReseal.js';
 
 /** A name as SQL reads it, quoted, so a table or column is never taken for a keyword. */
 const ident = (name) => `"${String(name).replace(/"/g, '""')}"`;
@@ -163,6 +163,19 @@ export async function copyDatabase(from, to, { say = console.log, merge = [] } =
     say(`  ${r.email}: merged into the account that already has this email`);
   }
   if (unvouched.length) throw new Error(mergeRefusal(unvouched));
+  // A merged account's v2 credentials are bound to its old id and must be sealed again to the
+  // one it joins — which needs the key that sealed them. Without it, stop before the first row:
+  // copied as they are they would never open, and a second run skips rows already there.
+  if (merged.size) {
+    const { unopenable } = await rebindPreflight((text, params) => from.query(text, params), merged);
+    if (unopenable) {
+      throw new Error(
+        `${unopenable} stored credential(s) of the accounts being merged are sealed to their old id and cannot be opened here, ` +
+          'so they could not be moved to the account they join. Run the copy with the deployment\'s ENCRYPTION_KEY ' +
+          '(and ENCRYPTION_KEY_PREVIOUS, if it has one) in the environment. Nothing was copied.',
+      );
+    }
+  }
   /** Columns that hold an account's id: every foreign key to `users`, and any `user_id`. */
   const accountColumns = new Map();
   const holds = (table, column) => {
@@ -257,13 +270,11 @@ export async function copyDatabase(from, to, { say = console.log, merge = [] } =
     copied[table] = done;
     say(`  ${table}: ${done}`);
   }
-  if (rebinding.rebound) say(`  ${rebinding.rebound} stored credential(s) of merged accounts sealed again to the account they joined`);
-  if (rebinding.unopenable) {
-    say(
-      `  ${rebinding.unopenable} stored credential(s) of merged accounts could not be opened here, so were copied as they were and will not open: ` +
-        'the person enters them again. (A copy run with the deployment\'s ENCRYPTION_KEY in the environment re-binds them; a second run does not, since it skips rows the target has.)',
-    );
-  }
+  // Counted as sealed, before the insert: a row the target already had (the same setting) kept
+  // its own, as everything else there does — so this is at most what went in.
+  if (rebinding.rebound) say(`  ${rebinding.rebound} stored credential(s) of merged accounts sealed again to the account they joined (where the new database already had the same setting, its own was kept)`);
+  // The check above stops the copy before this can happen; a value that changed since it ran is still said.
+  if (rebinding.unopenable) say(`  ${rebinding.unopenable} stored credential(s) of merged accounts could not be opened here and were copied as they were — they will not open, and the person enters them again`);
   return copied;
 }
 

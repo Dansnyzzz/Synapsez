@@ -33,6 +33,7 @@ const query = async (text, params = []) => (await db.query(text, params)).rows;
 const store = await initStore({ driver: { query } });
 const { resealSecrets } = await import('../server/secretsReseal.js');
 const { decryptSecret, openSecret, secretVersion, currentKeyId } = await import('../server/crypto.js');
+const { cloudBrowserContext, mcpConfigContext } = await import('../server/secretContexts.js');
 
 /** A value sealed the v1 way, as everything stored before v2 was. */
 const v1 = (plain, secret = process.env.ENCRYPTION_KEY) => {
@@ -80,7 +81,7 @@ section('applied: everything in v2, under the current key, and the app still ope
   check('  each now v2 under the key that seals', Object.values(now).every((value) => secretVersion(value).version === 'v2' && secretVersion(value).keyId === currentKeyId()), JSON.stringify(Object.values(now).map((v) => secretVersion(v))));
   check('  the TOTP seed opens as its owner', decryptSecret(now.u, ['totp', user.id]) === 'JBSWY3DPEHPK3PXP');
   check('  the connector token, the provider keys (list and single), the hook secret', decryptSecret(now.c, ['connector', user.id, 'github']) === 'ghp_legacy' && decryptSecret(now.or, ['provider-key', user.id, 'openrouter']) === 'sk-or-v1-legacy' && decryptSecret(now.g, ['provider-key', user.id, 'google']) === 'AIza-legacy-single' && decryptSecret(now.h, ['hook', user.id, route.id]) === 'whsec_legacy');
-  check('  the cloud browser key and the MCP headers', decryptSecret(now.cb, ['cloud-browser', user.id]) === 'cb-key' && JSON.parse(decryptSecret(now.m, ['mcp-config', user.id, 'headers'])).Authorization === 'Bearer t');
+  check('  the cloud browser key and the MCP headers', decryptSecret(now.cb, cloudBrowserContext(user.id, 'https://cb.example')) === 'cb-key' && JSON.parse(decryptSecret(now.m, mcpConfigContext(user.id, 'headers', { transport: 'http', url: 'https://mcp.example' }))).Authorization === 'Bearer t');
   const again = await resealSecrets(query);
   check('a second run finds nothing to do', Object.values(again).every((t) => t.resealed === 0 && t.current > 0), JSON.stringify(again));
 }
@@ -99,6 +100,31 @@ section('a rotation: the new key seals, the old one opens until the reseal, then
   await store.saveConnector(user.id, 'notion', v1('ntn_lost', 'a-key-nobody-has-any-more'), 'n');
   const stuck = await resealSecrets(query, { apply: true });
   check('a value no key here opens is counted, not lost or overwritten', stuck.connector?.unopenable === 1 && openSecret((await query("SELECT token FROM connectors WHERE service = 'notion'"))[0].token).state === 'undecryptable', JSON.stringify(stuck.connector));
+}
+
+section('security review, 2026-11-12: nothing counted fine that is not, and a cutover only on a true "yes"');
+{
+  const { cutoverReady } = await import('../server/secretsReseal.js');
+  const { encryptSecret } = await import('../server/crypto.js');
+  // The stuck v1 connector from above makes the verdict "no" until it is gone.
+  check('with a value that will not open, the cutover is not safe', !cutoverReady(await resealSecrets(query)));
+  await query("DELETE FROM connectors WHERE service = 'notion'");
+  check('  with it gone, it is', cutoverReady(await resealSecrets(query)));
+
+  // A v2 value under the current key, bound to another account: not "current" — lost.
+  await store.saveConnector(user.id, 'slack', encryptSecret('xoxb-elsewhere', ['connector', 'u-someone-else', 'slack']), 's');
+  const misbound = await resealSecrets(query);
+  check('a current-key value bound to another owner is counted as one that will not open', misbound.connector?.unopenable === 1 && !cutoverReady(misbound), JSON.stringify(misbound.connector));
+  check('  and the count says which key sealed how many', Object.values(misbound.connector?.keys || {}).reduce((a, b) => a + b, 0) === misbound.connector.current + misbound.connector.unopenable + misbound.connector.resealed && (misbound.connector.keys[currentKeyId()] || 0) > 0, JSON.stringify(misbound.connector?.keys));
+  await query("DELETE FROM connectors WHERE service = 'slack'");
+
+  // The app writes back what it read: a v1 key read before a reseal, written after, must not undo it.
+  const settings = await import('../server/settings.js');
+  await store.setUserSetting(user.id, 'providerKeys', { openrouter: [{ cipher: v1('sk-or-v1-raced'), hint: '…ced' }] });
+  await settings.addApiKey(user.id, 'openrouter', 'sk-or-v1-second-key');
+  const written = (await query("SELECT value FROM user_settings WHERE user_id = $1 AND key = 'providerKeys'", [user.id]))[0].value;
+  check('a write-back seals any v1 entry it carries again, so a reseal it raced is not undone', written.openrouter.length === 2 && written.openrouter.every((e) => secretVersion(e.cipher).version === 'v2'), JSON.stringify(written.openrouter.map((e) => secretVersion(e.cipher))));
+  check('  and both keys still open as before', decryptSecret(written.openrouter[0].cipher, ['provider-key', user.id, 'openrouter']) === 'sk-or-v1-raced' && decryptSecret(written.openrouter[1].cipher, ['provider-key', user.id, 'openrouter']) === 'sk-or-v1-second-key');
 }
 
 console.log(failures ? `\n\x1b[31m${failures} failed\x1b[0m` : '\n\x1b[32mall passed\x1b[0m');

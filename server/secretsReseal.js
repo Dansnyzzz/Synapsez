@@ -7,18 +7,21 @@
  *
  * Writes compare-and-set: a value changed by the app since it was read is left for the
  * next run rather than overwritten. Device pairings are not touched — they live minutes.
- * Reports counts by kind only: never a value, never an account.
+ * Every value is opened, current ones too, so one bound to the wrong owner or address is
+ * found rather than counted as fine. Reports counts by kind, and which key sealed how many:
+ * never a value, never an account.
  *
- * Where a credential lives, and its context — the same pairs the app seals with:
+ * Where a credential lives, and its context — the same the app seals with:
  *   users.totp_secret                       ['totp', userId]
  *   connectors.token                        ['connector', userId, service]
  *   hook_routes.secret_enc                  ['hook', userId, routeId]
  *   user_settings providerKeys[provider][]  ['provider-key', userId, provider]
- *   user_settings cloudBrowser.key          ['cloud-browser', userId]
- *   user_settings mcpBridge.key             ['mcp-bridge', userId]
- *   mcp_servers.config headersCipher/envCipher ['mcp-config', userId, 'headers'|'env']
+ *   user_settings cloudBrowser.key          cloudBrowserContext (secretContexts.js)
+ *   user_settings mcpBridge.key             mcpBridgeContext
+ *   mcp_servers.config headersCipher/envCipher mcpConfigContext
  */
 import { openSecret, encryptSecret, needsReseal, secretVersion } from './crypto.js';
+import { cloudBrowserContext, mcpBridgeContext, mcpConfigContext } from './secretContexts.js';
 
 /**
  * Each table that holds credentials: its rows that may, whose they are, the sealed values in
@@ -70,7 +73,8 @@ const SEALED = {
       }
       if (row.key !== 'cloudBrowser' && row.key !== 'mcpBridge') return [];
       const kind = row.key === 'cloudBrowser' ? 'cloud-browser' : 'mcp-bridge';
-      return value.key ? [{ kind, value: value.key, context: (user) => [kind, user], put: (sealed) => { value.key = sealed; } }] : [];
+      const context = (user) => (kind === 'cloud-browser' ? cloudBrowserContext(user, value.url) : mcpBridgeContext(user, value.url));
+      return value.key ? [{ kind, value: value.key, context, put: (sealed) => { value.key = sealed; } }] : [];
     },
     update: (row, was) => ['UPDATE user_settings SET value = $3::jsonb WHERE user_id = $1 AND key = $2 AND value = $4::jsonb RETURNING user_id', [row.user_id, row.key, JSON.stringify(row.value), JSON.stringify(was.value)]],
   },
@@ -83,7 +87,7 @@ const SEALED = {
       if (!config || typeof config !== 'object') return [];
       return [['headers', 'headersCipher'], ['env', 'envCipher']]
         .filter(([, field]) => config[field])
-        .map(([what, field]) => ({ kind: 'mcp-config', value: config[field], context: (user) => ['mcp-config', user, what], put: (sealed) => { config[field] = sealed; } }));
+        .map(([what, field]) => ({ kind: 'mcp-config', value: config[field], context: (user) => mcpConfigContext(user, what, config), put: (sealed) => { config[field] = sealed; } }));
     },
     update: (row, was) => ['UPDATE mcp_servers SET config = $2::jsonb WHERE id = $1 AND config = $3::jsonb RETURNING id', [row.id, JSON.stringify(row.config), JSON.stringify(was.config)]],
   },
@@ -102,24 +106,43 @@ function working(place, row) {
   }
 }
 
-/** One value: left as it is, sealed again, or not openable — and the new value when sealed again. */
+/**
+ * One value: left as it is, sealed again, or not openable — and the new value when sealed
+ * again. Opened whatever its key: a value under the current key that will not open (bound to
+ * another owner, or to an address the row no longer has) is not "current", it is lost.
+ */
 function resealOne(value, context, tally) {
   if (!value) return null;
-  if (!needsReseal(value)) {
-    tally.current += 1;
-    return null;
-  }
+  const { version, keyId } = secretVersion(value);
+  const sealedBy = version === 'v2' ? keyId : version || 'unknown';
+  tally.keys[sealedBy] = (tally.keys[sealedBy] || 0) + 1;
   const opened = openSecret(value, context);
   if (opened.state !== 'ok') {
     tally.unopenable += 1;
+    return null;
+  }
+  if (!needsReseal(value)) {
+    tally.current += 1;
     return null;
   }
   tally.resealed += 1;
   return encryptSecret(opened.value, context);
 }
 
-/** Per kind: values left, values sealed again, values no key here opens; rows written, rows changed since they were read. */
-const emptyTally = () => ({ current: 0, resealed: 0, unopenable: 0, written: 0, changedMeanwhile: 0 });
+/**
+ * Per kind: values left, values sealed again, values no key here opens; rows written, rows
+ * changed since they were read; and how many values each key (or 'v1') had sealed.
+ */
+const emptyTally = () => ({ current: 0, resealed: 0, unopenable: 0, written: 0, changedMeanwhile: 0, keys: /** @type {Record<string, number>} */ ({}) });
+
+/**
+ * Whether a count says the cutover is safe: nothing left to seal again, nothing that will
+ * not open, nothing changed under the run — then ENCRYPTION_REFUSE_V1 may be set and an
+ * older key dropped from ENCRYPTION_KEY_PREVIOUS. Read from a dry run after `--apply`.
+ *
+ * @param {Record<string, ReturnType<typeof emptyTally>>} report
+ */
+export const cutoverReady = (report) => Object.values(report).every((t) => t.resealed === 0 && t.unopenable === 0 && t.changedMeanwhile === 0);
 
 /**
  * @param {(text: string, params?: any[]) => Promise<any[]>} query rows back for each statement
@@ -153,6 +176,40 @@ export async function resealSecrets(query, { apply = false } = {}) {
   return report;
 }
 
+/**
+ * Before db:copy writes anything for a merge: how many v2 values the merging accounts hold,
+ * and how many of those will not open here — no ENCRYPTION_KEY, or not the one that sealed
+ * them. Any at all and the copy stops before its first row: carried across as they are they
+ * would never open under the account they join, and a second run skips rows already there.
+ *
+ * @param {(text: string, params?: any[]) => Promise<any[]>} query the source database
+ * @param {Map<string, string>} merged old account id → the id it joins
+ */
+export async function rebindPreflight(query, merged) {
+  let bound = 0;
+  let unopenable = 0;
+  for (const place of Object.values(SEALED)) {
+    let rows;
+    try {
+      rows = await query(place.select);
+    } catch {
+      continue; // an older database without this table or column holds none of it
+    }
+    for (const row of rows) {
+      const owner = place.owner(row);
+      if (!merged.has(owner)) continue;
+      const copy = working(place, row);
+      if (!copy) continue;
+      for (const field of place.fields(copy)) {
+        if (secretVersion(field.value).version !== 'v2') continue;
+        bound += 1;
+        if (openSecret(field.value, field.context(owner)).state !== 'ok') unopenable += 1;
+      }
+    }
+  }
+  return { bound, unopenable };
+}
+
 /** Whose credentials a row of `table` holds, or null for a table that holds none. */
 export const credentialOwner = (table, row) => (SEALED[table] ? SEALED[table].owner(row) || null : null);
 
@@ -179,12 +236,7 @@ export function rebindRow(table, row, toUser) {
   let unopenable = 0;
   for (const field of place.fields(copy)) {
     if (secretVersion(field.value).version !== 'v2') continue;
-    let opened;
-    try {
-      opened = openSecret(field.value, field.context(from));
-    } catch {
-      opened = { state: 'no-key', value: '' };
-    }
+    const opened = openSecret(field.value, field.context(from));
     if (opened.state !== 'ok') {
       unopenable += 1;
       continue;
