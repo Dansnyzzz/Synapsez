@@ -807,6 +807,14 @@ section('Usage, devices, feedback and what is new — from the account menu');
     const stillPaid = await page.$eval(`${row} input[data-paid-radio][value="${keyId}"]`, (el) => /** @type {HTMLInputElement} */ (el).checked).catch(() => false);
     check('  chosen as the paid key, the radio stays after Refresh', keyId && stillPaid === true, String(keyId));
     check('  and says the provider must allow going past the free amount', /past the free/i.test(await page.$eval(row, (el) => el.textContent || '').catch(() => '')));
+    check('  Stack Exchange is one row, with its reason', (await page.$$eval('#admin-free-tier .ctable__row strong', (els) => els.filter((el) => el.textContent === 'Stack Exchange').length)) === 1);
+    // A save the server refuses puts the radio back where the server has it.
+    await page.route('**/api/admin/service-keys/paid', (route) => route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'A monthly cap is a number of zero or more.' }) }));
+    await page.click(`${row} input[data-paid-radio][value=""]`).catch(() => {});
+    await page.waitForTimeout(900);
+    const kept = await page.$eval(`${row} input[data-paid-radio][value="${keyId}"]`, (el) => /** @type {HTMLInputElement} */ (el).checked).catch(() => false);
+    check('  a refused paid-key save leaves the previously saved radio selected', kept === true);
+    await page.unroute('**/api/admin/service-keys/paid');
     await page.click(`${row} [data-key-remove="${keyId}"]`).catch(() => {});
     await page.click(`${row} [data-key-remove="${keyId}"]`).catch(() => {});
     await page.waitForTimeout(900);

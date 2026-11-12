@@ -99,7 +99,9 @@ export function createFreeAllowances(host, deps) {
   const open = new Set();
   let visible = false;
   let heardAt = 0;
-  let busy = false;
+  /** The newest request's number, and whether one is out: an older answer is dropped. */
+  let latest = 0;
+  let asking = false;
   let tavilyOn = false;
 
   /** One key's row. */
@@ -203,6 +205,8 @@ export function createFreeAllowances(host, deps) {
         pool.delete(s.service);
         continue;
       }
+      // Drawn here with its note: the loop below is only for services with no allowance row.
+      pool.delete(s.service);
       const used = s.used == null ? '—' : `${amount(s.service, s.used)} / ${amount(s.service, s.limit)}`;
       const note = entry?.note ? t(entry.note) : s.service === 'google' ? t('freetier.googleNote') : '';
       rows.push(`<div class="ctable__row" role="row">
@@ -236,10 +240,13 @@ export function createFreeAllowances(host, deps) {
   const editing = () => !!host.querySelector('[data-add-form]:not([hidden])') || (host.contains(document.activeElement) && !!document.activeElement?.matches('input:not([data-paid-radio])'));
 
   async function load({ force = false } = {}) {
-    if (busy) return;
-    busy = true;
+    // A quiet poll waits for one already asked; a forced load always asks, and its answer wins.
+    if (!force && asking) return;
+    const mine = ++latest;
+    asking = true;
     try {
       const report = await api.freeTier();
+      if (mine !== latest) return;
       tavilyOn = report.tavilyHint === true;
       heardAt = Date.now();
       // The page is being used: a quiet refresh waits for the person to finish.
@@ -255,21 +262,26 @@ export function createFreeAllowances(host, deps) {
       if (!host.querySelector('.ctable')) host.textContent = err.message;
       else if (force) toast(err.message, 'error');
     } finally {
-      busy = false;
+      if (mine === latest) asking = false;
     }
   }
 
-  /** Make a call, say its failure as a toast, redraw on success. @param {() => Promise<any>} run */
-  async function act(run, button) {
+  /**
+   * Make a call, say its failure as a toast, redraw on success. `redraw`: draw from the server
+   * after a failure too, for a control (the paid radio) that already moved under the person's hand.
+   *
+   * @param {() => Promise<any>} run
+   */
+  async function act(run, button, { redraw = false } = {}) {
     if (button) button.disabled = true;
     try {
       const out = await run();
-      busy = false;
       await load({ force: true });
       return out;
     } catch (err) {
       toast(err.message, 'error');
       if (button?.isConnected) button.disabled = false;
+      if (redraw) await load({ force: true });
       return null;
     }
   }
@@ -287,7 +299,7 @@ export function createFreeAllowances(host, deps) {
     const service = /** @type {string} */ (group.dataset.pool);
     const picked = /** @type {HTMLInputElement | null} */ (group.querySelector('input[data-paid-radio]:checked'));
     const keyId = picked && picked.value ? picked.value : null;
-    return act(() => api.setPaidKey(service, keyId, keyId ? capOf(service, group) : null), null).then((out) => {
+    return act(() => api.setPaidKey(service, keyId, keyId ? capOf(service, group) : null), null, { redraw: true }).then((out) => {
       if (out) toast(t('freetier.paid.saved'), 'ok');
     });
   }
@@ -382,7 +394,6 @@ export function createFreeAllowances(host, deps) {
       form.reset();
       form.hidden = true;
       toast(t('freetier.add.done'), 'ok');
-      busy = false;
       await load({ force: true });
     } catch (err) {
       toast(err.message, 'error');
