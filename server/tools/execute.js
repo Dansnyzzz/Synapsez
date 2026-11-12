@@ -470,7 +470,8 @@ async function runTool({ user, name, input, chatId, signal, deviceHint, delivera
    */
   if (isMcpTool(name)) {
     try {
-      const { text, isError } = await callMcpTool(userId, name, input || {}, Number(input?.timeout_ms) || undefined);
+      // Stop and the turn's end reach the call; its wait is capped whatever `timeout_ms` asked.
+      const { text, isError } = await callMcpTool(userId, name, input || {}, Number(input?.timeout_ms) || undefined, { signal, deadline });
       /**
        * Wrapped, because this is code from outside the repository returning text
        * straight into the model's context. The tool is already graded

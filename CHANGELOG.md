@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-11-12 — Doors closed the harness audit found (1.27.0)
+
+From a three-part audit of the app against a 2026 agent-harness checklist (model gateway to observability), the gaps that could cost the owner, leak data or run past the function — fixed and tested:
+
+- **Row-level security on every table** (schema 49). On Supabase the tables in `public` are served by its Data API to anyone with the project's public anon key; with row-level security on and no policy, those roles reach no row. The app is the tables' owner and is unaffected. docs/database.md says how to switch the Data API off too.
+- **The deployment's own key serves free models only** while `FREE_TIER_ONLY` holds — an account with no key of its own could run a paid model on it, billed to the owner if the key had credit. Google's keys are the exception (their free tier bills nothing). An account's own key is unaffected.
+- **`send_email` has a daily line**: 40 people per account, and for the whole deployment 60 on Resend or 300 on Gmail/SMTP — the same mailbox sends every sign-in code, and a provider suspends a mailbox past its limit. Recipients a refused send held are given back.
+- **A tool the conversation was never given is not run when the model names it** — a held MCP tool, a connector's tool with nothing linked, a name a page made up. Checked as a class in the loop and again where an MCP call is made. A deferred tool named directly still runs.
+- **The same message is not sent twice in one turn**: an identical Slack post, Gmail send, Telegram message, post or non-GET request that already went out is answered "already sent".
+- **MCP calls stop when you press Stop** (and tell the server, with MCP's own `notifications/cancelled`), and wait at most two minutes or what the turn has left — the model's own `timeout_ms` was used as given.
+- **The turn's end reaches everything it starts**: sub-agents and deep research stop near it rather than run past the 300 s function; a step is not started with under 45 s left — the turn stops with Continue instead of being cut off; scheduled tasks, workflows and resumed turns share their invocation's end instead of a fresh 270 s each.
+- **The per-turn token ceiling counts sub-agents, research, folds and checks** beside the main loop. One sub-agent's answer is cut at 6,000 characters.
+- **Fixed: every tool of an MCP server on the cloud computer looked changed on its first start** (1.25.0's change check): jsonb returns a kept tool list with its keys reordered, and the fingerprint read the order. Schemas are read in one order now; approvals recorded before still hold.
+- From the 1.26.0 security re-check: `db:copy` seals credentials from before 1.26.0 in the current envelope as it copies (so `ENCRYPTION_REFUSE_V1` does not refuse them later); `npm run secrets:reseal -- --check` exits 1 unless the cutover is safe; every kind of stored credential is bound through one module (`server/secretContexts.js`), and sealing without a known kind and owner is refused.
+
 ## 2026-11-12 — Stored keys bound to whose they are, and a key that can change (1.26.0)
 
 **The v2 envelope for every stored credential** (`server/crypto.js`): provider keys, connector and OAuth tokens, the TOTP seed, MCP headers and environment, hook secrets, the cloud browser and MCP bridge keys. Still AES-256-GCM — which is not outdated — but used better:

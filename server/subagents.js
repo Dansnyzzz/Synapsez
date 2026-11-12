@@ -39,6 +39,10 @@ import { GOOGLE_DATA_TOOLS } from './googleData.js';
 
 const MAX_TASKS = 6;
 const MAX_STEPS = 8;
+/** Kept of the turn's time after the sub-agents, for the parent to read their answers and reply. */
+const SUBAGENT_RESERVE_MS = 25_000;
+/** The most of one sub-agent's answer handed back to the parent. */
+const ANSWER_MAX = 6_000;
 
 const SYSTEM = [
   'You are a sub-agent: one part of a larger job, working on your own.',
@@ -121,7 +125,7 @@ async function briefFor(userId, context, task) {
   return lines.filter(Boolean).join('\n\n');
 }
 
-async function runOne({ userId, user, chatId = null, entry, prefs, tools, task, brief = null, signal, stream }) {
+async function runOne({ userId, user, chatId = null, entry, prefs, tools, task, brief = null, signal, stream, deadline = Infinity }) {
   // The names this sub-agent was given. See the membership check in the tool loop.
   const offered = new Set((tools || []).map((t) => t.name));
   const messages = [{ id: `sub-${Date.now()}`, role: 'user', text: brief ?? String(task) }];
@@ -140,6 +144,8 @@ async function runOne({ userId, user, chatId = null, entry, prefs, tools, task, 
 
   for (let step = 0; step < MAX_STEPS; step += 1) {
     if (signal?.aborted) break;
+    // Near the turn's end, report what there is rather than start a step the function will not finish.
+    if (Date.now() >= deadline - SUBAGENT_RESERVE_MS) break;
 
     const assistant = { id: `sub-a-${step}`, role: 'assistant', text: '', toolCalls: [] };
     let done = null;
@@ -172,6 +178,7 @@ async function runOne({ userId, user, chatId = null, entry, prefs, tools, task, 
          */
         effort: subagentEffort(prefs?.effort),
         signal,
+        deadline: deadline - SUBAGENT_RESERVE_MS,
       })) {
         if (ev.type === 'text') assistant.text += ev.delta ?? '';
         else if (ev.type === 'done') done = ev;
@@ -257,14 +264,17 @@ async function runOne({ userId, user, chatId = null, entry, prefs, tools, task, 
         }
         // The conversation travels with the call, so `search_docs` reads its
         // project's shelf and a file id from it resolves as it would for the parent.
-        const out = await executeTool({ user, name: call.name, input: call.input, chatId, signal });
+        const out = await executeTool({ user, name: call.name, input: call.input, chatId, signal, deadline: deadline - SUBAGENT_RESERVE_MS });
         return { toolCallId: call.id, name: call.name, content: out.content, isError: out.isError };
       },
     );
     messages.push({ id: `sub-t-${step}`, role: 'tool', results });
   }
 
-  return { task, answer: answer || '(no answer)', usage, failed: false };
+  // One answer of six must not fill the parent's window (harness audit, 2026-11-12).
+  const said = answer || '(no answer)';
+  return { task, answer: said.length > ANSWER_MAX ? `${said.slice(0, ANSWER_MAX)}
+[… cut at ${ANSWER_MAX} characters — ask a narrower question for the rest]` : said, usage, failed: false };
 }
 
 /**
@@ -284,6 +294,7 @@ export async function runParallel({
   modelId,
   signal,
   stream = streamCompletion,
+  deadline = Infinity,
 }) {
   const list = (Array.isArray(tasks) ? tasks : []).map((t) => String(t || '').trim()).filter(Boolean);
 
@@ -350,6 +361,7 @@ export async function runParallel({
         brief: await briefFor(user.id, context, task),
         signal,
         stream,
+        deadline,
       }),
     ),
   );

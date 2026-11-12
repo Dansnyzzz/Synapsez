@@ -392,6 +392,10 @@ section('changing model on a reply that had already finished');
 
 section('a dead key of your own is no way past the deployment key\'s ceiling');
 {
+  // A deployment that pays for a paid model on its own key — what these ceilings exist for.
+  // With FREE_TIER_ONLY on (the default) that key serves free models only (data-route.test).
+  const freeOnlyWas = process.env.FREE_TIER_ONLY;
+  process.env.FREE_TIER_ONLY = 'false';
   process.env.OPENAI_API_KEY = 'sk-deployment-key';
   await store.createUser({ id: 'u-over', email: 'over@example.com', name: 'Over', passwordHash: await hashPassword(password), role: 'user' });
   await store.updateUser('u-over', { monthlyTokenLimit: 10 });
@@ -447,6 +451,8 @@ section('a dead key of your own is no way past the deployment key\'s ceiling');
   const told = JSON.stringify(plainRun.events.filter((e) => e.name === 'error'));
   check('the deployment key refused: it says so, and not what the provider said about it', /refused/.test(told) && !/afford|1141/.test(told), told);
   delete process.env.OPENAI_API_KEY;
+  if (freeOnlyWas === undefined) delete process.env.FREE_TIER_ONLY;
+  else process.env.FREE_TIER_ONLY = freeOnlyWas;
 }
 
 section('a run that has already finished, or someone else\'s, is not stopped');

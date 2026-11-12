@@ -590,7 +590,9 @@ export function createApp() {
     // killed, which both left a task marked mid-run and guaranteed workflows
     // inherited nothing — the very thing `remaining()` was written to prevent.
     // Two thirds to tasks, so a long queue cannot starve the workflows below.
-    const ran = await runDueTasks({ budgetMs: Math.floor(remaining() * 0.66) });
+    // One end for every run this invocation starts — the function's, less a margin to store the last step.
+    const endsAt = started + 270_000;
+    const ran = await runDueTasks({ budgetMs: Math.floor(remaining() * 0.66), endsAt });
 
     // Workflows share this heartbeat rather than adding a second cron: the
     // free tier allows one a day, and spending it twice is not an option. A
@@ -602,7 +604,7 @@ export function createApp() {
     }));
     // Conversations whose turn the 300s limit cut off, finished with nobody
     // watching — see server/resume.js.
-    const resumed = await resumeCutOffTurns({ budgetMs: remaining() }).catch(() => []);
+    const resumed = await resumeCutOffTurns({ budgetMs: remaining(), endsAt }).catch(() => []);
     // Group rounds a killed invocation left, or whose next segment was never asked
     // for (server/bots/continue.js) — after the turns above, with what time is left.
     const groups = await resumeGroupRounds({ budgetMs: remaining() }).catch(() => []);

@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { getStore, isServerless } from './store/index.js';
 import { sha256, randomToken, encryptSecret, decryptSecret } from './crypto.js';
+import { devicePairingContext } from './secretContexts.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -113,7 +114,7 @@ export async function claimPairing(userId, rawCode, { name } = {}) {
   const store = getStore();
   const token = randomToken(24);
 
-  const pairing = await store.claimPairing(userId, sha256(code), encryptSecret(token, ['device-pairing']));
+  const pairing = await store.claimPairing(userId, sha256(code), encryptSecret(token, devicePairingContext()));
   if (!pairing) {
     throw new Error('That code is not valid, has already been used, or has expired. Ask the computer for a new one.');
   }
@@ -148,7 +149,7 @@ export async function collectPairing(id) {
   const collected = await store.consumePairing(pairing.id);
   if (!collected) return { status: 'pending' };
 
-  const token = decryptSecret(collected.secret, ['device-pairing']);
+  const token = decryptSecret(collected.secret, devicePairingContext());
   if (!token) return { status: 'unknown' };
 
   return { status: 'paired', token, deviceId: pairing.id, name: collected.device_name };

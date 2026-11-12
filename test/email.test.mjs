@@ -221,5 +221,45 @@ section('the password-reset email is in the language of the person asking');
   check('  and anything else is English', (await mailLanguage(nobody, { headers: { 'accept-language': 'fr-FR' } })) === 'en' && (await mailLanguage(nobody, {})) === 'en');
 }
 
+/*
+ * The mailbox send_email uses also sends every sign-in and confirmation code: past the
+ * provider's daily limit it is suspended and nobody can sign in (owner, 2026-11-12). So the
+ * assistant's sends are counted in recipients, per account and for the deployment.
+ */
+section('a daily line on how many people the assistant may email');
+{
+  const { PGlite } = await import('@electric-sql/pglite');
+  const { initStore } = await import('../server/store/index.js');
+  const db = await PGlite.create();
+  await initStore({ driver: { query: async (text, params = []) => (await db.query(text, params)).rows } });
+  Object.assign(process.env, { GMAIL_USER: 'deployment.mailbox@gmail.com', GMAIL_APP_PASSWORD: 'abcd efgh ijkl mnop' });
+  email.__testing.useTransport(fakeTransport);
+  refuse = null;
+  const ten = (n) => Array.from({ length: 10 }, (_, i) => `p${n}-${i}@example.com`).join(',');
+  const heavy = { id: 'u-heavy', email: 'heavy@example.com', name: 'H' };
+  sent.length = 0;
+  const results = [];
+  for (let n = 0; n < 5; n += 1) results.push(await attempt({ to: ten(n), subject: `Batch ${n}`, body: 'x' }, { user: heavy }));
+  check('forty people in a day go out', results.slice(0, 4).every((r) => r.ok) && sent.length === 4, JSON.stringify(results.map((r) => r.ok)));
+  check('  the forty-first is refused, said as the daily limit, and nothing is sent', !results[4].ok && /NOT sent/.test(results[4].error) && /daily limit/.test(results[4].error) && sent.length === 4, results[4].error);
+  check('  another account still has its own line', (await attempt({ to: 'one@example.com', subject: 'Other', body: 'x' }, { user: { id: 'u-light', email: 'l@example.com' } })).ok);
+
+  refuse = 'mailbox full';
+  const failed = await attempt({ to: 'refund@example.com', subject: 'Fails', body: 'x' }, { user: { id: 'u-refund', email: 'r@example.com' } });
+  refuse = null;
+  const { readCounter } = (await import('../server/store/index.js')).getStore();
+  const today = new Date().toISOString().slice(0, 10);
+  check('a send the provider refused gives its recipients back', !failed.ok && (await readCounter(`mail:tool:u-refund:${today}`)) === 0, failed.error);
+
+  // The deployment's line: Gmail's 300 a day, the rest of its 500 left for sign-in codes.
+  const store = (await import('../server/store/index.js')).getStore();
+  const { periodOf } = await import('../server/freeTier.js');
+  await store.addToCounter(`mail:tool:${today}`, 295, periodOf('day').ends);
+  const blocked = await attempt({ to: ten(9), subject: 'Over the deployment line', body: 'x' }, { user: { id: 'u-fresh', email: 'f@example.com' } });
+  check("past the deployment's line, refused for everyone, saying the mailbox also sends sign-in codes", !blocked.ok && /sign-in codes/.test(blocked.error), blocked.error);
+  check('  and the account it was refused for is not charged for it', (await readCounter(`mail:tool:u-fresh:${today}`)) === 0);
+  await db.close();
+}
+
 console.log(failures === 0 ? '\n\x1b[32mAll email checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

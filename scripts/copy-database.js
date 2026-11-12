@@ -194,15 +194,16 @@ export async function copyDatabase(from, to, { say = console.log, merge = [] } =
     }
     for (const [table, cols] of sourceColumns) if (cols.has('user_id')) holds(table, 'user_id');
   }
-  /** Credentials of merged accounts: re-bound to the id they join, or left as they were. */
-  const rebinding = { rebound: 0, unopenable: 0 };
+  /** Credentials as they are copied: sealed in v2 and bound to the account they land in, or left as they were. */
+  const rebinding = { rebound: 0, unopenable: 0, v1Left: 0 };
   /** A row as it goes to the target, its sealed credentials bound to the account it now belongs to. */
   const rebound = (table, row) => {
-    const owner = merged.size ? credentialOwner(table, row) : null;
-    if (!owner || !merged.has(owner)) return row;
-    const moved = rebindRow(table, row, merged.get(owner));
+    const owner = credentialOwner(table, row);
+    if (!owner) return row;
+    const moved = rebindRow(table, row, merged.get(owner) || owner);
     rebinding.rebound += moved.rebound;
     rebinding.unopenable += moved.unopenable;
+    rebinding.v1Left += moved.v1Left;
     return moved.row;
   };
   /** A value as it goes to the target, an old account's id turned into the one it merged into. */
@@ -272,7 +273,8 @@ export async function copyDatabase(from, to, { say = console.log, merge = [] } =
   }
   // Counted as sealed, before the insert: a row the target already had (the same setting) kept
   // its own, as everything else there does — so this is at most what went in.
-  if (rebinding.rebound) say(`  ${rebinding.rebound} stored credential(s) of merged accounts sealed again to the account they joined (where the new database already had the same setting, its own was kept)`);
+  if (rebinding.rebound) say(`  ${rebinding.rebound} stored credential(s) sealed again as they were copied — in the v2 envelope, bound to the account they belong to on the new database (where it already had the same setting, its own was kept)`);
+  if (rebinding.v1Left) say(`  ${rebinding.v1Left} stored credential(s) from before 1.26.0 were copied as they were (no ENCRYPTION_KEY here to seal them again): run npm run secrets:reseal on the new database before setting ENCRYPTION_REFUSE_V1`);
   // The check above stops the copy before this can happen; a value that changed since it ran is still said.
   if (rebinding.unopenable) say(`  ${rebinding.unopenable} stored credential(s) of merged accounts could not be opened here and were copied as they were — they will not open, and the person enters them again`);
   return copied;

@@ -330,7 +330,8 @@ section('strict privacy reaches the wire, standard does not');
     sent.push({ provider: entry.provider, privacy: common.privacy, key: common.apiKey });
     yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 1, output: 1 } };
   };
-  const entry = { id: 'openrouter/test/model', provider: 'openrouter', model: 'test/model', context: 100_000, maxOutput: 1000 };
+  // A free model: on the deployment's shared key nothing else runs (1.27.0, data-route.test).
+  const entry = { id: 'openrouter/test/model:free', provider: 'openrouter', model: 'test/model:free', context: 100_000, maxOutput: 1000, price: { in: 0, out: 0 }, tags: ['free'] };
   const run = async (userId, e = entry) => {
     for await (const ev of streamCompletion({ userId, entry: e, system: 's', messages: [{ id: 'x', role: 'user', text: message }], tools: [], streamOne })) void ev;
   };

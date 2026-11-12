@@ -44,7 +44,7 @@ import { record as recordUsage } from '../usage.js';
 import { log } from '../util/trace.js';
 import { search, formatResults, searchPlan, readThroughExa, countryOf } from '../search.js';
 import { firecrawlReady, firecrawlScrape, firecrawlMap, firecrawlCrawl, researchPapers, readPaper, relatedPapers, lawSearch } from '../firecrawl.js';
-import { mayMeter, countMetered } from '../freeTier.js';
+import { mayMeter, countMetered, periodOf } from '../freeTier.js';
 import { untrusted } from './untrusted.js';
 import { searchProject } from '../projects.js';
 import { normaliseQuestions, answerText } from './askOptions.js';
@@ -2012,11 +2012,13 @@ async function skillWrite({ name, description, instructions }, { userId }) {
   return `Saved the skill "${saved.name}". It will be offered to you in future conversations.`;
 }
 
-async function runParallelTool({ tasks }, { user, chatId, signal }) {
-  return runParallel({ user, chatId, tasks, signal });
+// Both take the turn's end (harness audit, 2026-11-12): started late in a turn, each ran on its
+// own clock past the 300 s function, and a turn resumed after that ran it again from the start.
+async function runParallelTool({ tasks }, { user, chatId, signal, deadline = Infinity }) {
+  return runParallel({ user, chatId, tasks, signal, deadline });
 }
 
-async function deepResearchTool({ question }, { userId, user, chatId, signal }) {
+async function deepResearchTool({ question }, { userId, user, chatId, signal, deadline = Infinity }) {
   const q = String(question || '').trim();
   if (!q) throw new Error('Give a question to research.');
   const { content } = await runDeepResearch({
@@ -2025,6 +2027,7 @@ async function deepResearchTool({ question }, { userId, user, chatId, signal }) 
     user,
     chatId,
     signal,
+    deadline,
     // The research pass reads its best sources rather than trusting the search
     // engine's blurb. Passed in from here because the reader lives in this file
     // and importing it the other way would close a cycle. It is the same guarded
@@ -2515,6 +2518,56 @@ function recipientsFor(to, user) {
   return list;
 }
 
+/**
+ * How many people the assistant may write to in a day (owner, 2026-11-12, from the harness
+ * audit): per account, and for the whole deployment. The mailbox `send_email` sends from is
+ * the one every sign-in and confirmation code leaves by, and a mail provider suspends a
+ * mailbox past its daily sending limit — so a webhook or a schedule on `auto`, five emails
+ * to ten people a run, could lock everyone out of signing in. Counted in recipients, as the
+ * providers count; the deployment's line sits well under each provider's free limit (Resend
+ * 100 a day, Gmail 500), leaving the rest for the codes. Not lifted by FREE_TIER_ONLY: it
+ * guards the mailbox, not a bill.
+ */
+const MAIL_RECIPIENTS_DAILY = Object.freeze({ account: 40, deployment: { resend: 60, smtp: 300 } });
+
+/**
+ * Hold `count` recipients against today's lines; the line that would be crossed, or null.
+ * Counted before the send, in one upsert each, and given back by `releaseRecipients` when
+ * nothing went out. A count that cannot be kept (no database: a script, a test) holds nothing.
+ */
+async function holdRecipients(userId, count, now = new Date()) {
+  const { key, ends } = periodOf('day', now);
+  const mine = `mail:tool:${userId || 'anonymous'}:${key}`;
+  const all = `mail:tool:${key}`;
+  try {
+    const store = getStore();
+    if ((await store.addToCounter(mine, count, ends)) > MAIL_RECIPIENTS_DAILY.account) {
+      await store.addToCounter(mine, -count, ends);
+      return 'account';
+    }
+    const limit = MAIL_RECIPIENTS_DAILY.deployment[emailBackend()] ?? MAIL_RECIPIENTS_DAILY.deployment.smtp;
+    if ((await store.addToCounter(all, count, ends)) > limit) {
+      await store.addToCounter(all, -count, ends);
+      await store.addToCounter(mine, -count, ends);
+      return 'deployment';
+    }
+  } catch (err) {
+    if (!/not ready yet/.test(String(err?.message))) log.warn('send_email: recipients not counted', { error: String(err?.message || err).slice(0, 160) });
+  }
+  return null;
+}
+
+/** Give back recipients held for a send that did not go out. */
+async function releaseRecipients(userId, count, now = new Date()) {
+  const { key, ends } = periodOf('day', now);
+  try {
+    await getStore().addToCounter(`mail:tool:${userId || 'anonymous'}:${key}`, -count, ends);
+    await getStore().addToCounter(`mail:tool:${key}`, -count, ends);
+  } catch {
+    /* nothing to give back to */
+  }
+}
+
 /** How far back an identical email counts as "already sent". */
 const RESEND_WINDOW_MS = 20 * 60_000;
 
@@ -2603,6 +2656,21 @@ async function sendEmailTool({ to, subject, body, html, kind, resend }, { user, 
    * because a message with both parts is what an ordinary mail client sends.
    * An `html` body the model wrote itself is sent as given.
    */
+  const owner = userId || user?.id;
+  const over = await holdRecipients(owner, recipients.length);
+  if (over === 'account') {
+    throw new Error(
+      `The email was NOT sent: this account has written to ${MAIL_RECIPIENTS_DAILY.account} people by email today, the daily limit. ` +
+        'Tell the user it can go tomorrow, or they can send it from their own mail.',
+    );
+  }
+  if (over === 'deployment') {
+    throw new Error(
+      'The email was NOT sent: the app has sent as much email today as it may — its mailbox also sends everyone\'s sign-in codes. ' +
+        'Tell the user it can go tomorrow, or they can send it from their own mail.',
+    );
+  }
+
   const account = await accountMailPrefs(user);
   const composed = text
     ? composeMessage({
@@ -2631,6 +2699,7 @@ async function sendEmailTool({ to, subject, body, html, kind, resend }, { user, 
   // request — so a refusal from the provider arrives here as `ok: false`, and
   // reporting it as sent would be exactly the lie this tool exists not to tell.
   if (!result?.ok) {
+    await releaseRecipients(owner, recipients.length);
     throw new Error(`The email was NOT sent: the mail provider refused it (${result?.error || 'no reason given'}). Say so plainly.`);
   }
   const accepted = result.accepted?.length ? result.accepted : recipients;

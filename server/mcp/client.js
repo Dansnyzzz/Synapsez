@@ -211,9 +211,10 @@ function stdioTransport({ command, args = [], env = {}, cwd }) {
     get closed() {
       return closed;
     },
-    async request(method, params, timeoutMs = DEFAULT_TIMEOUT_MS) {
+    async request(method, params, timeoutMs = DEFAULT_TIMEOUT_MS, onId = null) {
       if (closed) throw new Error(closed);
       const id = nextId++;
+      onId?.(id);
       const waiting = pending.create(id, timeoutMs);
       child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
       return waiting;
@@ -342,8 +343,9 @@ function httpTransport({ url, headers = {} }) {
     get closed() {
       return closed;
     },
-    async request(method, params, timeoutMs = DEFAULT_TIMEOUT_MS) {
+    async request(method, params, timeoutMs = DEFAULT_TIMEOUT_MS, onId = null) {
       const id = nextId++;
+      onId?.(id);
       const message = await send({ jsonrpc: '2.0', id, method, params }, timeoutMs);
       if (!message) throw new Error('The server accepted the request but sent no answer.');
       if (message.error) {
@@ -433,10 +435,38 @@ export async function connectMcp(config) {
       protocolVersion: hello?.protocolVersion || null,
       instructions: hello?.instructions || null,
       tools,
-      /** Run one tool. The result is flattened to text for the model. */
-      async call(name, args, timeoutMs) {
-        const result = await transport.request('tools/call', { name, arguments: args || {} }, timeoutMs);
-        return { text: flatten(result), isError: !!result?.isError };
+      /**
+       * Run one tool. The result is flattened to text for the model. A `signal` that fires
+       * — the person pressed Stop, the turn ran out — ends the wait at once and tells the server
+       * with MCP's own notifications/cancelled, rather than leaving the call to outlive the
+       * function (harness audit, 2026-11-12).
+       *
+       * @param {string} name @param {any} args @param {number} [timeoutMs] @param {{ signal?: AbortSignal | null }} [options]
+       */
+      async call(name, args, timeoutMs, { signal = null } = {}) {
+        if (signal?.aborted) throw Object.assign(new Error('The run was stopped before this tool was called.'), { name: 'AbortError' });
+        let sent = null;
+        const work = transport.request('tools/call', { name, arguments: args || {} }, timeoutMs, (id) => {
+          sent = id;
+        });
+        let onAbort = null;
+        const stopped = signal
+          ? new Promise((_, reject) => {
+              onAbort = () => {
+                if (sent != null) transport.notify('notifications/cancelled', { requestId: sent, reason: 'The run was stopped.' });
+                reject(Object.assign(new Error('The run was stopped while this tool was working.'), { name: 'AbortError' }));
+              };
+              signal.addEventListener('abort', onAbort, { once: true });
+            })
+          : null;
+        try {
+          const result = await (stopped ? Promise.race([work, stopped]) : work);
+          return { text: flatten(result), isError: !!result?.isError };
+        } finally {
+          if (onAbort) signal?.removeEventListener('abort', onAbort);
+          // A call stopped first still settles later; nothing waits for it.
+          work.catch(() => {});
+        }
       },
       close: () => transport.close(),
     };

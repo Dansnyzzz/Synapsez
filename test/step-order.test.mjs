@@ -362,6 +362,37 @@ section('a file written in parts is looked over at the end');
   check('only once: the turn then ends', (await store.listMessages(user.id, 'c-parts')).at(-1)?.text === 'Xong 4.');
 }
 
+/*
+ * Harness audit, 2026-11-12: an identical message or post that already went out this turn is
+ * not sent again — only file writes and settled reads were guarded, so a model that lost track
+ * sent the same Slack post or POST once a step.
+ */
+section('a message that went out this turn is not sent again');
+{
+  const guard = createStepGuard();
+  const post = { name: 'slack_post', input: { channel: '#team', text: 'Build passed.' } };
+  check('the first send runs', guard.check(post) === null);
+  guard.note(post, { content: 'Posted.' });
+  const again = guard.check(post);
+  check('  the identical one later in the turn is not sent, and the model is told to treat it as sent', again && again.isError === false && /Not sent again/.test(again.content), again?.content);
+  check('  a different message still goes', guard.check({ name: 'slack_post', input: { channel: '#team', text: 'Deploy done.' } }) === null);
+  const mail = { name: 'gmail', input: { action: 'send', to: 'a@example.com', subject: 'Hi', body: 'x' } };
+  guard.note(mail, { content: 'Sent.' });
+  check('a Gmail send, the same', /Not sent again/.test(guard.check(mail)?.content || ''));
+  const draft = { name: 'gmail', input: { action: 'draft', to: 'a@example.com', subject: 'Hi', body: 'x' } };
+  guard.note(draft, { content: 'Saved.' });
+  check('  but a draft is not a send', guard.check(draft) === null || !/Not sent again/.test(guard.check(draft)?.content || ''));
+  const post2 = { name: 'http_request', input: { method: 'POST', url: 'https://hooks.example/x', body: '{}' } };
+  const get = { name: 'http_request', input: { method: 'GET', url: 'https://example.com/status' } };
+  guard.note(post2, { content: '200' });
+  guard.note(get, { content: '200' });
+  check('a POST is not repeated', /Not sent again/.test(guard.check(post2)?.content || ''));
+  check('  a GET may be asked again', !/Not sent again/.test(guard.check(get)?.content || ''));
+  const failedSend = { name: 'telegram_send', input: { chat_id: '1', text: 'x' } };
+  guard.note(failedSend, { isError: true, content: 'Telegram did not take it' });
+  check('a send that failed may be tried again', !/Not sent again/.test(guard.check(failedSend)?.content || ''));
+}
+
 removeTemp(process.env.DATA_DIR);
 console.log(failures === 0 ? '\n\x1b[32mOne step at a time, and nothing twice.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

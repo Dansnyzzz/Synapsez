@@ -263,7 +263,7 @@ export function splitStatements(sql) {
  *  48  shared_models.efforts / reasoning_mandatory — the effort levels each model takes,
  *      so the reasoning dial asks a model only for what it lists (openaiCompatible.js)
  */
-export const SCHEMA_VERSION = 48;
+export const SCHEMA_VERSION = 49;
 
 /** How long a forgotten bot memory entry waits for Undo before it is deleted for good. */
 export const FORGOTTEN_KEEP_MS = 10 * 60_000;

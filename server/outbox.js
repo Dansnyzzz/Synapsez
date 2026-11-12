@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
 import { decryptSecret } from './crypto.js';
+import { connectorContext } from './secretContexts.js';
 import { log } from './util/trace.js';
 
 /*
@@ -84,7 +85,7 @@ class Permanent extends Error {}
 async function telegramToken(userId) {
   const row = await getStore().getConnector(userId, 'telegram');
   if (!row) throw new Permanent('Telegram is not connected any more.');
-  return decryptSecret(row.token, ['connector', userId, 'telegram']);
+  return decryptSecret(row.token, connectorContext(userId, 'telegram'));
 }
 
 /**

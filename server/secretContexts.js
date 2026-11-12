@@ -3,6 +3,7 @@
  * for the ones handed to a server — where it is sent. One place, read by the app where it
  * seals and opens and by the reseal (secretsReseal.js), so the two can never disagree about a
  * context: a mismatch would make the reseal quietly break every credential of that kind.
+ * Every kind is here, so a site writing one out by hand is the odd one out.
  *
  * Where a secret goes is part of its binding (security review, 2026-11-12): bound only to the
  * owner, an MCP server's headers stayed openable after someone with write access to the
@@ -10,16 +11,36 @@
  * to the address too, the moved row no longer opens, so nothing is sent. Every writer of
  * these rows seals again from the plaintext with the address it saves, so an honest edit of
  * the address re-binds.
+ *
+ * The values these build are stored: changing what one returns for an existing row makes
+ * every credential of that kind unreadable. Add a kind; do not reshape one.
  */
+
+/** A two-step sign-in seed. */
+export const totpContext = (userId) => ['totp', userId];
+
+/** A linked service's token (GitHub, Notion, Google, Telegram…). */
+export const connectorContext = (userId, service) => ['connector', userId, service];
+
+/** A bot hook's signing secret. */
+export const hookContext = (userId, routeId) => ['hook', userId, routeId];
+
+/** An account's own API key for one provider. */
+export const providerKeyContext = (userId, provider) => ['provider-key', userId, provider];
+
+/** A device pairing's token, for the minutes it waits to be collected. */
+export const devicePairingContext = () => ['device-pairing'];
 
 /**
  * Where an MCP server's secrets go: its URL, or the program and arguments that receive its
- * environment, and where that program runs.
+ * environment, and where that program runs — read in the order `connectMcp` reads the row
+ * (transport first), so the address bound is the one a connection would use.
  *
  * @param {{ transport?: string, url?: string, command?: string, args?: unknown[], place?: string } | null | undefined} config
  */
 export function mcpDestination(config) {
   if (!config || typeof config !== 'object') return 'none';
+  if (config.transport === 'http') return `http:${String(config.url || '')}`;
   if (config.command || config.transport === 'stdio') {
     const args = Array.isArray(config.args) ? config.args.map(String) : [];
     return `stdio:${config.place || 'local'}:${JSON.stringify([String(config.command || ''), ...args])}`;
@@ -35,3 +56,6 @@ export const cloudBrowserContext = (userId, url) => ['cloud-browser', userId, `u
 
 /** The MCP bridge's key on the account's cloud computer, bound to its address. */
 export const mcpBridgeContext = (userId, url) => ['mcp-bridge', userId, `url:${String(url || '')}`];
+
+/** Every kind a context may name, for `encryptSecret` to refuse anything else. */
+export const SECRET_KINDS = Object.freeze(['totp', 'connector', 'hook', 'provider-key', 'device-pairing', 'mcp-config', 'cloud-browser', 'mcp-bridge']);

@@ -70,7 +70,7 @@ export const isComplete = (kind) => COMPLETE.has(kind);
  * Continue button is honest. A reply blocked by a content filter must not get
  * one: pressing it would produce the same refusal.
  */
-const RESUMABLE = new Set(['max_steps', 'token_limit', 'reasoning_cut']);
+const RESUMABLE = new Set(['max_steps', 'token_limit', 'reasoning_cut', 'time_limit']);
 
 /** Whether a turn that stopped this way can simply be told to carry on. */
 export const isResumable = (kind) => RESUMABLE.has(kind);

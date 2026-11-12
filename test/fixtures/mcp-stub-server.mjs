@@ -62,6 +62,8 @@ const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 const ok = (id, result) => send({ jsonrpc: '2.0', id, result });
 const fail = (id, code, message) => send({ jsonrpc: '2.0', id, error: { code, message } });
 
+const cancelled = [];
+
 function handle(message) {
   const { id, method, params } = message;
 
@@ -79,6 +81,11 @@ function handle(message) {
 
   // Notifications carry no id and expect no answer.
   if (method === 'notifications/initialized') return undefined;
+  // Kept, so a test can ask whether a stopped call was called off (cancelled_seen below).
+  if (method === 'notifications/cancelled') {
+    cancelled.push(params?.requestId);
+    return undefined;
+  }
 
   // The rule a real server enforces and a careless client trips over.
   if (!initialised) return fail(id, -32002, 'Not initialised. Send initialize first.');
@@ -95,6 +102,9 @@ function handle(message) {
     const name = params?.name;
     const args = params?.arguments || {};
 
+    // Unlisted, so the counts above stay five: one that never answers, and what was called off.
+    if (name === 'linger') return undefined;
+    if (name === 'cancelled_seen') return ok(id, { content: [{ type: 'text', text: JSON.stringify(cancelled) }] });
     if (name === 'echo') return ok(id, { content: [{ type: 'text', text: `echo: ${args.message}` }] });
     if (name === 'add') return ok(id, { content: [{ type: 'text', text: String(Number(args.a) + Number(args.b)) }] });
     if (name === 'structured') return ok(id, { structuredContent: { rows: [1, 2, 3], note: 'no content list' } });

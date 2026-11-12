@@ -28,7 +28,7 @@ import { projectPrompt } from './projects.js';
 import { freeFallbackFor } from './recommend.js';
 import { compact, shouldCompact, measure, activeTranscript, transcriptTokens } from './compact.js';
 import { promptParts, contextBreakdown } from './contextParts.js';
-import { log, annotate } from './util/trace.js';
+import { log, annotate, currentTrace, withTrace } from './util/trace.js';
 import { mapWithLimit, MAX_PARALLEL_TOOLS } from './util/parallel.js';
 import { validZone } from './util/zone.js';
 import { sandboxConfigured } from './sandbox.js';
@@ -896,6 +896,36 @@ export function withheldRefusal(call) {
 }
 
 /**
+ * Refuse a call to a tool this conversation could not have been given at all (harness audit,
+ * 2026-11-12). `policyRefusal` and `withheldRefusal` each close one way a name the model was
+ * not offered reaches `executeTool`; this closes the rest, as a class rather than an instance:
+ * an MCP tool held back because its description changed since it was approved (registry.js
+ * `screenTools`) still ran when the model named it, and so did a connector's tool with no
+ * connector, or a name a page told the model to use. Only Anthropic refuses unoffered names
+ * itself (GAP-004).
+ *
+ * `callable` is every tool the account may be given this turn — what this step offered, and
+ * whatever `load_tools` could still add — so a deferred tool named directly still runs, as
+ * it always has. Null (no list given) refuses nothing.
+ *
+ * @param {{ id: string, name: string }} call
+ * @param {Set<string> | null} callable
+ */
+export function unofferedRefusal(call, callable) {
+  if (!callable || callable.has(call.name)) return null;
+  return {
+    toolCallId: call.id,
+    name: call.name,
+    content:
+      `"${call.name}" is not one of the tools this conversation has, so it was not run. Use only the tools you were given ` +
+      '(load_tools lists the ones that can be added). If an MCP server\'s tool is missing, it may be held until the user ' +
+      'approves what it now says, in Settings → Extensions.',
+    isError: true,
+    ms: 0,
+  };
+}
+
+/**
  * Tools whose effect lands on somebody other than the person in the chat.
  */
 export const OUTBOUND = new Set(['send_email', 'slack_post', 'telegram_send', 'meta_page_post', 'github_write']);
@@ -1371,7 +1401,7 @@ export function repeatedRead(call, memo, counts) {
   return key ? { key } : null;
 }
 
-async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, policy, sent, origin = null, whereabouts = null, answers, memo = null, counts = {}, withhold = null, googleData = false, guard = null, canSee = true, masking = false, deadline = Infinity, turnId = null, turnOrigin = null }) {
+async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint, onLoadTools, deliverable, callable = null, policy, sent, origin = null, whereabouts = null, answers, memo = null, counts = {}, withhold = null, googleData = false, guard = null, canSee = true, masking = false, deadline = Infinity, turnId = null, turnOrigin = null }) {
   /**
    * One call of the batch. Whether to run at all is decided first and draws
    * nothing: a call that would change nothing is not a step anybody needs to see.
@@ -1383,6 +1413,7 @@ async function runToolCalls({ user, toolCalls, chatId, emit, signal, deviceHint,
       // name it was not offered.
       const refused =
         (withhold?.has(call.name) ? withheldRefusal(call) : null) ||
+        unofferedRefusal(call, callable) ||
         policyRefusal(call, policy) ||
         outboundRefusal(call, policy, sent);
       if (refused) {
@@ -1666,6 +1697,8 @@ export function readTheWeb(messages) {
 // on its own it let a stall on a late step, or the move to Auto after one, run
 // past the function's life.
 const TURN_BUDGET_MS = 270_000;
+/** Less than this left of the turn and no new step starts: a model call and a tool rarely fit in less. */
+const STEP_RESERVE_MS = 45_000;
 
 /**
  * Run one turn of a conversation — the agent loop (below, `runTurn`) — and, when the
@@ -1686,8 +1719,17 @@ export async function runAgent(options) {
     else if (event === 'error') failed = true;
     return options.emit?.(event, data);
   };
+  // What this turn spends on the side (usage.js `record`), kept where every call it makes
+  // can reach it: in the request's own scope when there is one, so its log fields stay as they
+  // are, or in one of its own for a run started outside a request (a task, a hook).
+  const sideSpend = { tokens: 0 };
+  const run = () => runTurn({ ...options, emit, turnId, turnInfo, sideSpend });
   try {
-    return await runTurn({ ...options, emit, turnId, turnInfo });
+    if (currentTrace() && Object.keys(currentTrace()).length) {
+      annotate({ turnSpend: sideSpend });
+      return await run();
+    }
+    return await withTrace({ turnSpend: sideSpend }, run);
   } catch (err) {
     failed = true;
     throw err;
@@ -1709,7 +1751,7 @@ export async function runAgent(options) {
  *   test with no network — see `compact()` and `runParallel` for the same seam.
  *   Defaults to the real `streamCompletion`.
  */
-async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, answers, handoff = false, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion, deadlineAt = Infinity, turnId = null, turnOrigin: originGiven = null, turnInfo = null, runControl = false }) {
+async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, answers, handoff = false, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion, deadlineAt = Infinity, turnId = null, turnOrigin: originGiven = null, turnInfo = null, runControl = false, sideSpend = { tokens: 0 } }) {
   const store = getStore();
   // This turn's deadline on this function, handed to every model call (HAR-015).
   // A group round runs several turns in one function's life, and hands each the time that is left (bots/rounds.js).
@@ -1837,6 +1879,8 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
     turnLimit = turnTokenLimit({ usingSharedKey: true });
   };
   let turnTokens = 0;
+  /** The main loop's tokens and what its sub-agents, research, folds and checks spent beside it. */
+  const spentThisTurn = () => turnTokens + (Number(sideSpend?.tokens) || 0);
   if (!quota.allowed) {
     emit('error', { message: quota.reason, code: 'quota_exceeded' });
     emit('done', { stopReason: 'quota_exceeded' });
@@ -2083,6 +2127,10 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
       }).map((t) => t.name),
     );
 
+  // Every name a call may use this turn: what a step offers, and what load_tools could add
+  // (see `unofferedRefusal`). load_tools itself always, so asking for a tool is never refused.
+  const callable = () => new Set([...loadable(), ...buildTools().map((t) => t.name), 'load_tools']);
+
   /**
    * `priced` says whether the running cost is worth showing at all, and
    * `estimated` whether it is our arithmetic or the provider's own invoice.
@@ -2173,7 +2221,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
 
       await store.markToolCallsStarted(userId, chatId, last.id, run.map((c) => c.id));
       const ran = run.length
-        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: answered, memo: turnReads, counts: turnCounts, withhold, googleData: carriesGoogleData(messages), guard: stepGuard, canSee: entry?.vision !== false, masking, deadline, turnId, turnOrigin })
+        ? await runToolCalls({ user, toolCalls: run, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), callable: callable(), policy, sent, origin, whereabouts, answers: answered, memo: turnReads, counts: turnCounts, withhold, googleData: carriesGoogleData(messages), guard: stepGuard, canSee: entry?.vision !== false, masking, deadline, turnId, turnOrigin })
         : { id: newId(), role: 'tool', results: [] };
 
       // Back into the order the model asked for them, which is the order it will
@@ -2263,8 +2311,20 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
       return;
     }
 
+    /*
+     * Too little of the turn's time left for another step (harness audit, 2026-11-12): stopped
+     * here, between steps, with everything so far saved and a Continue — rather than started,
+     * and killed by the host part way through a model call or a tool, to be found later by
+     * the stale-lease sweep. Never before the first step: a turn always does something.
+     */
+    if (step > 0 && Date.now() >= deadline - STEP_RESERVE_MS) {
+      const stop = budgetStop('time_limit', 'Stopped near the end of the time one reply may take, so nothing was cut off half way. Press Continue to carry on from here.');
+      emit('done', { stopReason: 'time_limit', stop });
+      return;
+    }
+
     // Checked before the next request, not after: the point is not to send it.
-    if (turnLimit && turnTokens >= turnLimit) {
+    if (turnLimit && spentThisTurn() >= turnLimit) {
       /**
        * Said on `done`, not as a passing status line.
        *
@@ -2275,7 +2335,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
        */
       const stop = budgetStop(
         'token_limit',
-        `Stopped after ${turnTokens.toLocaleString()} tokens in this turn. Send a message to continue.`,
+        `Stopped after ${spentThisTurn().toLocaleString()} tokens in this turn. Send a message to continue.`,
       );
       emit('done', { stopReason: 'token_limit', stop });
       return;
@@ -2591,7 +2651,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
         const cut = partCutOff(done, assistant);
         if (!cut || signal?.aborted) break;
         const tokens = (Number(done.usage?.input) || 0) + (Number(done.usage?.output) || 0);
-        if (turnLimit && turnTokens + tokens >= turnLimit) break;
+        if (turnLimit && spentThisTurn() + tokens >= turnLimit) break;
         if (Number(deadline) - Date.now() < MIN_CONTINUATION_MS) break;
         if (done.usage) {
           lastCall = { model: entry.id, usage: done.usage };
@@ -3054,7 +3114,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
     // No answers on this path: a well-formed question pauses above rather than
     // reaching here, so anything named `ask_options` that gets this far is a
     // malformed call on its way to becoming a tool error.
-    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), policy, sent, origin, whereabouts, answers: null, memo: turnReads, counts: turnCounts, withhold, googleData, guard: stepGuard, canSee: entry?.vision !== false, masking, deadline, turnId, turnOrigin });
+    const toolMessage = await runToolCalls({ user, toolCalls: assistant.toolCalls, chatId, emit, signal, deviceHint, onLoadTools: activate, deliverable: loadable(), callable: callable(), policy, sent, origin, whereabouts, answers: null, memo: turnReads, counts: turnCounts, withhold, googleData, guard: stepGuard, canSee: entry?.vision !== false, masking, deadline, turnId, turnOrigin });
     // See the resume path: a superseded run leaves the results to the run that
     // replaced it, rather than writing a second tool message for one turn.
     if (signal?.reason === 'superseded') {

@@ -3312,8 +3312,8 @@ section('Connectors: Claude\'s table and cards, every Google product its own, an
   const { encryptSecret } = await import('../server/crypto.js');
   const me = await getStore().getUserByEmail('ui@test.local');
   const scope = 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify openid email';
-  await getStore().saveConnector(me.id, 'google', encryptSecret(JSON.stringify({ access: 'a', refresh: 'r', exp: Date.now() + 3600e3, scope, off: [] })), 'ui@example.com');
-  await getStore().saveConnector(me.id, 'github', encryptSecret('ghp_ui'), 'ui-octo');
+  await getStore().saveConnector(me.id, 'google', encryptSecret(JSON.stringify({ access: 'a', refresh: 'r', exp: Date.now() + 3600e3, scope, off: [] }), ['connector', me.id, 'google']), 'ui@example.com');
+  await getStore().saveConnector(me.id, 'github', encryptSecret('ghp_ui', ['connector', me.id, 'github']), 'ui-octo');
   await page.evaluate(() => {
     for (const d of document.querySelectorAll('dialog[open]')) d.close();
   });

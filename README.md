@@ -1302,8 +1302,13 @@ aside until it resets while DuckDuckGo and Stack Exchange carry on.
 - **The same search, asked again within ten minutes,** is answered from memory and spends nothing.
 - **Administrators see each service's use** this period in Settings → People → *Free allowances*.
 - Models are not on this list: each account brings its own key (or OpenRouter's free models on its own
-  OpenRouter key), so a model call is never the deployment's bill. `FREE_TIER_ONLY=false` lifts every
-  ceiling for a deployment that pays.
+  OpenRouter key), so a model call is never the deployment's bill. If the deployment sets a shared key
+  (`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`…), it serves **free models only** (1.27.0) — a paid model
+  on it is refused, telling the person to add their own key; Google's key is the exception, its free
+  tier bills nothing. `FREE_TIER_ONLY=false` lifts every ceiling, this one too, for a deployment that pays.
+- **The assistant's email** (`send_email`) reaches at most 40 people a day per account, and for the whole
+  deployment 60 a day on Resend or 300 on Gmail or SMTP — the same mailbox sends every sign-in code, and
+  a provider suspends a mailbox past its daily limit. Not lifted by `FREE_TIER_ONLY`.
 
 ---
 
@@ -2027,7 +2032,8 @@ sealed it, so a key can change without anyone losing what they saved:
    many. Then `npm run secrets:reseal -- --apply --key-id <id>`, with the id Settings → Admin →
    Free tier shows; it refuses any other, so a laptop holding a different key cannot write.
 3. It counts again after writing and ends with "Safe to set ENCRYPTION_REFUSE_V1=true and drop older
-   keys …: yes" or "no" (exit code 1 on "no"). Only on "yes" remove the old key from
+   keys …: yes" or "no" (exit code 1 on "no"; `npm run secrets:reseal -- --check` asks the same
+   without writing, for a script to stop on). Only on "yes" remove the old key from
    `ENCRYPTION_KEY_PREVIOUS` — and, the first time, set `ENCRYPTION_REFUSE_V1=true`.
 
 A value that will not open is never overwritten: it is counted, and either the key that sealed it goes

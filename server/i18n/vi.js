@@ -19,6 +19,8 @@ export const vi = {
   'Stopped after {0} tokens in this turn. Send a message to continue.':
     'Đã dừng sau {0} token trong lượt này. Gửi một tin nhắn để tiếp tục.',
   'Stopped after {0} steps. Send a message to continue.': 'Đã dừng sau {0} bước. Gửi một tin nhắn để tiếp tục.',
+  'Stopped near the end of the time one reply may take, so nothing was cut off half way. Press Continue to carry on from here.':
+    'Đã dừng khi gần hết thời gian cho một câu trả lời, để không có gì bị cắt ngang. Bấm Tiếp tục để làm tiếp từ đây.',
 
   /* ── hỏi người dùng bằng nút bấm ── */
   'ask_options needs at least one question with two or more distinct options. Pass questions: [{ question, options: ["…", "…"] }].':
@@ -411,10 +413,19 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Hãy cho biết địa chỉ cần gửi tới — tài khoản này không có email riêng được lưu.',
   'That is {0} recipients; {1} is the limit for one email.': 'Đó là {0} người nhận; mỗi email tối đa {1} người.',
   'not a sealed value': 'không phải giá trị đã được khoá',
+  'The run was stopped before this tool was called.': 'Lượt chạy đã dừng trước khi gọi công cụ này.',
+  'The run was stopped.': 'Lượt chạy đã dừng.',
+  'The run was stopped while this tool was working.': 'Lượt chạy đã dừng khi công cụ này đang làm việc.',
+  '"{0}" is not one of the tools this account was offered from that server — it may be waiting for approval in Settings → Extensions.':
+    '"{0}" không nằm trong các công cụ tài khoản này được cung cấp từ máy chủ đó — có thể nó đang chờ duyệt trong Cài đặt → Tiện ích mở rộng.',
   'A stored credential needs to know whose it is and what it is for — part of that was missing, so it was not saved.':
     'Thông tin đăng nhập được lưu cần biết nó thuộc về ai và dùng vào việc gì — thiếu một phần, nên chưa được lưu.',
   'The email was NOT sent: the mail provider refused it ({0}). Say so plainly.':
     'Email CHƯA được gửi: dịch vụ gửi thư đã từ chối ({0}).',
+  'The email was NOT sent: this account has written to {0} people by email today, the daily limit. Tell the user it can go tomorrow, or they can send it from their own mail.':
+    'Email CHƯA được gửi: hôm nay tài khoản này đã gửi email tới {0} người, mức tối đa mỗi ngày. Có thể gửi vào ngày mai, hoặc gửi từ hộp thư của chính bạn.',
+  "The email was NOT sent: the app has sent as much email today as it may — its mailbox also sends everyone's sign-in codes. Tell the user it can go tomorrow, or they can send it from their own mail.":
+    'Email CHƯA được gửi: hôm nay ứng dụng đã gửi hết số email được phép — hộp thư này còn gửi mã đăng nhập cho mọi người. Có thể gửi vào ngày mai, hoặc gửi từ hộp thư của chính bạn.',
   'your own account address': 'địa chỉ email tài khoản của bạn',
   'every recipient was refused ({0}): {1}': 'mọi người nhận đều bị từ chối ({0}): {1}',
 

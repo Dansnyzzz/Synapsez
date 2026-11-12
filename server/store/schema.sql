@@ -1412,3 +1412,24 @@ CREATE INDEX IF NOT EXISTS outbox_done_idx ON outbox (created_at) WHERE status <
 -- came back as an empty answer, and "none" on one that needs to think as nonsense.
 ALTER TABLE shared_models ADD COLUMN IF NOT EXISTS efforts TEXT;
 ALTER TABLE shared_models ADD COLUMN IF NOT EXISTS reasoning_mandatory BOOLEAN;
+
+-- ── Schema 49 ────────────────────────────────────────────────────────────────
+-- Row-level security on every table here (harness audit, 2026-11-12). On Supabase the
+-- tables in `public` are what its Data API (PostgREST) serves, and anyone holding the
+-- project's public anon key may call it: with no row-level security, every table could be
+-- read and written that way. Enabled with no policy, nothing reaches a row through those
+-- roles. The app is unaffected: it connects as the tables' owner, which row-level security
+-- does not bind unless forced, and a table it does not own cannot have it switched on (that
+-- one is left alone rather than failing the whole schema). KEEP THIS BLOCK LAST, so a table
+-- added above it is covered from its first deploy.
+DO $$
+DECLARE t record;
+BEGIN
+  FOR t IN SELECT tablename FROM pg_tables WHERE schemaname = current_schema() AND NOT rowsecurity LOOP
+    BEGIN
+      EXECUTE format('ALTER TABLE %I.%I ENABLE ROW LEVEL SECURITY', current_schema(), t.tablename);
+    EXCEPTION WHEN insufficient_privilege THEN
+      NULL;
+    END;
+  END LOOP;
+END $$;

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { waitUntil } from '@vercel/functions';
 import { getStore, isServerless } from './store/index.js';
 import { openSecret, encryptSecret } from './crypto.js';
+import { hookContext } from './secretContexts.js';
 import { consume as consumeLimit } from './ratelimit.js';
 import { log } from './util/trace.js';
 
@@ -38,7 +39,7 @@ export const newRouteId = () => crypto.randomBytes(18).toString('base64url');
  * The secret as stored: bound to its account and its route (crypto.js v2).
  * @param {string} secret @param {{ userId: string, routeId: string }} owner
  */
-export const sealHookSecret = (secret, { userId, routeId }) => encryptSecret(secret, ['hook', userId, routeId]);
+export const sealHookSecret = (secret, { userId, routeId }) => encryptSecret(secret, hookContext(userId, routeId));
 /**
  * The secret back, for a route row — or null when it will not open (a key since rotated
  * away, v1 refused, a copy bound to another account). Never "": an HMAC with an empty key
@@ -46,7 +47,7 @@ export const sealHookSecret = (secret, { userId, routeId }) => encryptSecret(sec
  * such signature through, starting the owner's task (security review, 2026-11-12).
  */
 const hookSecretOf = (route) => {
-  const opened = openSecret(route.secret_enc, ['hook', route.user_id, route.id]);
+  const opened = openSecret(route.secret_enc, hookContext(route.user_id, route.id));
   return opened.state === 'ok' && opened.value ? opened.value : null;
 };
 /** Said when a route's secret will not open: nothing it receives can be checked. */

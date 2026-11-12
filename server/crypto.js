@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import { log } from './util/trace.js';
+import { SECRET_KINDS } from './secretContexts.js';
 
 const scrypt = promisify(crypto.scrypt);
 
@@ -311,10 +312,13 @@ export function contextBytes(context = []) {
  * @param {Array<string|number|null|undefined>} [context] e.g. ['provider-key', userId, provider]
  */
 export function encryptSecret(plaintext, context = []) {
-  // A binding with a part left empty — an owner forgotten — would open for anything sealed
-  // the same way without one (security review, 2026-11-12): refused when sealing, not found later.
+  // A binding with a part left empty — an owner forgotten, or no context at all — would open
+  // for anything sealed the same way without one (security review, 2026-11-12): refused when
+  // sealing, not found later. A known kind, then its owner; only a device pairing, which lives
+  // minutes and has no account yet, is a kind alone (secretContexts.js).
   const parts = Array.isArray(context) ? context : [context];
-  if (parts.length > 1 && parts.slice(1).some((part) => part == null || String(part) === '')) {
+  const kindOnly = parts.length === 1 && parts[0] === 'device-pairing';
+  if (!SECRET_KINDS.includes(String(parts[0])) || (!kindOnly && (parts.length < 2 || parts.slice(1).some((part) => part == null || String(part) === '')))) {
     throw new Error('A stored credential needs to know whose it is and what it is for — part of that was missing, so it was not saved.');
   }
   const key = keyring()[0];

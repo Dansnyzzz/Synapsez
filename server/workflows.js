@@ -153,7 +153,7 @@ const freshState = (steps) =>
  * nobody is here to approve, so the honest answer is that the run needs a
  * person — not that it failed, and certainly not that it finished.
  */
-async function runStep({ user, chatId, runId = null, modelId, instruction, resume = false, runNote = null, policy = null }) {
+async function runStep({ user, chatId, runId = null, modelId, instruction, resume = false, runNote = null, policy = null, deadline = Infinity }) {
   const store = getStore();
 
   if (!resume) {
@@ -198,6 +198,8 @@ async function runStep({ user, chatId, runId = null, modelId, instruction, resum
       user,
       chatId,
       modelId,
+      // The run's end, not a fresh 270 s: a second step in one heartbeat ran past the function.
+      deadlineAt: deadline,
       // What the step may do unwatched: the workflow's own choice where it made
       // one, the account's default otherwise — the same rule as a task's.
       policy,
@@ -512,6 +514,7 @@ export async function advanceRun(run, { deadline = Date.now() + START_BUDGET_MS 
         // it is told to look at what it already did before doing anything.
         resume: resuming,
         runNote: resuming ? `${runNote}\n\n${resumeNote(Number(state[cursor].attempts) || 1)}` : runNote,
+        deadline,
       });
     } finally {
       clearInterval(heartbeat);

@@ -31,6 +31,8 @@ import { buildReport } from './report.js';
 const DEFAULT_CAP = 250_000;
 /** Wall-clock limits for one run: well inside the 300s function on a deployment. */
 const SERVERLESS_TIME_MS = 150_000;
+/** Kept of the turn's time after the research, for the model to read and answer (harness audit, 2026-11-12). */
+const TURN_RESERVE_MS = 25_000;
 const LOCAL_TIME_MS = 600_000;
 /**
  * The share of the clock kept back for the debate: a draft, one critique and
@@ -60,13 +62,14 @@ const ledgerToArray = (ledger) =>
 /**
  * @param {{
  *   question: string, userId?: string, user?: any, chatId?: string|null, signal?: AbortSignal,
+ *   deadline?: number,
  *   deps?: {
  *     store?: any, stream?: any, search?: any, entry?: any, cap?: number, timeMs?: number,
  *     readPage?: (url: string) => Promise<string>,
  *   },
  * }} args
  */
-export async function runDeepResearch({ question, userId, user, chatId, signal, deps = {} }) {
+export async function runDeepResearch({ question, userId, user, chatId, signal, deadline: turnEnds = Infinity, deps = {} }) {
   const store = deps.store || getStore();
   const stream = deps.stream;
   const search = deps.search;
@@ -80,7 +83,8 @@ export async function runDeepResearch({ question, userId, user, chatId, signal, 
    * tick. Past the deadline the debate stops and the report is written from
    * what was gathered, marked as such.
    */
-  const deadline = Date.now() + (deps.timeMs ?? (isServerless() ? SERVERLESS_TIME_MS : LOCAL_TIME_MS));
+  // Its own clock, or the turn's end less a moment to write up — whichever comes first.
+  const deadline = Math.min(Date.now() + (deps.timeMs ?? (isServerless() ? SERVERLESS_TIME_MS : LOCAL_TIME_MS)), Number(turnEnds) - TURN_RESERVE_MS);
   const budget = { spent: 0, cap, tokensIn: 0, tokensOut: 0, deadline };
   const id = crypto.randomUUID();
 
