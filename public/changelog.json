@@ -1,6 +1,36 @@
 {
   "entries": [
     {
+      "version": "1.25.0",
+      "date": "2026-11-12",
+      "new": {
+        "vi": [
+          "Khi dùng Auto, mục \"Câu trả lời này đi đâu\" cho biết model nào thực sự trả lời.",
+          "Công cụ của server MCP bị đổi mô tả hoặc mới xuất hiện sau khi bạn thêm server sẽ bị giữ lại cho tới khi bạn xem và duyệt (Cài đặt → Tiện ích mở rộng)."
+        ],
+        "en": [
+          "With Auto, \"Where this reply went\" names the model that actually answered.",
+          "An MCP server's tools that change their description, or appear, after you added it are held until you look and approve them (Settings → Extensions)."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Mức suy luận chọn theo đúng các mức mỗi model hỗ trợ: Low trả lời nhanh mà vẫn chính xác, Max suy nghĩ nhiều hơn — không còn gửi mức model không nhận."
+        ],
+        "en": [
+          "The reasoning level follows the levels each model supports: Low answers fast and still right, Max thinks more — no model is asked for a level it does not take."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Sau khi đã đọc dữ liệu riêng tư và nội dung từ bên ngoài, việc mở một địa chỉ bạn chưa nêu sẽ hỏi trước. Công cụ tìm kiếm đang lỗi tạm bị đẩy xuống cuối để không làm chậm."
+        ],
+        "en": [
+          "After reading private data and words from outside, opening an address you never named asks first. A search engine that keeps failing is moved to the back for a while so searches are not slowed."
+        ]
+      }
+    },
+    {
       "version": "1.24.0",
       "date": "2026-11-11",
       "new": {

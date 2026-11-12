@@ -1,6 +1,6 @@
 {
   "name": "ai-remote",
-  "version": "1.24.0",
+  "version": "1.25.0",
   "private": true,
   "type": "module",
   "description": "Synapsez — a self-hosted, multi-provider agentic AI workspace you can drive from any device.",
@@ -111,6 +111,8 @@
     "eval": "node test/eval/run.mjs",
     "eval:live": "node test/eval/run.mjs --live",
     "eval:json": "node test/eval/run.mjs --json",
+    "eval:record": "node test/eval/run.mjs --live --record",
+    "eval:replay": "node test/eval/run.mjs --replay",
     "test:webfetch": "node test/webfetch.test.mjs",
     "test:steps": "node test/steps.test.mjs",
     "vendor:pdfjs": "node scripts/vendor-pdfjs.js",
