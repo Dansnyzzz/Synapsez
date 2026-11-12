@@ -95,6 +95,7 @@ import { checkDomain } from './domainCheck.js';
 import { afterTurn, titleShown } from './themes.js';
 import { freeTierReport } from './freeTier.js';
 import { currentKeyId } from './crypto.js';
+import { chainTurn, continueTurn } from './turnContinue.js';
 import { firecrawlAccount } from './firecrawl.js';
 import { SECURITY_HEADERS, HSTS } from './securityHeaders.js';
 import { insightsConfig } from './insights.js';
@@ -619,6 +620,23 @@ export function createApp() {
    * one ran short of time (server/bots/continue.js). The deployment's own secret, as
    * the heartbeat's; answered at once, the segment held open by `waitUntil`.
    */
+  // The next part of a conversation's turn, asked for by the part before it (turnContinue.js).
+  app.post(
+    '/api/internal/turns/continue',
+    requireCron,
+    wrap(async (req, res) => {
+      const userId = String(req.body?.userId || '');
+      const chatId = String(req.body?.chatId || '');
+      const runId = String(req.body?.runId || '');
+      const afterSeq = Number(req.body?.afterSeq);
+      if (!/^[\w-]{1,80}$/.test(userId) || !/^[\w-]{1,80}$/.test(chatId) || !/^[0-9a-f-]{36}$/i.test(runId) || !Number.isFinite(afterSeq)) {
+        return res.status(400).json({ error: 'userId, chatId, runId and afterSeq are needed.' });
+      }
+      waitUntil(continueTurn({ userId, chatId, runId, afterSeq }).catch((err) => log.error('carrying a turn on failed', err, { chatId })));
+      res.status(202).json({ accepted: true });
+    }),
+  );
+
   app.post(
     '/api/internal/bot-rounds/continue',
     requireCron,
@@ -2584,7 +2602,10 @@ export function createApp() {
        * refresh into a failed turn. The two extra checks are the ones that
        * describe a connection the client dropped rather than one we closed.
        */
+      /** The turn stopped for time and said it is carrying on (agent.js, turnContinue.js). */
+      let carryOn = false;
       const emit = (event, data) => {
+        if (event === 'done' && data?.stop?.continuing) carryOn = true;
         if (res.writableEnded || res.destroyed || res.closed) return;
         try {
           res.write(`event: ${event}\ndata: ${JSON.stringify(translateEvent(data, language) ?? {})}\n\n`);
@@ -2652,6 +2673,8 @@ export function createApp() {
           deviceHint: req.body?.deviceHint,
           emit,
           signal: controller.signal,
+          // Near the function's end the turn carries itself on rather than waiting for Continue.
+          canContinue: true,
         });
       } catch (err) {
         log.error('turn failed', err, { ms: since(started) });
@@ -2669,6 +2692,10 @@ export function createApp() {
         await store.releaseChatRun(req.user.id, chatId, runId, runSeq).catch(() => {});
         // Whatever this run had is written, so whatever was waiting on it may go.
         if (controller.signal.reason !== 'superseded') await store.clearRunStop(req.user.id, chatId).catch(() => {});
+        // Stopped for time and carrying on: the browser asks again at once; if it does not
+        // (closed, gone), the next part starts on its own (turnContinue.js) — only now, with
+        // the lease let go, so it can tell a browser that came back from nobody.
+        if (carryOn && !controller.signal.aborted) chainTurn({ userId: req.user.id, chatId, runId, afterSeq: runSeq });
         // Earned in this turn: said on the stream while it is open, so the page wears it at once (owner, 2026-11-08).
         const earned = await afterTurn(req.user).catch((err) => {
           log.error('earned things not looked at after a turn', err);

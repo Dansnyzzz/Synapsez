@@ -1706,6 +1706,25 @@ export function readTheWeb(messages) {
 const TURN_BUDGET_MS = 270_000;
 /** Less than this left of the turn and no new step starts: a model call and a tool rarely fit in less. */
 const STEP_RESERVE_MS = 45_000;
+/** How many times one message's turn carries itself on past a function's time — a guard, about three hours. */
+export const MAX_AUTO_CONTINUES = 40;
+
+/**
+ * The next carry-on of this conversation's turn, counted from the person's last message,
+ * or null past MAX_AUTO_CONTINUES. Kept per conversation in settings, beside resume.js's
+ * own count; a new message starts the count again.
+ *
+ * @param {string} chatId @param {any[]} messages
+ */
+async function nextContinuation(chatId, messages) {
+  const asked = [...messages].reverse().find((m) => m.role === 'user')?.id || '';
+  const key = `continue:${chatId}`;
+  const seen = (await getStore().getSetting(key).catch(() => null)) || {};
+  const count = seen.asked === asked ? (Number(seen.count) || 0) + 1 : 1;
+  if (count > MAX_AUTO_CONTINUES) return null;
+  await getStore().setSetting(key, { asked, count }).catch(() => {});
+  return { count };
+}
 
 /**
  * Run one turn of a conversation — the agent loop (below, `runTurn`) — and, when the
@@ -1758,7 +1777,7 @@ export async function runAgent(options) {
  *   test with no network — see `compact()` and `runParallel` for the same seam.
  *   Defaults to the real `streamCompletion`.
  */
-async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, answers, handoff = false, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion, deadlineAt = Infinity, turnId = null, turnOrigin: originGiven = null, turnInfo = null, runControl = false, sideSpend = { tokens: 0 } }) {
+async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, answers, handoff = false, emit, signal, deviceHint, origin = null, whereabouts = null, policy: policyOverride = null, unattended = false, runNote = null, stream = streamCompletion, deadlineAt = Infinity, turnId = null, turnOrigin: originGiven = null, turnInfo = null, runControl = false, sideSpend = { tokens: 0 }, canContinue = false }) {
   const store = getStore();
   // This turn's deadline on this function, handed to every model call (HAR-015).
   // A group round runs several turns in one function's life, and hands each the time that is left (bots/rounds.js).
@@ -2326,7 +2345,20 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
      * the stale-lease sweep. Never before the first step: a turn always does something.
      */
     if (step > 0 && Date.now() >= deadline - STEP_RESERVE_MS) {
-      const stop = budgetStop('time_limit', 'Stopped near the end of the time one reply may take, so nothing was cut off half way. Press Continue to carry on from here.');
+      // Carried on by itself where the caller can (owner, 2026-11-12: "tự động tiếp tục full
+      // hết", free and paid models alike): the browser asks again at once, and with nobody
+      // watching the server asks itself (turnContinue.js). It still ends where a turn ends —
+      // finished, stopped, out of credit or quota, at the account's step or token limits —
+      // and after MAX_AUTO_CONTINUES carries-on from one message, as a guard against a loop.
+      const carry = canContinue && !signal?.aborted ? await nextContinuation(chatId, messages) : null;
+      const stop = carry
+        ? { ...budgetStop('time_limit', 'Near the end of the time one reply may take — carrying on by itself.'), continuing: true, count: carry.count }
+        : budgetStop(
+            'time_limit',
+            canContinue
+              ? `Carried on ${MAX_AUTO_CONTINUES} times since your message, so it stopped here. Press Continue to carry on.`
+              : 'Stopped near the end of the time one reply may take, so nothing was cut off half way. Press Continue to carry on from here.',
+          );
       emit('done', { stopReason: 'time_limit', stop });
       return;
     }

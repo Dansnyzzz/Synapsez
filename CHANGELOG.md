@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-12 — A long answer carries on by itself (1.28.1)
+
+**A turn that reaches the end of the time one function may run carries on by itself** (owner, 2026-11-12: "tự động tiếp tục full hết", the same for free and paid models). 1.27.0 made such a turn stop cleanly between steps rather than be cut off, with a Continue button — and so ended the browser's own reconnect loop, which used to carry a long turn on without asking. Now the stop says it is carrying on: the browser asks again at once, the same run, nothing to press; with the browser closed, the server asks itself for the next part (`server/turnContinue.js`, the internal route `/api/internal/turns/continue` on `CRON_SECRET`, as group rounds do), waiting a moment first and standing down if a browser has taken the conversation up again — never both. It ends where a turn ends: finished, stopped, out of credit or free quota, at the account's step limit or the shared key's token limit, and after 40 carries-on from one message (about three hours), as a guard against a loop.
+
+**"Waiting for … to start", measured** (2026-11-12, the same model, `deepseek/deepseek-v4.1-flash-1017`, from this machine): OrcaRouter took 3.5–9.8 s to its first token on a short prompt and 8–28 s on a 55,000-token one — and sends nothing, not even its headers, until then; OpenRouter took 0.6–3.4 s and 2.4–2.8 s. The wait is OrcaRouter's, not the app's. OrcaRouter also counted 608 prompt tokens where OpenRouter counted 26 for the same short message, and lists the model at $0.15 / $0.60 per million tokens against OpenRouter's $0.022 / $0.40.
+
 ## 2026-11-12 — Memory that keeps its history, and every piece of your data in reach (1.28.0)
 
 **Memory, after the owner's six-layer model** (schema 50):

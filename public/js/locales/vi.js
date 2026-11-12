@@ -1000,6 +1000,7 @@ export const vi = {
 
   /* ── những gì hiện ra trong lúc một lượt đang chạy ───────────── */
   'status.reconnecting': 'Đang kết nối lại…',
+  'status.carryingOn': 'Đang tự tiếp tục — mỗi lần chạy khoảng bốn phút rưỡi…',
   'status.restarting': 'Đang viết lại câu trả lời đó…',
   'status.continuing': 'Đang viết tiếp…',
   'status.paused': 'Đã tạm dừng sau nhiều lần nối lại.',
