@@ -111,6 +111,33 @@ they are about people, not keys. Their pot grows with the capacity.
 The Gemini key here is only the deployment's search grounding (`search.js` google engine); the
 deployment's model keys already rotate (providers).
 
+## The paid key (owner, 2026-11-12)
+
+"When the whole free allowance is used and the call is charged, take the one key the owner selects
+and bill it in full, so the owner pays the service."
+
+- Per service the owner may mark **one** key — any of its keys, the environment's too — as its
+  **paid key** (radio in the key rows; "none" by default). Stored in `settings` under
+  `service_paid_keys` as `{ [service]: { keyId, capMonthly } }` (`keyId` = a row id or `'env'`).
+- Order of use: the free keys first, by largest share left, each inside its free ceiling. When none
+  has room:
+  - a call that is **charged** — `withKey(service, need, run, { paid: true })`, which spec B passes
+    when a person's plan quota or service balance covers the call — goes to the paid key, past its
+    free ceiling, billed by the provider to the owner's account;
+  - with the ceilings lifted (`FREE_TIER_ONLY=false`) every call may;
+  - any other call stands aside as today. **So nothing is billed before spec B charges people.**
+- `capMonthly` (optional, in the service's unit: mills for Exa/E2B, requests or credits for the
+  rest): the most the paid key may spend past its free ceiling in a month; reached, the paid key
+  stands aside like a spent allowance. Recommended for Brave, which has no cap of its own; the
+  page suggests one when Brave is chosen.
+- Counted apart: `paid:<service>@<keyId>:<month>`, shown on the service row as "paid this month:
+  $1.20 (key …a1b2)" — the figure spec B's real-cost line reads.
+- A paid key that turns `invalid` or `exhausted` (the provider refuses even paid calls, e.g. no
+  card) stands aside and the page shows it in red; nothing else takes its place by itself.
+- The provider must allow going past the free amount on that account (Exa overage, Tavily
+  pay-as-you-go limit, Firecrawl pay-as-you-go on Hobby, Brave's card, E2B's card): the page says
+  this beside the radio. Only the owner can choose or clear it; audited (`service_paid_key_set`).
+
 ## Live figures
 
 `keyPool.liveUsage(service, key)` per service that has one (Tavily `/usage`, Firecrawl
@@ -142,6 +169,8 @@ person's request path.
   most 20 attempts an hour.
 - `DELETE /api/admin/service-keys/:id` — owner only; audited (`service_key_removed`).
 - `POST /api/admin/service-keys/:id/check` — owner only; re-runs the check, clears `invalid`.
+- `PUT /api/admin/service-keys/paid` `{ service, keyId: string|null, capMonthly?: number|null }` —
+  owner only; chooses or clears a service's paid key; audited.
 
 ## Security
 
@@ -177,7 +206,9 @@ person's request path.
 - `test/key-pool.test.mjs`: pick by largest share; capacity = sum; add/remove changes it without a
   restart; each failure class → its state and the next key; cooling expires; exhausted until period
   end; legacy env bucket kept; Firecrawl shares of the summed capacity; E2B sticky key; duplicate
-  fingerprint refused; 6th key refused; hint only in every response and log line.
+  fingerprint refused; 6th key refused; hint only in every response and log line; the paid key is
+  used only after every free key is full and only for `paid: true` (or ceilings off), stops at its
+  monthly cap, is counted under `paid:`, and is never used for an unpaid call.
 - `test/database.test.mjs`: schema 52 table, RLS, cascade of `added_by`.
 - `test/secrets-reseal.test.mjs`: the new kind is resealed.
 - Route tests: owner-only, validation failure message, audit rows.
