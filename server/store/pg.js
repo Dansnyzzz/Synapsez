@@ -6044,6 +6044,14 @@ export function createPgStore(connectionString) {
       await q('UPDATE screens SET frame = NULL, meta = $2 WHERE user_id = $1', [userId, '{}']);
     },
 
+    /**
+     * A statement as given, for the code that works below the store's methods — the
+     * credential reseal and the cutover (secretsReseal.js, secretsCutover.js). Never from a
+     * route: everything a request does goes through a method that scopes it to its account.
+     */
+    async rawQuery(text, params = []) {
+      return q(text, params);
+    },
     // ── throttling ──────────────────────────────────────────────────
     /**
      * Count one attempt against a bucket and say whether it is over the line.

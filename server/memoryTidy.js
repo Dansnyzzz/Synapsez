@@ -4,7 +4,7 @@ import { streamCompletion } from './providers/index.js';
 import { priceTurn } from './providers/catalog.js';
 import { record as recordUsage } from './usage.js';
 import { resolveForUser, AUTO_ID } from './autoPick.js';
-import { getPrefs } from './settings.js';
+import { getPrefs, providerPrivacyFor, maskPersonalFor } from './settings.js';
 import { redactSecrets } from './redact.js';
 import { log } from './util/trace.js';
 import { MEMORY_KEY, MAX_NOTE_CHARS, currentNotes, kindOf, memoryRefusal, removedNote, stampNote } from './memory.js';
@@ -132,7 +132,7 @@ export function checkProposal(p, byId, allowed) {
  * never changes a note.
  *
  * @param {{ userId: string, stream?: typeof streamCompletion, resolve?: typeof resolveForUser, now?: Date }} options
- * @returns {Promise<{ status: 'off' | 'memory_off' | 'too_few' | 'no_model' | 'proposed' | 'failed', proposals?: number, held?: number }>}
+ * @returns {Promise<{ status: 'off' | 'memory_off' | 'too_few' | 'no_model' | 'privacy' | 'proposed' | 'failed', proposals?: number, held?: number }>}
  */
 export async function proposeTidy({ userId, stream = streamCompletion, resolve = resolveForUser, now = new Date() }) {
   try {
@@ -147,6 +147,17 @@ export async function proposeTidy({ userId, stream = streamCompletion, resolve =
     if (listed.length < 2) return { status: 'too_few', held };
     const entry = await resolve(userId, AUTO_ID);
     if (!entry) return { status: 'no_model' };
+    /*
+     * What the person chose not to share is not shared (owner, 2026-11-12). Strict provider
+     * privacy — "only providers that neither keep nor train on what is sent" — is enforced on
+     * OpenRouter's routing alone (providers/index.js), so a tidy for a strict account goes
+     * only that way, and asks for it outright: a model with no such endpoint refuses, and
+     * the tidy does not run. Hiding personal details, when switched on, applies here as on
+     * every call. Notes saved from Google data are never in the list at all (`readable`).
+     */
+    const privacy = await providerPrivacyFor(userId);
+    if (privacy === 'strict' && entry.provider !== 'openrouter') return { status: 'privacy' };
+    const maskPersonal = await maskPersonalFor(userId);
     const [projects, archived] = await Promise.all([store.listProjects(userId), store.listProjects(userId, { archived: true })]);
     const names = new Map([...projects, ...archived].map((p) => [p.id, p.name]));
     const place = (bucket) => (bucket === MEMORY_KEY ? 'everywhere' : `project "${names.get(bucket.slice(MEMORY_KEY.length + 1)) || 'deleted'}"`);
@@ -154,7 +165,7 @@ export async function proposeTidy({ userId, stream = streamCompletion, resolve =
 
     let said = '';
     let spent = null;
-    for await (const ev of stream({ userId, entry, system: SYSTEM, messages: [{ id: 'tidy', role: 'user', text: `<notes>\n${lines.join('\n')}\n</notes>` }], tools: [], effort: 'low', maxTokens: 1500, signal: AbortSignal.timeout(40_000) })) {
+    for await (const ev of stream({ userId, entry, system: SYSTEM, messages: [{ id: 'tidy', role: 'user', text: `<notes>\n${lines.join('\n')}\n</notes>` }], tools: [], effort: 'low', maxTokens: 1500, signal: AbortSignal.timeout(40_000), privacy, maskPersonal })) {
       if (ev.type === 'text') said += ev.delta ?? '';
       else if (ev.type === 'done') spent = ev.usage || null;
     }

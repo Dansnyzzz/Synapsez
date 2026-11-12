@@ -23,6 +23,9 @@ export const vi = {
   'Carried on {0} times since your message, so it stopped here. Press Continue to carry on.':
     'Đã tự tiếp tục {0} lần kể từ tin nhắn của bạn, nên dừng ở đây. Bấm Tiếp tục để làm tiếp.',
   'userId, chatId, runId and afterSeq are needed.': 'Cần userId, chatId, runId và afterSeq.',
+  'Only the owner of this deployment can change how stored credentials are opened.':
+    'Chỉ chủ sở hữu bản triển khai này mới đổi được cách mở thông tin đăng nhập đã lưu.',
+  'Say on: true or on: false.': 'Hãy gửi on: true hoặc on: false.',
   'Stopped near the end of the time one reply may take, so nothing was cut off half way. Press Continue to carry on from here.':
     'Đã dừng khi gần hết thời gian cho một câu trả lời, để không có gì bị cắt ngang. Bấm Tiếp tục để làm tiếp từ đây.',
 

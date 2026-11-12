@@ -17,6 +17,7 @@ import { untrusted } from './tools/untrusted.js';
 import { keepNewest, sweepChatLimit } from './chatLimit.js';
 import { waitUntil } from '@vercel/functions';
 import { tidyDueAccounts } from './memoryTidy.js';
+import { cutoverStep } from './secretsCutover.js';
 
 /**
  * Work that happens without anyone watching.
@@ -949,6 +950,8 @@ export async function sweep() {
     store.pruneMemoryHistory(),
     // The monthly tidy some accounts asked for: proposals only, never a change (memoryTidy.js).
     tidyNotes(),
+    // The move off the v1 envelope, a count at most hourly (owner, 2026-11-12; secretsCutover.js).
+    cutoverStep().catch((err) => log.error('the secrets cutover step failed', err)),
     // Sign-ins a week after they could last be used — expired or signed out.
     store.pruneSessions(),
     // After retention has run, so a conversation it deletes takes its copy in

@@ -96,6 +96,7 @@ import { afterTurn, titleShown } from './themes.js';
 import { freeTierReport } from './freeTier.js';
 import { currentKeyId } from './crypto.js';
 import { chainTurn, continueTurn } from './turnContinue.js';
+import { refreshSecretPolicy, cutoverStatus, setRefuseV1 } from './secretsCutover.js';
 import { firecrawlAccount } from './firecrawl.js';
 import { SECURITY_HEADERS, HSTS } from './securityHeaders.js';
 import { insightsConfig } from './insights.js';
@@ -308,6 +309,7 @@ export function createApp() {
   const outside = (handler) => (req, res, next) =>
     Promise.resolve()
       .then(() => initStore())
+      .then(() => refreshSecretPolicy())
       .then(() => handler(req, res))
       .catch(next);
   app.post(
@@ -416,6 +418,9 @@ export function createApp() {
   // may be a cold one, so this cannot happen once at startup.
   app.use(wrap(async (req, res, next) => {
     await initStore();
+    // Whether v1-sealed credentials are still opened — the deployment's own word, kept in
+    // its database (secretsCutover.js); read again at most every ten minutes.
+    await refreshSecretPolicy();
     next();
   }));
 
@@ -2767,6 +2772,18 @@ export function createApp() {
     }),
   );
 
+  // The owner's word on the v1 envelope: refuse it, or let it in again (secretsCutover.js).
+  admin.post(
+    '/secrets/refuse-v1',
+    wrap(async (req, res) => {
+      if (!isOwner(req.user)) return res.status(403).json({ error: 'Only the owner of this deployment can change how stored credentials are opened.' });
+      if (typeof req.body?.on !== 'boolean') return res.status(400).json({ error: 'Say on: true or on: false.' });
+      const value = await setRefuseV1(req.body.on);
+      await audit(req, req.user.id, 'secrets_policy_changed', { refuseV1: value.on });
+      res.json({ refuseV1: value, secrets: await cutoverStatus() });
+    }),
+  );
+
   // How much of each free allowance this deployment has used this period (freeTier.js).
   admin.get(
     '/free-tier',
@@ -2781,7 +2798,9 @@ export function createApp() {
       } catch {
         /* no key here is said by the startup check */
       }
-      res.json({ ...(await freeTierReport()), firecrawl: await firecrawlAccount().catch(() => null), encryptionKeyId });
+      // And where the move off the v1 envelope is (secretsCutover.js) — counts only.
+      const secrets = await cutoverStatus().catch(() => null);
+      res.json({ ...(await freeTierReport()), firecrawl: await firecrawlAccount().catch(() => null), encryptionKeyId, secrets, owner: isOwner(req.user) });
     }),
   );
 

@@ -151,6 +151,8 @@ export const api = {
   answerFeedback: (body) => request('POST', '/api/feedback/answer', body),
   // The deployment's free allowances this period (server/freeTier.js).
   freeTier: () => request('GET', '/api/admin/free-tier'),
+  // The owner refusing the v1 credential envelope, or letting it in again (secretsCutover.js).
+  secretsPolicy: (on) => request('POST', '/api/admin/secrets/refuse-v1', { on }),
   feedbackTranscript: (id) => request('GET', `/api/admin/feedback/${encodeURIComponent(id)}/transcript`),
   markFeedbackRead: (id) => request('PUT', `/api/admin/feedback/${encodeURIComponent(id)}/read`),
   deleteFeedback: (id) => request('DELETE', `/api/admin/feedback/${encodeURIComponent(id)}`),

@@ -2100,6 +2100,12 @@ sealed it, so a key can change without anyone losing what they saved:
    without writing, for a script to stop on). Only on "yes" remove the old key from
    `ENCRYPTION_KEY_PREVIOUS` — and, the first time, set `ENCRYPTION_REFUSE_V1=true`.
 
+**The deployment does steps 2 and 3 itself** (1.28.2, `server/secretsCutover.js`): its sweep seals
+everything again under the key that seals now, counts at most hourly, and refuses v1 once two counts an
+hour apart are clean — a flag in the database, no variable to set. Settings → Admin → Free tier shows
+where it stands; the owner can let v1 in again there. The command above is for doing it by hand, or
+from a laptop, after a rotation.
+
 A value that will not open is never overwritten: it is counted, and either the key that sealed it goes
 back into `ENCRYPTION_KEY_PREVIOUS` or the person enters it again. **No going back below 1.26.0**
 once it has written anything: 1.25.0 reads every v2 value as "not configured" (keys, two-step codes,

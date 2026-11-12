@@ -1,6 +1,18 @@
 {
   "entries": [
     {
+      "version": "1.28.2",
+      "date": "2026-11-12",
+      "improved": {
+        "vi": [
+          "Dọn ghi chú hằng tháng theo đúng lựa chọn chia sẻ của bạn: ở quyền riêng tư Nghiêm ngặt, ghi chú chỉ tới nhà cung cấp không lưu và không huấn luyện — không có thì không gửi. Khoá cũ của thông tin đăng nhập đã lưu được hệ thống tự chuyển sang định dạng mới."
+        ],
+        "en": [
+          "The monthly tidy keeps to your sharing choice: with strict provider privacy, notes go only to providers that neither keep nor train on them — or not at all. Stored credentials are moved off the old envelope by the app itself."
+        ]
+      }
+    },
+    {
       "version": "1.28.1",
       "date": "2026-11-12",
       "improved": {
