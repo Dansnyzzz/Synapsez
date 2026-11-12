@@ -127,5 +127,24 @@ section('security review, 2026-11-12: nothing counted fine that is not, and a cu
   check('  and both keys still open as before', decryptSecret(written.openrouter[0].cipher, ['provider-key', user.id, 'openrouter']) === 'sk-or-v1-raced' && decryptSecret(written.openrouter[1].cipher, ['provider-key', user.id, 'openrouter']) === 'sk-or-v1-second-key');
 }
 
+section('a deployment service key is sealed per service and row, and reseals with the rest (schema 52)');
+{
+  const { serviceKeyContext } = await import('../server/secretContexts.js');
+  const { encryptSecret } = await import('../server/crypto.js');
+  const was = process.env.ENCRYPTION_KEY;
+  process.env.ENCRYPTION_KEY = 'reseal-test-encryption-key-three-for-service-keys';
+  const sealed = encryptSecret('tvly-service-key', serviceKeyContext('tavily', 'sk-r'));
+  await store.addServiceKey({ id: 'sk-r', service: 'tavily', sealed, fingerprint: 'fp-r', hint: '-key', label: null, ceiling: null, addedBy: null });
+  process.env.ENCRYPTION_KEY_PREVIOUS = process.env.ENCRYPTION_KEY;
+  process.env.ENCRYPTION_KEY = was;
+  const due = await resealSecrets(query);
+  check('a key sealed under the previous key is found under its own kind, due a reseal', due['service-key']?.resealed === 1 && due['service-key'].unopenable === 0, JSON.stringify(due['service-key']));
+  const applied = await resealSecrets(query, { apply: true });
+  delete process.env.ENCRYPTION_KEY_PREVIOUS;
+  const stored = (await query("SELECT sealed FROM service_keys WHERE id = 'sk-r'"))[0].sealed;
+  check('  written, now under the current key', applied['service-key']?.written === 1 && secretVersion(stored).keyId === currentKeyId(), JSON.stringify(applied['service-key']));
+  check('  and it opens with its service and row, and with no other', decryptSecret(stored, serviceKeyContext('tavily', 'sk-r')) === 'tvly-service-key' && decryptSecret(stored, serviceKeyContext('brave', 'sk-r')) === '' && decryptSecret(stored, serviceKeyContext('tavily', 'sk-other')) === '');
+}
+
 console.log(failures ? `\n\x1b[31m${failures} failed\x1b[0m` : '\n\x1b[32mall passed\x1b[0m');
 process.exit(failures ? 1 : 0);

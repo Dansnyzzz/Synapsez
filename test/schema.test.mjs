@@ -264,7 +264,8 @@ section('schema.sql and SCHEMA_VERSION move together');
   // 43: bots.hue, scheduled_tasks.bot_id, and incognito chats with a bot left out of one-chat-per-bot.
   // 49: row-level security on every table (harness audit). 50: bot_memory history and provenance.
   // 51: skills.previous — a skill's words before the assistant last changed them.
-  const STAMPED = { version: 51, fingerprint: '39024acdb9dfc156' };
+  // 52: service_keys — several keys per deployment service.
+  const STAMPED = { version: 52, fingerprint: '3d0053574e6b680c' };
 
   check(
     'the recorded version matches the code',
@@ -372,6 +373,18 @@ section('the team features reach a database from 45; its bot chats count as read
   const fresh = await upgraded.botChat('u-team', { botId: later.id, title: 'Scout' });
   await upgraded.appendMessage('u-team', fresh.id, { id: 'm-team-3', role: 'assistant', text: 'Ready.' });
   check('  one made after starts unread', (await upgraded.botPreviews('u-team')).find((p) => p.chat_id === fresh.id)?.unread === true);
+}
+
+section('service keys reach a database from 51 (schema 52)');
+{
+  await driver.query('DROP TABLE IF EXISTS service_keys');
+  await driver.query(`UPDATE settings SET value = '51'::jsonb WHERE key = 'schema_version'`);
+  check('the table really is gone first', !(await tableExists('service_keys')), 'otherwise this proves nothing');
+  const upgraded = createPgStore(driver);
+  await upgraded.init();
+  check('opening it adds the table', (await tableExists('service_keys')) && (await columnExists('service_keys', 'fingerprint')));
+  await upgraded.addServiceKey({ id: 'sk-1', service: 'exa', sealed: 'v2.x', fingerprint: 'f', hint: 'abcd', label: null, ceiling: null, addedBy: null });
+  check('  and it takes a key', (await upgraded.listServiceKeys('exa')).length === 1);
 }
 
 section('and the stamp is what decides');

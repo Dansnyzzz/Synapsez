@@ -267,8 +267,9 @@ export function splitStatements(sql) {
  *      chat_id / message_seq / outside_from — a bot's memory keeps the versions a bot
  *      or a review replaced, and where each was saved (server/bots/memory.js)
  *  51  skills.previous — the words before the assistant last changed a skill, to restore
+ *  52  service_keys — several keys per deployment service (keyPool.js)
  */
-export const SCHEMA_VERSION = 51;
+export const SCHEMA_VERSION = 52;
 
 /** How long a forgotten bot memory entry waits for Undo before it is deleted for good. */
 export const FORGOTTEN_KEEP_MS = 10 * 60_000;
@@ -5355,6 +5356,34 @@ export function createPgStore(connectionString) {
     },
     async listHookReceipts(userId, routeId, limit = 20) {
       return q('SELECT delivery_id, status, reason, at FROM hook_receipts WHERE user_id = $1 AND route_id = $2 ORDER BY at DESC LIMIT $3', [userId, String(routeId ?? ''), limit]);
+    },
+
+    /** The keys the owner added to deployment services (schema 52), oldest first; one service's, or all. Bounded: at most four per service. */
+    async listServiceKeys(service = null) {
+      if (service) return q('SELECT * FROM service_keys WHERE service = $1 ORDER BY added_at, id LIMIT 50', [String(service)]);
+      return q('SELECT * FROM service_keys ORDER BY service, added_at, id LIMIT 500');
+    },
+    /** Stores one; the same key twice in a service is refused with code 'duplicate' (the unique index decides, so two tabs cannot both add it). */
+    async addServiceKey({ id, service, sealed, fingerprint, hint, label = null, ceiling = null, addedBy = null }) {
+      const rows = await q(
+        `INSERT INTO service_keys (id, service, sealed, fingerprint, hint, label, ceiling, added_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (service, fingerprint) DO NOTHING RETURNING *`,
+        [id, service, sealed, fingerprint, hint, label, ceiling, addedBy],
+      );
+      if (!rows[0]) throw Object.assign(new Error('That key is already in this service.'), { code: 'duplicate' });
+      return rows[0];
+    },
+    async deleteServiceKey(id) {
+      return (await q('DELETE FROM service_keys WHERE id = $1 RETURNING id', [String(id)])).length > 0;
+    },
+    /** What a key last did: ok, cooling (until `retryAt`), exhausted or invalid, and the error that said so. */
+    async setServiceKeyState(id, { state, retryAt = null, lastError = null }) {
+      await q('UPDATE service_keys SET state = $2, state_at = NOW(), retry_at = $3, last_error = $4 WHERE id = $1', [String(id), state, retryAt, lastError ? String(lastError).slice(0, 300) : null]);
+    },
+    /** The provider's own count of what is left, as last read for the admin page. */
+    async setServiceKeyLive(id, live) {
+      await q('UPDATE service_keys SET live = $2::jsonb WHERE id = $1', [String(id), live == null ? null : toJson(live)]);
     },
 
     /** A wait a bot parks until its next run (spec C.2): refused (null) past `max` open ones, or for a bot not this account's. */

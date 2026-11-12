@@ -19,9 +19,10 @@
  *   user_settings cloudBrowser.key          cloudBrowserContext (secretContexts.js)
  *   user_settings mcpBridge.key             mcpBridgeContext
  *   mcp_servers.config headersCipher/envCipher mcpConfigContext
+ *   service_keys.sealed                     ['service-key', service, id]
  */
 import { openSecret, encryptSecret, needsReseal, secretVersion } from './crypto.js';
-import { cloudBrowserContext, mcpBridgeContext, mcpConfigContext, totpContext, connectorContext, hookContext, providerKeyContext } from './secretContexts.js';
+import { cloudBrowserContext, mcpBridgeContext, mcpConfigContext, totpContext, connectorContext, hookContext, providerKeyContext, serviceKeyContext } from './secretContexts.js';
 
 /**
  * Each table that holds credentials: its rows that may, whose they are, the sealed values in
@@ -90,6 +91,13 @@ const SEALED = {
         .map(([what, field]) => ({ kind: 'mcp-config', value: config[field], context: (user) => mcpConfigContext(user, what, config), put: (sealed) => { config[field] = sealed; } }));
     },
     update: (row, was) => ['UPDATE mcp_servers SET config = $2::jsonb WHERE id = $1 AND config = $3::jsonb RETURNING id', [row.id, JSON.stringify(row.config), JSON.stringify(was.config)]],
+  },
+  // The deployment's own keys belong to no account: no owner, so db:copy never re-binds them.
+  service_keys: {
+    select: 'SELECT id, service, sealed FROM service_keys',
+    owner: () => '',
+    fields: (row) => (row.sealed ? [{ kind: 'service-key', value: row.sealed, context: () => serviceKeyContext(row.service, row.id), put: (sealed) => { row.sealed = sealed; } }] : []),
+    update: (row, was) => ['UPDATE service_keys SET sealed = $2 WHERE id = $1 AND sealed = $3 RETURNING id', [row.id, row.sealed, was.sealed]],
   },
 };
 
