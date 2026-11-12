@@ -582,7 +582,7 @@ async function verifySecondFactor(user, code) {
   const clean = String(code || '').trim().toUpperCase();
 
   if (/^\d{6}$/.test(clean)) {
-    const step = matchingTotpStep(decryptSecret(user.totp_secret), clean);
+    const step = matchingTotpStep(decryptSecret(user.totp_secret, ['totp', user.id]), clean);
     if (step == null) return false;
     return getStore().consumeTotpStep(user.id, step);
   }
@@ -600,7 +600,7 @@ async function verifySecondFactor(user, code) {
  */
 export async function beginTotpSetup(user) {
   const secret = totpSecret();
-  await getStore().setTotpSecret(user.id, encryptSecret(secret));
+  await getStore().setTotpSecret(user.id, encryptSecret(secret, ['totp', user.id]));
 
   const uri = totpUri({ secret, email: user.email });
   const { toString: renderQr } = await import('qrcode');
@@ -612,7 +612,7 @@ export async function beginTotpSetup(user) {
 /** Finish enrolment. Returns the recovery codes — shown once, stored hashed. */
 export async function confirmTotpSetup(user, code) {
   if (!user.totp_secret) throw new Error('Start the setup again — no pending secret was found.');
-  if (!verifyTotp(decryptSecret(user.totp_secret), code)) {
+  if (!verifyTotp(decryptSecret(user.totp_secret, ['totp', user.id]), code)) {
     throw new Error('That code is not right. Check your authenticator app and try again.');
   }
 

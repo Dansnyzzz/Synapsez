@@ -179,14 +179,14 @@ export async function startBridge(machine, { signal } = {}) {
 async function readBridge(userId) {
   const value = await getStore().getUserSetting(userId, SETTING);
   if (!value || typeof value !== 'object' || !value.url || !value.key) return null;
-  const key = decryptSecret(value.key);
+  const key = decryptSecret(value.key, ['mcp-bridge', userId]);
   return key ? { ...value, key } : null;
 }
 
 async function saveBridge(userId, conn) {
   // The key drives programs on the account's machine, so it is sealed like a
   // provider key — a database dump alone does not hand it over.
-  await getStore().setUserSetting(userId, SETTING, { ...conn, key: encryptSecret(conn.key) });
+  await getStore().setUserSetting(userId, SETTING, { ...conn, key: encryptSecret(conn.key, ['mcp-bridge', userId]) });
 }
 
 /** Starts in progress on this instance, by account, so parallel calls share one. */

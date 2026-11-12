@@ -658,7 +658,7 @@ section('a server added once is ready for the next account, offered without star
     let offered;
     try {
       probe = await registry.probeMcpServer(config, { userId: user.id });
-      await store.saveMcpServer(user.id, { id: 'mcp-cloud-row', name: 'stub', config: registry.sealConfig({ ...config, tools: probe.keep }), enabled: true });
+      await store.saveMcpServer(user.id, { id: 'mcp-cloud-row', name: 'stub', config: registry.sealConfig({ ...config, tools: probe.keep }, { userId: user.id }), enabled: true });
       offered = await registry.mcpTools(user.id);
     } finally {
       globalThis.fetch = realFetch;
@@ -669,7 +669,7 @@ section('a server added once is ready for the next account, offered without star
     check('  and neither started a machine nor asked one anything', requests === 0, `${requests} requests`);
 
     // The first call is what starts it — here the account's bridge is the local one above.
-    await store.setUserSetting(user.id, cloud.__testing.SETTING, { url: conn.url, key: encryptSecret(conn.key), build: cloud.__testing.bridgeSource().build });
+    await store.setUserSetting(user.id, cloud.__testing.SETTING, { url: conn.url, key: encryptSecret(conn.key, ['mcp-bridge', user.id]), build: cloud.__testing.bridgeSource().build });
     const result = await registry.callMcpTool(user.id, 'mcp__stub__echo', { message: 'lần đầu' }, 30_000);
     check('the first call starts it on the account\'s own computer, and it answers', result.text === 'echo: lần đầu', result.text);
 
@@ -677,7 +677,7 @@ section('a server added once is ready for the next account, offered without star
     // brings back must not bring back a server removed meanwhile, nor switch one
     // back on that was switched off.
     const whileConnecting = async (rowId, name, meanwhile) => {
-      await store.saveMcpServer(user.id, { id: rowId, name, config: registry.sealConfig({ ...config, tools: probe.keep.slice(0, 1) }), enabled: true });
+      await store.saveMcpServer(user.id, { id: rowId, name, config: registry.sealConfig({ ...config, tools: probe.keep.slice(0, 1) }, { userId: user.id }), enabled: true });
       registry.forgetMcp(user.id);
       const plainFetch = globalThis.fetch;
       let pending = true;
@@ -779,7 +779,7 @@ section('a server added once is ready for the next account, offered without star
       await new Promise((r) => lossy.listen(lossyPort, '127.0.0.1', r));
       try {
         const lossyKey = 'lossy-bridge-key'.padEnd(32, 'k');
-        await store.setUserSetting(memberRow.id, cloud.__testing.SETTING, { url: `http://127.0.0.1:${lossyPort}`, key: encryptSecret(lossyKey), build: cloud.__testing.bridgeSource().build });
+        await store.setUserSetting(memberRow.id, cloud.__testing.SETTING, { url: `http://127.0.0.1:${lossyPort}`, key: encryptSecret(lossyKey, ['mcp-bridge', memberRow.id]), build: cloud.__testing.bridgeSource().build });
         const transport = cloud.cloudTransport({ command: process.execPath, args: [STUB] }, { userId: memberRow.id });
         let lost = '';
         await transport.request('tools/call', { name: 'echo', arguments: { message: 'once' } }, 5000).catch((err) => (lost = err.message));
@@ -802,7 +802,7 @@ section('a server added once is ready for the next account, offered without star
       await new Promise((r) => huge.listen(hugePort, '127.0.0.1', r));
       try {
         const hugeKey = 'huge-bridge-key'.padEnd(32, 'k');
-        await store.setUserSetting(memberRow.id, cloud.__testing.SETTING, { url: `http://127.0.0.1:${hugePort}`, key: encryptSecret(hugeKey), build: cloud.__testing.bridgeSource().build });
+        await store.setUserSetting(memberRow.id, cloud.__testing.SETTING, { url: `http://127.0.0.1:${hugePort}`, key: encryptSecret(hugeKey, ['mcp-bridge', memberRow.id]), build: cloud.__testing.bridgeSource().build });
         const transport = cloud.cloudTransport({ command: process.execPath, args: [STUB] }, { userId: memberRow.id });
         let told = '';
         await transport.request('tools/call', { name: 'echo', arguments: { message: 'big' } }, 10_000).catch((err) => (told = err.message));
@@ -832,7 +832,7 @@ section('a server that changes its tools after it was approved: the changes wait
   await store.saveMcpServer(user.id, {
     id: 'srv-rug',
     name: 'Rug Server',
-    config: sealConfig({ transport: 'stdio', command: process.execPath, args: [STUB], env: { MCP_STUB_MODE_FILE: modeFile } }),
+    config: sealConfig({ transport: 'stdio', command: process.execPath, args: [STUB], env: { MCP_STUB_MODE_FILE: modeFile } }, { userId: user.id }),
     enabled: true,
   });
   try {

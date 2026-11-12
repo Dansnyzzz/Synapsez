@@ -34,8 +34,13 @@ export const HOOK_PER_DAY = 500;
 export const newHookSecret = () => `whsec_${crypto.randomBytes(24).toString('base64url')}`;
 /** A new route id: the URL's last part. */
 export const newRouteId = () => crypto.randomBytes(18).toString('base64url');
-/** The secret as stored. */
-export const sealHookSecret = (secret) => encryptSecret(secret);
+/**
+ * The secret as stored: bound to its account and its route (crypto.js v2).
+ * @param {string} secret @param {{ userId: string, routeId: string }} owner
+ */
+export const sealHookSecret = (secret, { userId, routeId }) => encryptSecret(secret, ['hook', userId, routeId]);
+/** The secret back, for a route row. */
+const hookSecretOf = (route) => decryptSecret(route.secret_enc, ['hook', route.user_id, route.id]);
 
 /**
  * The signature a sender puts in `X-Synapsez-Signature`: HMAC-SHA256 with the secret over
@@ -137,7 +142,7 @@ export async function acceptHook({ routeId, raw, headers, req = null, now = Date
   if (body.length > HOOK_BODY_MAX) return { status: 413, body: { error: 'A hook body is at most 64 KB.' } };
   let secret;
   try {
-    secret = decryptSecret(route.secret_enc);
+    secret = hookSecretOf(route);
   } catch {
     return { status: 500, body: { error: 'This hook cannot be checked. Rotate its secret.' } };
   }
@@ -197,6 +202,6 @@ export async function sendTestHook({ userId, taskId, start = startHookRun }) {
   const body = Buffer.from(JSON.stringify({ type: 'test', occurredAt: new Date().toISOString(), data: { test: true, note: 'A test sent from Synapsez.' } }));
   const timestamp = String(Math.floor(Date.now() / 1000));
   const delivery = `test-${crypto.randomUUID()}`;
-  const signature = signHook(decryptSecret(route.secret_enc), { timestamp, delivery, body });
+  const signature = signHook(hookSecretOf(route), { timestamp, delivery, body });
   return acceptHook({ routeId: route.id, raw: body, headers: { 'x-synapsez-timestamp': timestamp, 'x-synapsez-delivery': delivery, 'x-synapsez-signature': signature }, start });
 }

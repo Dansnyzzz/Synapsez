@@ -312,7 +312,8 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
         const task = await store.createTask(req.user.id, { id: crypto.randomUUID(), title, prompt, model: null, cron: null, nextRunAt: null, tz, botId: bot.id, trigger: 'hook' });
         if (!task) return res.status(404).json({ error: 'No such bot.' });
         const secret = newHookSecret();
-        const route = await store.createHookRoute(req.user.id, { id: newRouteId(), taskId: task.id, secretEnc: sealHookSecret(secret) });
+        const routeId = newRouteId();
+        const route = await store.createHookRoute(req.user.id, { id: routeId, taskId: task.id, secretEnc: sealHookSecret(secret, { userId: req.user.id, routeId }) });
         // Shown this once; only its encrypted form is kept.
         return res.status(201).json({ task, hook: { url: hookUrl(req, route.id), secret } });
       }
@@ -373,7 +374,7 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
       const route = await hookOf(req, res);
       if (!route) return;
       const secret = newHookSecret();
-      await getStore().rotateHookRoute(req.user.id, route.task_id, sealHookSecret(secret));
+      await getStore().rotateHookRoute(req.user.id, route.task_id, sealHookSecret(secret, { userId: req.user.id, routeId: route.id }));
       res.json({ url: hookUrl(req, route.id), secret });
     }),
   );

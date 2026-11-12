@@ -84,7 +84,7 @@ class Permanent extends Error {}
 async function telegramToken(userId) {
   const row = await getStore().getConnector(userId, 'telegram');
   if (!row) throw new Permanent('Telegram is not connected any more.');
-  return decryptSecret(row.token);
+  return decryptSecret(row.token, ['connector', userId, 'telegram']);
 }
 
 /**

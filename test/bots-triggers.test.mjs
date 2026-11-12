@@ -66,7 +66,8 @@ const hooks = await import('../server/hooks.js');
 const scheduler = await import('../server/scheduler.js');
 const hookTask = await store.createTask(uid, { id: id(), title: 'Build watcher', prompt: 'Say whether the build passed.', botId: scout.id, trigger: 'hook' });
 let secret = hooks.newHookSecret();
-const route = await store.createHookRoute(uid, { id: hooks.newRouteId(), taskId: hookTask.id, secretEnc: hooks.sealHookSecret(secret) });
+const routeId = hooks.newRouteId();
+const route = await store.createHookRoute(uid, { id: routeId, taskId: hookTask.id, secretEnc: hooks.sealHookSecret(secret, { userId: uid, routeId }) });
 const started = [];
 const start = (job) => started.push(job);
 const deliver = (body, { delivery = id(), ts = Math.floor(Date.now() / 1000), sign = secret, sig = null } = {}) => {
@@ -143,7 +144,7 @@ section('rotate: the old secret stops at once; a test is sent from the server');
 {
   const old = secret;
   secret = hooks.newHookSecret();
-  await store.rotateHookRoute(uid, hookTask.id, hooks.sealHookSecret(secret));
+  await store.rotateHookRoute(uid, hookTask.id, hooks.sealHookSecret(secret, { userId: uid, routeId: route.id }));
   const withOld = await deliver({ type: 'build.done' }, { sign: old });
   const withNew = await deliver({ type: 'build.done' });
   check('the old secret is refused after Rotate', withOld.status === 401);
@@ -157,7 +158,8 @@ section('rate limits per route');
 {
   const busy = await store.createTask(uid, { id: id(), title: 'Busy', prompt: 'x', botId: scout.id, trigger: 'hook' });
   const s2 = hooks.newHookSecret();
-  const r2 = await store.createHookRoute(uid, { id: hooks.newRouteId(), taskId: busy.id, secretEnc: hooks.sealHookSecret(s2) });
+  const r2Id = hooks.newRouteId();
+  const r2 = await store.createHookRoute(uid, { id: r2Id, taskId: busy.id, secretEnc: hooks.sealHookSecret(s2, { userId: uid, routeId: r2Id }) });
   let last = null;
   for (let i = 0; i <= hooks.HOOK_PER_MINUTE; i += 1) {
     const raw = Buffer.from(JSON.stringify({ type: 'tick' }));
@@ -199,7 +201,7 @@ section('waits: parked, capped, offered to the next run, closed');
 
 const outbox = await import('../server/outbox.js');
 const tg = await import('../server/telegramInbound.js');
-await store.saveConnector(uid, 'telegram', encryptSecret('123456:TEST-TOKEN'), '@synapsez_test_bot');
+await store.saveConnector(uid, 'telegram', encryptSecret('123456:TEST-TOKEN', ['connector', uid, 'telegram']), '@synapsez_test_bot');
 /** Telegram, faked: every address asked, and what it answers. */
 function fakeTelegram(answer = () => ({ ok: true, result: { message_id: 77 } })) {
   const calls = [];

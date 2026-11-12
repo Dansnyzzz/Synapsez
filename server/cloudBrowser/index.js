@@ -249,12 +249,12 @@ export function panelToken(secret, scope, ttl = TOKEN_MS, now = Date.now()) {
 async function readConnection(userId) {
   const value = await getStore().getUserSetting(userId, SETTING);
   if (!value || typeof value !== 'object' || !value.url || !value.key) return null;
-  const secret = decryptSecret(value.key);
+  const secret = decryptSecret(value.key, ['cloud-browser', userId]);
   return secret ? { ...value, key: secret } : null;
 }
 
 async function saveConnection(userId, value) {
-  await getStore().setUserSetting(userId, SETTING, { ...value, key: encryptSecret(value.key) });
+  await getStore().setUserSetting(userId, SETTING, { ...value, key: encryptSecret(value.key, ['cloud-browser', userId]) });
 }
 
 /**

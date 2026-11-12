@@ -3133,7 +3133,7 @@ section('a conversation holding Google data is marked, and the mark follows its 
 
   // A sub-agent never reads Google itself: its answer comes back as a
   // run_parallel result, which nothing could tell apart from any other.
-  await store.saveConnector(gUser.id, 'google', encryptSecret(JSON.stringify({ access: 'x', refresh: 'r', exp: Date.now() + 1e6, scope: 'https://www.googleapis.com/auth/contacts.readonly' })), 'g@example.com');
+  await store.saveConnector(gUser.id, 'google', encryptSecret(JSON.stringify({ access: 'x', refresh: 'r', exp: Date.now() + 1e6, scope: 'https://www.googleapis.com/auth/contacts.readonly' }), ['connector', gUser.id, 'google']), 'g@example.com');
   const control = availableTools({ workerOnline: false, desktopOnline: false, policy: 'readonly', subagent: true, context: 0, connected: ['google', 'google_contacts'] }).map((t) => t.name);
   check('(Contacts is a read-only tool a sub-agent would otherwise be offered)', control.includes('google_contacts'));
   const { stream: subStream, seen: subSeen } = scriptedProvider([{ text: 'ok' }]);

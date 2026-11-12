@@ -183,7 +183,7 @@ section('an expired access token is refreshed, and the call goes through');
   await getStore().saveConnector(
     'u-g',
     'google',
-    encryptSecret(JSON.stringify({ access: 'old', refresh: 'r-1', exp: Date.now() - 1000, scope: 'https://www.googleapis.com/auth/gmail.modify' })),
+    encryptSecret(JSON.stringify({ access: 'old', refresh: 'r-1', exp: Date.now() - 1000, scope: 'https://www.googleapis.com/auth/gmail.modify' }), ['connector', 'u-g', 'google']),
     'g@example.com',
   );
   const seen = [];
@@ -218,14 +218,14 @@ section('an expired access token is refreshed, and the call goes through');
     await getStore().saveConnector(
       'u-g',
       'google',
-      encryptSecret(JSON.stringify({ access: 'x', refresh: 'r-1', exp: 0, scope: '' })),
+      encryptSecret(JSON.stringify({ access: 'x', refresh: 'r-1', exp: 0, scope: '' }), ['connector', 'u-g', 'google']),
       conn.account,
     );
     const revoked = await throws(() => GOOGLE_IMPLEMENTATIONS.gmail({ action: 'labels' }, { userId: 'u-g' }));
     check('a revoked grant says to reconnect', /Reconnect Google/.test(revoked?.message || ''), revoked?.message);
 
     globalThis.fetch = async () => new Response(JSON.stringify({ error: { message: 'Request had insufficient authentication scopes.', status: 'PERMISSION_DENIED' } }), { status: 403 });
-    await getStore().saveConnector('u-g', 'google', encryptSecret(JSON.stringify({ access: 'ok', refresh: 'r', exp: Date.now() + 1e6, scope: '' })), 'g');
+    await getStore().saveConnector('u-g', 'google', encryptSecret(JSON.stringify({ access: 'ok', refresh: 'r', exp: Date.now() + 1e6, scope: '' }), ['connector', 'u-g', 'google']), 'g');
     const scope = await throws(() => GOOGLE_IMPLEMENTATIONS.google_drive({ action: 'search' }, { userId: 'u-g' }));
     check('a product not allowed says how to allow it', /allow it/.test(scope?.message || ''), scope?.message);
 

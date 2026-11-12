@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
+import { log } from './util/trace.js';
 
 const scrypt = promisify(crypto.scrypt);
 
@@ -216,13 +217,40 @@ export function recoveryCodes(count = 10) {
   });
 }
 
-/**
- * Provider API keys are other people's credentials. They are encrypted at rest
- * so a database dump alone does not hand them over.
+/*
+ * ── Secrets at rest: the v2 envelope (owner, 2026-11-12) ───────────────────
+ *
+ * Every credential this app keeps for somebody — provider keys, OAuth and connector
+ * tokens, the TOTP seed, MCP headers and environments, hook secrets, the cloud
+ * computer's service keys — is sealed with AES-256-GCM. What v2 adds to v1, and why:
+ *
+ *   - **Bound to whose and what it is.** The sealing names its purpose and owner as
+ *     additional authenticated data (`context`, e.g. ['provider-key', userId, 'openrouter']),
+ *     length-prefixed so no two contexts can be spliced into the same bytes. A ciphertext
+ *     copied into another account's row — by anyone who can write to the database — no
+ *     longer opens there. v1 had no context: a sealed token was anyone's.
+ *   - **Keys that can change.** Each sealing carries the id of the key that sealed it.
+ *     ENCRYPTION_KEY is the key; ENCRYPTION_KEY_PREVIOUS (comma-separated) holds the ones
+ *     before it, still able to open what they sealed. Rotating is: set the new key, move
+ *     the old one to PREVIOUS, run `npm run secrets:reseal -- --apply`, then drop PREVIOUS.
+ *     v1 had one key, and changing it silently made every stored credential unreadable.
+ *   - **Failures said apart.** `openSecret` answers ok, empty, undecryptable (wrong key or
+ *     tampered), unknown-key (sealed by a key this server no longer has) or refused-v1; and an
+ *     undecryptable value is logged once, by kind, with nothing of the value in it. v1 said
+ *     "" for all of them, so a lost key looked like "no key configured".
+ *   - **HKDF** derives the AES key from the secret (v1 hashed it once, which is sound for a
+ *     long random secret, and stays for opening v1).
+ *
+ * v1 still opens, so nothing stored before this breaks; everything written from now on is
+ * v2, and `npm run secrets:reseal` re-seals the rest. ENCRYPTION_REFUSE_V1=true then refuses
+ * v1 outright, so once the cutover is done the envelope is never chosen by whoever can
+ * write the stored value (a v1 value written there would otherwise open, unbound).
  */
-function encryptionKey() {
-  const secret = process.env.ENCRYPTION_KEY || process.env.ACCESS_TOKEN;
-  if (!secret) {
+
+/** The secrets this server can seal and open with, newest first. */
+function secretsInUse() {
+  const current = process.env.ENCRYPTION_KEY || process.env.ACCESS_TOKEN;
+  if (!current) {
     // Reaching here means the startup check was bypassed — say what to do, not
     // just what is wrong.
     throw new Error(
@@ -231,33 +259,157 @@ function encryptionKey() {
         'stopping and starting again generates one for you).',
     );
   }
-  return crypto.createHash('sha256').update(`ai-remote:keys:${secret}`).digest();
+  const previous = String(process.env.ENCRYPTION_KEY_PREVIOUS || '')
+    .split(',')
+    .map((secret) => secret.trim())
+    .filter(Boolean);
+  return [current, ...previous];
 }
 
-export function encryptSecret(plaintext) {
+/** Keys derived once per set of secrets: v2 by HKDF, v1 as v1 derived them, and each v2 key's id. */
+let ring = { from: '', keys: [] };
+function keyring() {
+  const secrets = secretsInUse();
+  const from = secrets.join('\u0000');
+  if (ring.from === from) return ring.keys;
+  const keys = secrets.map((secret, index) => {
+    const v2 = Buffer.from(crypto.hkdfSync('sha256', secret, 'ai-remote:keys:v2', 'aes-256-gcm', 32));
+    return {
+      id: crypto.createHash('sha256').update(v2).digest('hex').slice(0, 12),
+      v2,
+      v1: crypto.createHash('sha256').update(`ai-remote:keys:${secret}`).digest(),
+      current: index === 0,
+    };
+  });
+  ring = { from, keys };
+  // Said once per set of keys: a short secret is a weak AES key, whatever the derivation.
+  if (String(secrets[0]).length < 32) log.warn('ENCRYPTION_KEY is shorter than 32 characters — a longer random value is safer; rotate with ENCRYPTION_KEY_PREVIOUS and npm run secrets:reseal');
+  return keys;
+}
+
+/** The id of the key that seals now — for the reseal script and the administrators' view. */
+export const currentKeyId = () => keyring()[0].id;
+
+/**
+ * A context as authenticated bytes: every part length-prefixed, so ['a|b', 'c'] and
+ * ['a', 'b|c'] can never be the same bytes — no owner can be spliced into another's.
+ *
+ * @param {Array<string|number|null|undefined>} context
+ */
+export function contextBytes(context = []) {
+  const parts = ['ai-remote', 'secret', 'v2', ...(Array.isArray(context) ? context : [context])];
+  return Buffer.from(parts.map((part) => {
+    const text = String(part ?? '');
+    return `${Buffer.byteLength(text)}:${text}`;
+  }).join('|'), 'utf8');
+}
+
+/**
+ * Seal a credential, bound to what it is and whose (see above).
+ *
+ * @param {string} plaintext
+ * @param {Array<string|number|null|undefined>} [context] e.g. ['provider-key', userId, provider]
+ */
+export function encryptSecret(plaintext, context = []) {
+  const key = keyring()[0];
   const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', encryptionKey(), iv);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key.v2, iv);
+  cipher.setAAD(contextBytes(context));
   const body = Buffer.concat([cipher.update(String(plaintext), 'utf8'), cipher.final()]);
-  return `v1.${iv.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}.${body.toString('base64url')}`;
+  return `v2.${key.id}.${iv.toString('base64url')}.${cipher.getAuthTag().toString('base64url')}.${body.toString('base64url')}`;
 }
 
-export function decryptSecret(payload) {
-  try {
-    const [version, ivB64, tagB64, bodyB64] = String(payload).split('.');
-    if (version !== 'v1') return '';
-    const decipher = crypto.createDecipheriv(
-      'aes-256-gcm',
-      encryptionKey(),
-      Buffer.from(ivB64, 'base64url'),
-    );
-    decipher.setAuthTag(Buffer.from(tagB64, 'base64url'));
-    return Buffer.concat([
-      decipher.update(Buffer.from(bodyB64, 'base64url')),
-      decipher.final(),
-    ]).toString('utf8');
-  } catch {
-    // Wrong ENCRYPTION_KEY or tampered ciphertext. Treat as "no key configured"
-    // rather than crashing the request.
-    return '';
+/** Which envelope a stored value is in, and which key sealed it (v2 only). */
+export function secretVersion(payload) {
+  const parts = String(payload ?? '').split('.');
+  if (parts[0] === 'v2' && parts.length === 5) return { version: 'v2', keyId: parts[1] };
+  if (parts[0] === 'v1' && parts.length === 4) return { version: 'v1', keyId: null };
+  return { version: null, keyId: null };
+}
+
+/** v1 refused outright, once every stored value has been re-sealed (ENCRYPTION_REFUSE_V1). */
+const refusingV1 = () => /^(1|true|yes|on)$/i.test(String(process.env.ENCRYPTION_REFUSE_V1 || '').trim());
+
+function openGcm(key, ivB64, tagB64, bodyB64, aad) {
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(ivB64, 'base64url'));
+  if (aad) decipher.setAAD(aad);
+  decipher.setAuthTag(Buffer.from(tagB64, 'base64url'));
+  return Buffer.concat([decipher.update(Buffer.from(bodyB64, 'base64url')), decipher.final()]).toString('utf8');
+}
+
+/** Kinds already said in the log, so a broken key is one line, not one per request. */
+const reported = new Set();
+function reportOnce(state, version, context) {
+  const kind = `${state}|${version}|${String((Array.isArray(context) ? context : [context])[0] ?? '')}`;
+  if (reported.has(kind)) return;
+  reported.add(kind);
+  // Only what it is and why — never the value, never the owner.
+  log.warn('secrets: a stored credential could not be opened — if ENCRYPTION_KEY changed, put the old one in ENCRYPTION_KEY_PREVIOUS', {
+    kind: String((Array.isArray(context) ? context : [context])[0] || 'credential'),
+    state,
+    version: String(version),
+  });
+}
+
+/**
+ * Open a sealed credential, saying how it went.
+ *
+ * @param {string} payload
+ * @param {Array<string|number|null|undefined>} [context] the same context it was sealed with
+ * @returns {{ value: string, state: 'ok'|'empty'|'undecryptable'|'unknown-key'|'refused-v1', version: 'v1'|'v2'|null, current: boolean }}
+ */
+export function openSecret(payload, context = []) {
+  const text = String(payload ?? '');
+  if (!text) return { value: '', state: 'empty', version: null, current: false };
+  const parts = text.split('.');
+  const keys = keyring();
+  if (parts[0] === 'v2' && parts.length === 5) {
+    const key = keys.find((k) => k.id === parts[1]);
+    if (!key) {
+      reportOnce('unknown-key', 'v2', context);
+      return { value: '', state: 'unknown-key', version: 'v2', current: false };
+    }
+    try {
+      return { value: openGcm(key.v2, parts[2], parts[3], parts[4], contextBytes(context)), state: 'ok', version: 'v2', current: key.current };
+    } catch {
+      reportOnce('undecryptable', 'v2', context);
+      return { value: '', state: 'undecryptable', version: 'v2', current: false };
+    }
   }
+  if (parts[0] === 'v1' && parts.length === 4) {
+    if (refusingV1()) {
+      reportOnce('refused-v1', 'v1', context);
+      return { value: '', state: 'refused-v1', version: 'v1', current: false };
+    }
+    for (const key of keys) {
+      try {
+        return { value: openGcm(key.v1, parts[1], parts[2], parts[3], null), state: 'ok', version: 'v1', current: false };
+      } catch {
+        /* the next key, then none */
+      }
+    }
+    reportOnce('undecryptable', 'v1', context);
+    return { value: '', state: 'undecryptable', version: 'v1', current: false };
+  }
+  reportOnce('undecryptable', 'unknown', context);
+  return { value: '', state: 'undecryptable', version: null, current: false };
+}
+
+/**
+ * The credential itself, or "" when it cannot be opened — the shape every caller had
+ * before v2, so a credential that will not open still reads as "not configured" rather
+ * than failing the request. `openSecret` for callers that must tell the two apart.
+ *
+ * @param {string} payload
+ * @param {Array<string|number|null|undefined>} [context]
+ */
+export function decryptSecret(payload, context = []) {
+  return openSecret(payload, context).value;
+}
+
+/** Whether a stored value should be sealed again: v1, or v2 under a key that no longer seals. */
+export function needsReseal(payload) {
+  const { version, keyId } = secretVersion(payload);
+  if (version === 'v1') return true;
+  return version === 'v2' && keyId !== currentKeyId();
 }

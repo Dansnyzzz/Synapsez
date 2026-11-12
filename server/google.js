@@ -145,13 +145,13 @@ async function readRow(userId) {
   const row = await getStore().getConnector(userId, 'google');
   if (!row) return null;
   try {
-    return { row, data: JSON.parse(decryptSecret(row.token)) };
+    return { row, data: JSON.parse(decryptSecret(row.token, ['connector', userId, 'google'])) };
   } catch {
     return null;
   }
 }
 
-const save = (userId, data, account) => getStore().saveConnector(userId, 'google', encryptSecret(JSON.stringify(data)), account);
+const save = (userId, data, account) => getStore().saveConnector(userId, 'google', encryptSecret(JSON.stringify(data), ['connector', userId, 'google']), account);
 
 /**
  * The products in use: granted by Google, and not turned off here.

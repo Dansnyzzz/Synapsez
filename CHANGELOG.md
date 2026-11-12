@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-11-12 — Stored keys bound to whose they are, and a key that can change (1.26.0)
+
+**The v2 envelope for every stored credential** (`server/crypto.js`): provider keys, connector and OAuth tokens, the TOTP seed, MCP headers and environment, hook secrets, the cloud browser and MCP bridge keys. Still AES-256-GCM — which is not outdated — but used better:
+- **Bound to its owner and purpose.** Each value is sealed with what it is for as authenticated data — `['provider-key', user, provider]`, `['connector', user, service]`, `['hook', user, route]`… A value copied into another account's row, or into another field, no longer opens: someone able to write to the database cannot move one person's key under another account.
+- **A key that can change.** The key is derived with HKDF and named by a short id in each value. `ENCRYPTION_KEY_PREVIOUS` (comma-separated) keeps older keys able to open what they sealed during a rotation; `npm run secrets:reseal` counts what is not yet under the current key, and `-- --apply` seals it again — compare-and-set, so a value the app changed meanwhile is left for the next run, and one no key here opens is counted, never overwritten. Before this, changing `ENCRYPTION_KEY` silently lost every stored key.
+- **Failures told apart**: empty, will not open, sealed by a key this server no longer has, refused — said once in the log by kind, never the value or the owner. An MCP server whose stored headers will not open now says so, rather than running with none.
+- **Nothing to do on deploy.** Values sealed before (v1) still open; they are sealed again the next time they are saved, or all at once by the reseal. `ENCRYPTION_REFUSE_V1=true` refuses v1 once the reseal reports none left. A key shorter than 32 characters is warned about at start.
+
+**SJC's gold board is off on Vercel again.** Read through Firecrawl in 1.24.0; measured 2026-11-12, SJC turns Firecrawl's fetch away too (HTTP 500 on every engine, for the price feed and the homepage alike), so nothing is spent trying. `FIN_SOURCE_SJC=on` still asks it directly; gold elsewhere comes from COMEX futures as before.
+
 ## 2026-11-12 — Each model asked for what it takes; a way out guarded; changed tools held (1.25.0)
 
 **The reasoning dial, per model** (schema 48, `shared_models.efforts` / `reasoning_mandatory`). OpenRouter's catalogue now says which effort levels each model takes; each is asked only for one of those — the setting itself, or the nearest listed, never "none". Measured 2026-11-12 on a free model listing high, medium and none: an unlisted level came back as an empty answer, and "none" as nonsense, where its own default answered right. `max` is sent as OpenRouter's own `max` now (its docs list it), stepped down when a model refuses. A model with no levels is a switch: Low turns it off unless the model must think. On OrcaRouter, DeepSeek and GLM (measured: `reasoning_effort: "none"` and `thinking: disabled` both give 0 reasoning tokens in half the time, answers still right; "off" is a 400; the levels barely move it) are switched off at Low and asked "high" at Extra high and Max.

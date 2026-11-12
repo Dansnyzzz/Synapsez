@@ -113,7 +113,7 @@ export async function claimPairing(userId, rawCode, { name } = {}) {
   const store = getStore();
   const token = randomToken(24);
 
-  const pairing = await store.claimPairing(userId, sha256(code), encryptSecret(token));
+  const pairing = await store.claimPairing(userId, sha256(code), encryptSecret(token, ['device-pairing']));
   if (!pairing) {
     throw new Error('That code is not valid, has already been used, or has expired. Ask the computer for a new one.');
   }
@@ -148,7 +148,7 @@ export async function collectPairing(id) {
   const collected = await store.consumePairing(pairing.id);
   if (!collected) return { status: 'pending' };
 
-  const token = decryptSecret(collected.secret);
+  const token = decryptSecret(collected.secret, ['device-pairing']);
   if (!token) return { status: 'unknown' };
 
   return { status: 'paired', token, deviceId: pairing.id, name: collected.device_name };

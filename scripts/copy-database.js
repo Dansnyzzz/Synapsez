@@ -10,7 +10,10 @@
  * and a copy cut short can simply be run again. Nothing in the source changes.
  * An account the target already has under the same email takes the old
  * account's rows rather than gaining a twin — but only for an email the owner
- * names with `--merge a@x,b@y` (SEC-057); see `merged` below.
+ * names with `--merge a@x,b@y` (SEC-057); see `merged` below. A merged account's
+ * stored credentials are sealed to its id (crypto.js v2), so they are opened and sealed
+ * again under the id they join — which needs the deployment's ENCRYPTION_KEY in the
+ * environment; without it they are copied as they are, and said.
  *
  * Needs both databases reachable: a Neon project whose compute hours have run
  * out answers 402 until its next billing period, or until it is upgraded.
@@ -23,6 +26,7 @@
  */
 import { pathToFileURL } from 'node:url';
 import { createPgStore } from '../server/store/pg.js';
+import { credentialOwner, rebindRow } from '../server/secretsReseal.js';
 
 /** A name as SQL reads it, quoted, so a table or column is never taken for a keyword. */
 const ident = (name) => `"${String(name).replace(/"/g, '""')}"`;
@@ -177,6 +181,17 @@ export async function copyDatabase(from, to, { say = console.log, merge = [] } =
     }
     for (const [table, cols] of sourceColumns) if (cols.has('user_id')) holds(table, 'user_id');
   }
+  /** Credentials of merged accounts: re-bound to the id they join, or left as they were. */
+  const rebinding = { rebound: 0, unopenable: 0 };
+  /** A row as it goes to the target, its sealed credentials bound to the account it now belongs to. */
+  const rebound = (table, row) => {
+    const owner = merged.size ? credentialOwner(table, row) : null;
+    if (!owner || !merged.has(owner)) return row;
+    const moved = rebindRow(table, row, merged.get(owner));
+    rebinding.rebound += moved.rebound;
+    rebinding.unopenable += moved.unopenable;
+    return moved.row;
+  };
   /** A value as it goes to the target, an old account's id turned into the one it merged into. */
   const carried = (table, column, value) =>
     merged.size && accountColumns.get(table)?.has(column) && merged.has(value) ? merged.get(value) : value;
@@ -233,7 +248,7 @@ export async function copyDatabase(from, to, { say = console.log, merge = [] } =
         if (table === 'users' && merged.has(row.id)) continue;
         const size = sizeOf(row);
         if (batch.length && (bytes + size > INSERT_BYTES || (batch.length + 1) * columns.length > MAX_PARAMS)) await flush();
-        batch.push(row);
+        batch.push(rebound(table, row));
         bytes += size;
       }
       await flush();
@@ -241,6 +256,13 @@ export async function copyDatabase(from, to, { say = console.log, merge = [] } =
     }
     copied[table] = done;
     say(`  ${table}: ${done}`);
+  }
+  if (rebinding.rebound) say(`  ${rebinding.rebound} stored credential(s) of merged accounts sealed again to the account they joined`);
+  if (rebinding.unopenable) {
+    say(
+      `  ${rebinding.unopenable} stored credential(s) of merged accounts could not be opened here, so were copied as they were and will not open: ` +
+        'the person enters them again. (A copy run with the deployment\'s ENCRYPTION_KEY in the environment re-binds them; a second run does not, since it skips rows the target has.)',
+    );
   }
   return copied;
 }

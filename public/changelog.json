@@ -1,6 +1,26 @@
 {
   "entries": [
     {
+      "version": "1.26.0",
+      "date": "2026-11-12",
+      "improved": {
+        "vi": [
+          "Khoá API, token kết nối và mã 2 bước đã lưu nay được khoá riêng theo từng tài khoản và mục đích: chép sang tài khoản khác sẽ không mở được. Quản trị viên có thể đổi khoá mã hoá mà không làm mất khoá đã lưu của ai."
+        ],
+        "en": [
+          "Stored API keys, connector tokens and two-step codes are now sealed to their account and purpose: copied to another account they do not open. An administrator can change the encryption key without anyone losing a saved key."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Giá vàng SJC tạm tắt trên bản triển khai: SJC chặn cả Firecrawl (đã đo ngày 12/11/2026). Giá vàng thế giới vẫn có."
+        ],
+        "en": [
+          "SJC gold prices are off on the deployed app again: SJC turns Firecrawl away too (measured 12 November 2026). World gold prices are still there."
+        ]
+      }
+    },
+    {
       "version": "1.25.0",
       "date": "2026-11-12",
       "new": {

@@ -251,7 +251,7 @@ export function mountMcpRoutes(api, { wrap, body }) {
         // Where it runs is kept with it: a server an ordinary account added to
         // run on its own cloud computer must never later start beside the
         // server because ALLOW_MCP_STDIO was switched on (client.js `connectMcp`).
-        config: sealConfig(place === 'cloud' ? { ...config, place, tools: keep } : place ? { ...config, place } : config),
+        config: sealConfig(place === 'cloud' ? { ...config, place, tools: keep } : place ? { ...config, place } : config, { userId: req.user.id }),
         enabled: req.body?.enabled !== false,
       });
       // The cached connections are keyed by slug, and the set has changed.

@@ -99,6 +99,52 @@ const cipher = encryptSecret('sk-ant-super-secret');
 check('ciphertext hides the key', !cipher.includes('super-secret'));
 check('round-trips correctly', decryptSecret(cipher) === 'sk-ant-super-secret');
 check('tampered ciphertext yields nothing', decryptSecret(`${cipher}xyz`) === '');
+{
+  // The v2 envelope (crypto.js, owner 2026-11-12): bound to whose and what, keys that can change.
+  const crypto = await import('../server/crypto.js');
+  const nodeCrypto = await import('node:crypto');
+  const mine = crypto.encryptSecret('sk-or-v1-mine', ['provider-key', 'u-alice', 'openrouter']);
+  check('v2: sealed under the key that seals now', mine.startsWith(`v2.${crypto.currentKeyId()}.`) && !crypto.needsReseal(mine));
+  check('  opens for its owner and purpose', crypto.decryptSecret(mine, ['provider-key', 'u-alice', 'openrouter']) === 'sk-or-v1-mine');
+  const stolen = crypto.openSecret(mine, ['provider-key', 'u-bob', 'openrouter']);
+  check('  copied into another account it does not open, and says why', stolen.value === '' && stolen.state === 'undecryptable', JSON.stringify(stolen));
+  check('  nor for another purpose or provider', crypto.decryptSecret(mine, ['connector', 'u-alice', 'openrouter']) === '' && crypto.decryptSecret(mine, ['provider-key', 'u-alice', 'google']) === '');
+  check('  contexts are length-prefixed: ["a|b","c"] is not ["a","b|c"]', !crypto.contextBytes(['a|b', 'c']).equals(crypto.contextBytes(['a', 'b|c'])));
+
+  // A value sealed the v1 way, as everything stored before v2 was.
+  const v1 = (plain, secret = process.env.ENCRYPTION_KEY) => {
+    const key = nodeCrypto.createHash('sha256').update(`ai-remote:keys:${secret}`).digest();
+    const iv = nodeCrypto.randomBytes(12);
+    const c = nodeCrypto.createCipheriv('aes-256-gcm', key, iv);
+    const body = Buffer.concat([c.update(plain, 'utf8'), c.final()]);
+    return `v1.${iv.toString('base64url')}.${c.getAuthTag().toString('base64url')}.${body.toString('base64url')}`;
+  };
+  const old = v1('sk-legacy');
+  check('v1 still opens, whatever the context, and is due a reseal', crypto.decryptSecret(old, ['provider-key', 'u-alice', 'openrouter']) === 'sk-legacy' && crypto.needsReseal(old));
+
+  const was = { key: process.env.ENCRYPTION_KEY, prev: process.env.ENCRYPTION_KEY_PREVIOUS, refuse: process.env.ENCRYPTION_REFUSE_V1 };
+  try {
+    // Rotation: a new key seals; the old one, as PREVIOUS, still opens what it sealed.
+    process.env.ENCRYPTION_KEY_PREVIOUS = was.key;
+    process.env.ENCRYPTION_KEY = 'a-brand-new-encryption-key-for-the-rotation-test';
+    check('after rotating, what the old key sealed still opens', crypto.decryptSecret(mine, ['provider-key', 'u-alice', 'openrouter']) === 'sk-or-v1-mine' && crypto.decryptSecret(old) === 'sk-legacy');
+    check('  and is due a reseal under the new key', crypto.needsReseal(mine));
+    const resealed = crypto.encryptSecret('sk-or-v1-mine', ['provider-key', 'u-alice', 'openrouter']);
+    check('  a reseal is under the new key', resealed.split('.')[1] === crypto.currentKeyId() && resealed.split('.')[1] !== mine.split('.')[1]);
+    delete process.env.ENCRYPTION_KEY_PREVIOUS;
+    const lost = crypto.openSecret(mine, ['provider-key', 'u-alice', 'openrouter']);
+    check('with the old key gone, it says the key is unknown rather than "no key"', lost.state === 'unknown-key', JSON.stringify(lost));
+    process.env.ENCRYPTION_KEY = was.key;
+    process.env.ENCRYPTION_REFUSE_V1 = 'true';
+    check('ENCRYPTION_REFUSE_V1: v1 is refused once everything is resealed', crypto.openSecret(old).state === 'refused-v1' && crypto.decryptSecret(mine, ['provider-key', 'u-alice', 'openrouter']) === 'sk-or-v1-mine');
+  } finally {
+    for (const [name, value] of [['ENCRYPTION_KEY', was.key], ['ENCRYPTION_KEY_PREVIOUS', was.prev], ['ENCRYPTION_REFUSE_V1', was.refuse]]) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+  check('an empty value is empty, not an error', crypto.openSecret('').state === 'empty' && crypto.openSecret(null).state === 'empty');
+}
 
 // ── chats ───────────────────────────────────────────────────────────
 section('chat isolation');
