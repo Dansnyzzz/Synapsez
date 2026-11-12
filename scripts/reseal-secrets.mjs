@@ -3,6 +3,7 @@
  *
  *   npm run secrets:reseal                              count; writes nothing
  *   npm run secrets:reseal -- --apply --key-id <id>     re-seal and write
+ *   npm run secrets:reseal -- --check                   count; exit 1 unless the cutover is safe
  *
  * Reads DATABASE_URL (or POSTGRES_URL), ENCRYPTION_KEY and ENCRYPTION_KEY_PREVIOUS from the
  * environment — the deployment's, not a laptop's (`node --env-file=… scripts/reseal-secrets.mjs`).
@@ -27,6 +28,8 @@ import { currentKeyId } from '../server/crypto.js';
 
 const argv = process.argv.slice(2);
 const apply = argv.includes('--apply');
+// A dry run a script can stop on: "no" exits 1, as it does after --apply.
+const checking = argv.includes('--check');
 const named = (() => {
   const at = argv.indexOf('--key-id');
   return at >= 0 ? String(argv[at + 1] || '').trim() : '';
@@ -94,4 +97,4 @@ if (stuck) console.log(`\n  ${stuck} value(s) could not be opened with the keys 
 const safe = cutoverReady(report);
 console.log(`\n  Safe to set ENCRYPTION_REFUSE_V1=true and drop older keys from ENCRYPTION_KEY_PREVIOUS: ${safe ? 'yes' : 'no'}\n`);
 await close();
-process.exit(apply && !safe ? 1 : 0);
+process.exit((apply || checking) && !safe ? 1 : 0);

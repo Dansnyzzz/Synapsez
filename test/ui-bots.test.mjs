@@ -998,7 +998,7 @@ section('triggers from outside: a webhook task, its secret once, a test; waits a
 
   // Telegram to Chief, on the Telegram connector's page (read only: turning it on would call Telegram).
   const { encryptSecret } = await import('../server/crypto.js');
-  await store.saveConnector(me.id, 'telegram', encryptSecret('123456:TEST'), '@test_bot');
+  await store.saveConnector(me.id, 'telegram', encryptSecret('123456:TEST', ['connector', me.id, 'telegram']), '@test_bot');
   // Settings → Connectors → Telegram, as a person gets there.
   await page.click('#account-button');
   await page.waitForTimeout(250);

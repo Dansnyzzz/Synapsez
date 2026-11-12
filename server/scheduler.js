@@ -590,7 +590,7 @@ async function runGroupTask(task, user) {
   return { taskId: task.id, status, chatId: log.id };
 }
 
-async function runTask(task) {
+async function runTask(task, { endsAt = Infinity } = {}) {
   const store = getStore();
   const user = await store.getUserById(task.user_id);
   // The account was deleted between the claim and now. Retire the task rather
@@ -698,6 +698,9 @@ async function runTask(task) {
       user,
       chatId,
       signal: controller.signal,
+      // The heartbeat's end (harness audit, 2026-11-12): the second task in one invocation got a
+      // fresh 270 s of its own, and was killed part way through by the function's 300.
+      deadlineAt: endsAt,
       /**
        * The model the account is on now, not the one it was on when the task
        * was made. `task.model` used to win, so a task made on a free model kept
@@ -809,7 +812,7 @@ export async function stopTask(userId, taskId) {
  * Run everything that is due. Returns what it ran, so a cron endpoint can
  * report it and a test can assert on it.
  */
-export async function runDueTasks({ limit = 5, userId = null, budgetMs = null } = {}) {
+export async function runDueTasks({ limit = 5, userId = null, budgetMs = null, endsAt = Infinity } = {}) {
   const ran = [];
   const started = Date.now();
 
@@ -837,7 +840,7 @@ export async function runDueTasks({ limit = 5, userId = null, budgetMs = null } 
       ran.push(await skipMissed(task));
       continue;
     }
-    ran.push(await runTask(task));
+    ran.push(await runTask(task, { endsAt }));
   }
   return ran;
 }

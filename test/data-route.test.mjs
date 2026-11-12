@@ -510,6 +510,60 @@ section('the overview has what it says');
   check('nowhere does it claim to catch everything', !/100%|every personal|tất cả thông tin cá nhân|mọi thông tin cá nhân\b(?! \. )/i.test(claims.split('\n').filter((l) => /'cloak\.m|'cloak\.mask|'memory\.maskPersonal/.test(l)).join('\n')));
 }
 
+/*
+ * The owner's free-only rule, on the deployment's own key (harness audit, 2026-11-12): an
+ * account with no key of its own rides the deployment's, and a key with credit on it billed
+ * the owner for any paid model. While FREE_TIER_ONLY holds, only a model priced at nothing
+ * runs on it; Google's keys excepted (their free tier bills nothing).
+ */
+section('the deployment key serves free models only');
+{
+  const user = await makeUser('u-shared-free-only');
+  const saved = { or: process.env.OPENROUTER_API_KEY, g: process.env.GOOGLE_API_KEY, only: process.env.FREE_TIER_ONLY };
+  process.env.OPENROUTER_API_KEY = 'sk-or-v1-deployment-shared-placeholder';
+  process.env.GOOGLE_API_KEY = 'AIza-deployment-shared-placeholder';
+  delete process.env.FREE_TIER_ONLY;
+  const ask = async (entry) => {
+    let reached = 0;
+    let said = '';
+    try {
+      for await (const _ of streamCompletion({
+        userId: user.id,
+        entry,
+        system: 'x',
+        messages: [{ id: 'm', role: 'user', text: 'hi' }],
+        tools: [],
+        streamOne: async function* dispatch() {
+          reached += 1;
+          yield { type: 'done', stopReason: 'end_turn', toolCalls: [] };
+        },
+      }));
+    } catch (err) {
+      said = err.message;
+    }
+    return { reached, said };
+  };
+  const paid = { id: 'openrouter/vendor/paid-model', provider: 'openrouter', model: 'vendor/paid-model', label: 'Paid', price: { in: 3, out: 15 } };
+  const free = { id: 'openrouter/vendor/free-model:free', provider: 'openrouter', model: 'vendor/free-model:free', label: 'Free', price: { in: 0, out: 0 }, tags: ['free'] };
+  try {
+    const refused = await ask(paid);
+    check('a paid model on the deployment key is refused before anything is sent', refused.reached === 0 && /free models only/.test(refused.said), refused.said);
+    check('  and the person is told to add their own key', /Settings → Providers/.test(refused.said));
+    check('a free model on it runs', (await ask(free)).reached === 1);
+    check("Google's key is not refused for a priced Gemini model (its free tier bills nothing)", (await ask({ id: 'google/gemini-x', provider: 'google', model: 'gemini-x', label: 'G', price: { in: 1, out: 2 } })).reached === 1);
+    process.env.FREE_TIER_ONLY = 'false';
+    check('FREE_TIER_ONLY=false, for a deployment that pays, lifts it', (await ask(paid)).reached === 1);
+    delete process.env.FREE_TIER_ONLY;
+    await setApiKey(user.id, 'openrouter', 'sk-or-v1-the-accounts-own-key-placeholder');
+    check("the account's own key runs a paid model — it is their bill", (await ask(paid)).reached === 1);
+  } finally {
+    for (const [name, value] of [['OPENROUTER_API_KEY', saved.or], ['GOOGLE_API_KEY', saved.g], ['FREE_TIER_ONLY', saved.only]]) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
+
 removeTemp(process.env.DATA_DIR);
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll data route checks passed.\x1b[0m\n');
 process.exit(failures ? 1 : 0);

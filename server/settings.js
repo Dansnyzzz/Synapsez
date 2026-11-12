@@ -1,5 +1,6 @@
 import { getStore } from './store/index.js';
 import { encryptSecret, decryptSecret, needsReseal } from './crypto.js';
+import { providerKeyContext } from './secretContexts.js';
 import { CATALOG } from './providers/catalog.js';
 import { PLUGIN_IDS } from '../public/js/plugins.js';
 import { suggestionFor } from './recommend.js';
@@ -411,7 +412,7 @@ async function storedKeys(userId) {
  * then lost the key (security review, 2026-11-12). Sealed again here, the race is harmless.
  */
 function freshList(userId, provider, list) {
-  const context = ['provider-key', userId, provider];
+  const context = providerKeyContext(userId, provider);
   return list.map((entry) => {
     if (!entry?.cipher || !needsReseal(entry.cipher)) return entry;
     const plain = decryptSecret(entry.cipher, context);
@@ -605,7 +606,7 @@ export async function getApiKeys(userId, provider, { includeResting = false, fre
 
   const own = [];
   list.forEach((entry, index) => {
-    const decrypted = decryptSecret(entry.cipher, ['provider-key', userId, provider]);
+    const decrypted = decryptSecret(entry.cipher, providerKeyContext(userId, provider));
     if (!decrypted) return;
     // A key already known to be rate limited or dead is worse than useless: on
     // OpenRouter the failed request it would earn still counts against the
@@ -637,7 +638,7 @@ export async function getApiKey(userId, provider) {
  * Quotas only apply in that case.
  */
 export async function usesSharedKey(userId, provider) {
-  const own = keyList(await storedKeys(userId), provider).some((entry) => decryptSecret(entry.cipher, ['provider-key', userId, provider]));
+  const own = keyList(await storedKeys(userId), provider).some((entry) => decryptSecret(entry.cipher, providerKeyContext(userId, provider)));
   if (own) return false;
   return !!process.env[ENV_KEYS[provider]];
 }
@@ -668,7 +669,7 @@ const keyMeta = (meta = {}) => ({
 export async function keyEntries(userId, provider) {
   return keyList(await storedKeys(userId), provider).map((entry, index) => ({
     index,
-    key: decryptSecret(entry.cipher, ['provider-key', userId, provider]) || '',
+    key: decryptSecret(entry.cipher, providerKeyContext(userId, provider)) || '',
     account: entry.account || null,
     paid: typeof entry.paid === 'boolean' ? entry.paid : null,
     freeTier: entry.freeTier === 'low' || entry.freeTier === 'high' ? entry.freeTier : null,
@@ -684,7 +685,7 @@ export async function keyEntries(userId, provider) {
 export async function setKeyMeta(userId, provider, key, meta) {
   const keys = await storedKeys(userId);
   const list = keyList(keys, provider);
-  const index = list.findIndex((entry) => decryptSecret(entry.cipher, ['provider-key', userId, provider]) === key);
+  const index = list.findIndex((entry) => decryptSecret(entry.cipher, providerKeyContext(userId, provider)) === key);
   if (index < 0) return;
   const merged = { ...list[index], ...keyMeta(meta) };
   // Called on every refusal it might learn from: nothing new, nothing written. Writing
@@ -699,7 +700,7 @@ export async function setKeyMeta(userId, provider, key, meta) {
 export async function setApiKey(userId, provider, value, meta = {}) {
   if (!Object.hasOwn(ENV_KEYS, provider)) throw new Error(`Unknown provider "${provider}"`);
   const keys = await storedKeys(userId);
-  if (value) keys[provider] = [{ cipher: encryptSecret(value, ['provider-key', userId, provider]), hint: hintFor(value), addedAt: new Date().toISOString(), ...keyMeta(meta) }];
+  if (value) keys[provider] = [{ cipher: encryptSecret(value, providerKeyContext(userId, provider)), hint: hintFor(value), addedAt: new Date().toISOString(), ...keyMeta(meta) }];
   else delete keys[provider];
   await getStore().setUserSetting(userId, KEYS_KEY, freshKeys(userId, keys));
   cursor.delete(cursorKey(userId, provider));
@@ -716,12 +717,12 @@ export async function addApiKey(userId, provider, value, meta = {}) {
   const keys = await storedKeys(userId);
   const list = keyList(keys, provider);
   // The same key twice is not a fallback; it is the same outage twice.
-  if (list.some((entry) => decryptSecret(entry.cipher, ['provider-key', userId, provider]) === clean)) {
+  if (list.some((entry) => decryptSecret(entry.cipher, providerKeyContext(userId, provider)) === clean)) {
     throw new Error('That key is already on this provider.');
   }
   if (list.length >= 8) throw new Error('Eight keys per provider is the limit.');
 
-  list.push({ cipher: encryptSecret(clean, ['provider-key', userId, provider]), hint: hintFor(clean), addedAt: new Date().toISOString(), ...keyMeta(meta) });
+  list.push({ cipher: encryptSecret(clean, providerKeyContext(userId, provider)), hint: hintFor(clean), addedAt: new Date().toISOString(), ...keyMeta(meta) });
   keys[provider] = list;
   await getStore().setUserSetting(userId, KEYS_KEY, freshKeys(userId, keys));
   return list.length;

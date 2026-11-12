@@ -73,6 +73,39 @@ section('a fresh database gets everything');
   check('and the version is stamped', Number(stamped[0]?.value) > 0, `${stamped[0]?.value}`);
 }
 
+/*
+ * Schema 49 (harness audit, 2026-11-12): on Supabase, `public` is what the Data API serves to
+ * anyone with the project's anon key. Row-level security with no policy means those roles
+ * reach no row; the app, the tables' owner, is not bound by it.
+ */
+section('every table has row-level security, and the app is not locked out (schema 49)');
+{
+  const tables = await driver.query("SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname = current_schema()");
+  const off = tables.filter((t) => !t.rowsecurity).map((t) => t.tablename);
+  check('row-level security is on for every table', tables.length > 30 && off.length === 0, off.join(', ') || `${tables.length} tables`);
+  await driver.query("INSERT INTO settings (key, value) VALUES ('rls-probe', '\"visible to the owner\"'::jsonb) ON CONFLICT (key) DO NOTHING");
+  const asOwner = await driver.query("SELECT value FROM settings WHERE key = 'rls-probe'");
+  check('  the app, as owner, still reads and writes', asOwner.length === 1);
+  // Supabase's API roles, as its defaults grant them: SELECT on everything in public.
+  await driver.query("DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF; END $$");
+  await driver.query(`GRANT USAGE ON SCHEMA ${'public'} TO anon`);
+  await driver.query('GRANT SELECT, INSERT ON settings TO anon');
+  await driver.query('SET ROLE anon');
+  let seen;
+  let wrote = 'not refused';
+  try {
+    seen = await driver.query("SELECT value FROM settings WHERE key = 'rls-probe'");
+    await driver.query("INSERT INTO settings (key, value) VALUES ('rls-anon', '1'::jsonb)").catch((err) => {
+      wrote = err.message;
+    });
+  } finally {
+    await driver.query('RESET ROLE');
+  }
+  check('  the anon role, granted SELECT as Supabase grants it, reads no row', Array.isArray(seen) && seen.length === 0, JSON.stringify(seen));
+  check('  and cannot write one', /row-level security/i.test(wrote), wrote);
+  await driver.query("DELETE FROM settings WHERE key = 'rls-probe'");
+}
+
 section('the newest tables reach a database that predates them');
 {
   /**
@@ -229,7 +262,7 @@ section('schema.sql and SCHEMA_VERSION move together');
   // 42: bots, bot_groups, bot_group_members, bot_memory, chats.bot_id/.bot_group_id,
   // usage_events.bot_id — the Bot page.
   // 43: bots.hue, scheduled_tasks.bot_id, and incognito chats with a bot left out of one-chat-per-bot.
-  const STAMPED = { version: 48, fingerprint: '38697159d5d115a5' };
+  const STAMPED = { version: 49, fingerprint: '64e84e9e720f0ae6' };
 
   check(
     'the recorded version matches the code',

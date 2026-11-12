@@ -180,6 +180,13 @@ section('db:copy merges an old account into the one with the same email');
   const { encryptSecret, decryptSecret } = await import('../server/crypto.js');
   await old.saveConnector('u-neon', 'github', encryptSecret('ghp_from_neon', ['connector', 'u-neon', 'github']), 'octo');
   await old.setUserSetting('u-neon', 'providerKeys', { openrouter: [{ cipher: encryptSecret('sk-or-v1-from-neon', ['provider-key', 'u-neon', 'openrouter']), hint: '…eon' }] });
+  // And one from before 1.26.0, unbound (v1): it must arrive sealed in v2, or ENCRYPTION_REFUSE_V1 refuses it later.
+  const nodeCrypto = await import('node:crypto');
+  const v1Key = nodeCrypto.createHash('sha256').update(`ai-remote:keys:${process.env.ENCRYPTION_KEY}`).digest();
+  const v1Iv = nodeCrypto.randomBytes(12);
+  const v1C = nodeCrypto.createCipheriv('aes-256-gcm', v1Key, v1Iv);
+  const v1Body = Buffer.concat([v1C.update('ntn_from_before', 'utf8'), v1C.final()]);
+  await old.saveConnector('u-neon', 'notion', `v1.${v1Iv.toString('base64url')}.${v1C.getAuthTag().toString('base64url')}.${v1Body.toString('base64url')}`, 'n');
   await now.createUser({ id: 'u-supabase', email: 'owner@example.com', name: 'Owner', passwordHash: 'y', role: 'admin', username: 'owner.one' });
   await now.createChat('u-supabase', { id: 'c-since', title: 'Made since', model: 'auto' });
   await now.setUserSetting('u-supabase', 'prefs', { language: 'vi', defaultModel: 'new-model' });
@@ -220,7 +227,9 @@ section('db:copy merges an old account into the one with the same email');
   const keys = (await now.getUserSetting('u-supabase', 'providerKeys'))?.openrouter;
   check("a merged account's stored credentials open under the account they joined", decryptSecret(token, ['connector', 'u-supabase', 'github']) === 'ghp_from_neon' && decryptSecret(keys?.[0]?.cipher, ['provider-key', 'u-supabase', 'openrouter']) === 'sk-or-v1-from-neon', JSON.stringify({ token: !!token, keys: keys?.length }));
   check('  and no longer under the old id', decryptSecret(token, ['connector', 'u-neon', 'github']) === '');
-  check('  said, with nothing left that would not open', said.some((l) => /2 stored credential\(s\) of merged accounts sealed again/.test(l)) && !said.some((l) => /could not be opened/.test(l)), said.filter((l) => /credential/.test(l)).join(' | '));
+  check('  said, with nothing left that would not open', said.some((l) => /3 stored credential\(s\) sealed again as they were copied/.test(l)) && !said.some((l) => /could not be opened|copied as they were \(/.test(l)), said.filter((l) => /credential/.test(l)).join(' | '));
+  const notion = (await target.query("SELECT token FROM connectors WHERE user_id = 'u-supabase' AND service = 'notion'")).rows[0]?.token;
+  check('a credential from before 1.26.0 arrives sealed in v2, bound to the account it joined', String(notion).startsWith('v2.') && decryptSecret(notion, ['connector', 'u-supabase', 'notion']) === 'ntn_from_before', String(notion).slice(0, 3));
 
   // Security review, 2026-11-12: without the key that sealed them, a merge's credentials would
   // be carried across unopenable — and a second run skips rows already there. So it stops first.

@@ -32,10 +32,11 @@ const MIN_TIME_MS = 120_000;
 const attemptsKey = (chatId) => `resume:${chatId}`;
 
 /**
- * @param {{ budgetMs?: number, limit?: number, run?: typeof runAgent, staleMs?: number }} [options]
+ * @param {{ budgetMs?: number, limit?: number, run?: typeof runAgent, staleMs?: number, endsAt?: number }} [options]
+ *   `endsAt`: when this invocation must be done — every turn it resumes stops before it.
  *   `run` is injectable so the suite can drive this without a model.
  */
-export async function resumeCutOffTurns({ budgetMs = 240_000, limit = 2, run = runAgent, staleMs = undefined } = {}) {
+export async function resumeCutOffTurns({ budgetMs = 240_000, limit = 2, run = runAgent, staleMs = undefined, endsAt = Date.now() + budgetMs } = {}) {
   const store = getStore();
   const deadline = Date.now() + budgetMs;
   const resumed = [];
@@ -86,6 +87,8 @@ export async function resumeCutOffTurns({ budgetMs = 240_000, limit = 2, run = r
         answers: null,
         deviceHint: null,
         signal: controller.signal,
+        // What is left of this invocation, not a fresh turn's worth (harness audit, 2026-11-12).
+        deadlineAt: endsAt,
         emit(event, data) {
           if (event === 'approval_required' || event === 'question_required') outcome = 'waiting_for_person';
           else if (event === 'error') outcome = `error: ${String(data?.message || '').slice(0, 160)}`;

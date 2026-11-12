@@ -42,6 +42,12 @@ anything else through a connection pool. Free plans change — check the current
    Variables* → `DATABASE_URL` = the string from step 2. **Redeploy.**
 5. Open the app. The first request creates the tables; sign up, and the first account is the
    administrator.
+6. **The Data API.** Supabase serves every table in `public` over its REST API to anyone holding the
+   project's public *anon* key. The app never uses that API — it talks to Postgres directly — and since
+   1.27.0 (schema 49) it switches row-level security on for every table, with no policy, so those
+   roles reach no row. To close the door entirely: *Project Settings → Data API* → turn it off, or
+   remove `public` from *Exposed schemas*. Check *Advisors → Security Advisor* shows no "RLS disabled"
+   warnings after the first deploy of 1.27.0.
 
 ## Bringing the old data across
 
@@ -74,11 +80,15 @@ not be typed where a shell keeps its history.
   someone else's; merged, it would receive everything the old one held. The copy stops before
   writing a row and lists each such email. Check each is the same person, then add
   `--merge a@example.com,b@example.com`. Where both have the same thing — the same setting — the new
-  database's stays. The copy says which accounts it merged. A merged account's saved keys and
-  tokens are sealed to its old id (since 1.26.0), so the copy opens them and seals them again to
-  the account they join — run it with the deployment's `ENCRYPTION_KEY` in the environment for
-  that. Without it, it says how many it could not re-bind; those have to be entered again. (Data
-  saved before 1.26.0, Neon's included, is not bound and needs nothing.)
+  database's stays. The copy says which accounts it merged.
+- **Run it with the deployment's `ENCRYPTION_KEY`** (and `ENCRYPTION_KEY_PREVIOUS`, if set) in the
+  environment. Saved keys and tokens are sealed to their account (since 1.26.0): the copy opens each
+  and seals it again, in the current envelope, for the account it lands in — a merged account's to
+  the one it joins, and anything saved before 1.26.0 (Neon's included) moved out of the old, unbound
+  envelope. If a merged account holds credentials it cannot open, it stops before writing a row.
+  Without the key, anything from before 1.26.0 is copied as it was, and it says so.
+- **The order, when `ENCRYPTION_REFUSE_V1` is in the plan:** copy first, then `npm run secrets:reseal`
+  on the new database, and set `ENCRYPTION_REFUSE_V1=true` only when the reseal says it is safe.
 
 ## Keeping an eye on the free limits
 

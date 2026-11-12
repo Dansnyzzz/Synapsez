@@ -1,5 +1,6 @@
 import { getStore } from './store/index.js';
 import { encryptSecret, decryptSecret } from './crypto.js';
+import { connectorContext } from './secretContexts.js';
 import { GOOGLE_PRODUCTS, googleConfigured, googleGrants, disconnectGoogle } from './google.js';
 
 /**
@@ -207,7 +208,7 @@ export async function connect(userId, service, token) {
   if (!clean) throw new Error('Paste the token.');
 
   const account = await spec.verify(clean);
-  await getStore().saveConnector(userId, service, encryptSecret(clean, ['connector', userId, service]), account);
+  await getStore().saveConnector(userId, service, encryptSecret(clean, connectorContext(userId, service)), account);
   return { service, account };
 }
 
@@ -258,7 +259,7 @@ async function tokenFor(userId, service) {
       `${SERVICES[service]?.label || service} is not connected. The user can connect it in Settings → Connectors.`,
     );
   }
-  return decryptSecret(row.token, ['connector', userId, service]);
+  return decryptSecret(row.token, connectorContext(userId, service));
 }
 
 /**

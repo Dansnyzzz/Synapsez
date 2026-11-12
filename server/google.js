@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
 import { encryptSecret, decryptSecret } from './crypto.js';
+import { connectorContext } from './secretContexts.js';
 import { signingRoot } from './secrets.js';
 
 /**
@@ -145,13 +146,13 @@ async function readRow(userId) {
   const row = await getStore().getConnector(userId, 'google');
   if (!row) return null;
   try {
-    return { row, data: JSON.parse(decryptSecret(row.token, ['connector', userId, 'google'])) };
+    return { row, data: JSON.parse(decryptSecret(row.token, connectorContext(userId, 'google'))) };
   } catch {
     return null;
   }
 }
 
-const save = (userId, data, account) => getStore().saveConnector(userId, 'google', encryptSecret(JSON.stringify(data), ['connector', userId, 'google']), account);
+const save = (userId, data, account) => getStore().saveConnector(userId, 'google', encryptSecret(JSON.stringify(data), connectorContext(userId, 'google')), account);
 
 /**
  * The products in use: granted by Google, and not turned off here.

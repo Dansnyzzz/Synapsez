@@ -95,10 +95,11 @@ check('wrong password rejected', !(await verifyPassword('wrong', alice.password_
 check('hash is not the password', !alice.password_hash.includes('correct-horse-battery'));
 
 section('provider key encryption');
-const cipher = encryptSecret('sk-ant-super-secret');
+const keyContext = ['provider-key', 'u-isolation', 'anthropic'];
+const cipher = encryptSecret('sk-ant-super-secret', keyContext);
 check('ciphertext hides the key', !cipher.includes('super-secret'));
-check('round-trips correctly', decryptSecret(cipher) === 'sk-ant-super-secret');
-check('tampered ciphertext yields nothing', decryptSecret(`${cipher}xyz`) === '');
+check('round-trips correctly', decryptSecret(cipher, keyContext) === 'sk-ant-super-secret');
+check('tampered ciphertext yields nothing', decryptSecret(`${cipher}xyz`, keyContext) === '');
 {
   // The v2 envelope (crypto.js, owner 2026-11-12): bound to whose and what, keys that can change.
   const crypto = await import('../server/crypto.js');
@@ -800,7 +801,7 @@ section('workflow isolation');
 
 section('connectors');
 {
-  await store.saveConnector(alice.id, 'github', encryptSecret('ghp_secret_token'), 'alice');
+  await store.saveConnector(alice.id, 'github', encryptSecret('ghp_secret_token', ['connector', alice.id, 'github']), 'alice');
   const listed = await store.listConnectors(alice.id);
   check('a connector is stored', listed.length === 1);
   check('the token never appears in a listing', !JSON.stringify(listed).includes('ghp_secret_token'));
@@ -808,7 +809,7 @@ section('connectors');
 
   const row = await store.getConnector(alice.id, 'github');
   check('the stored token is encrypted', !row.token.includes('ghp_secret_token'));
-  check('and decrypts back', decryptSecret(row.token) === 'ghp_secret_token');
+  check('and decrypts back', decryptSecret(row.token, ['connector', alice.id, 'github']) === 'ghp_secret_token');
 
   check("Bob cannot read Alice's connector", (await store.getConnector(bob.id, 'github')) === null);
   await store.deleteConnector(bob.id, 'github');
@@ -943,10 +944,10 @@ check('a code from 30s ago still works', verifyTotp(secret, totpCode(secret, Dat
 check('a code from 2 minutes ago does not', !verifyTotp(secret, totpCode(secret, Date.now() - 120_000)));
 check('the uri names the account', totpUri({ secret, email: 'a@b.c' }).includes('a%40b.c'));
 
-await store.setTotpSecret(bob.id, encryptSecret(secret));
+await store.setTotpSecret(bob.id, encryptSecret(secret, ['totp', bob.id]));
 let bobRow = await store.getUserById(bob.id);
 check('the secret is stored encrypted', !bobRow.totp_secret.includes(secret));
-check('and decrypts back', decryptSecret(bobRow.totp_secret) === secret);
+check('and decrypts back', decryptSecret(bobRow.totp_secret, ['totp', bob.id]) === secret);
 check('staging a secret does not enable it', bobRow.totp_enabled_at === null);
 
 const codes = recoveryCodes();
@@ -2568,8 +2569,8 @@ section("the + menu's choices stay on the account that made them");
   check('on a small window the rarely-used tools wait behind load_tools', heldBack.includes('load_tools') && !heldBack.includes('chart'), String(heldBack.length));
   check('  unless every tool is loaded up front', !loaded.includes('load_tools') && loaded.includes('chart'), String(loaded.length));
 
-  await store.saveConnector(carol.id, 'github', encryptSecret('ghp_carol'), 'carol');
-  await store.saveConnector(carol.id, 'notion', encryptSecret('secret_carol'), 'carol');
+  await store.saveConnector(carol.id, 'github', encryptSecret('ghp_carol', ['connector', carol.id, 'github']), 'carol');
+  await store.saveConnector(carol.id, 'notion', encryptSecret('secret_carol', ['connector', carol.id, 'notion']), 'carol');
   const paused = await connectorSummary(carol.id, { off: ['github'] });
   check('a paused connector is not offered to the assistant', !paused.ids.includes('github') && paused.ids.includes('notion'), paused.ids.join(','));
   check('  nor named in its prompt', !/GitHub/i.test(paused.summary || ''), paused.summary);

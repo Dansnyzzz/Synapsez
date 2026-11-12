@@ -1,6 +1,26 @@
 {
   "entries": [
     {
+      "version": "1.27.0",
+      "date": "2026-11-12",
+      "improved": {
+        "vi": [
+          "Bấm Dừng giờ dừng luôn cả công cụ MCP đang chạy. Câu trả lời dài gần hết thời gian sẽ dừng gọn kèm nút Tiếp tục, thay vì bị cắt ngang."
+        ],
+        "en": [
+          "Stop now also stops an MCP tool that is running. A long reply that nears its time limit stops cleanly with a Continue button instead of being cut off."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Không còn gửi trùng cùng một tin nhắn hay email trong một lượt. Công cụ chưa được cấp cho cuộc trò chuyện sẽ không chạy. Công cụ của máy chủ MCP chạy trên máy tính đám mây không còn bị báo nhầm là đã thay đổi."
+        ],
+        "en": [
+          "The same message or email is no longer sent twice in one turn. A tool the conversation was not given is not run. Tools of an MCP server on the cloud computer are no longer wrongly reported as changed."
+        ]
+      }
+    },
+    {
       "version": "1.26.0",
       "date": "2026-11-12",
       "improved": {

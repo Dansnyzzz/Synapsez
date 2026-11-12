@@ -1,6 +1,7 @@
 import { withMarkup } from './pricing.js';
 import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
+import { currentTrace } from './util/trace.js';
 
 /**
  * Per-account usage accounting.
@@ -99,6 +100,14 @@ export async function checkQuota(user, { usingSharedKey, store = getStore() }) {
  */
 export async function record(userId, { chatId, model, usage, costUsd, role = 'turn', origin = null }) {
   if (!usage) return;
+  // A call a turn made on the side — a sub-agent, deep research, a fold, a quality check — is
+  // that turn's spend too (harness audit, 2026-11-12): the per-turn ceiling counted only the
+  // main loop's calls, so a fan-out of six sub-agents or a research run went past it unseen.
+  // The loop counts its own ('turn') itself; see agent.js `spentThisTurn`.
+  if (role !== 'turn') {
+    const spend = currentTrace().turnSpend;
+    if (spend) spend.tokens += (Number(usage.input) || 0) + (Number(usage.output) || 0);
+  }
   await getStore().recordUsage(userId, {
     id: crypto.randomUUID(),
     chatId,

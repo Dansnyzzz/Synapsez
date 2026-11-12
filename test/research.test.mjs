@@ -383,6 +383,13 @@ section('the whole pipeline, end to end with fakes');
   });
   check('a run past its time limit ends with a report, not a cut-off turn', /token or time limit/i.test(timed.content), timed.content.slice(0, 120));
   check('  and is saved as stopped at its limit', (await store.getResearchRun(uid, timed.runId))?.status === 'budget');
+
+  // Harness audit, 2026-11-12: started late in a turn, its own 150 s ran past the function's end.
+  const lateInTurn = await runDeepResearch({
+    question: 'Q5?', userId: uid, user: { id: uid }, chatId: 'c5', deadline: Date.now() + 5_000,
+    deps: { search: fakeSearch, stream: byRole, entry: { provider: 'x' } },
+  });
+  check("the turn's end is a time limit too: the run stops with a report", /token or time limit/i.test(lateInTurn.content), lateInTurn.content.slice(0, 120));
 }
 
 section('reading many pages, the right parts of them, and finishing on time');

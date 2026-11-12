@@ -84,6 +84,19 @@ const SETTLED_READS = new Set(['read_file', 'list_dir', 'glob', 'grep', 'look_at
  */
 const LIVE = /^(browser_|desktop_)|^(cloud_browser|run_command|run_background|run_background_logs|run_background_stop|sandbox_run|process_list|system_stats|clipboard_read|market_data|world_facts|sports|update_plan|ask_options|notify)$/;
 
+/**
+ * A message or post that lands on somebody else (harness audit, 2026-11-12): the identical one
+ * that went out earlier in the turn is not sent again. Only file writes and settled reads were
+ * checked, so a model that lost track sent the same Slack post, Gmail, Telegram message or
+ * POST once a step — up to five times under `auto`. A Gmail draft, a GET, are not sends.
+ *
+ * @param {{ name: string, input?: any }} call
+ */
+const sendsSomething = (call) =>
+  /^(send_email|slack_post|telegram_send|meta_page_post|github_write)$/.test(call.name) ||
+  (call.name === 'gmail' && /^(send|reply|forward)$/i.test(String(call.input?.action || ''))) ||
+  (call.name === 'http_request' && !/^(GET|HEAD|OPTIONS)$/i.test(String(call.input?.method || 'GET')));
+
 /** A failure that the same call can only repeat: the file is what the edit does not match. */
 const CERTAIN_FAILURE = /did not match|matches more than once|has nothing to find|There is no file|was uploaded|has no stored source|Pass content/;
 
@@ -161,6 +174,12 @@ export function createStepGuard(messages = []) {
             `It said: ${before.content.slice(0, 400)}\nChange what you send, or tell the person what is stopping you.`,
         };
       }
+    }
+    if (sendsSomething(call) && succeeded.has(key)) {
+      return {
+        isError: false,
+        content: 'Not sent again: this exact message already went out earlier in this turn. Treat it as sent and carry on — a second copy only if the person asks for one in their next message.',
+      };
     }
     if (LIVE.test(call.name)) return null;
     const done = succeeded.get(key);

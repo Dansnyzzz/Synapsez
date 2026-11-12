@@ -21,7 +21,7 @@
  *   mcp_servers.config headersCipher/envCipher mcpConfigContext
  */
 import { openSecret, encryptSecret, needsReseal, secretVersion } from './crypto.js';
-import { cloudBrowserContext, mcpBridgeContext, mcpConfigContext } from './secretContexts.js';
+import { cloudBrowserContext, mcpBridgeContext, mcpConfigContext, totpContext, connectorContext, hookContext, providerKeyContext } from './secretContexts.js';
 
 /**
  * Each table that holds credentials: its rows that may, whose they are, the sealed values in
@@ -34,19 +34,19 @@ const SEALED = {
   users: {
     select: 'SELECT id, totp_secret FROM users WHERE totp_secret IS NOT NULL',
     owner: (row) => row.id,
-    fields: (row) => (row.totp_secret ? [{ kind: 'totp', value: row.totp_secret, context: (user) => ['totp', user], put: (sealed) => { row.totp_secret = sealed; } }] : []),
+    fields: (row) => (row.totp_secret ? [{ kind: 'totp', value: row.totp_secret, context: (user) => totpContext(user), put: (sealed) => { row.totp_secret = sealed; } }] : []),
     update: (row, was) => ['UPDATE users SET totp_secret = $2 WHERE id = $1 AND totp_secret = $3 RETURNING id', [row.id, row.totp_secret, was.totp_secret]],
   },
   connectors: {
     select: 'SELECT user_id, service, token FROM connectors WHERE token IS NOT NULL',
     owner: (row) => row.user_id,
-    fields: (row) => (row.token ? [{ kind: 'connector', value: row.token, context: (user) => ['connector', user, row.service], put: (sealed) => { row.token = sealed; } }] : []),
+    fields: (row) => (row.token ? [{ kind: 'connector', value: row.token, context: (user) => connectorContext(user, row.service), put: (sealed) => { row.token = sealed; } }] : []),
     update: (row, was) => ['UPDATE connectors SET token = $3 WHERE user_id = $1 AND service = $2 AND token = $4 RETURNING user_id', [row.user_id, row.service, row.token, was.token]],
   },
   hook_routes: {
     select: 'SELECT id, user_id, secret_enc FROM hook_routes WHERE secret_enc IS NOT NULL',
     owner: (row) => row.user_id,
-    fields: (row) => (row.secret_enc ? [{ kind: 'hook', value: row.secret_enc, context: (user) => ['hook', user, row.id], put: (sealed) => { row.secret_enc = sealed; } }] : []),
+    fields: (row) => (row.secret_enc ? [{ kind: 'hook', value: row.secret_enc, context: (user) => hookContext(user, row.id), put: (sealed) => { row.secret_enc = sealed; } }] : []),
     update: (row, was) => ['UPDATE hook_routes SET secret_enc = $2 WHERE id = $1 AND secret_enc = $3 RETURNING id', [row.id, row.secret_enc, was.secret_enc]],
   },
   user_settings: {
@@ -60,7 +60,7 @@ const SEALED = {
         /** @type {Sealed[]} */
         const out = [];
         for (const [provider, held] of Object.entries(value)) {
-          const context = (user) => ['provider-key', user, provider];
+          const context = (user) => providerKeyContext(user, provider);
           // A single string is how one key per provider was kept before lists.
           if (typeof held === 'string') out.push({ kind: 'provider-key', value: held, context, put: (sealed) => { value[provider] = sealed; } });
           else if (Array.isArray(held)) {
@@ -214,39 +214,47 @@ export async function rebindPreflight(query, merged) {
 export const credentialOwner = (table, row) => (SEALED[table] ? SEALED[table].owner(row) || null : null);
 
 /**
- * A row moving to an account with another id (db:copy merging an old account into the one
- * with the same email): each v2 value in it opened as the old owner's and sealed again as
- * the new owner's — bound to the old id, it would not open under the new one. v1 values are
- * unbound and stay as they are. A value that will not open here (no ENCRYPTION_KEY, or not
- * the key that sealed it) is left as it was and counted, never dropped. The row comes back
- * in the shape it came in.
+ * A row as db:copy writes it to another database, its credentials bound to the account they
+ * belong to there (`toUser`: the same id, or the one a merged account joins). A v2 value of a
+ * merged account is opened as the old owner's and sealed again as the new one's — bound to
+ * the old id it would not open under the new. A v1 value (from before 1.26.0, unbound) is
+ * sealed in v2 as it goes (security review, 2026-11-12): carried as v1 it would be refused the
+ * moment ENCRYPTION_REFUSE_V1 is set, after a reseal of the new database had said it was safe.
+ * A value that will not open here — no ENCRYPTION_KEY, or not the key that sealed it — is left
+ * as it was and counted (`unopenable` for v2, `v1Left` for v1), never dropped. The row comes
+ * back in the shape it came in.
  *
  * @param {string} table
  * @param {Record<string, any>} row
  * @param {string} toUser
- * @returns {{ row: Record<string, any>, rebound: number, unopenable: number }}
+ * @returns {{ row: Record<string, any>, rebound: number, unopenable: number, v1Left: number }}
  */
 export function rebindRow(table, row, toUser) {
   const place = SEALED[table];
   const from = place?.owner(row);
-  if (!place || !from || from === toUser) return { row, rebound: 0, unopenable: 0 };
+  const none = { row, rebound: 0, unopenable: 0, v1Left: 0 };
+  if (!place || !from || !toUser) return none;
   const copy = working(place, row);
-  if (!copy) return { row, rebound: 0, unopenable: 0 };
+  if (!copy) return none;
   let rebound = 0;
   let unopenable = 0;
+  let v1Left = 0;
   for (const field of place.fields(copy)) {
-    if (secretVersion(field.value).version !== 'v2') continue;
+    const { version } = secretVersion(field.value);
+    if (version === 'v2' && from === toUser) continue;
+    if (version !== 'v1' && version !== 'v2') continue;
     const opened = openSecret(field.value, field.context(from));
     if (opened.state !== 'ok') {
-      unopenable += 1;
+      if (version === 'v1') v1Left += 1;
+      else unopenable += 1;
       continue;
     }
     field.put(encryptSecret(opened.value, field.context(toUser)));
     rebound += 1;
   }
-  if (!rebound) return { row, rebound, unopenable };
+  if (!rebound) return { ...none, unopenable, v1Left };
   if (place.json && typeof row[place.json] === 'string') copy[place.json] = JSON.stringify(copy[place.json]);
-  return { row: copy, rebound, unopenable };
+  return { row: copy, rebound, unopenable, v1Left };
 }
 
 /**

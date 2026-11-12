@@ -188,18 +188,33 @@ export function keptTools(tools) {
   }));
 }
 
+/** A value with every object's keys in one order, so the same schema always reads the same. */
+const canonical = (value) =>
+  Array.isArray(value)
+    ? value.map(canonical)
+    : value && typeof value === 'object'
+      ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]))
+      : value;
+
+const printOf = (parts) => crypto.createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 16);
+
 /**
  * A tool's fingerprint: its name, what it says it does, and what it takes (2026-11-12,
  * the "rug pull" class — a server approved as harmless that later changes what a tool
  * says, or adds one, and the next turn offers the new words to the model unseen).
+ *
+ * The schema is read with its keys in one order (harness audit, 2026-11-12): a list kept on
+ * the row comes back from jsonb with its keys reordered, so the same tool, live from the
+ * server, printed differently — and every tool of a cloud server looked changed the first
+ * time it was started. `legacyPrint` is the order-sensitive print approvals before this
+ * recorded, still accepted for them.
  */
 export function toolPrint(tool) {
-  return crypto
-    .createHash('sha256')
-    .update(JSON.stringify([String(tool?.name || ''), String(tool?.title || ''), String(tool?.description || ''), tool?.inputSchema ?? null]))
-    .digest('hex')
-    .slice(0, 16);
+  return printOf([String(tool?.name || ''), String(tool?.title || ''), String(tool?.description || ''), canonical(tool?.inputSchema ?? null)]);
 }
+
+/** The print approvals recorded before the schema was read in one order. */
+const legacyPrint = (tool) => printOf([String(tool?.name || ''), String(tool?.title || ''), String(tool?.description || ''), tool?.inputSchema ?? null]);
 
 /** Every tool's fingerprint, by name — what an approval records. */
 export const printsOf = (tools) => Object.fromEntries(keptTools(tools).map((tool) => [tool.name, toolPrint(tool)]));
@@ -217,9 +232,27 @@ export function screenTools(row, tools) {
   if (!approved || typeof approved !== 'object') return { approved: list, changed: [], first: true };
   const ok = [];
   const changed = [];
-  for (const tool of list) (approved[tool?.name] === toolPrint(keptTools([tool])[0]) ? ok : changed).push(tool);
+  for (const tool of list) {
+    const kept = keptTools([tool])[0];
+    const want = approved[tool?.name];
+    // Today's print, or one recorded before it from the tool as sent or as jsonb kept it.
+    const same = want === toolPrint(kept) || want === legacyPrint(kept) || want === legacyPrint(jsonbOrdered(kept));
+    (same ? ok : changed).push(tool);
+  }
   return { approved: ok, changed, first: false };
 }
+
+/** A value with its keys in the order Postgres jsonb keeps them: shorter first, then by bytes. */
+const jsonbOrdered = (value) =>
+  Array.isArray(value)
+    ? value.map(jsonbOrdered)
+    : value && typeof value === 'object'
+      ? Object.fromEntries(
+          Object.keys(value)
+            .sort((a, b) => Buffer.byteLength(a) - Buffer.byteLength(b) || Buffer.compare(Buffer.from(a), Buffer.from(b)))
+            .map((key) => [key, jsonbOrdered(value[key])]),
+        )
+      : value;
 
 /** What the settings page shows of a held tool: its name and what it now says. */
 const heldOf = (changed) => changed.map((tool) => ({ name: String(tool?.name || ''), description: String(tool?.description || '').replace(INVISIBLE, '').slice(0, 300) }));
@@ -429,8 +462,30 @@ export async function mcpTools(userId) {
   return { tools, servers };
 }
 
-/** Run one MCP tool by its prefixed name. */
-export async function callMcpTool(userId, name, input, timeoutMs) {
+/** The longest any one MCP call may wait, whatever the model asked for (harness audit, 2026-11-12). */
+export const MCP_CALL_MAX_MS = 120_000;
+/** What is kept of a turn's time for the step after a tool: the model has to read the result. */
+const MCP_TURN_RESERVE_MS = 10_000;
+
+/**
+ * How long one call may wait: what the model asked (`timeout_ms`, its own argument), or the
+ * client's 30 s, never past MCP_CALL_MAX_MS nor past what the turn has left. The model's
+ * number was used as given, so a call could be told to wait an hour and outlive the 300 s
+ * function it ran in.
+ */
+export function mcpCallBudget(asked, deadline = Infinity, now = Date.now()) {
+  const wanted = Number(asked) > 0 ? Number(asked) : 30_000;
+  const left = Number.isFinite(deadline) ? deadline - now - MCP_TURN_RESERVE_MS : Infinity;
+  return Math.max(1_000, Math.min(wanted, MCP_CALL_MAX_MS, left));
+}
+
+/**
+ * Run one MCP tool by its prefixed name.
+ *
+ * @param {string} userId @param {string} name @param {any} input @param {number} [timeoutMs]
+ * @param {{ signal?: AbortSignal | null, deadline?: number }} [options] the turn's Stop and its end
+ */
+export async function callMcpTool(userId, name, input, timeoutMs, { signal = null, deadline = Infinity } = {}) {
   const split = splitMcpName(name);
   if (!split) throw new Error(`"${name}" is not a valid MCP tool name.`);
 
@@ -453,7 +508,13 @@ export async function callMcpTool(userId, name, input, timeoutMs) {
     );
   }
 
-  return held.connection.call(split.tool, input, timeoutMs);
+  // Only a tool this account was offered (registry `screenTools`): one held since its
+  // description changed is not run because the model named it. The agent refuses unoffered
+  // names first (agent.js `unofferedRefusal`); this is the same rule where the call is made.
+  if (Array.isArray(held.tools) && !held.tools.some((tool) => tool?.name === name)) {
+    throw new Error(`"${name}" is not one of the tools this account was offered from that server — it may be waiting for approval in Settings → Extensions.`);
+  }
+  return held.connection.call(split.tool, input, mcpCallBudget(timeoutMs, deadline), { signal });
 }
 
 /**

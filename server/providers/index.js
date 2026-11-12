@@ -15,6 +15,7 @@ import {
   setKeyMeta,
 } from '../settings.js';
 import { resolveModel, PROVIDERS, isFreeEntry } from './catalog.js';
+import { freeTierOnly } from '../freeTier.js';
 import { startChatSpan } from '../util/genaiSpan.js';
 import crypto from 'node:crypto';
 import { createShield } from '../deidentify.js';
@@ -539,6 +540,16 @@ async function* streamAny(opts) {
       if (shared && sharedKeyAllowed && !(await sharedKeyAllowed())) {
         gaveUp.add(key);
         refused = 'the deployment key is over this account\'s monthly limit';
+        continue;
+      }
+      // The deployment pays for nothing while FREE_TIER_ONLY holds (freeTier.js, the owner's
+      // free-only rule; harness audit, 2026-11-12): on its own key only a model priced at
+      // nothing runs. A key with credit on it would otherwise bill the owner for every
+      // account's paid model. Google's keys are the exception — their free tier bills nothing
+      // unless the project turns billing on, and its catalogue prices are the paid tier's.
+      if (shared && !freeModel && provider !== 'google' && freeTierOnly()) {
+        gaveUp.add(key);
+        refused = 'the deployment key serves free models only — add your own key in Settings → Providers for this one';
         continue;
       }
       // From here the deployment pays, and the turn's own limits for that apply (agent.js).

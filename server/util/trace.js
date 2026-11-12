@@ -100,7 +100,9 @@ function emit(level, message, fields = {}) {
   // Cleaned once, up here, because there are two output formats below and
   // cleaning inside one of them is how half a fix ships.
   const safe = cleanFields(fields);
-  const record = { level, msg: message, ...trace, ...safe };
+  // State a turn keeps in its scope for its own use (agent.js `turnSpend`) is not a log field.
+  const { turnSpend: _turnSpend, ...traced } = trace;
+  const record = { level, msg: message, ...traced, ...safe };
 
   if (asJson) {
     // `time` last in the object but first in the reader's mind; platforms sort
@@ -109,7 +111,7 @@ function emit(level, message, fields = {}) {
     return;
   }
 
-  const parts = Object.entries({ ...trace, ...safe })
+  const parts = Object.entries({ ...traced, ...safe })
     .filter(([, v]) => v !== undefined && v !== null && v !== '')
     .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`);
   const colour = LEVEL_COLOUR[level] ?? '';
