@@ -25,6 +25,9 @@ const KEYS = {
   wide: 'tvly-wide-ceiling-9999-zzzz',
   fc1: 'fc-hobby-4444-dddd',
   fc2: 'fc-free-5555-eeee',
+  // Another key ending in the same four characters as `env`, and one that does not.
+  twin: 'tvly-twin-9999-zzzz-1111',
+  replaced: 'tvly-replaced-7777-2222',
   e2bEnv: 'e2b_env_6666_ffff',
   e2b: 'e2b_stored_7777_gggg',
   exa: 'exa-good-1212-jjjj',
@@ -276,8 +279,9 @@ try {
     check('the owner chose one key, with a monthly cap', paid?.keyId === a && paid.capMonthly === 5, JSON.stringify(paid));
     const free = await caught(pool.withKey('tavily', 1, async () => 'answered', { paid: false }));
     check('every free key full: a call nobody is charged for stands aside — nothing billed', free?.skip === true, String(free?.message));
+    // As withKey says a charged call must: held with take before it is made, not made when take says no.
     const charged = (need) => pool.withKey('tavily', need, async (key, meta) => {
-      await tiers.spend('tavily', need, undefined, { keyId: meta.id, paid: meta.paid });
+      if (!(await tiers.take('tavily', need, undefined, { keyId: meta.id, paid: meta.paid }))) throw Object.assign(new Error('held back at the cap'), { skip: true });
       return { mine: key === KEYS.a, id: meta.id, paid: meta.paid };
     }, { paid: true });
     const first = await charged(2);
@@ -409,6 +413,69 @@ try {
     check('  and the services table sums the keys: Tavily 1,900 + 950 + 950, Firecrawl from its live plans', services.tavily.limit === 3800 && services.tavily.used === 4 && services.firecrawl_search.limit === 3420, JSON.stringify([services.tavily, services.firecrawl_search]));
     const text = JSON.stringify(report);
     check('  no key, sealed value or fingerprint in it', leaks(text).length === 0 && !/"(sealed|fingerprint|key)":/.test(text), leaks(text).join());
+    await pool.setPaidKey('tavily', null);
+    await resetCounts();
+  }
+
+  section("a replaced environment key starts afresh; the key put back keeps its state (review, round 1)");
+  {
+    process.env.TAVILY_API_KEY = KEYS.env;
+    await fresh('tavily');
+    answers.set('api.tavily.com/usage', (u, headers) => json({ key: { usage: 1, limit: bearer(headers) === KEYS.env ? 400 : null }, account: { current_plan: 'Researcher', plan_usage: 1, plan_limit: 1000 } }));
+    await pool.liveUsage('tavily', await entry('tavily', 'env'), { fresh: true });
+    await pool.markKey('tavily', 'env', 'invalid', { error: 'HTTP 401' });
+    check('the environment key refused, its own plan read', (await entry('tavily', 'env')).state === 'invalid' && (await entry('tavily', 'env')).live?.limit === 400);
+    process.env.TAVILY_API_KEY = KEYS.twin;
+    const twin = await entry('tavily', 'env');
+    check('  another key in its place — one ending in the same four characters — has neither its state nor its figure', twin.hint === KEYS.env.slice(-4) && twin.state === 'ok' && twin.live === null && (await pool.pickKey('tavily', 1))?.key.id === 'env', JSON.stringify({ state: twin.state, live: twin.live }));
+    process.env.TAVILY_API_KEY = KEYS.replaced;
+    const other = await import('../server/keyPool.js?instance=redeployed');
+    const there = (await other.keysFor('tavily', { fresh: true }))[0];
+    check('  nor has a key put in its place on a fresh instance reading the same database', there?.hint === KEYS.replaced.slice(-4) && there.state === 'ok' && (await other.pickKey('tavily', 1))?.key.id === 'env', JSON.stringify({ hint: there?.hint, state: there?.state }));
+    process.env.TAVILY_API_KEY = KEYS.env;
+    check('  the refused key put back is still refused, here and there', (await entry('tavily', 'env')).state === 'invalid' && (await other.keysFor('tavily', { fresh: true }))[0]?.state === 'invalid');
+    check('  the saved state names its key by a hash, never by the key', !!(await store.getSetting('service_env_state'))?.tavily?.id && leaks(JSON.stringify(await store.getSetting('service_env_state'))).length === 0);
+
+    const version = () => store.getSetting('service_keys_version');
+    const asides = () => heard.filter((line) => line.includes('a key set aside')).length;
+    const before = { version: await version(), asides: asides() };
+    await pool.markKey('tavily', 'env', 'invalid', { error: 'HTTP 401' });
+    await pool.markKey('tavily', c, 'ok');
+    check('marking a key as it already is writes nothing, moves no version, logs nothing', (await version()) === before.version && asides() === before.asides, `${before.version} → ${await version()}`);
+    await pool.markKey('tavily', 'env', 'ok');
+    check('  a real change still does', (await version()) !== before.version && (await entry('tavily', 'env')).state === 'ok');
+    answers.delete('api.tavily.com/usage');
+  }
+
+  section("a charged call is held to the paid key's cap — all at once, and when the count cannot be written (review, round 1)");
+  {
+    await resetCounts();
+    await pool.setPaidKey('tavily', 'env', 3);
+    const took = await Promise.all(Array.from({ length: 6 }, () => tiers.take('tavily', 1, undefined, { keyId: 'env', paid: true })));
+    check('six charged calls at once against a cap of three: three go, and three are counted', took.filter(Boolean).length === 3 && (await store.readCounter(`paid:tavily@env:${month}`)) === 3 && (await store.readCounter(`free:tavily:${month}`)) === 3, JSON.stringify(took));
+    await resetCounts();
+    await pool.setPaidKey('tavily', 'env', 5);
+    const write = store.addToCounter;
+    store.addToCounter = async () => {
+      throw new Error('database away');
+    };
+    const down = { paid: await tiers.take('tavily', 1, undefined, { keyId: 'env', paid: true }), free: await tiers.take('tavily', 1) };
+    process.env.FREE_TIER_ONLY = 'false';
+    down.lifted = await tiers.take('tavily', 1, undefined, { keyId: 'env', paid: true });
+    delete process.env.FREE_TIER_ONLY;
+    store.addToCounter = write;
+    check("a count that cannot be written: a charged call does not go, ceilings lifted or not — the cap is the owner's", down.paid === false && down.lifted === false, JSON.stringify(down));
+    check('  while an uncharged Tavily call goes, as before (Tavily refuses by itself once spent)', down.free === true);
+    await tiers.take('tavily', 1, undefined, { keyId: 'env', paid: true });
+    // The paid count's own write fails; anything taken back afterwards goes through.
+    store.addToCounter = async (bucket, amount, until) => {
+      if (String(bucket).startsWith('paid:') && amount > 0) throw new Error('database away');
+      return write.call(store, bucket, amount, until);
+    };
+    const half = await tiers.take('tavily', 1, undefined, { keyId: 'env', paid: true });
+    store.addToCounter = write;
+    const counts = { free: await store.readCounter(`free:tavily:${month}`), paid: await store.readCounter(`paid:tavily@env:${month}`) };
+    check('  one whose paid count fails half way: refused, its free count given back, the paid count untouched', half === false && counts.free === 1 && counts.paid === 1, JSON.stringify({ half, ...counts }));
     await pool.setPaidKey('tavily', null);
     await resetCounts();
   }

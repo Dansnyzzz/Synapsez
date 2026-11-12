@@ -188,16 +188,20 @@ async function underCap(service, keyId, total) {
 export async function take(service, amount, now = new Date(), { keyId = 'env', paid = false } = {}) {
   const tier = TIERS[service];
   if (!tier || !(Number(amount) > 0)) return true;
+  /** What has been added so far, to take back if the call does not go. */
+  const counted = [];
   try {
     const store = getStore();
     const { bucket, ends } = countedIn(service, keyId, now);
     const total = await store.addToCounter(bucket, amount, ends);
-    const counted = [[bucket, ends]];
+    counted.push([bucket, ends]);
     let fits;
     if (paidHere(service, paid)) {
       const apart = keyBucket(service, keyId, now, { paid: true });
+      const paidTotal = await countPaid(service, keyId, amount, now);
+      // Listed once it is written, so a failure taking it back never takes back what was not added.
       counted.push([apart.bucket, apart.ends]);
-      fits = await underCap(service, keyId, await countPaid(service, keyId, amount, now));
+      fits = await underCap(service, keyId, paidTotal);
     } else if (!freeTierOnly() || (paid && (tier.pooled || tier.share))) {
       // The ceilings off; or a paid call in Firecrawl's index or one of its shares — free splits, not a paid call's.
       fits = true;
@@ -213,7 +217,11 @@ export async function take(service, amount, now = new Date(), { keyId = 'env', p
     for (const [name, until] of counted) await store.addToCounter(name, -amount, until);
     return false;
   } catch (err) {
-    return !freeTierOnly() || !tier.billed || noDatabase(err);
+    // A charged call is a bill by definition, and its cap the owner's limit whatever FREE_TIER_ONLY
+    // says: a count that cannot be written or read stops it (review, 2026-11-12). The rest as before.
+    const goes = paid && !noDatabase(err) ? false : !freeTierOnly() || !tier.billed || noDatabase(err);
+    if (!goes) for (const [name, until] of counted) await getStore().addToCounter(name, -amount, until).catch(() => {});
+    return goes;
   }
 }
 

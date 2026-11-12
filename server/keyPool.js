@@ -1,5 +1,5 @@
 import { getStore } from './store/index.js';
-import { openSecret } from './crypto.js';
+import { openSecret, sha256 } from './crypto.js';
 import { serviceKeyContext } from './secretContexts.js';
 import { periodOf, freeTierOnly, num, e2bMonthCap, noDatabase } from './freeTierPeriod.js';
 import { log } from './util/trace.js';
@@ -109,6 +109,22 @@ const envKeyOf = (service) => {
   return '';
 };
 
+/** The last identity worked out per service, so a call does not hash the same key again. */
+const envIds = new Map();
+/**
+ * Which key the environment holds, as its saved state and figure name it: a short hash of
+ * service and key — never the key, and not its hint, which two keys may share. A key put in
+ * the environment in place of another is a new key, and inherits nothing (review, 2026-11-12).
+ */
+const envIdOf = (service, key = envKeyOf(service)) => {
+  if (!key) return '';
+  const known = envIds.get(service);
+  if (known?.key === key) return known.id;
+  const id = sha256(`${service}:${key}`).slice(0, 16);
+  envIds.set(service, { key, id });
+  return id;
+};
+
 /** A window's own description, for freeTier.js: its period, its default ceiling, whether it is billed. Null for a service not counted per key. */
 export const poolWindow = (id) => WINDOWS[id] ?? null;
 
@@ -124,9 +140,12 @@ let loading = null;
 let checking = null;
 /** Moved by `bumpKeysVersion`, so a read begun before a change is not kept after it. */
 let generation = 0;
-/** The environment key's state per service: it has no row (spec A). Mirrored in the setting `service_env_state`. */
+/**
+ * The environment key's state per service: it has no row (spec A). Mirrored in the setting
+ * `service_env_state`; each entry names the key it is about (`envIdOf`), and holds for no other.
+ */
 const envStates = new Map();
-/** The environment key's last figure from its provider, per service, with the hint of the key it was read for. */
+/** The environment key's last figure from its provider, per service, with the identity of the key it was read for. */
 const envLive = new Map();
 /** When each key's provider was last asked, so a failing one is not asked on every call. */
 const askedAt = new Map();
@@ -172,7 +191,7 @@ async function load() {
   for (const [service, saved] of Object.entries(envSaved && typeof envSaved === 'object' ? envSaved : {})) {
     const mine = envStates.get(service);
     if (POOLED[service] && saved && (!mine || Number(saved.at) > mine.at)) {
-      envStates.set(service, { state: asState(saved.state), retryAt: Number(saved.retryAt) || null, error: String(saved.error || ''), at: Number(saved.at) || 0 });
+      envStates.set(service, { id: String(saved.id || ''), state: asState(saved.state), retryAt: Number(saved.retryAt) || null, error: String(saved.error || ''), at: Number(saved.at) || 0 });
     }
   }
   return { version: version ?? null, checkedAt: Date.now(), stored, paid: cleanPaid(paid) };
@@ -219,9 +238,9 @@ function effective(key, at = Date.now()) {
 }
 
 /** The environment key's figure, if it was read for the key the environment holds now. */
-const envLiveOf = (service, hint) => {
+const envLiveOf = (service, id = envIdOf(service)) => {
   const saved = envLive.get(service);
-  return saved && saved.hint === hint ? saved.live : null;
+  return saved && id && saved.id === id ? saved.live : null;
 };
 
 /** @returns {PoolKey[]} */
@@ -229,8 +248,11 @@ function compose(service, snap) {
   const out = [];
   const envKey = envKeyOf(service);
   if (envKey) {
+    const id = envIdOf(service, envKey);
     const saved = envStates.get(service);
-    out.push({ id: 'env', fromEnv: true, key: envKey, hint: hintOf(envKey), label: null, ceiling: null, state: saved?.state || 'ok', retryAt: saved?.retryAt ?? null, live: envLiveOf(service, hintOf(envKey)) });
+    // A state saved for the key the environment held before is not this key's.
+    const mine = saved && saved.id === id ? saved : null;
+    out.push({ id: 'env', fromEnv: true, key: envKey, hint: hintOf(envKey), label: null, ceiling: null, state: mine?.state || 'ok', retryAt: mine?.retryAt ?? null, live: envLiveOf(service, id) });
   }
   for (const key of snap.stored.get(service) || []) out.push({ ...key });
   const at = Date.now();
@@ -405,7 +427,7 @@ export async function capacityOf(service, now = new Date()) {
 export function noteUse(service, keyId, amount) {
   const window = WINDOWS[service];
   if (!window?.live || !Number(amount)) return;
-  const live = keyId === 'env' ? envLive.get(window.of)?.live : snapshot?.stored.get(window.of)?.find((key) => key.id === keyId)?.live;
+  const live = keyId === 'env' ? envLiveOf(window.of) : snapshot?.stored.get(window.of)?.find((key) => key.id === keyId)?.live;
   if (live && Number.isFinite(Number(live.used))) live.used = Math.max(0, Number(live.used) + Number(amount));
 }
 
@@ -565,6 +587,8 @@ export async function markKey(service, key, state, { retryAfterMs = 0, error = '
   const id = serviceOf(service);
   const keyId = typeof key === 'string' ? key : String(key?.id || '');
   if (!id || !keyId || !KEY_STATES.includes(state)) return;
+  const envKey = keyId === 'env' ? envKeyOf(id) : '';
+  if (keyId === 'env' && !envKey) return; // no key in the environment: nothing to set aside
   const now = Date.now();
   const wait = Math.max(0, Number(retryAfterMs) || 0);
   const retryAt =
@@ -572,27 +596,42 @@ export async function markKey(service, key, state, { retryAfterMs = 0, error = '
     : state === 'exhausted' ? (wait > 0 ? now + wait : periodOf(WINDOWS[id].per, new Date(now)).ends.getTime())
     : null;
   const held = snapshot?.stored.get(id)?.find((one) => one.id === keyId);
-  const known = typeof key === 'object' && key ? key : keyId === 'env' ? { key: envKeyOf(id), hint: hintOf(envKeyOf(id)) } : held;
+  const known = typeof key === 'object' && key ? key : keyId === 'env' ? { key: envKey, hint: hintOf(envKey) } : held;
   const hint = known?.hint || '';
-  const was = keyId === 'env' ? envStates.get(id)?.state || 'ok' : held?.state || 'ok';
+  const envId = keyId === 'env' ? envIdOf(id, envKey) : '';
+  // What this instance thought, for the log when the database cannot be read.
+  const mine = keyId === 'env' ? envStates.get(id) : held;
+  const before = (keyId === 'env' && mine?.id !== envId ? null : mine?.state) || 'ok';
   const lastError = state === 'ok' ? '' : scrub(error, known?.key, hint);
   // This instance stops using it at once, whatever the database says next.
-  if (keyId === 'env') envStates.set(id, { state, retryAt, error: lastError, at: now });
+  if (keyId === 'env') envStates.set(id, { id: envId, state, retryAt, error: lastError, at: now });
   for (const one of snapshot?.stored.get(id) || []) if (one.id === keyId) Object.assign(one, { state, retryAt });
+  const same = (was) => was.state === state && (was.retryAt ?? null) === retryAt;
+  // Whether anything changes is the database's to say, not this instance's copy, which may be 30 s old:
+  // the same state again writes nothing and moves no version, so a burst of refusals is one change.
+  let was = null;
   try {
     const store = getStore();
     if (keyId === 'env') {
       const saved = await store.getSetting(ENV_STATE);
-      await store.setSetting(ENV_STATE, { ...(saved && typeof saved === 'object' ? saved : {}), [id]: { state, retryAt, error: lastError, at: now } });
+      const all = saved && typeof saved === 'object' ? saved : {};
+      // A state saved for another key — the one the environment held before — is not this key's.
+      const entry = all[id]?.id === envId ? all[id] : null;
+      was = { state: asState(entry?.state), retryAt: Number(entry?.retryAt) || null };
+      if (!same(was)) await store.setSetting(ENV_STATE, { ...all, [id]: { id: envId, state, retryAt, error: lastError, at: now } });
     } else {
-      await store.setServiceKeyState(keyId, { state, retryAt: retryAt ? new Date(retryAt) : null, lastError: lastError || null });
+      const row = (await store.listServiceKeys(id)).find((one) => String(one.id) === keyId);
+      if (!row) return; // removed meanwhile
+      was = { state: asState(row.state), retryAt: row.retry_at ? new Date(row.retry_at).getTime() : null };
+      if (!same(was)) await store.setServiceKeyState(keyId, { state, retryAt: retryAt ? new Date(retryAt) : null, lastError: lastError || null });
     }
+    if (same(was)) return;
     await bump();
   } catch (err) {
     if (!noDatabase(err)) log.warn('key pool: a key state was not saved', { service: id, hint, error: String(err?.message || err).slice(0, 160) });
   }
   if (state !== 'ok') log.warn('key pool: a key set aside', { service: id, hint, state, until: retryAt ? new Date(retryAt).toISOString() : '', error: lastError });
-  else if (was !== 'ok') log.info('key pool: a key is in use again', { service: id, hint });
+  else if ((was?.state ?? before) !== 'ok') log.info('key pool: a key is in use again', { service: id, hint });
 }
 
 /**
@@ -602,6 +641,12 @@ export async function markKey(service, key, state, { retryAfterMs = 0, error = '
  * failing service, the next key once, the first left as it was; anything else is the
  * caller's to see. Counting stays with the caller (`take`/`spend`, with `id` and `paid`).
  * Every key out: an error with `skip`, the service standing aside as a spent allowance does.
+ *
+ * **A charged call (`meta.paid`) must be held with `take(service, need, now, { keyId: meta.id,
+ * paid: true })` inside `run`, before the request is made, and not made when that says no.**
+ * Choosing the paid key here only reads its month's count; the atomic hold against its cap —
+ * which also refuses when the count cannot be written — is `take`'s. `spend` afterwards counts
+ * what was used past the hold, never instead of it.
  *
  * @template T
  * @param {string} service
@@ -750,7 +795,7 @@ export async function liveUsage(service, key, { fresh = false } = {}) {
   }
   if (!live) return known;
   if (key.id === 'env') {
-    envLive.set(id, { hint: key.hint, live });
+    envLive.set(id, { id: envIdOf(id, key.key), live });
   } else {
     for (const one of snapshot?.stored.get(id) || []) if (one.id === key.id) one.live = live;
     await getStore().setServiceKeyLive(key.id, live).catch((err) => {
