@@ -1,6 +1,28 @@
 {
   "entries": [
     {
+      "version": "1.28.0",
+      "date": "2026-11-12",
+      "new": {
+        "vi": [
+          "Ghi nhớ giữ lịch sử: khi trợ lý sửa hay xoá một ghi chú, bản trước được giữ để bạn khôi phục; mỗi ghi chú cho biết nó được lưu trong cuộc trò chuyện nào. Ghi chú loại \"quy tắc\" luôn hỏi bạn trước khi đổi.",
+          "Trong Quyền riêng tư → Dữ liệu của bạn có thêm \"Tài liệu đã lập chỉ mục\": xem và xoá từng thư mục. Bản xuất dữ liệu có thêm bot và trí nhớ của bot."
+        ],
+        "en": [
+          "Memory keeps its history: when the assistant changes or removes a note, the earlier version is kept for you to restore, and each note says which conversation saved it. A \"rule\" note always asks you before it changes.",
+          "Privacy → Your data has \"Indexed documents\": see and forget each folder. The export now includes your bots and their memory."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Có thể bật dọn ghi chú hằng tháng: một model miễn phí đề xuất gộp hoặc xoá, bạn chấp nhận hay từ chối từng mục. Trợ lý đọc được đoạn hội thoại quanh kết quả tìm kiếm cũ và sửa một phần kỹ năng mà không ghi đè cả kỹ năng."
+        ],
+        "en": [
+          "An optional monthly tidy of your notes: a free model proposes merges or removals and you accept or reject each. The assistant can read the conversation around an earlier search result, and change part of a skill without rewriting it."
+        ]
+      }
+    },
+    {
       "version": "1.27.0",
       "date": "2026-11-12",
       "improved": {

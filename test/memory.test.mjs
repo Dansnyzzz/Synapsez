@@ -168,11 +168,11 @@ section('withheld tools, in one place');
   check('an ordinary conversation withholds nothing', withheldTools({ chat: {}, prefs: {} }).size === 0);
   const inc = withheldTools({ chat: { incognito: true }, prefs: {} });
   check('incognito withholds every memory tool', memory.MEMORY_TOOLS.every((n) => inc.has(n)));
-  check('  and chat search, and skill_write', inc.has('search_chats') && inc.has('skill_write'));
+  check('  and chat search, and skill_write — with read_chat and skill_edit, which follow them', inc.has('search_chats') && inc.has('skill_write') && inc.has('read_chat') && inc.has('skill_edit'));
   const off = withheldTools({ chat: {}, prefs: { memory: false } });
   check('memory off withholds the memory tools but not chat search', off.has('memory_write') && !off.has('search_chats'));
   const noSearch = withheldTools({ chat: {}, prefs: { chatSearch: false } });
-  check('chat search off withholds only that', noSearch.size === 1 && noSearch.has('search_chats'));
+  check('chat search off withholds only that — search_chats and read_chat, the step after it', noSearch.size === 2 && noSearch.has('search_chats') && noSearch.has('read_chat'), [...noSearch].join(','));
 
   const { availableTools } = await import('../server/tools/definitions.js');
   const names = availableTools({ workerOnline: false, policy: 'guarded', withhold: inc, context: 200_000 }).map((t) => t.name);

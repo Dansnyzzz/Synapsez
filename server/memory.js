@@ -872,10 +872,11 @@ export function withheldTools({ chat = null, prefs = {} } = {}) {
   }
   const incognito = !!chat?.incognito;
   if (incognito || prefs.memory === false) for (const name of MEMORY_TOOLS) out.add(name);
-  if (incognito || prefs.chatSearch === false) out.add('search_chats');
+  // read_chat goes where search_chats goes: the same recall, a step further (data rights round, 2026-11-12).
+  if (incognito || prefs.chatSearch === false) for (const name of ['search_chats', 'read_chat']) out.add(name);
   // Connector search switched off in Settings → Capabilities (owner, 2026-11-01).
   if (prefs.connectorSearch === false) for (const name of ['search_connectors', 'suggest_connectors']) out.add(name);
-  if (incognito) out.add('skill_write');
+  if (incognito) for (const name of ['skill_write', 'skill_edit']) out.add(name);
   return out;
 }
 

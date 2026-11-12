@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-11-12 — Memory that keeps its history, and every piece of your data in reach (1.28.0)
+
+**Memory, after the owner's six-layer model** (schema 50):
+- **Where a note came from.** Each note, and each entry a bot keeps, records the conversation and message it was saved in and — when that turn had read something from outside — where from (a host or a kind of tool, never the words). Settings → Memory and the bot panel say "Saved in … after reading …"; the export carries it.
+- **What a note said before.** When the assistant changes or removes a note, the earlier version is kept (five at most, each with when it held and when it stopped) and can be restored or wiped from Settings → Memory; only the current version is read into a conversation. Your own edit or delete keeps nothing (PRV-006). A bot's memory keeps the same chain: a correction closes the old entry rather than overwriting it; closed entries go after 90 days.
+- **Kinds of note**: fact, preference, rule, event. A *rule* steers the assistant from the trusted part of its prompt, so the assistant asks before writing or changing one — under every mode, Auto too. An *event* can carry a date after which it leaves the conversation. Notes are read rules first.
+- **A ceiling that asks for tidying**: 40 notes or 24,000 characters in a scope; past it the assistant is told to merge or remove before adding.
+- **An optional monthly tidy** (off by default; Settings → Memory): a free model reads your notes and *proposes* merges, removals and contradictions for you to accept or reject. It changes nothing by itself and never sees notes made from Google data.
+- **A bot's own review** writes nothing when the turns it reviews had read something from outside the app; what it does change is marked as the review's and can be undone.
+
+**Your data, all of it in reach** (Decree 13/2023):
+- **Indexed documents** in Settings → Privacy → Your data: each indexed folder, its files and passages, and when — forget one in two clicks. The export lists them (not their text or vectors), and now includes your bots, their memory and groups too.
+- **Indexing keeps up with the disk**: after a complete walk of a folder, files deleted or renamed there leave the index; nothing is removed after a walk that stopped early.
+- **Ingest hygiene**: hidden and direction-changing characters are stripped from documents as they come in (and as old passages go out), and a passage that addresses an AI is marked as such inside the untrusted wrapper.
+- **`read_chat`**: from `search_chats`'s excerpt to the conversation around it, under the same rules (same project, never incognito or a bot's, chat search on).
+- **`skill_edit`** changes part of a skill; `skill_write` will not cut one by more than 30% unless told to, and the assistant's change keeps the earlier version for you to restore (Settings → Skills, schema 51).
+
 ## 2026-11-12 — Doors closed the harness audit found (1.27.0)
 
 From a three-part audit of the app against a 2026 agent-harness checklist (model gateway to observability), the gaps that could cost the owner, leak data or run past the function — fixed and tested:
