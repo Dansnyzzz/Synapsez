@@ -176,6 +176,10 @@ section('db:copy merges an old account into the one with the same email');
   await old.appendMessage('u-neon', 'c-from-neon', { id: 'm-neon', role: 'user', text: 'Ghi chú cũ' });
   await old.setUserSetting('u-neon', 'prefs', { language: 'vi', defaultModel: 'old-model' });
   await old.setUserSetting('u-neon', 'memory_note', { text: 'kept from before' });
+  // Credentials sealed to the old id (crypto.js v2): bound to it, they must be re-bound to the id they join.
+  const { encryptSecret, decryptSecret } = await import('../server/crypto.js');
+  await old.saveConnector('u-neon', 'github', encryptSecret('ghp_from_neon', ['connector', 'u-neon', 'github']), 'octo');
+  await old.setUserSetting('u-neon', 'providerKeys', { openrouter: [{ cipher: encryptSecret('sk-or-v1-from-neon', ['provider-key', 'u-neon', 'openrouter']), hint: '…eon' }] });
   await now.createUser({ id: 'u-supabase', email: 'owner@example.com', name: 'Owner', passwordHash: 'y', role: 'admin', username: 'owner.one' });
   await now.createChat('u-supabase', { id: 'c-since', title: 'Made since', model: 'auto' });
   await now.setUserSetting('u-supabase', 'prefs', { language: 'vi', defaultModel: 'new-model' });
@@ -211,7 +215,33 @@ section('db:copy merges an old account into the one with the same email');
   check('  a setting chosen since wins over the old one', (await now.getUserSetting('u-supabase', 'prefs'))?.defaultModel === 'new-model');
   check('  and one only the old account had comes across', (await now.getUserSetting('u-supabase', 'memory_note'))?.text === 'kept from before');
   check('it says which account it merged', said.some((l) => /owner@example\.com/.test(l) && /merged/i.test(l)), said.join(' | '));
-  check('  and counts only what went in — the setting the target kept is not counted', said.some((l) => /user_settings: 1$/.test(l)), said.filter((l) => /user_settings/.test(l)).join(''));
+  check('  and counts only what went in — the setting the target kept is not counted', said.some((l) => /user_settings: 2$/.test(l)), said.filter((l) => /user_settings/.test(l)).join(''));
+  const token = (await target.query("SELECT token FROM connectors WHERE user_id = 'u-supabase' AND service = 'github'")).rows[0]?.token;
+  const keys = (await now.getUserSetting('u-supabase', 'providerKeys'))?.openrouter;
+  check("a merged account's stored credentials open under the account they joined", decryptSecret(token, ['connector', 'u-supabase', 'github']) === 'ghp_from_neon' && decryptSecret(keys?.[0]?.cipher, ['provider-key', 'u-supabase', 'openrouter']) === 'sk-or-v1-from-neon', JSON.stringify({ token: !!token, keys: keys?.length }));
+  check('  and no longer under the old id', decryptSecret(token, ['connector', 'u-neon', 'github']) === '');
+  check('  said, with nothing left that would not open', said.some((l) => /2 stored credential\(s\) of merged accounts sealed again/.test(l)) && !said.some((l) => /could not be opened/.test(l)), said.filter((l) => /credential/.test(l)).join(' | '));
+
+  // Security review, 2026-11-12: without the key that sealed them, a merge's credentials would
+  // be carried across unopenable — and a second run skips rows already there. So it stops first.
+  const source2 = new PGlite();
+  const target2 = new PGlite();
+  const old2 = createPgStore(driverOf(source2));
+  const now2 = createPgStore(driverOf(target2));
+  await old2.init();
+  await now2.init();
+  await old2.createUser({ id: 'u-old-2', email: 'two@example.com', name: 'Two', passwordHash: 'x', role: 'user' });
+  await old2.createChat('u-old-2', { id: 'c-old-2', title: 'Kept back', model: 'auto' });
+  const keyHere = process.env.ENCRYPTION_KEY;
+  process.env.ENCRYPTION_KEY = 'the-deployments-own-key-not-in-this-environment';
+  await old2.saveConnector('u-old-2', 'github', encryptSecret('ghp_unreachable', ['connector', 'u-old-2', 'github']), 'o');
+  process.env.ENCRYPTION_KEY = keyHere;
+  await now2.createUser({ id: 'u-new-2', email: 'two@example.com', name: 'Two', passwordHash: 'y', role: 'user' });
+  const stopped = await copyDatabase(driverOf(source2), driverOf(target2), { say: () => {}, merge: ['two@example.com'] }).then(() => '', (e) => e.message);
+  check('a merge whose credentials cannot be opened here stops before the first row, saying which key it needs', /cannot be opened here/.test(stopped) && /ENCRYPTION_KEY/.test(stopped) && /Nothing was copied/.test(stopped), stopped);
+  check('  and indeed nothing was copied', (await now2.getChat('u-new-2', 'c-old-2')) == null);
+  await source2.close();
+  await target2.close();
   await source.close();
   await target.close();
 }

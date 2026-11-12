@@ -74,7 +74,11 @@ not be typed where a shell keeps its history.
   someone else's; merged, it would receive everything the old one held. The copy stops before
   writing a row and lists each such email. Check each is the same person, then add
   `--merge a@example.com,b@example.com`. Where both have the same thing — the same setting — the new
-  database's stays. The copy says which accounts it merged.
+  database's stays. The copy says which accounts it merged. A merged account's saved keys and
+  tokens are sealed to its old id (since 1.26.0), so the copy opens them and seals them again to
+  the account they join — run it with the deployment's `ENCRYPTION_KEY` in the environment for
+  that. Without it, it says how many it could not re-bind; those have to be entered again. (Data
+  saved before 1.26.0, Neon's included, is not bound and needs nothing.)
 
 ## Keeping an eye on the free limits
 

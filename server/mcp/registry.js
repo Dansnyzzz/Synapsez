@@ -2,7 +2,8 @@ import crypto from 'node:crypto';
 import { INVISIBLE } from '../tools/untrusted.js';
 import { getStore } from '../store/index.js';
 import { isOwner } from '../adminRoles.js';
-import { encryptSecret, decryptSecret } from '../crypto.js';
+import { encryptSecret, openSecret } from '../crypto.js';
+import { mcpConfigContext } from '../secretContexts.js';
 import { connectMcp } from './client.js';
 import { stdioPlace, mcpSignature, checkOnScratch } from './cloud.js';
 import { chargeCloudCheck } from '../sandbox.js';
@@ -123,16 +124,17 @@ export function offerable(id, list) {
 function stored(row) {
   const config = { ...(row.config || {}) };
 
+  // Opened against its owner and field (crypto.js v2): a value that will not open says so,
+  // rather than reading as no headers at all — decryptSecret never threw, so this never did.
   const decrypt = (cipher, what) => {
-    let plain;
-    try {
-      plain = decryptSecret(cipher);
-    } catch (err) {
+    const opened = openSecret(cipher, mcpConfigContext(row.user_id, what === 'headers' ? 'headers' : 'env', row.config));
+    if (opened.state !== 'ok') {
       throw new Error(
-        `Its stored ${what} could not be decrypted (${err?.message || 'unknown error'}). ` +
+        `Its stored ${what} could not be decrypted (${opened.state}). ` +
           'That usually means ENCRYPTION_KEY has changed since the server was added — remove it and add it again.',
       );
     }
+    const plain = opened.value;
     try {
       return JSON.parse(plain || '{}');
     } catch {
@@ -244,15 +246,22 @@ function advertised(id, row, tool) {
   };
 }
 
-/** Encrypt the parts of a config that are secrets, for storage. */
-export function sealConfig(config = {}) {
+/**
+ * Encrypt the parts of a config that are secrets, for storage — bound to the account
+ * that owns the row and to where they are sent (crypto.js v2, secretContexts.js), so a
+ * sealed header copied into another account's row, or a row pointed at another host,
+ * does not open.
+ *
+ * @param {any} config @param {{ userId?: string }} [owner]
+ */
+export function sealConfig(config = {}, { userId = '' } = {}) {
   const out = { ...config };
   if (out.headers && Object.keys(out.headers).length) {
-    out.headersCipher = encryptSecret(JSON.stringify(out.headers));
+    out.headersCipher = encryptSecret(JSON.stringify(out.headers), mcpConfigContext(userId, 'headers', out));
   }
   delete out.headers;
   if (out.env && Object.keys(out.env).length) {
-    out.envCipher = encryptSecret(JSON.stringify(out.env));
+    out.envCipher = encryptSecret(JSON.stringify(out.env), mcpConfigContext(userId, 'env', out));
   }
   delete out.env;
   return out;

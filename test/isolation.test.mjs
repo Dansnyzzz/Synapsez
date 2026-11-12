@@ -99,6 +99,89 @@ const cipher = encryptSecret('sk-ant-super-secret');
 check('ciphertext hides the key', !cipher.includes('super-secret'));
 check('round-trips correctly', decryptSecret(cipher) === 'sk-ant-super-secret');
 check('tampered ciphertext yields nothing', decryptSecret(`${cipher}xyz`) === '');
+{
+  // The v2 envelope (crypto.js, owner 2026-11-12): bound to whose and what, keys that can change.
+  const crypto = await import('../server/crypto.js');
+  const nodeCrypto = await import('node:crypto');
+  const mine = crypto.encryptSecret('sk-or-v1-mine', ['provider-key', 'u-alice', 'openrouter']);
+  check('v2: sealed under the key that seals now', mine.startsWith(`v2.${crypto.currentKeyId()}.`) && !crypto.needsReseal(mine));
+  check('  opens for its owner and purpose', crypto.decryptSecret(mine, ['provider-key', 'u-alice', 'openrouter']) === 'sk-or-v1-mine');
+  const stolen = crypto.openSecret(mine, ['provider-key', 'u-bob', 'openrouter']);
+  check('  copied into another account it does not open, and says why', stolen.value === '' && stolen.state === 'undecryptable', JSON.stringify(stolen));
+  check('  nor for another purpose or provider', crypto.decryptSecret(mine, ['connector', 'u-alice', 'openrouter']) === '' && crypto.decryptSecret(mine, ['provider-key', 'u-alice', 'google']) === '');
+  check('  contexts are length-prefixed: ["a|b","c"] is not ["a","b|c"]', !crypto.contextBytes(['a|b', 'c']).equals(crypto.contextBytes(['a', 'b|c'])));
+
+  // A value sealed the v1 way, as everything stored before v2 was.
+  const v1 = (plain, secret = process.env.ENCRYPTION_KEY) => {
+    const key = nodeCrypto.createHash('sha256').update(`ai-remote:keys:${secret}`).digest();
+    const iv = nodeCrypto.randomBytes(12);
+    const c = nodeCrypto.createCipheriv('aes-256-gcm', key, iv);
+    const body = Buffer.concat([c.update(plain, 'utf8'), c.final()]);
+    return `v1.${iv.toString('base64url')}.${c.getAuthTag().toString('base64url')}.${body.toString('base64url')}`;
+  };
+  const old = v1('sk-legacy');
+  check('v1 still opens, whatever the context, and is due a reseal', crypto.decryptSecret(old, ['provider-key', 'u-alice', 'openrouter']) === 'sk-legacy' && crypto.needsReseal(old));
+
+  const was = { key: process.env.ENCRYPTION_KEY, prev: process.env.ENCRYPTION_KEY_PREVIOUS, refuse: process.env.ENCRYPTION_REFUSE_V1 };
+  try {
+    // Rotation: a new key seals; the old one, as PREVIOUS, still opens what it sealed.
+    process.env.ENCRYPTION_KEY_PREVIOUS = was.key;
+    process.env.ENCRYPTION_KEY = 'a-brand-new-encryption-key-for-the-rotation-test';
+    check('after rotating, what the old key sealed still opens', crypto.decryptSecret(mine, ['provider-key', 'u-alice', 'openrouter']) === 'sk-or-v1-mine' && crypto.decryptSecret(old) === 'sk-legacy');
+    check('  and is due a reseal under the new key', crypto.needsReseal(mine));
+    const resealed = crypto.encryptSecret('sk-or-v1-mine', ['provider-key', 'u-alice', 'openrouter']);
+    check('  a reseal is under the new key', resealed.split('.')[1] === crypto.currentKeyId() && resealed.split('.')[1] !== mine.split('.')[1]);
+    delete process.env.ENCRYPTION_KEY_PREVIOUS;
+    const lost = crypto.openSecret(mine, ['provider-key', 'u-alice', 'openrouter']);
+    check('with the old key gone, it says the key is unknown rather than "no key"', lost.state === 'unknown-key', JSON.stringify(lost));
+    process.env.ENCRYPTION_KEY = was.key;
+    process.env.ENCRYPTION_REFUSE_V1 = 'true';
+    check('ENCRYPTION_REFUSE_V1: v1 is refused once everything is resealed', crypto.openSecret(old).state === 'refused-v1' && crypto.decryptSecret(mine, ['provider-key', 'u-alice', 'openrouter']) === 'sk-or-v1-mine');
+  } finally {
+    for (const [name, value] of [['ENCRYPTION_KEY', was.key], ['ENCRYPTION_KEY_PREVIOUS', was.prev], ['ENCRYPTION_REFUSE_V1', was.refuse]]) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+  check('an empty value is empty, not an error', crypto.openSecret('').state === 'empty' && crypto.openSecret(null).state === 'empty');
+
+  // Security review, 2026-11-12. Node opens GCM with a tag cut to 4 bytes unless told its
+  // length: a short tag is a guessable forgery, and the binding is what it would defeat.
+  const [v, kid, iv, tag, body] = mine.split('.');
+  const cut = (n) => [v, kid, iv, Buffer.from(tag, 'base64url').subarray(0, n).toString('base64url'), body].join('.');
+  check('a tag cut to 12, 8 or 4 bytes does not open', [12, 8, 4].every((n) => crypto.openSecret(cut(n), ['provider-key', 'u-alice', 'openrouter']).state === 'undecryptable'));
+  check('  nor a nonce of another length', crypto.openSecret([v, kid, Buffer.alloc(16).toString('base64url'), tag, body].join('.'), ['provider-key', 'u-alice', 'openrouter']).state === 'undecryptable');
+  let empty = '';
+  try {
+    crypto.encryptSecret('sk', ['provider-key', '', 'openrouter']);
+  } catch (err) {
+    empty = err.message;
+  }
+  check('sealing with an owner left empty is refused, not bound to nobody', /whose it is/.test(empty), empty);
+  const saved = { key: process.env.ENCRYPTION_KEY, token: process.env.ACCESS_TOKEN };
+  delete process.env.ENCRYPTION_KEY;
+  delete process.env.ACCESS_TOKEN;
+  let noKey;
+  try {
+    noKey = crypto.openSecret(mine, ['provider-key', 'u-alice', 'openrouter']);
+  } finally {
+    if (saved.key !== undefined) process.env.ENCRYPTION_KEY = saved.key;
+    if (saved.token !== undefined) process.env.ACCESS_TOKEN = saved.token;
+  }
+  check('with no key in the environment at all, it says so rather than throwing', noKey?.state === 'no-key' && noKey.value === '', JSON.stringify(noKey));
+
+  // Where a secret is sent is part of its binding (secretContexts.js).
+  const { mcpConfigContext, cloudBrowserContext } = await import('../server/secretContexts.js');
+  const config = { transport: 'http', url: 'https://mcp.example.com/mcp' };
+  const headers = crypto.encryptSecret('{"Authorization":"Bearer t"}', mcpConfigContext('u-alice', 'headers', config));
+  check("an MCP server's headers open at their own address", crypto.decryptSecret(headers, mcpConfigContext('u-alice', 'headers', config)).includes('Bearer t'));
+  check('  and not once the row is pointed at another host', crypto.decryptSecret(headers, mcpConfigContext('u-alice', 'headers', { ...config, url: 'https://attacker.example/mcp' })) === '');
+  const stdio = { transport: 'stdio', command: 'npx', args: ['-y', 'server-a'], place: 'cloud' };
+  const env = crypto.encryptSecret('{"TOKEN":"x"}', mcpConfigContext('u-alice', 'env', stdio));
+  check("  a program's environment does not open for another program or its arguments", crypto.decryptSecret(env, mcpConfigContext('u-alice', 'env', { ...stdio, args: ['-y', 'server-b'] })) === '' && crypto.decryptSecret(env, mcpConfigContext('u-alice', 'env', stdio)) === '{"TOKEN":"x"}');
+  const browser = crypto.encryptSecret('cb', cloudBrowserContext('u-alice', 'https://cb-1.example'));
+  check("  the cloud browser's key does not open for another address", crypto.decryptSecret(browser, cloudBrowserContext('u-alice', 'https://cb-2.example')) === '' && crypto.decryptSecret(browser, cloudBrowserContext('u-alice', 'https://cb-1.example')) === 'cb');
+}
 
 // ── chats ───────────────────────────────────────────────────────────
 section('chat isolation');

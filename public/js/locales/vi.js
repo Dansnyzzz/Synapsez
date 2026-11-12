@@ -2457,6 +2457,7 @@ export const vi = {
   'freetier.firecrawl_more': 'Firecrawl — sơ đồ trang, đọc nhiều trang, mã nguồn',
   'freetier.firecrawl_index': 'Firecrawl — chỉ mục bài báo và luật (miễn phí)',
   'freetier.firecrawlLive': 'Chính Firecrawl báo còn {left} trên {plan} credit của chu kỳ này.',
+  'freetier.keyId': 'Thông tin đăng nhập đã lưu được khoá tại đây bằng khoá có mã',
   'freetier.tavily': 'Tavily',
   'freetier.brave': 'Brave Search',
   'freetier.google': 'Google search (khoá Gemini của bản triển khai)',

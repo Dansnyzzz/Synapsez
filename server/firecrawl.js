@@ -6,9 +6,9 @@
  *   - **search** — one more engine in web_search's chain, after Exa (search.js): 2 credits
  *     for up to ten results.
  *   - **scrape** — a page that turns this server away, or draws itself with script, read
- *     through Firecrawl's browser when Exa could not (web_fetch); and SJC's gold board,
- *     which refuses every datacenter (finance/http.js). 1 credit a page; a PDF's pages are
- *     capped, since each one costs a credit more.
+ *     through Firecrawl's browser when Exa could not (web_fetch). 1 credit a page; a PDF's
+ *     pages are capped, since each one costs a credit more. (SJC's gold board was read this
+ *     way in 1.24.0; measured 2026-11-12, it turns Firecrawl away too — finance/http.js.)
  *   - **map / crawl** — a site's pages listed (1 credit), or a few of them read at once
  *     (1 credit a page, ten at most): `site_pages`.
  *   - **the Developer Index** — issues, pull requests, READMEs and documentation, for
@@ -224,16 +224,16 @@ export async function firecrawlSearch(query, { count = 10, recency = null, sites
 const PDF_PAGES = 5;
 
 /**
- * One page through Firecrawl's browser, as markdown (or as it came, for an API that answers
- * JSON). Null when there is no room for it this month — the caller says what went wrong.
+ * One page through Firecrawl's browser, as markdown. Null when there is no room for it this
+ * month — the caller says what went wrong.
  * Firecrawl charges a credit when it returns a document, whatever the page's own status;
  * nothing when it returns none.
  *
  * @param {string} url
- * @param {{ raw?: boolean, timeoutMs?: number, signal?: AbortSignal }} [options]
+ * @param {{ timeoutMs?: number, signal?: AbortSignal }} [options]
  * @returns {Promise<{ text: string, status: number|null, title: string|null, url: string, pages: number|null } | null>}
  */
-export async function firecrawlScrape(url, { raw = false, timeoutMs = 45_000, signal } = {}) {
+export async function firecrawlScrape(url, { timeoutMs = 45_000, signal } = {}) {
   const held = await hold('firecrawl_scrape', 1);
   if (!held) return null;
   let json;
@@ -241,8 +241,8 @@ export async function firecrawlScrape(url, { raw = false, timeoutMs = 45_000, si
     json = await call('/v2/scrape', {
       body: {
         url,
-        formats: [raw ? 'rawHtml' : 'markdown'],
-        onlyMainContent: !raw,
+        formats: ['markdown'],
+        onlyMainContent: true,
         proxy: 'auto',
         blockAds: true,
         removeBase64Images: true,
@@ -262,7 +262,7 @@ export async function firecrawlScrape(url, { raw = false, timeoutMs = 45_000, si
   const used = Number(meta.creditsUsed);
   await held.settle(Number.isFinite(used) ? used : 1 + (pages ? Math.min(pages, PDF_PAGES) : 0));
   return {
-    text: String((raw ? data.rawHtml : data.markdown) || ''),
+    text: String(data.markdown || ''),
     status: Number(meta.statusCode) || null,
     title: meta.title ? String(meta.title) : null,
     url: String(meta.url || meta.sourceURL || url),

@@ -1,6 +1,6 @@
 /**
  * Firecrawl on the deployment's free month (owner, 2026-11-11): a search engine, pages that
- * refuse this server, SJC's gold board, a site's pages, the Developer Index for code, and the
+ * refuse this server, a site's pages, the Developer Index for code, and the
  * free paper and law indexes — each call held against its share and the whole before it is
  * made, given back when Firecrawl charged nothing. Firecrawl itself is never called: its API
  * is answered here.
@@ -73,7 +73,7 @@ function firecrawlApi(url, init) {
         },
       });
     case 'POST /v2/scrape':
-      return json({ success: true, data: { markdown: `# The page\n\n${'Words a browser could read. '.repeat(20)}`, rawHtml: '<html><body><pre>{&quot;success&quot;:true,&quot;latestDate&quot;:&quot;09:30 11/11/2026&quot;,&quot;data&quot;:[{&quot;TypeName&quot;:&quot;Vàng SJC 1L&quot;,&quot;BranchName&quot;:&quot;Hồ Chí Minh&quot;,&quot;BuyValue&quot;:148000000,&quot;SellValue&quot;:150000000}]}</pre></body></html>', metadata: { statusCode: 200, title: 'The page', url: body?.url } } });
+      return json({ success: true, data: { markdown: `# The page\n\n${'Words a browser could read. '.repeat(20)}`, metadata: { statusCode: 200, title: 'The page', url: body?.url } } });
     case 'POST /v2/map':
       return json({ success: true, links: [{ url: 'https://example.com/pricing', title: 'Pricing' }, { url: 'https://example.com/docs', title: 'Docs' }] });
     case 'POST /v2/crawl':
@@ -189,23 +189,17 @@ try {
     await resetCounts();
   }
 
-  section("SJC's gold board on Vercel, through Firecrawl");
+  section("SJC's gold board on Vercel stays off, Firecrawl or not (measured 2026-11-12)");
   {
     const finance = await import('../server/finance/http.js');
     process.env.VERCEL = '1';
-    check('on with Firecrawl, through it', finance.enabled('sjc') && finance.throughFirecrawl('sjc'));
-    const board = await finance.getJson('sjc', 'https://sjc.com.vn/GoldPrice/Services/PriceService.ashx');
-    const sent = callsTo('/v2/scrape').at(-1);
-    check("  the JSON the browser was shown, read back out of its page", board?.success === true && board.data?.[0]?.TypeName === 'Vàng SJC 1L' && sent.body.formats[0] === 'rawHtml', JSON.stringify(board).slice(0, 120));
-    process.env.FIN_SOURCE_SJC = 'off';
-    check('  FIN_SOURCE_SJC=off stops it', !finance.enabled('sjc') && !finance.throughFirecrawl('sjc'));
+    const before = callsTo('/v2/scrape').length;
+    check('off on Vercel even with Firecrawl here — it turns Firecrawl away too', !finance.enabled('sjc') && !!process.env.FIRECRAWL_API_KEY);
+    process.env.FIN_SOURCE_SJC = 'on';
+    check('  FIN_SOURCE_SJC=on still asks it directly, as before', finance.enabled('sjc'));
     delete process.env.FIN_SOURCE_SJC;
-    const key = process.env.FIRECRAWL_API_KEY;
-    delete process.env.FIRECRAWL_API_KEY;
-    check('  without Firecrawl, off on Vercel as before', !finance.enabled('sjc'));
-    process.env.FIRECRAWL_API_KEY = key;
     delete process.env.VERCEL;
-    check('jsonOfPage: a body that is JSON stays as it is; a page around it is unwrapped', finance.jsonOfPage('{"a":1}') === '{"a":1}' && finance.jsonOfPage('<pre>{&quot;a&quot;:&amp;1}</pre>') === '{"a":&1}');
+    check('  and no credit of the month was spent on it', callsTo('/v2/scrape').length === before);
     await resetCounts();
   }
 

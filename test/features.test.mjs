@@ -2094,7 +2094,7 @@ section('connectors: each Google product its own, the catalogue page, logos, and
   const google = await import('../server/google.js');
   const user = await store.createUser({ id: 'u-gprod', email: 'gprod@example.com', passwordHash: 'x', name: 'G', role: 'user' });
   const scope = 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify openid email';
-  await store.saveConnector(user.id, 'google', encryptSecret(JSON.stringify({ access: 'a', refresh: 'r', exp: Date.now() + 3600e3, scope })), 'g@example.com');
+  await store.saveConnector(user.id, 'google', encryptSecret(JSON.stringify({ access: 'a', refresh: 'r', exp: Date.now() + 3600e3, scope }), ['connector', user.id, 'google']), 'g@example.com');
   check('every granted product is in use to begin with', (await google.googleGrants(user.id)).join() === 'gmail,drive');
   check('disconnecting Drive leaves Gmail', (await google.dropGoogleProduct(user.id, 'drive')).join() === 'gmail' && (await google.googleGrants(user.id)).join() === 'gmail');
   const realFetch = globalThis.fetch;
@@ -2127,8 +2127,8 @@ section('connectors: each Google product its own, the catalogue page, logos, and
 
   // The catalogue Settings draws, through its route.
   const { mountConnectorRoutes } = await import('../server/routes/connectors.js');
-  await store.saveConnector(user.id, 'google', encryptSecret(JSON.stringify({ access: 'a', refresh: 'r', exp: Date.now() + 3600e3, scope })), 'g@example.com');
-  await store.saveConnector(user.id, 'github', encryptSecret('ghp_x'), 'octo');
+  await store.saveConnector(user.id, 'google', encryptSecret(JSON.stringify({ access: 'a', refresh: 'r', exp: Date.now() + 3600e3, scope }), ['connector', user.id, 'google']), 'g@example.com');
+  await store.saveConnector(user.id, 'github', encryptSecret('ghp_x', ['connector', user.id, 'github']), 'octo');
   const app = express();
   const api = express.Router();
   api.use((req, res, next) => {

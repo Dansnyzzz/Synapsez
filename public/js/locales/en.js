@@ -2471,6 +2471,7 @@ export const en = {
   'freetier.firecrawl_more': 'Firecrawl — site maps, crawls, code',
   'freetier.firecrawl_index': 'Firecrawl — paper and law indexes (free)',
   'freetier.firecrawlLive': 'Firecrawl itself says {left} of its {plan} credits are left this cycle.',
+  'freetier.keyId': 'Stored credentials are sealed here with the key whose id is',
   'freetier.tavily': 'Tavily',
   'freetier.brave': 'Brave Search',
   'freetier.google': 'Google search (deployment Gemini key)',

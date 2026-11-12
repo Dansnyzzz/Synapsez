@@ -6994,6 +6994,9 @@ async function loadFreeTier() {
         Number.isFinite(report.firecrawl?.remaining)
           ? `<p class="hint">${escapeHtml(t('freetier.firecrawlLive', { left: Number(report.firecrawl.remaining).toLocaleString(locale), plan: report.firecrawl.plan == null ? '—' : Number(report.firecrawl.plan).toLocaleString(locale) }))}</p>`
           : ''
+      }${
+        // The id `npm run secrets:reseal -- --apply --key-id` must be given (a hash, never the key).
+        report.encryptionKeyId ? `<p class="hint">${escapeHtml(t('freetier.keyId'))} <code>${escapeHtml(report.encryptionKeyId)}</code></p>` : ''
       }`;
   } catch (err) {
     host.textContent = err.message;
