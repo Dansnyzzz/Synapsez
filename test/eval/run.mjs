@@ -4,6 +4,16 @@
  *   node test/eval/run.mjs          scripted — free, deterministic, CI-safe
  *   node test/eval/run.mjs --live   against a real model, needs a key
  *   node test/eval/run.mjs --json   machine-readable, for trending over time
+ *   node test/eval/run.mjs --live --record   a live run that keeps what the model chose,
+ *                                    case by case, in test/eval/cassettes/
+ *   node test/eval/run.mjs --replay  the recorded choices scored again — free, offline
+ *
+ * Cassettes (2026-11-12, after OrcaReplay's record/replay): a live run's choices kept so
+ * a later change can be checked against them for nothing. Only what the score reads is
+ * kept — the tools the model reached for and what it cost — never what it wrote. Each
+ * cassette carries a fingerprint of what the model was shown (the prompt's version, the
+ * catalogue, the question, the dial); when that has changed since, the replay does not
+ * pretend: the case is reported as diverged, to be recorded again.
  *
  * What the scripted mode can and cannot tell you is worth being exact about,
  * because an eval that overclaims is worse than none.
@@ -28,8 +38,11 @@ import { CASES, AXES } from './cases.mjs';
 process.env.ENCRYPTION_KEY ||= 'eval-encryption-key';
 process.env.SESSION_SECRET ||= 'eval-session-secret';
 
-const live = process.argv.includes('--live');
+const record = process.argv.includes('--record');
+const replay = !record && process.argv.includes('--replay');
+const live = record || process.argv.includes('--live');
 const asJson = process.argv.includes('--json');
+const CASSETTES = new URL('./cassettes/', import.meta.url);
 
 /**
  * Live runs (RSN-001): the provider keys from `.env` and nothing else from it —
@@ -233,6 +246,24 @@ function scripted(testCase) {
  * would mostly be measuring how well the model recovers from its own first
  * mistake.
  */
+/** What the model was shown for a case, as one short hash: change any of it and a cassette no longer applies. */
+async function shownPrint(testCase, tools) {
+  const { createHash } = await import('node:crypto');
+  return createHash('sha256')
+    .update(JSON.stringify([promptVersion(), tools.map((t) => t.name).sort(), testCase.ask, liveEffort]))
+    .digest('hex')
+    .slice(0, 16);
+}
+
+/** The events a cassette keeps of a stream: the tools reached for, and the bill. */
+async function* recorded(events, kept) {
+  for await (const event of events) {
+    if (event.type === 'tool_call_start') kept.push({ type: 'tool_call_start', name: event.name });
+    else if (event.type === 'done') kept.push({ type: 'done', toolCalls: (event.toolCalls || []).map((c) => ({ name: c.name })), usage: event.usage || null });
+    yield event;
+  }
+}
+
 async function liveRun(testCase) {
   const { expect: want, situation } = testCase;
 
@@ -240,11 +271,39 @@ async function liveRun(testCase) {
   // in live mode. Paying a model to re-read a regex would be theatre.
   if (!want.prefers) return scripted(testCase);
 
+  const fs = await import('node:fs');
+  const tools = toolsFor(situation);
+  const print = await shownPrint(testCase, tools);
+  const file = new URL(`${testCase.id.replace(/[^a-z0-9_-]+/gi, '_')}.jsonl`, CASSETTES);
+
+  /** Replay: the recorded choices, scored as a live run would score them — or diverged. */
+  let events;
+  if (replay) {
+    if (!fs.existsSync(file)) return { ...scripted(testCase), notes: ['no cassette — scored the scripted way; npm run eval:record keeps one'] };
+    const [head, ...lines] = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    if (head?.print !== print) {
+      return { pass: false, diverged: true, why: `diverged: the prompt, the catalogue, the question or the dial changed since this was recorded (${head?.at || 'unknown'}, ${head?.model || 'unknown model'}) — record it again` };
+    }
+    events = (async function* () {
+      yield* lines;
+    })();
+  }
+
   const { streamCompletion } = await import('../../server/providers/index.js');
   const { resolveModel } = await import('../../server/providers/catalog.js');
-
   const entry = resolveModel(liveModel);
-  const tools = toolsFor(situation);
+  const kept = [];
+  if (!events) {
+    const stream = streamCompletion({
+      userId: process.env.EVAL_USER_ID,
+      entry,
+      system: promptFor(situation),
+      messages: [{ id: 'eval', role: 'user', text: testCase.ask }],
+      tools,
+      effort: liveEffort,
+    });
+    events = record ? recorded(stream, kept) : stream;
+  }
 
   /**
    * One turn, and only the first tool call in it.
@@ -255,19 +314,18 @@ async function liveRun(testCase) {
    */
   let first = null;
   let usage = null;
-  for await (const event of streamCompletion({
-    userId: process.env.EVAL_USER_ID,
-    entry,
-    system: promptFor(situation),
-    messages: [{ id: 'eval', role: 'user', text: testCase.ask }],
-    tools,
-    effort: liveEffort,
-  })) {
+  for await (const event of events) {
     if (event.type === 'tool_call_start' && !first) first = event.name;
     else if (event.type === 'done') {
       usage = event.usage;
       if (!first && event.toolCalls?.length) first = event.toolCalls[0].name;
     }
+  }
+
+  if (record) {
+    fs.mkdirSync(CASSETTES, { recursive: true });
+    const head = { print, model: liveModel, effort: liveEffort, at: new Date().toISOString() };
+    fs.writeFileSync(file, [head, ...kept].map((line) => JSON.stringify(line)).join('\n') + '\n');
   }
 
   // Reasoning shown apart — it is the part the dial moves (RSN-003). Both adapters
@@ -309,7 +367,7 @@ for (const testCase of CASES) {
   const started = Date.now();
   let outcome;
   try {
-    outcome = live ? await liveRun(testCase) : scripted(testCase);
+    outcome = live || replay ? await liveRun(testCase) : scripted(testCase);
   } catch (err) {
     outcome = { pass: false, why: String(err?.message || err) };
   }
@@ -325,7 +383,7 @@ if (asJson) {
   console.log(
     JSON.stringify(
       {
-        mode: live ? 'live' : 'scripted',
+        mode: replay ? 'replay' : record ? 'record' : live ? 'live' : 'scripted',
         at: new Date().toISOString(),
         promptVersion: promptNow,
         promptStamped,
@@ -347,7 +405,7 @@ if (asJson) {
     ),
   );
 } else {
-  console.log(`\n${bold(`Agent eval — ${live ? 'live' : 'scripted'}`)}\n`);
+  console.log(`\n${bold(`Agent eval — ${replay ? 'replay' : record ? 'live, recording' : live ? 'live' : 'scripted'}`)}\n`);
   for (const axis of AXES) {
     console.log(bold(axis));
     for (const result of results.filter((r) => r.axis === axis)) {
@@ -383,7 +441,9 @@ if (asJson) {
     `${passed === results.length ? green('All') : red(`${results.length - passed} of`)} ` +
       `${results.length} cases ${passed === results.length ? 'passed' : 'failed'}.`,
   );
-  if (!live) {
+  if (replay) {
+    console.log(dim('\nReplayed from test/eval/cassettes: what a model chose when it was recorded, scored again. A diverged case is recorded again with `npm run eval:record`.\n'));
+  } else if (!live) {
     console.log(
       dim(
         '\nScripted mode checks that the conditions for a right answer are in place.\n' +

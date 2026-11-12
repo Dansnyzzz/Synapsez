@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-11-12 — Each model asked for what it takes; a way out guarded; changed tools held (1.25.0)
+
+**The reasoning dial, per model** (schema 48, `shared_models.efforts` / `reasoning_mandatory`). OpenRouter's catalogue now says which effort levels each model takes; each is asked only for one of those — the setting itself, or the nearest listed, never "none". Measured 2026-11-12 on a free model listing high, medium and none: an unlisted level came back as an empty answer, and "none" as nonsense, where its own default answered right. `max` is sent as OpenRouter's own `max` now (its docs list it), stepped down when a model refuses. A model with no levels is a switch: Low turns it off unless the model must think. On OrcaRouter, DeepSeek and GLM (measured: `reasoning_effort: "none"` and `thinking: disabled` both give 0 reasoning tokens in half the time, answers still right; "off" is a 400; the levels barely move it) are switched off at Low and asked "high" at Extra high and Max.
+
+**Which model Auto answered with** is said under "Where this reply went" — the router's own choice, read from the stream.
+
+**A search engine having a bad afternoon** — two timeouts or server errors in a row — goes to the back of the chain for a minute and a half, so searches do not wait out its timeout first.
+
+**The way out, guarded** (the "lethal trifecta"): a conversation that has read the account's private data through a tool (mail, Drive, files, notes, earlier conversations) and words from outside asks before opening an address on a host the person never named — and says where the outside words came from.
+
+**MCP tools that change after they were approved are held.** Each tool's name, words and parameters are fingerprinted when a server is first seen; a tool that later says something else, or a new one, is not offered to the model until the person looks at what it now says and approves it (Settings → Extensions). Hidden characters are taken out of what tools say.
+
+**Eval cassettes**: `npm run eval:record` keeps what a live model chose, case by case (the tools only — never what it wrote); `npm run eval:replay` scores them again for nothing, and reports a case as diverged when the prompt, the catalogue or the question changed since.
+
+**Injection regressions through the loop**: a page telling the assistant to send the notes it read to another host stops for a yes.
+
 ## 2026-11-11 — Firecrawl, and holes closed (1.24.0)
 
 **Firecrawl** (`server/firecrawl.js`), on the deployment's `FIRECRAWL_API_KEY` and its Free plan — 1,000 credits a month, no card, a refusal at zero, never a bill (docs.firecrawl.dev, read 2026-11-11). It replaces the Bright Data plan, which was never shipped.

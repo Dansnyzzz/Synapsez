@@ -1039,10 +1039,11 @@ section('the effort dial reaches every model that reasons, in each wire\'s own w
       && reasoningParams({ router: 'openrouter', model: 'openrouter/free', entry: { reasoning: null }, effort: 'low' }).reasoning?.enabled === false);
   check('  a family with a real dial gets low as low',
     ['openai/gpt-5.6-terra', 'anthropic/claude-sonnet-4.5', 'google/gemini-3-pro', 'x-ai/grok-5'].every((m) => reasoningParams({ router: 'openrouter', model: m, entry: {}, effort: 'low' }).reasoning?.effort === 'low'));
-  check('OrcaRouter: DeepSeek and GLM, which ignore reasoning_effort, are switched off at low and left alone above it',
+  check('OrcaRouter: DeepSeek and GLM are switched off at low, left alone in the middle, asked "high" at the top (measured 2026-11-12)',
     reasoningParams({ router: 'orcarouter', model: 'deepseek/deepseek-v4.1-flash-free', entry: {}, effort: 'low' }).thinking?.type === 'disabled'
       && reasoningParams({ router: 'orcarouter', model: 'z-ai/glm-5.3-flash-free', entry: {}, effort: 'low' }).thinking?.type === 'disabled'
-      && Object.keys(reasoningParams({ router: 'orcarouter', model: 'deepseek/deepseek-v4.1-flash-free', entry: {}, effort: 'max' })).length === 0);
+      && Object.keys(reasoningParams({ router: 'orcarouter', model: 'deepseek/deepseek-v4.1-flash-free', entry: {}, effort: 'high' })).length === 0
+      && reasoningParams({ router: 'orcarouter', model: 'deepseek/deepseek-v4.1-flash-free', entry: {}, effort: 'max' }).reasoning_effort === 'high');
   const off = { reasoning: { enabled: false } };
   const offThinking = { thinking: { type: 'disabled' } };
   check('  a model that refuses to stop thinking: the switch is dropped and the turn goes on', stepDown(off) && !off.reasoning && stepDown(offThinking) && !offThinking.thinking);
@@ -1051,8 +1052,22 @@ section('the effort dial reaches every model that reasons, in each wire\'s own w
     check('every model is told the level in words: low fast but exact, max thorough, high as it is',
       /fast/.test(effortNote('low')) && /exact/.test(effortNote('low')) && /no more/.test(effortNote('medium')) && effortNote('high') === '' && /thoroughly/.test(effortNote('max')) && /verify/.test(effortNote('xhigh')));
   }
-  check('OpenRouter: max is asked as xhigh, the top of its scale',
-    reasoningParams({ router: 'openrouter', model: 'x', entry: {}, effort: 'max' }).reasoning?.effort === 'xhigh');
+  check("OpenRouter: max is asked as max — its own word since 2026-11-12 — and a refusal steps it to xhigh",
+    reasoningParams({ router: 'openrouter', model: 'x', entry: {}, effort: 'max' }).reasoning?.effort === 'max');
+  {
+    // Schema 48: each model is asked only for a level it lists (measured 2026-11-12: an
+    // unlisted level answered empty, "none" answered with nonsense).
+    const { effortFor } = await import('../server/providers/openaiCompatible.js');
+    const ask = (efforts, effort, extra = {}) => reasoningParams({ router: 'openrouter', model: 'nvidia/x:free', entry: { efforts, ...extra }, effort }).reasoning;
+    check('a listed level is asked as it is', ask('high,medium,none', 'medium')?.effort === 'medium' && ask('max,high,medium,low,minimal', 'low')?.effort === 'low');
+    check('  an unlisted one becomes the nearest listed — never "none"', ask('high,medium,none', 'low')?.effort === 'medium' && ask('high,medium,none', 'max')?.effort === 'high' && ask('minimal,high', 'low')?.effort === 'minimal');
+    check('  equally near: the lower for Low and Medium, the higher above', effortFor('medium', ['low', 'high']) === 'low' && effortFor('xhigh', ['high', 'max']) === 'max' && effortFor('low', ['none']) === null);
+    check("  'any' takes the setting itself", ask('any', 'xhigh')?.effort === 'xhigh');
+    check('a model with no levels: Low switches it off, unless it must think', ask('', 'low')?.enabled === false && ask('', 'low', { reasoningMandatory: true }) === undefined && ask('', 'high') === undefined);
+    const { effortsOf } = await import('../server/models.js');
+    check("the catalogue's reasoning block read as 'any', '', a list, or nothing said",
+      effortsOf({ reasoning: { supported_efforts: null } }) === 'any' && effortsOf({ reasoning: { mandatory: true } }) === '' && effortsOf({ reasoning: { supported_efforts: ['high', 'medium', 'none'] } }) === 'high,medium,none' && effortsOf({}) === null);
+  }
   check('OpenRouter: a model known not to reason is sent nothing',
     Object.keys(reasoningParams({ router: 'openrouter', model: 'x', entry: { reasoning: false }, effort: 'high' })).length === 0);
   check('OpenRouter: the Auto router, unknown, is sent the setting',
@@ -2266,6 +2281,15 @@ section('keys: recognised wherever pasted, checked with their provider, one Open
     { id: 'openrouter/vendor/best-paid', provider: 'openrouter', model: 'vendor/best-paid', family: 'vendor', label: 'Best Paid', context: 200000, maxOutput: 32000, priceIn: 3, priceOut: 15, isFree: false, releasedAt: new Date().toISOString(), vision: true },
   ];
   await store.upsertModels(lib);
+  // Schema 48: a model's levels and whether it must think travel from the catalogue to the call.
+  await store.upsertModels([{ ...lib[0], id: 'openrouter/vendor/levels:free', model: 'vendor/levels:free', efforts: 'high,medium,none', reasoningMandatory: false }, { ...lib[0], id: 'openrouter/vendor/must:free', model: 'vendor/must:free', efforts: '', reasoningMandatory: true }]);
+  {
+    const { resolveModel } = await import('../server/providers/catalog.js');
+    const levels = resolveModel('openrouter/vendor/levels:free', await store.getSharedModel('openrouter/vendor/levels:free'));
+    const must = resolveModel('openrouter/vendor/must:free', await store.getSharedModel('openrouter/vendor/must:free'));
+    const plain = resolveModel(lib[0].id, await store.getSharedModel(lib[0].id));
+    check('schema 48: the levels a model takes are kept and read back, and nothing said stays nothing', levels.efforts === 'high,medium,none' && levels.reasoningMandatory === false && must.efforts === '' && must.reasoningMandatory === true && plain.efforts === null && plain.reasoningMandatory === null, JSON.stringify([levels.efforts, must.efforts, plain.efforts]));
+  }
   let refusal = '';
   await rec.setRecommended({ free: 'openrouter/vendor/best-paid' }).catch((err) => (refusal = err.message));
   let refusal2 = '';

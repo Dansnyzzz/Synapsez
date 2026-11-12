@@ -178,6 +178,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Máy tính đám mây đã dùng hết hạn mức miễn phí của tháng này, nên không máy nào khởi động được cho tới khi hạn mức được làm mới. Hãy nói rõ với người dùng và đề xuất cách làm không cần nó.',
   'A project needs a name.': 'Dự án cần có tên.',
   'No such project.': 'Không có dự án này.',
+  'This server is not connected, so there is no list to approve yet. Open a conversation that uses it, then try again.':
+    'Server này chưa được kết nối nên chưa có danh sách để duyệt. Mở một cuộc trò chuyện có dùng server này rồi thử lại.',
   'Firecrawl answered HTTP {0}: {1}': 'Firecrawl trả lời HTTP {0}: {1}',
   'research_index with op "{0}" needs {1}.': 'research_index với op "{0}" cần {1}.',
   'op is one of "papers", "read", "related" or "law".': 'op là một trong "papers", "read", "related" hoặc "law".',
@@ -786,6 +788,9 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Máy chủ stdio cần máy tính đám mây (Vercel Sandbox) hoặc ALLOW_MCP_STDIO trên máy bạn tin tưởng, mà bản triển khai này không có cái nào. Máy chủ http thì chạy ở đâu cũng được.',
   'This conversation has read something from outside — a page, a search result, a server. A note saved now is read at the start of every later conversation, so check it carries nothing that came from there.':
     'Cuộc trò chuyện này đã đọc nội dung từ bên ngoài — một trang web, kết quả tìm kiếm hay một máy chủ. Ghi chú lưu lúc này sẽ được đọc ở đầu mọi cuộc trò chuyện sau, nên hãy kiểm tra để chắc nó không mang theo gì từ nguồn đó.',
+  'This conversation has read your private data and words from outside{0}. It now opens {1}, which you did not name — check the address carries nothing of yours before it is sent.':
+    'Cuộc trò chuyện này đã đọc dữ liệu riêng tư của bạn và nội dung từ bên ngoài{0}. Giờ nó mở {1} — địa chỉ bạn chưa từng nêu — hãy kiểm tra địa chỉ không mang theo gì của bạn trước khi gửi.',
+  ' (the latest from {0})': ' (gần nhất từ {0})',
   'The MCP bridge on the cloud computer did not come up in time.':
     'Cầu nối MCP trên máy tính đám mây không khởi động kịp.',
   'The connection to the cloud computer was lost.':

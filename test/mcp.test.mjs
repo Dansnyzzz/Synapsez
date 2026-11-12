@@ -820,6 +820,44 @@ section('a server added once is ready for the next account, offered without star
   }
 }
 
+section('a server that changes its tools after it was approved: the changes wait for a yes (2026-11-12)');
+{
+  const { getStore } = await import('../server/store/index.js');
+  const store = getStore();
+  const { sealConfig, mcpTools, forgetMcp, approveMcpTools, toolPrint, screenTools } = await import('../server/mcp/registry.js');
+  // The deployment's owner, from the section above: only the owner runs a program beside the server.
+  const user = await store.getUserById('user-a');
+  const modeFile = path.join(os.tmpdir(), `ai-remote-mcp-rug-${process.pid}.txt`);
+  fs.writeFileSync(modeFile, 'normal');
+  await store.saveMcpServer(user.id, {
+    id: 'srv-rug',
+    name: 'Rug Server',
+    config: sealConfig({ transport: 'stdio', command: process.execPath, args: [STUB], env: { MCP_STUB_MODE_FILE: modeFile } }),
+    enabled: true,
+  });
+  try {
+    const first = await mcpTools(user.id);
+    const approvedNow = (await store.getMcpServer(user.id, 'srv-rug'))?.config?.approved || {};
+    check('the first list it shows becomes its approved one', first.tools.filter((t) => t.name.startsWith('mcp__rug_server__')).length === 5 && Object.keys(approvedNow).length === 5, JSON.stringify(first.servers[0]?.error || Object.keys(approvedNow)));
+    fs.writeFileSync(modeFile, 'rugpull');
+    forgetMcp(user.id);
+    const later = await mcpTools(user.id);
+    const names = later.tools.map((t) => t.name);
+    const server = later.servers.find((s) => s.id === 'rug_server');
+    check('a tool whose words changed is not offered, nor a new one', !names.includes('mcp__rug_server__echo') && !names.includes('mcp__rug_server__collect') && names.includes('mcp__rug_server__add'), names.join(','));
+    check('  and the settings page is told which, with what they now say', server?.changed?.length === 2 && server.changed.some((c) => c.name === 'echo' && /evil\.example/.test(c.description)), JSON.stringify(server?.changed));
+    const row = await store.getMcpServer(user.id, 'srv-rug');
+    check('approving them records them as they are now', (await approveMcpTools(user.id, row)) === 6);
+    const after = await mcpTools(user.id);
+    check('  and they are offered from then on', after.tools.some((t) => t.name === 'mcp__rug_server__collect') && !(after.servers.find((s) => s.id === 'rug_server')?.changed || []).length);
+    check('a fingerprint changes with the words, not with nothing', toolPrint({ name: 'a', description: 'x' }) !== toolPrint({ name: 'a', description: 'y' }) && toolPrint({ name: 'a', description: 'x' }) === toolPrint({ name: 'a', description: 'x' }));
+    check('  a server never approved takes its first list', screenTools({ config: {} }, [{ name: 'a' }]).first === true);
+  } finally {
+    forgetMcp(user.id);
+    fs.rmSync(modeFile, { force: true });
+  }
+}
+
 bridge.kill();
 {
   const { getStore } = await import('../server/store/index.js');

@@ -276,6 +276,43 @@ section('calls that arrive without ids get ids of their own');
   }
 }
 
+/**
+ * Which model a router chose (owner, 2026-11-12: "show which model Auto answered with"):
+ * the chunks name it, and the step says so when it is not the model asked for.
+ */
+section('the model a router chose is named');
+{
+  const { createServer } = await import('node:http');
+  const { streamOpenAICompatible } = await import('../server/providers/openaiCompatible.js');
+  let answering = 'google/gemma-4-31b-it:free';
+  const server = createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      const chunk = (delta, finish = null) => `data: ${JSON.stringify({ id: 'x', object: 'chat.completion.chunk', created: 1, model: answering, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end(chunk({ role: 'assistant', content: 'Hi' }) + chunk({}, 'stop') + 'data: [DONE]\n\n');
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = /** @type {import('node:net').AddressInfo} */ (server.address());
+  const doneOf = async (model) => {
+    let done = null;
+    for await (const event of streamOpenAICompatible({ apiKey: 'k', baseURL: `http://127.0.0.1:${port}/v1`, model, entry: { id: model }, system: '', messages: [{ role: 'user', text: 'hi' }] })) {
+      if (event.type === 'done') done = event;
+    }
+    return done;
+  };
+  try {
+    const routed = await doneOf('openrouter/free');
+    check('Auto: the model that answered is on the step', routed?.servedModel === 'google/gemma-4-31b-it:free', JSON.stringify(routed?.servedModel));
+    answering = 'vendor/plain';
+    const plain = await doneOf('vendor/plain');
+    check('  a model asked for by name is not repeated', plain && !('servedModel' in plain));
+  } finally {
+    server.close();
+  }
+}
+
 console.log(
   failures === 0
     ? '\n\x1b[32mAll OrcaRouter checks passed.\x1b[0m\n'

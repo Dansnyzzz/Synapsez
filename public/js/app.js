@@ -5521,6 +5521,9 @@ function renderMcp({ servers, status }) {
             <p class="crow__desc crow__where">${escapeHtml(where || '')}</p>
             ${server.runsOn === 'cloud' ? `<p class="crow__desc">${escapeHtml(t('mcp.runsOnCloud'))}</p>` : ''}
             ${state?.error ? `<p class="crow__desc crow__warn">${escapeHtml(state.error)}</p>` : ''}
+            ${state?.changed?.length
+              ? `<div class="crow__desc crow__warn mcp-changed" role="note"><p>${escapeHtml(t('mcp.changed', { n: String(state.changed.length) }))}</p><ul>${state.changed.map((c) => `<li><strong>${escapeHtml(c.name)}</strong> — ${escapeHtml(c.description || t('mcp.noDescription'))}</li>`).join('')}</ul><button class="btn btn--small" type="button" data-mcp-approve="${escapeHtml(server.id)}">${escapeHtml(t('mcp.approve'))}</button></div>`
+              : ''}
           </div>
           <div class="crow__actions">
             <button class="btn btn--small" data-mcp-toggle="${escapeHtml(server.id)}" type="button">
@@ -5541,6 +5544,19 @@ function renderMcp({ servers, status }) {
         await api.setMcpEnabled(server.id, server.enabled === false);
         await loadMcp();
       } catch (err) {
+        toast(err.message, 'error');
+      }
+    });
+  }
+  for (const btn of /** @type {NodeListOf<HTMLButtonElement>} */ (host.querySelectorAll('[data-mcp-approve]'))) {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        await api.approveMcpTools(btn.dataset.mcpApprove);
+        toast(t('mcp.approved'));
+        await loadMcp();
+      } catch (err) {
+        btn.disabled = false;
         toast(err.message, 'error');
       }
     });

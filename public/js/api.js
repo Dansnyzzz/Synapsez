@@ -319,6 +319,8 @@ export const api = {
   addMcpServer: (body) => request('POST', '/api/mcp', body),
   setMcpEnabled: (id, enabled) => request('PATCH', `/api/mcp/${id}`, { enabled }),
   removeMcpServer: (id) => request('DELETE', `/api/mcp/${id}`),
+  /** Approve a server's changed tools as they now are (server/mcp/registry.js `screenTools`). */
+  approveMcpTools: (id) => request('POST', `/api/mcp/${id}/approve-tools`),
 
   // The browser's zone rides along so the server can tell whether the library
   // is fresh as of six this morning *here* — see refreshIfStale.

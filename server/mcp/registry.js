@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+import { INVISIBLE } from '../tools/untrusted.js';
 import { getStore } from '../store/index.js';
 import { isOwner } from '../adminRoles.js';
 import { encryptSecret, decryptSecret } from '../crypto.js';
@@ -184,6 +186,49 @@ export function keptTools(tools) {
   }));
 }
 
+/**
+ * A tool's fingerprint: its name, what it says it does, and what it takes (2026-11-12,
+ * the "rug pull" class — a server approved as harmless that later changes what a tool
+ * says, or adds one, and the next turn offers the new words to the model unseen).
+ */
+export function toolPrint(tool) {
+  return crypto
+    .createHash('sha256')
+    .update(JSON.stringify([String(tool?.name || ''), String(tool?.title || ''), String(tool?.description || ''), tool?.inputSchema ?? null]))
+    .digest('hex')
+    .slice(0, 16);
+}
+
+/** Every tool's fingerprint, by name — what an approval records. */
+export const printsOf = (tools) => Object.fromEntries(keptTools(tools).map((tool) => [tool.name, toolPrint(tool)]));
+
+/**
+ * The tools as the person approved them, and the ones changed or new since — held back
+ * until they look and approve again (`approveMcpTools`). A server never approved (added
+ * before this, or just now) takes what it lists the first time as approved.
+ *
+ * @returns {{ approved: any[], changed: any[], first: boolean }}
+ */
+export function screenTools(row, tools) {
+  const list = Array.isArray(tools) ? tools : [];
+  const approved = row?.config?.approved;
+  if (!approved || typeof approved !== 'object') return { approved: list, changed: [], first: true };
+  const ok = [];
+  const changed = [];
+  for (const tool of list) (approved[tool?.name] === toolPrint(keptTools([tool])[0]) ? ok : changed).push(tool);
+  return { approved: ok, changed, first: false };
+}
+
+/** What the settings page shows of a held tool: its name and what it now says. */
+const heldOf = (changed) => changed.map((tool) => ({ name: String(tool?.name || ''), description: String(tool?.description || '').replace(INVISIBLE, '').slice(0, 300) }));
+
+/** The first list a server shows becomes its approved one. */
+async function approveFirst(userId, row, tools) {
+  await getStore()
+    .setMcpApproved(userId, row.id, printsOf(tools))
+    .catch((err) => log.warn('mcp: could not record the approved tools', { server: row.name, err: err?.message }));
+}
+
 /** One of a server's tools, as the model is offered it. */
 function advertised(id, row, tool) {
   return {
@@ -193,7 +238,8 @@ function advertised(id, row, tool) {
     // `assessRisk`: an unrecognised tool is already graded sensitive, and
     // that is the behaviour wanted here rather than an exception to it.
     readOnly: false,
-    description: `[${row.name}] ${tool.description || tool.title || 'No description given by the server.'}`.slice(0, 1024),
+    // Hidden characters taken out: what the model reads is what the person could read.
+    description: `[${row.name}] ${String(tool.description || tool.title || 'No description given by the server.').replace(INVISIBLE, '')}`.slice(0, 1024),
     parameters: tool.inputSchema || { type: 'object', properties: {} },
   };
 }
@@ -330,7 +376,7 @@ export async function mcpTools(userId) {
 
       if (current?.connection) {
         tools.push(...current.tools);
-        servers.push({ id, name: row.name, tools: current.tools.length, skipped: current.skipped, server: current.connection.server, ...(runsInCloud(row) ? { runsOn: 'cloud' } : {}) });
+        servers.push({ id, name: row.name, tools: current.tools.length, skipped: current.skipped, changed: current.changed || [], server: current.connection.server, ...(runsInCloud(row) ? { runsOn: 'cloud' } : {}) });
         return;
       }
 
@@ -342,22 +388,28 @@ export async function mcpTools(userId) {
        * the server, and keep somebody waiting for a machine they did not need.
        */
       if (runsInCloud(row) && Array.isArray(row.config?.tools)) {
-        const { usable, skipped } = offerable(id, row.config.tools);
+        const screened = screenTools(row, row.config.tools);
+        if (screened.first) await approveFirst(userId, row, row.config.tools);
+        const { usable, skipped } = offerable(id, screened.approved);
         const offered = usable.map((tool) => advertised(id, row, tool));
         tools.push(...offered);
-        servers.push({ id, name: row.name, tools: offered.length, skipped, runsOn: 'cloud' });
+        servers.push({ id, name: row.name, tools: offered.length, skipped, changed: heldOf(screened.changed), runsOn: 'cloud' });
         return;
       }
 
       try {
         const connection = await connectMcp({ ...stored(row), userId });
-        const { usable, skipped } = offerable(id, connection.tools);
+        const screened = screenTools(row, connection.tools);
+        if (screened.first) await approveFirst(userId, row, connection.tools);
+        const { usable, skipped } = offerable(id, screened.approved);
         const offered = usable.map((tool) => advertised(id, row, tool));
         if (skipped.length) log.warn('mcp: tools not offered', { server: id, skipped });
+        if (screened.changed.length) log.warn('mcp: tools changed since approved, held back', { server: id, changed: screened.changed.map((t) => t?.name) });
+        const changed = heldOf(screened.changed);
 
-        mine.set(id, { connection, tools: offered, skipped, error: null, at: Date.now() });
+        mine.set(id, { connection, tools: offered, skipped, changed, raw: connection.tools, error: null, at: Date.now() });
         tools.push(...offered);
-        servers.push({ id, name: row.name, tools: offered.length, skipped, server: connection.server });
+        servers.push({ id, name: row.name, tools: offered.length, skipped, changed, server: connection.server });
       } catch (err) {
         mine.set(id, { connection: null, tools: [], error: err.message, at: Date.now() });
         servers.push({ id, name: row.name, error: err.message, tools: 0 });
@@ -411,8 +463,9 @@ async function connectInCloud(userId, row) {
   const mine = live.get(userId);
   try {
     const connection = await connectMcp({ ...stored(row), userId, place: 'cloud' });
-    const { usable, skipped } = offerable(id, connection.tools);
-    mine.set(id, { connection, tools: usable.map((tool) => advertised(id, row, tool)), skipped, error: null, at: Date.now() });
+    const screened = screenTools(row, connection.tools);
+    const { usable, skipped } = offerable(id, screened.approved);
+    mine.set(id, { connection, tools: usable.map((tool) => advertised(id, row, tool)), skipped, changed: heldOf(screened.changed), raw: connection.tools, error: null, at: Date.now() });
     const now = keptTools(connection.tools);
     if (JSON.stringify(now) !== JSON.stringify(row.config?.tools || [])) {
       // Only the list: the row may have been removed, switched off or edited
@@ -514,6 +567,22 @@ function describeProbe(server, tools, { shared }) {
     keep: keptTools(tools),
     shared,
   };
+}
+
+/**
+ * The person looked at a server's changed tools and approves them as they now are: their
+ * fingerprints are recorded, and the next turn offers them. The list approved is the one
+ * the person was shown — the live connection's, or the one kept for a cloud server.
+ *
+ * @returns {Promise<number|null>} how many tools are approved, or null when there is no list to approve
+ */
+export async function approveMcpTools(userId, row) {
+  const held = live.get(userId)?.get(slugify(row.name));
+  const tools = Array.isArray(held?.raw) ? held.raw : Array.isArray(row.config?.tools) ? row.config.tools : null;
+  if (!tools) return null;
+  await getStore().setMcpApproved(userId, row.id, printsOf(tools));
+  forgetMcp(userId);
+  return tools.length;
 }
 
 /**
