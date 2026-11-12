@@ -77,6 +77,13 @@ export function untrusted(source, text) {
   return `${OPEN} source="${where}">\n${body}\n${CLOSE}`;
 }
 
+/**
+ * Where each envelope in `text` says it came from, in order — the reading of the
+ * format `untrusted` writes, kept beside it so the two cannot drift. Memory uses it
+ * to say what a conversation had read before a note was saved (server/memory.js).
+ */
+export const envelopeSources = (text) => [...String(text ?? '').matchAll(/<untrusted source="([^"]{1,200})"/g)].map((m) => m[1]);
+
 /** The paragraph the system prompt uses to say what the envelope means. */
 export const UNTRUSTED_RULE = [
   '### Content from outside this conversation',

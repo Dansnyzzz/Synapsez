@@ -1174,6 +1174,8 @@ export function createApp() {
         'onboarded',
         'memory',
         'memorySensitive',
+        // Opt-in: the notes go to the free Auto model once a month, for proposals only (memoryTidy.js).
+        'memoryTidy',
         'chatSearch',
         'retentionDays',
         'providerPrivacy',
@@ -1218,7 +1220,7 @@ export function createApp() {
         // Privacy choices are part of the security record: switching memory
         // off, or retention down to thirty days, is something an owner may want
         // to see they did — or did not — do.
-        const privacy = ['memory', 'memorySensitive', 'chatSearch', 'retentionDays', 'providerPrivacy', 'maskPersonal'].filter((k) => k in patch);
+        const privacy = ['memory', 'memorySensitive', 'memoryTidy', 'chatSearch', 'retentionDays', 'providerPrivacy', 'maskPersonal'].filter((k) => k in patch);
         if (privacy.length) {
           await audit(req, req.user.id, 'settings_privacy', Object.fromEntries(privacy.map((k) => [k, saved[k]])));
         }

@@ -95,6 +95,13 @@ export const DEFAULT_PREFS = {
   memorySensitive: false,
   chatSearch: true,
   /**
+   * "Tidy my notes monthly" (owner, 2026-11-12): once a month the free Auto model reads
+   * the notes — never one saved from Google data — and proposes merges, removals and
+   * contradictions for the person to accept or reject; it changes nothing itself
+   * (memoryTidy.js). Off by default: it sends the notes to a model outside a conversation.
+   */
+  memoryTidy: false,
+  /**
    * Days after its last use that a conversation is deleted; 0 keeps everything.
    * Pinned conversations are always kept. See `deleteChatsOlderThan`.
    */
@@ -348,7 +355,7 @@ export async function setPrefs(userId, patch) {
     throw new Error(`"${patch.language}" is not a language this interface has. Use one of: ${[...LANGUAGES].join(', ')}.`);
   }
   if ('onboarded' in patch) next.onboarded = !!patch.onboarded;
-  for (const flag of ['memory', 'memorySensitive', 'chatSearch', 'maskPersonal', 'actionMonitor', 'connectorSearch', 'qualityGate', 'figureCheck', 'rankAnonymous', 'eventMail']) if (flag in patch) next[flag] = !!patch[flag];
+  for (const flag of ['memory', 'memorySensitive', 'memoryTidy', 'chatSearch', 'maskPersonal', 'actionMonitor', 'connectorSearch', 'qualityGate', 'figureCheck', 'rankAnonymous', 'eventMail']) if (flag in patch) next[flag] = !!patch[flag];
   if ('mascot' in patch && !MASCOTS.includes(patch.mascot)) throw new Error(`The mascot is one of: ${MASCOTS.join(', ')}.`);
   if ('retentionDays' in patch) {
     const days = Number(patch.retentionDays);

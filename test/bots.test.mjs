@@ -304,6 +304,24 @@ section('a bot that is not Chief cannot make bots, and keeps its own memory');
   check('  not to Chief\'s', !(await store.listBotMemory(aliceId, { botId: chief.id })).some((m) => /tea/.test(m.text)));
   const secret = await alice.call('POST', `/api/bots/${writer.id}/memory`, { text: 'my key is sk-abcdefghijklmnopqrstuvwxyz0123456789' });
   check('a key is never kept in memory', secret.status === 400, secret.text);
+  // The panel (owner, 2026-11-12, schema 50): where an entry was saved, its earlier versions, what the bot forgot.
+  {
+    const { remember, forget } = await import('../server/bots/memory.js');
+    const scope = { botId: writer.id };
+    const saved = (await remember(aliceId, scope, 'The user drinks oolong.', 'bot', { chatId })).entry;
+    await remember(aliceId, scope, 'The user drinks jasmine tea.', 'bot', { chatId, replace: saved.id });
+    await remember(aliceId, scope, 'The user reads at night.', 'bot', { chatId });
+    await forget(aliceId, scope, 'reads at night');
+    const panel = (await alice.call('GET', `/api/bots/${writer.id}/memory`)).body;
+    const jasmine = panel.entries.find((e) => /jasmine/.test(e.text));
+    check('the panel says where an entry was saved', jasmine?.saved?.chatId === chatId && typeof jasmine?.saved?.chatTitle === 'string', JSON.stringify(jasmine?.saved));
+    check('  with the version it replaced', jasmine?.history?.[0]?.text === 'The user drinks oolong.' && jasmine.history[0].closedBy === 'bot', JSON.stringify(jasmine?.history));
+    check('  and what the bot forgot, apart', panel.forgotten.some((f) => /reads at night/.test(f.text) && f.closedBy === 'bot'));
+    const back = await alice.call('POST', `/api/bots/${writer.id}/memory/${jasmine.history[0].id}/restore`);
+    const after = (await alice.call('GET', `/api/bots/${writer.id}/memory`)).body;
+    check('restoring an earlier version from the panel puts it back, the later one gone', back.status === 200 && after.entries.some((e) => e.text === 'The user drinks oolong.') && !after.entries.some((e) => /jasmine/.test(e.text)));
+    check("another account cannot restore this bot's versions", (await bob.call('POST', `/api/bots/${writer.id}/memory/${jasmine.history[0].id}/restore`)).status === 404);
+  }
   check('bot tools are graded: reading safe, changing ordinary', assessRisk('list_bots', {}) === 'safe' && assessRisk('create_bot', {}) === 'ordinary' && assessRisk('nonexistent_tool', {}) === 'sensitive');
   const { needsApproval } = await import('../server/agent.js');
   const planting = [{ id: 'a', name: 'update_bot', input: {} }, { id: 'b', name: 'create_bot', input: {} }, { id: 'c', name: 'remember', input: {} }, { id: 'd', name: 'list_bots', input: {} }];

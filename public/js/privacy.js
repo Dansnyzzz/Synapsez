@@ -47,6 +47,7 @@ export function createPrivacy({ state, armed, onImported, savePrefs = api.savePr
     const prefs = state.boot?.prefs || {};
     /** @type {HTMLInputElement} */ ($('memory-on')).checked = prefs.memory !== false;
     /** @type {HTMLInputElement} */ ($('memory-sensitive')).checked = prefs.memorySensitive === true;
+    /** @type {HTMLInputElement} */ ($('memory-tidy')).checked = prefs.memoryTidy === true;
     /** @type {HTMLInputElement} */ ($('chat-search')).checked = prefs.chatSearch !== false;
     /** @type {HTMLSelectElement} */ ($('retention')).value = String(prefs.retentionDays || 0);
     /** @type {HTMLSelectElement} */ ($('provider-privacy')).value = prefs.providerPrivacy === 'strict' ? 'strict' : 'standard';
@@ -66,6 +67,7 @@ export function createPrivacy({ state, armed, onImported, savePrefs = api.savePr
   const SAVED_ON_CHANGE = {
     'memory-on': { status: 'memory-saved', patch: () => ({ memory: checked('memory-on') }) },
     'memory-sensitive': { status: 'memory-saved', patch: () => ({ memorySensitive: checked('memory-sensitive') }) },
+    'memory-tidy': { status: 'memory-saved', patch: () => ({ memoryTidy: checked('memory-tidy') }) },
     'chat-search': { status: 'memory-saved', patch: () => ({ chatSearch: checked('chat-search') }) },
     retention: { status: 'memory-status', patch: () => ({ retentionDays: Number(/** @type {HTMLSelectElement} */ ($('retention')).value) || 0 }) },
     'provider-privacy': { status: 'memory-status', patch: () => ({ providerPrivacy: /** @type {HTMLSelectElement} */ ($('provider-privacy')).value }) },
@@ -108,11 +110,104 @@ export function createPrivacy({ state, armed, onImported, savePrefs = api.savePr
   const origin = (by) =>
     by === 'assistant' ? t('memory.byAssistant') : by === 'user' ? t('memory.byYou') : by === 'import' ? t('memory.byImport') : '';
 
+  /** A day as this browser writes days. */
+  const dayOf = (iso) => {
+    const date = iso ? new Date(/^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T00:00:00` : iso) : null;
+    return date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString(localeTag()) : '';
+  };
+
+  /**
+   * Where a note was saved and what the conversation had read from outside first
+   * (owner, 2026-11-12) — a host or a kind of tool, never what it said — so a note
+   * saved while reading a stranger's page can be told at a glance.
+   */
+  const savedLine = (saved) => {
+    if (!saved?.chatId) return '';
+    const where = saved.chatTitle ? t('memory.savedIn', { chat: saved.chatTitle }) : t('memory.savedInGone');
+    return saved.outside ? `${where} ${t('memory.afterReading', { source: saved.outside })}` : where;
+  };
+
+  /** Its kind, when it is not a plain fact, and an event's date. */
+  const kindBadge = (note) => {
+    const parts = [];
+    if (note.kind && note.kind !== 'fact') parts.push(`<span class="note__kind note__kind--${escapeHtml(note.kind)}">${escapeHtml(t(`memory.kind.${note.kind}`))}</span>`);
+    if (note.expires) parts.push(`<span class="note__kind${note.expired ? ' is-past' : ''}">${escapeHtml(t(note.expired ? 'memory.ended' : 'memory.until', { date: dayOf(note.expires) }))}</span>`);
+    return parts.join('');
+  };
+
+  /** The versions an assistant's changes kept, each with when it held, and a way to bring one back. */
+  const historyHtml = (note) => {
+    if (!note.history?.length) return '';
+    const rows = note.history
+      .map((v, i) => {
+        const span = [dayOf(v.validFrom), dayOf(v.invalidAt)].filter(Boolean).join(' – ');
+        const meta = [origin(v.by), span, savedLine(v.saved)].filter(Boolean).join(' · ');
+        return `<li class="note__version"><div class="note__version-text">${escapeHtml(v.content)}</div>
+          <div class="note__version-meta">${escapeHtml(meta)}</div>
+          <button class="btn btn--small" type="button" data-note-restore="${i}" aria-label="${escapeHtml(t('memory.restoreLabel', { key: note.key }))}">${escapeHtml(t('memory.restore'))}</button></li>`;
+      })
+      .join('');
+    return `<details class="note__history"${note.removed ? ' open' : ''}>
+      <summary>${escapeHtml(t('memory.history', { count: note.history.length }))}</summary>
+      <ol class="note__versions">${rows}</ol>
+      ${note.removed ? '' : `<button class="btn btn--small btn--ghost" type="button" data-note-purge>${escapeHtml(t('memory.purgeHistory'))}</button>`}
+    </details>`;
+  };
+
+  /**
+   * The monthly tidy's suggestions (owner, 2026-11-12): each says what it would do and
+   * why, and waits for Accept or Reject. Nothing is changed until the person accepts.
+   */
+  function paintTidy(tidy) {
+    const box = $('memory-tidy-list');
+    const list = tidy?.proposals || [];
+    if (!list.length) {
+      box.innerHTML = '';
+      return;
+    }
+    const names = (keys) => keys.map((k) => `“${k}”`).join(', ');
+    const what = (p) =>
+      p.type === 'merge'
+        ? t('memory.tidyMerge', { notes: names(p.keys), into: p.into })
+        : p.type === 'contradiction'
+          ? t('memory.tidyContradiction', { notes: names(p.keys), keep: p.keep })
+          : t('memory.tidyRemove', { notes: names(p.keys) });
+    box.innerHTML = `<h3 class="settings__title">${escapeHtml(t('memory.tidyTitle'))}</h3>
+      <ul class="tidy">${list
+        .map(
+          (p) => `<li class="tidy__item" data-tidy="${escapeHtml(p.id)}">
+            <p class="tidy__what">${escapeHtml(what(p))}${p.scope === 'project' && p.projectName ? ` <span class="tidy__where">${escapeHtml(t('memory.groupProject', { name: p.projectName }))}</span>` : ''}</p>
+            ${p.why ? `<p class="tidy__why">${escapeHtml(p.why)}</p>` : ''}
+            ${p.text ? `<blockquote class="tidy__text">${escapeHtml(p.text)}</blockquote>` : ''}
+            <div class="tidy__acts">
+              <button class="btn btn--small btn--primary" type="button" data-tidy-accept>${escapeHtml(t('memory.tidyAccept'))}</button>
+              <button class="btn btn--small btn--ghost" type="button" data-tidy-reject>${escapeHtml(t('memory.tidyReject'))}</button>
+            </div>
+          </li>`,
+        )
+        .join('')}</ul>`;
+    for (const item of box.querySelectorAll('[data-tidy]')) {
+      const id = /** @type {HTMLElement} */ (item).dataset.tidy;
+      for (const [selector, answer] of [['[data-tidy-accept]', 'accept'], ['[data-tidy-reject]', 'reject']]) {
+        item.querySelector(selector).addEventListener('click', async () => {
+          try {
+            await api.answerTidy(id, answer);
+            toast(t(answer === 'accept' ? 'memory.tidyAccepted' : 'memory.tidyRejected'), 'ok');
+          } catch (err) {
+            toast(err.message, 'error');
+          }
+          loadMemory();
+        });
+      }
+    }
+  }
+
   async function loadMemory() {
     const host = $('memory-list');
     host.setAttribute('aria-busy', 'true');
     try {
-      const { groups } = await api.memory();
+      const { groups, tidy } = await api.memory();
+      paintTidy(tidy);
       if (!groups.length) {
         host.innerHTML = `<p class="hint">${escapeHtml(t('memory.empty'))}</p>`;
         return;
@@ -130,18 +225,23 @@ export function createPrivacy({ state, armed, onImported, savePrefs = api.savePr
           return `<div class="note-group">
             <h4 class="note-group__head">${escapeHtml(title)}</h4>
             ${group.notes
-              .map(
-                (note) => `<div class="note" data-scope="${escapeHtml(scopeOf(group))}" data-key="${escapeHtml(note.key)}">
-                  <span class="note__key">${escapeHtml(note.key)}</span>
-                  <div class="note__body" title="${escapeHtml(note.content)}">${escapeHtml(note.content)}</div>
+              .map((note) => {
+                // Removed by the assistant: read into nothing, kept for the person to bring back or delete.
+                const body = note.removed ? t('memory.removed') : note.content;
+                const saved = savedLine(note.saved);
+                return `<div class="note${note.removed ? ' is-removed' : ''}${note.expired ? ' is-past' : ''}" data-scope="${escapeHtml(scopeOf(group))}" data-key="${escapeHtml(note.key)}" data-kind="${escapeHtml(note.kind || 'fact')}" data-expires="${escapeHtml(note.expires || '')}">
+                  <span class="note__key">${escapeHtml(note.key)}${kindBadge(note)}</span>
+                  <div class="note__body" title="${escapeHtml(body)}">${escapeHtml(body)}</div>
                   <span class="note__date">${escapeHtml([origin(note.by), when(note.updatedAt)].filter(Boolean).join(' · '))}</span>
                   <div class="note__actions">
-                    <button class="icon-btn" type="button" data-note-edit aria-label="${escapeHtml(t('memory.editLabel', { key: note.key }))}" title="${escapeHtml(t('memory.edit'))}">${PENCIL}</button>
-                    ${note.canUndo ? `<button class="icon-btn" type="button" data-note-undo aria-label="${escapeHtml(t('memory.undo'))}" title="${escapeHtml(t('memory.undoHint'))}">${UNDO}</button>` : ''}
+                    ${note.removed ? '' : `<button class="icon-btn" type="button" data-note-edit aria-label="${escapeHtml(t('memory.editLabel', { key: note.key }))}" title="${escapeHtml(t('memory.edit'))}">${PENCIL}</button>`}
+                    ${note.canUndo ? `<button class="icon-btn" type="button" data-note-undo aria-label="${escapeHtml(t(note.removed ? 'memory.bringBack' : 'memory.undo'))}" title="${escapeHtml(t(note.removed ? 'memory.bringBack' : 'memory.undoHint'))}">${UNDO}</button>` : ''}
                     <button class="icon-btn" type="button" data-note-delete aria-label="${escapeHtml(t('action.delete'))}" title="${escapeHtml(t('action.delete'))}">${BIN}</button>
                   </div>
-                </div>`,
-              )
+                  ${saved ? `<p class="note__saved">${escapeHtml(saved)}</p>` : ''}
+                  ${historyHtml(note)}
+                </div>`;
+              })
               .join('')}
           </div>`;
         })
@@ -176,13 +276,57 @@ export function createPrivacy({ state, armed, onImported, savePrefs = api.savePr
       }
     });
 
-    card.querySelector('[data-note-edit]').addEventListener('click', () => {
+    // An earlier version back; the ones after it go (owner, 2026-11-12).
+    for (const button of card.querySelectorAll('[data-note-restore]')) {
+      button.addEventListener('click', async () => {
+        try {
+          await api.restoreNote(scope, key, Number(/** @type {HTMLElement} */ (button).dataset.noteRestore));
+          toast(t('memory.restored', { key }), 'ok');
+          loadMemory();
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      });
+    }
+    // The earlier versions deleted, the note kept — asked twice, as every delete here is.
+    const purge = /** @type {HTMLButtonElement | null} */ (card.querySelector('[data-note-purge]'));
+    if (purge) {
+      armed(purge, t('memory.reallyPurge'), async () => {
+        await api.purgeNoteHistory(scope, key);
+        toast(t('memory.historyPurged', { key }));
+        loadMemory();
+      });
+    }
+
+    card.querySelector('[data-note-edit]')?.addEventListener('click', () => {
       const body = /** @type {HTMLElement} */ (card.querySelector('.note__body'));
       const field = document.createElement('textarea');
       field.className = 'note__edit';
       field.value = body.textContent || '';
       field.setAttribute('aria-label', t('memory.editLabel', { key }));
       body.replaceWith(field);
+      // Its kind, and an event's last day, beside the words (owner, 2026-11-12).
+      const extra = document.createElement('div');
+      extra.className = 'note__edit-kind';
+      const kindId = `note-kind-${Math.random().toString(36).slice(2, 8)}`;
+      const dateId = `${kindId}-until`;
+      extra.innerHTML =
+        `<label for="${kindId}">${escapeHtml(t('memory.kindLabel'))}</label>` +
+        `<select id="${kindId}" data-note-kind>${['fact', 'preference', 'rule', 'event']
+          .map((k) => `<option value="${k}"${card.dataset.kind === k ? ' selected' : ''}>${escapeHtml(t(`memory.kind.${k}`))}</option>`)
+          .join('')}</select>` +
+        `<label for="${dateId}" data-note-until-label>${escapeHtml(t('memory.expiresLabel'))}</label>` +
+        `<input type="date" id="${dateId}" data-note-until value="${escapeHtml(card.dataset.expires || '')}" />`;
+      field.after(extra);
+      const kindBox = /** @type {HTMLSelectElement} */ (extra.querySelector('[data-note-kind]'));
+      const untilBox = /** @type {HTMLInputElement} */ (extra.querySelector('[data-note-until]'));
+      const showUntil = () => {
+        const event = kindBox.value === 'event';
+        untilBox.hidden = !event;
+        /** @type {HTMLElement} */ (extra.querySelector('[data-note-until-label]')).hidden = !event;
+      };
+      kindBox.addEventListener('change', showUntil);
+      showUntil();
       field.focus();
       const actions = card.querySelector('.note__actions');
       actions.innerHTML =
@@ -191,7 +335,8 @@ export function createPrivacy({ state, armed, onImported, savePrefs = api.savePr
       actions.querySelector('[data-note-cancel]').addEventListener('click', () => loadMemory());
       actions.querySelector('[data-note-save]').addEventListener('click', async () => {
         try {
-          await api.saveNote(scope, key, field.value);
+          const event = kindBox.value === 'event';
+          await api.saveNote(scope, key, field.value, { kind: kindBox.value, expires: event ? untilBox.value : '' });
           toast(t('memory.saved', { key }), 'ok');
           loadMemory();
         } catch (err) {

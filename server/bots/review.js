@@ -1,5 +1,7 @@
+import crypto from 'node:crypto';
 import { getStore } from '../store/index.js';
 import { streamCompletion } from '../providers/index.js';
+import { outsideIn } from '../memory.js';
 import { priceTurn } from '../providers/catalog.js';
 import { record as recordUsage } from '../usage.js';
 import { resolveForUser, AUTO_ID } from '../autoPick.js';
@@ -63,7 +65,7 @@ export function parseReview(text) {
  * Count this turn, and review when it is the Nth. Never throws.
  *
  * @param {{ userId: string, chatId: string, stream?: typeof streamCompletion, resolve?: typeof resolveForUser }} options
- * @returns {Promise<{ status: 'skip' | 'off' | 'counting' | 'no_model' | 'reviewed' | 'failed', turns?: number, added?: number, updated?: number, forgot?: number }>}
+ * @returns {Promise<{ status: 'skip' | 'off' | 'counting' | 'outside' | 'no_model' | 'reviewed' | 'failed', turns?: number, from?: string, added?: number, updated?: number, forgot?: number }>}
  */
 export async function maybeReview({ userId, chatId, stream = streamCompletion, resolve = resolveForUser }) {
   try {
@@ -81,13 +83,28 @@ export async function maybeReview({ userId, chatId, stream = streamCompletion, r
     }
     await store.updateBot(userId, bot.id, { turnsSinceReview: 0 });
 
+    const messages = await store.listMessages(userId, chatId);
+    const said = messages.filter((m) => (m.role === 'user' || m.role === 'assistant') && String(m.text || '').trim()).slice(-RECENT);
+    /*
+     * HAR-005 for the review (owner, 2026-11-12). A turn that has read something from
+     * outside asks before the bot saves to memory itself; the review saves with nobody
+     * to ask, and the assistant's words it reads can carry what a page said. So when the
+     * turns it would read include anything from outside, it writes nothing this time —
+     * the count starts again and a later review, past those turns, can look. Said in the
+     * log by where it came from, never by what it said.
+     */
+    const from = said.length ? messages.findIndex((m) => m === said[0]) : messages.length;
+    const outside = outsideIn(messages.slice(Math.max(0, from)));
+    if (outside) {
+      log.info('a memory review wrote nothing: the turns it would read had read from outside', { chatId, from: outside });
+      return { status: 'outside', from: outside };
+    }
+
     const entry = await resolve(userId, AUTO_ID);
     if (!entry) return { status: 'no_model' };
     const scope = { botId: bot.id };
     const entries = await store.listBotMemory(userId, scope);
-    const transcript = (await store.listMessages(userId, chatId))
-      .filter((m) => (m.role === 'user' || m.role === 'assistant') && String(m.text || '').trim())
-      .slice(-RECENT)
+    const transcript = said
       .map((m) => `${m.role === 'user' ? 'User' : bot.name}: ${redactSecrets(String(m.text)).text.slice(0, CLIP)}`)
       .join('\n');
     const listed = entries.length
@@ -95,33 +112,38 @@ export async function maybeReview({ userId, chatId, stream = streamCompletion, r
       : '(none yet)';
     const prompt = `<entries>\n${listed}\n</entries>\n\n<conversation>\n${transcript || '(nothing said)'}\n</conversation>`;
 
-    let said = '';
+    let answer = '';
     let spent = null;
     for await (const ev of stream({ userId, entry, system: SYSTEM, messages: [{ id: 'review', role: 'user', text: prompt }], tools: [], effort: 'low', maxTokens: 700, signal: AbortSignal.timeout(60_000) })) {
-      if (ev.type === 'text') said += ev.delta ?? '';
+      if (ev.type === 'text') answer += ev.delta ?? '';
       else if (ev.type === 'done') spent = ev.usage || null;
     }
     // Booked to the bot, as its turns are (the conversation names it).
     if (spent) await recordUsage(userId, { chatId, model: entry.id, usage: spent, costUsd: priceTurn(entry, spent)?.usd || 0, role: 'memory_review' }).catch(() => {});
 
-    const plan = parseReview(said);
+    const plan = parseReview(answer);
     const mayChange = new Map(entries.filter((e) => e.source !== 'user' && !e.pinned).map((e) => [e.id, e]));
     let left = MAX_CHANGES;
     let added = 0;
     let updated = 0;
     let forgot = 0;
+    /*
+     * Written as the review's (owner, 2026-11-12): `source: 'review'` and the chat it
+     * read, so the panel can tell its changes from the bot's and take one back. A
+     * correction closes the entry it corrects, which stays as history; a forget closes it.
+     */
     for (const u of plan.update) {
       if (left <= 0 || !mayChange.has(u.id)) continue;
       const text = String(u.text).normalize('NFC').replace(/\s+/g, ' ').trim();
       if (!text || redactSecrets(text).text !== text || text.length > 300) continue;
-      if (await store.updateBotMemory(userId, u.id, scope, { text, textFolded: fold(text) })) {
+      if (await store.replaceBotMemory(userId, u.id, scope, { id: crypto.randomUUID(), text, textFolded: fold(text), source: 'review', chatId })) {
         updated += 1;
         left -= 1;
       }
     }
     for (const id of plan.forget) {
       if (left <= 0 || !mayChange.has(id)) continue;
-      if (await store.softDeleteBotMemory(userId, id, scope)) {
+      if (await store.closeBotMemory(userId, id, scope, { by: 'review' })) {
         forgot += 1;
         left -= 1;
       }
@@ -129,7 +151,7 @@ export async function maybeReview({ userId, chatId, stream = streamCompletion, r
     for (const text of plan.add) {
       if (left <= 0) break;
       try {
-        const { saved } = await remember(userId, scope, text, 'bot');
+        const { saved } = await remember(userId, scope, text, 'review', { chatId });
         if (saved) {
           added += 1;
           left -= 1;

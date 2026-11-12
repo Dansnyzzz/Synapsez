@@ -1369,6 +1369,14 @@ export const TOOLS = [
           description:
             'Where the note belongs. Omit it inside a project and the note is that project’s, which is nearly always right — its conventions, its people, its house style. Pass "account" only for something true of the user everywhere, such as the language they want answers in.',
         },
+        // Owner, 2026-11-12: a rule always asks the person first; an event leaves the prompt after `expires`.
+        kind: {
+          type: 'string',
+          enum: ['fact', 'preference', 'rule', 'event'],
+          description: 'Default fact. "rule" is a standing instruction and always asks the user first; "event" holds until `expires`.',
+        },
+        valid_from: { type: 'string', description: 'YYYY-MM-DD the fact became true, when it was not today.' },
+        expires: { type: 'string', description: 'Events only: YYYY-MM-DD after which it no longer applies.' },
       },
       required: ['key', 'content'],
     },
