@@ -4150,6 +4150,11 @@ function continueHere() {
 
 /** Hosts cap how long one request may run; the agent loop is resumable. */
 const MAX_RESUMES = 25;
+/**
+ * A turn that stops for time near the host's limit and says it is carrying on is asked again
+ * at once, as often as this — the server counts the same way (agent.js MAX_AUTO_CONTINUES).
+ */
+const MAX_CARRY_ON = 40;
 
 /**
  * Answer in the conversation on screen.
@@ -4216,19 +4221,34 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null,
   /** How the last attempt ended; 'waiting' leaves its calls open for the answer. */
   let ended = 'cut';
   try {
-    for (let resume = 0; resume <= MAX_RESUMES; resume += 1) {
+    let cuts = 0;
+    let carried = 0;
+    for (let attempt = 0; ; attempt += 1) {
       // A decision and an answer both belong to the batch that was paused, so
       // neither is resent on a reconnect — the server already has them.
-      const outcome = await streamOnce(run, resume === 0 ? decision : undefined, resume === 0 ? answers : undefined, resume === 0 && handoff);
+      const outcome = await streamOnce(run, attempt === 0 ? decision : undefined, attempt === 0 ? answers : undefined, attempt === 0 && handoff);
       ended = outcome;
+
+      // Stopped near the host's time limit and carrying on (owner, 2026-11-12): asked again at
+      // once, the same run, nothing to press. The server counts these too, and stops them.
+      if (outcome === 'continue') {
+        carried += 1;
+        if (carried > MAX_CARRY_ON) {
+          ended = 'done';
+          break;
+        }
+        setStatus(t('status.carryingOn'), run);
+        continue;
+      }
 
       // A clean finish, a question for the user, or a deliberate stop.
       if (outcome !== 'cut') break;
 
-      if (resume === MAX_RESUMES) {
+      if (cuts === MAX_RESUMES) {
         if (onScreen(run)) noteInterrupted(run, t('status.paused'));
         break;
       }
+      cuts += 1;
       // The host closed the connection mid-run. Every step is already saved,
       // so reconnecting continues from exactly where it stopped.
       setStatus(t('status.reconnecting'), run);
@@ -4335,6 +4355,7 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null,
 /**
  * One request against the agent endpoint.
  * @returns 'done' · 'waiting' (approval needed) · 'cut' (connection dropped mid-run)
+ *   · 'continue' (stopped for time and carrying on — asked again at once)
  */
 async function streamOnce(run, decision, answers, handoff = false) {
   let outcome = 'cut';
@@ -4637,6 +4658,12 @@ async function streamOnce(run, decision, answers, handoff = false) {
           if (code !== 'quota_exceeded' && code !== 'no_auto_model') noteInterrupted(run, said);
         },
         done: ({ stop }) => {
+          // Not finished: stopped for time and carrying on — the loop in `stream` asks again.
+          if (stop?.continuing) {
+            outcome = 'continue';
+            clearDrafts();
+            return;
+          }
           outcome = 'done';
           if (onScreen(run)) mascot.finished(!stop?.message);
           clearDrafts();

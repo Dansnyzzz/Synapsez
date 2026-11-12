@@ -1,6 +1,18 @@
 {
   "entries": [
     {
+      "version": "1.28.1",
+      "date": "2026-11-12",
+      "improved": {
+        "vi": [
+          "Câu trả lời dài chạm giới hạn thời gian của một lần chạy giờ tự tiếp tục, không cần bấm Tiếp tục — với mọi model, kể cả khi bạn đóng tab. Nó dừng khi xong việc, khi bạn bấm Dừng, hoặc khi hết tiền hay hết hạn mức."
+        ],
+        "en": [
+          "A long reply that reaches the time one run may take now carries on by itself, nothing to press — with every model, even with the tab closed. It stops when it is done, when you press Stop, or when credit or quota runs out."
+        ]
+      }
+    },
+    {
       "version": "1.28.0",
       "date": "2026-11-12",
       "new": {

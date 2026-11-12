@@ -541,6 +541,7 @@ export const en = {
 
   /* ── things said while a turn runs ───────────────────────────── */
   'status.reconnecting': 'Reconnecting…',
+  'status.carryingOn': 'Carrying on — one reply runs about four and a half minutes at a time…',
   'status.restarting': 'Starting that reply again…',
   'status.continuing': 'Carrying on…',
   'status.paused': 'Paused after several reconnects.',

@@ -1753,6 +1753,30 @@ section('the same read twice in a turn runs once');
   check('with too little of the turn left, the first step runs and the next does not start', lateCalls === 1 && lateDone?.stopReason === 'time_limit', JSON.stringify({ lateCalls, stop: lateDone?.stopReason }));
   check('  and it can be continued', lateDone?.stop?.resumable === true && /Continue/.test(lateDone?.stop?.message || ''), JSON.stringify(lateDone?.stop));
 
+  // Owner, 2026-11-12: where the caller can carry it on (the browser's route), the turn says
+  // so and carries on by itself — free and paid models alike — up to MAX_AUTO_CONTINUES.
+  const { MAX_AUTO_CONTINUES } = await import('../server/agent.js');
+  const carryDone = async () => {
+    const events = [];
+    let calls = 0;
+    const s = async function* () {
+      calls += 1;
+      yield { type: 'done', stopReason: 'tool_use', toolCalls: [{ id: `cc${calls}-${Math.random()}`, name: 'skill_read', input: { name: 'docx' } }], usage: { input: 5, output: 5 } };
+    };
+    await runAgent({ userId: dupUser.id, user: dupUser, chatId: 'c-late', emit: (type, payload) => events.push({ type, payload }), stream: s, deadlineAt: Date.now() + 30_000, canContinue: true });
+    return events.find((e) => e.type === 'done')?.payload?.stop;
+  };
+  const first = await carryDone();
+  check('where it can be carried on, the stop says it is carrying on, and counts', first?.continuing === true && first?.count === 1 && first?.kind === 'time_limit', JSON.stringify(first));
+  const second = await carryDone();
+  check('  the next carry-on of the same message counts on', second?.continuing === true && second?.count === 2, JSON.stringify(second));
+  await store.setSetting('continue:c-late', { asked: 'u-late-1', count: MAX_AUTO_CONTINUES });
+  const capped = await carryDone();
+  check(`  past ${MAX_AUTO_CONTINUES} it stops with a Continue, a guard against a loop`, !capped?.continuing && capped?.resumable === true && new RegExp(`Carried on ${MAX_AUTO_CONTINUES} times`).test(capped?.message || ''), JSON.stringify(capped));
+  await store.appendMessage(dupUser.id, 'c-late', { id: 'u-late-2', role: 'user', text: 'tiếp nào' });
+  const fresh = await carryDone();
+  check('  a new message starts the count again', fresh?.continuing === true && fresh?.count === 1, JSON.stringify(fresh));
+
   // Harness audit, 2026-11-12: the turn's token ceiling counted only the main loop's calls.
   const { withTrace } = await import('../server/util/trace.js');
   const { record } = await import('../server/usage.js');
