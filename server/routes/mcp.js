@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getStore } from '../store/index.js';
 import { runInSandbox } from '../sandbox.js';
-import { sealConfig, forgetMcp, probeMcpServer, mcpStatus, slugify } from '../mcp/registry.js';
+import { approveMcpTools, sealConfig, forgetMcp, probeMcpServer, mcpStatus, slugify } from '../mcp/registry.js';
 import { searchCatalogue, MCP_CATALOGUE } from '../mcp/catalogue.js';
 import { connectorDirectory, siteFor } from '../connectorDirectory.js';
 import { stdioPlace } from '../mcp/cloud.js';
@@ -288,6 +288,21 @@ export function mountMcpRoutes(api, { wrap, body }) {
       const updated = await getStore().setMcpServerEnabled(req.user.id, req.params.id, req.body?.enabled !== false);
       forgetMcp(req.user.id);
       return res.json({ server: { id: updated.id, name: updated.name, enabled: updated.enabled } });
+    }),
+  );
+
+  /**
+   * Approve a server's tools as they now are, after looking at what changed (registry.js
+   * `screenTools`): until then a changed or new tool is not offered to the model.
+   */
+  api.post(
+    '/mcp/:id/approve-tools',
+    wrap(async (req, res) => {
+      const row = await getStore().getMcpServer(req.user.id, req.params.id);
+      if (!row) return res.status(404).json({ error: 'No such MCP server.' });
+      const approved = await approveMcpTools(req.user.id, row);
+      if (approved == null) return res.status(409).json({ error: 'This server is not connected, so there is no list to approve yet. Open a conversation that uses it, then try again.' });
+      return res.json({ approved });
     }),
   );
 

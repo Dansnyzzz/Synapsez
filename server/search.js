@@ -577,6 +577,41 @@ export function searchChain() {
     .filter((name) => !ENGINES[name].key || process.env[ENGINES[name].key]);
 }
 
+/*
+ * An engine having a bad afternoon (owner, 2026-11-12, after the routers' "allowed fails,
+ * then cool down" idea): two timeouts or server errors in a row and it goes to the back
+ * of the chain for a minute and a half, so every search does not wait out its timeout
+ * first. Moved, never removed — if everything else fails it is still asked. Per instance.
+ */
+const TROUBLE_FAILS = 2;
+const TROUBLE_MS = 90_000;
+const trouble = new Map();
+
+/** The chain with any engine cooling down moved to the back, in their order. */
+export function cooledChain(chain, now = Date.now()) {
+  const cooling = (name) => (trouble.get(name)?.until || 0) > now;
+  return [...chain.filter((n) => !cooling(n)), ...chain.filter(cooling)];
+}
+
+/** What one engine's attempt said about its health: a timeout or a 5xx counts against it. */
+export function noteEngine(name, err, now = Date.now()) {
+  const row = trouble.get(name) || { fails: 0, until: 0 };
+  const struggling = err && !err.skip && (!err.status || err.status >= 500 || err.name === 'TimeoutError' || /timed? ?out|aborted/i.test(String(err.message)));
+  if (!struggling) {
+    trouble.delete(name);
+    return;
+  }
+  row.fails += 1;
+  if (row.fails >= TROUBLE_FAILS) {
+    row.until = now + TROUBLE_MS;
+    row.fails = 0;
+  }
+  trouble.set(name, row);
+}
+
+/** Testing seam. */
+export const clearEngineTrouble = () => trouble.clear();
+
 /** One address however it was written — scheme, www., a trailing slash and tracking tags aside. */
 function sameUrl(url) {
   try {
@@ -641,7 +676,7 @@ export function fuseResults(answered, count) {
  */
 export async function search(query, { count, userId = null, plan = SEARCH_LEVELS.medium, recency = null, sites = [], category = null, country = null } = {}) {
   const wanted = Math.min(Math.max(Number(count) || plan.count || 8, 1), 20);
-  const chain = searchChain();
+  const chain = cooledChain(searchChain());
 
   if (!chain.length) {
     throw Object.assign(
@@ -688,6 +723,7 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
       const engine = ENGINES[chain[at]];
       try {
         const out = await engine.run(query, ask);
+        noteEngine(chain[at], null);
         const results = Array.isArray(out) ? out : out.results;
         if (results.length) {
           answered.push({ at, label: engine.label, results, answer: Array.isArray(out) ? null : out.answer });
@@ -701,6 +737,7 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
           if (/allowance|share/.test(err.message)) log.info('search: free tier', { reason: err.message, userId: userId || 'unattributed' });
           continue;
         }
+        noteEngine(chain[at], err);
         // The service itself says its credit is spent: believed for the rest of the period.
         if (engine.metered && [402, 432, 433].includes(err.status)) await exhaust(chain[at]);
         attempts.push({ at, engine: engine.label, error: err.message });

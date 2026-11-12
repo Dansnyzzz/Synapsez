@@ -411,6 +411,30 @@ section("one account is never answered from another account's search (PRV-016)")
   check('the same account asking twice is answered from the cache', first > 0 && again === first, `${first} → ${again}`);
   check('  another account asking the same is not (PRV-016)', calls.length > again, `${again} → ${calls.length}`);
 }
+section('an engine having a bad afternoon goes to the back of the chain');
+{
+  const { cooledChain, noteEngine, clearEngineTrouble } = await import('../server/search.js');
+  clearEngineTrouble();
+  const chain = ['exa', 'firecrawl', 'duckduckgo'];
+  const t0 = Date.now();
+  const timeout = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+  noteEngine('exa', timeout, t0);
+  check('one timeout is not enough', cooledChain(chain, t0).join() === chain.join());
+  noteEngine('exa', Object.assign(new Error('Exa returned HTTP 503'), { status: 503 }), t0);
+  check('two in a row: moved to the back, not removed', cooledChain(chain, t0 + 1000).join() === 'firecrawl,duckduckgo,exa');
+  check('  for a minute and a half', cooledChain(chain, t0 + 91_000).join() === chain.join());
+  noteEngine('firecrawl', Object.assign(new Error('Firecrawl answered HTTP 400'), { status: 400 }), t0);
+  noteEngine('firecrawl', Object.assign(new Error('Firecrawl answered HTTP 401'), { status: 401 }), t0);
+  noteEngine('duckduckgo', Object.assign(new Error('standing aside'), { skip: true }), t0);
+  noteEngine('duckduckgo', Object.assign(new Error('standing aside'), { skip: true }), t0);
+  check('a refusal of the request, or standing aside, is not trouble', cooledChain(chain, t0 + 91_000).join() === chain.join());
+  noteEngine('exa', timeout, t0);
+  noteEngine('exa', null, t0);
+  noteEngine('exa', timeout, t0);
+  check('an answer in between starts the count again', cooledChain(chain, t0 + 91_000).join() === chain.join());
+  clearEngineTrouble();
+}
+
 console.log(
   failures === 0
     ? '\n[32mAll search checks passed.[0m\n'

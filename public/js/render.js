@@ -2259,6 +2259,8 @@ function routeButton(route, wrap) {
     };
     const provider = t(`cloak.provider.${route.provider}`);
     line(t('route.via', { model: route.model, provider: provider.startsWith('cloak.') ? route.provider : provider }), 'route-note__head');
+    // A router (Auto) picked the model that answered: named.
+    if (route.answeredBy) line(t('route.answeredBy', { model: route.answeredBy }));
     line(t(`route.tier.${route.tier}`), route.warn ? 'route-note__warn' : '');
     const kinds = Object.entries(route.masked || {});
     if (kinds.length) line(t('route.hidden', { list: kinds.map(([kind, n]) => `${t(`route.kind.${kind}`)} ×${n}`).join(', ') }));

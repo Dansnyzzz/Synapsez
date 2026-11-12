@@ -965,6 +965,67 @@ export function turnReadOutside(messages) {
 }
 
 /**
+ * The tools that read the account's own private data: its mail, files, calendar, notes,
+ * documents, earlier conversations (2026-11-12, the "lethal trifecta": private data, words
+ * from outside, and a way out — together, a page can send the first through the third).
+ */
+const PRIVATE_READS = new Set([
+  'gmail', 'google_drive', 'google_calendar', 'google_contacts', 'google_docs', 'google_sheets', 'google_tasks',
+  'read_file', 'fs_read_text', 'fs_search', 'grep', 'clipboard_read', 'search_docs', 'memory_read', 'memory_search',
+  'search_chats', 'notion_search', 'read_generated_file',
+]);
+
+/** Whether this conversation has read the account's private data through a tool. */
+export function turnReadPrivate(messages) {
+  return messages.some((m) => m.role === 'assistant' && (m.toolCalls || []).some((c) => PRIVATE_READS.has(String(c?.name))));
+}
+
+/** The hosts the person named in what they wrote — never what a page or a tool said. */
+export function hostsNamed(messages) {
+  const hosts = new Set();
+  for (const m of messages) {
+    if (m.role !== 'user') continue;
+    for (const match of String(m.text || '').matchAll(/\b(?:https?:\/\/)?((?:[a-z0-9-]+\.)+[a-z]{2,63})(?=[/:?#\s"')\],]|$)/gi)) {
+      hosts.add(match[1].toLowerCase().replace(/^www\./, ''));
+    }
+  }
+  return hosts;
+}
+
+/** Where the newest words from outside came from, as their envelope says. */
+export function lastOutsideSource(messages) {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i];
+    if (m.role !== 'tool') continue;
+    for (let j = (m.results || []).length - 1; j >= 0; j -= 1) {
+      const found = [...String(m.results[j]?.content ?? '').matchAll(/<untrusted source="([^"]{1,200})"/g)].pop();
+      if (found) return found[1];
+    }
+  }
+  return null;
+}
+
+const hostOf = (call) => {
+  try {
+    return new URL(String(call?.input?.[URL_ARGUMENT[call.name]] || '')).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return null;
+  }
+};
+
+/** A call that opens an address on a host the person never named. */
+const reachesUnnamed = (call, named) => {
+  if (!URL_ARGUMENT[call?.name]) return false;
+  const host = hostOf(call);
+  return !!host && ![...named].some((n) => host === n || host.endsWith(`.${n}`));
+};
+
+/** Why such a call asks, naming the host and where the outside words came from. */
+export function trifectaReason(call, source) {
+  return `This conversation has read your private data and words from outside${source ? ` (the latest from ${source})` : ''}. It now opens ${hostOf(call) || 'an address'}, which you did not name — check the address carries nothing of yours before it is sent.`;
+}
+
+/**
  * Whether a personal detail the shield put back is going out in a web address
  * (PRV-003). With masking on the model holds only placeholders, and a page can
  * talk it into writing one into a URL; restoring it there would hand the real
@@ -1003,12 +1064,17 @@ export const PERSONAL_LEAVING_REASON =
  * group — the bot's own memory, the account's notes, a bot's instructions — asks first;
  * the group's own memory, read only in that group, does not.
  *
- * @param {{ readOutside?: boolean, groupOutside?: boolean }} [context]
+ * `readPrivate` and `named` (2026-11-12): a turn that has read both the account's private
+ * data and words from outside asks before any address on a host the person did not name
+ * is opened — the way out a page would use to carry the first off (`reachesUnnamed`).
+ *
+ * @param {{ readOutside?: boolean, groupOutside?: boolean, readPrivate?: boolean, named?: Set<string> }} [context]
  */
-export function needsApproval(toolCalls, policy, { readOutside = false, groupOutside = false } = {}) {
+export function needsApproval(toolCalls, policy, { readOutside = false, groupOutside = false, readPrivate = false, named = new Set() } = {}) {
   if (policy === 'auto' || policy === 'readonly' || policy === 'plan') return [];
   return toolCalls.filter((call) => {
     if (readOutside && policy === 'guarded' && MEMORY_WRITES.has(call.name)) return true;
+    if (readOutside && readPrivate && policy === 'guarded' && reachesUnnamed(call, named)) return true;
     if (groupOutside && policy === 'guarded' && MEMORY_WRITES.has(call.name) && !(call.name === 'remember' && call.input?.scope !== 'own')) return true;
     if (personalInAddress(call) || personalLeaving(call)) return true;
     const risk = assessRisk(call.name, call.input);
@@ -1028,9 +1094,14 @@ function monitorHolds({ toolCalls, pending, policy, readOutside, thought, prefs,
   return heldByMonitor({ calls, messages, readOutside, thought, prefs, entry, userId, chatId, signal, googleData, stream });
 }
 
-/** The reason shown for one call in an approval prompt. */
-function approvalReason(call, policy, readOutside) {
+/**
+ * The reason shown for one call in an approval prompt.
+ * @param {any} call @param {string} policy @param {boolean} readOutside
+ * @param {{ readPrivate?: boolean, named?: Set<string>, source?: string|null }} [taint]
+ */
+function approvalReason(call, policy, readOutside, { readPrivate = false, named = new Set(), source = null } = {}) {
   if (readOutside && policy === 'guarded' && MEMORY_WRITES.has(call.name)) return READ_OUTSIDE_REASON;
+  if (readOutside && readPrivate && policy === 'guarded' && reachesUnnamed(call, named)) return trifectaReason(call, source);
   if (personalInAddress(call)) return PERSONAL_IN_ADDRESS_REASON;
   if (personalLeaving(call)) return PERSONAL_LEAVING_REASON;
   return riskReason(call.name, call.input);
@@ -2031,7 +2102,8 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
     // Re-check the policy rather than trusting that a decision was made. A run
     // cut short before it could ask must still ask on resume.
     const readOutside = turnReadOutside(messages);
-    const stillPending = needsApproval(last.toolCalls, policy, { readOutside, groupOutside });
+    const taint = { readPrivate: turnReadPrivate(messages), named: hostsNamed(messages), source: lastOutsideSource(messages) };
+    const stillPending = needsApproval(last.toolCalls, policy, { readOutside, groupOutside, ...taint });
 
     /**
      * A question still waiting for its answer.
@@ -2073,7 +2145,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
           name: c.name,
           input: c.input,
           needsApproval: stillPending.some((p) => p.id === c.id) || held.has(c.id),
-          reason: held.get(c.id) ?? approvalReason(c, policy, readOutside),
+          reason: held.get(c.id) ?? approvalReason(c, policy, readOutside, taint),
         })),
       });
       return;
@@ -2485,6 +2557,11 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
           } else if (ev.type === 'done') {
             releaseSeam();
             done = ev;
+            // A router (Auto) chose the model: said beside where the reply went.
+            if (ev.servedModel && assistant.route && assistant.route.answeredBy !== ev.servedModel) {
+              assistant.route = { ...assistant.route, answeredBy: String(ev.servedModel) };
+              emit('data_route', assistant.route);
+            }
           }
         }
         } finally {
@@ -2954,7 +3031,8 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
     }
 
     const readOutside = turnReadOutside(messages);
-    const pending = needsApproval(assistant.toolCalls, policy, { readOutside, groupOutside });
+    const taint = { readPrivate: turnReadPrivate(messages), named: hostsNamed(messages), source: lastOutsideSource(messages) };
+    const pending = needsApproval(assistant.toolCalls, policy, { readOutside, groupOutside, ...taint });
     const held = await monitorHolds({ toolCalls: assistant.toolCalls, pending, policy, readOutside, thought: assistant.thinking, prefs, entry, userId, chatId, messages, signal, googleData, stream });
     if (held.size) await store.holdToolCalls(userId, chatId, assistant.id, Object.fromEntries(held));
     if (pending.length || held.size) {
@@ -2964,7 +3042,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
           name: c.name,
           input: c.input,
           needsApproval: pending.some((p) => p.id === c.id) || held.has(c.id),
-          reason: held.get(c.id) ?? approvalReason(c, policy, readOutside),
+          reason: held.get(c.id) ?? approvalReason(c, policy, readOutside, taint),
         })),
       });
       return; // The client resumes by calling back with a decision.
