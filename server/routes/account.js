@@ -11,7 +11,10 @@ import { policyTable } from '../dataRoute.js';
 import { forgetMachine } from '../sandbox.js';
 import { currentMasking } from '../deidentifyQuality.js';
 import { log } from '../util/trace.js';
-import { MEMORY_KEY, projectMemoryKey, noteName, MAX_NOTE_CHARS, memoryRefusal, refusalMessage, stampNote } from '../memory.js';
+import {
+  MEMORY_KEY, projectMemoryKey, noteName, MAX_NOTE_CHARS, memoryRefusal, refusalMessage, stampNote,
+  noteHistory, noteKind, noteDay, kindOf, isLive, isExpired,
+} from '../memory.js';
 import { normaliseImport, IMPORT_LIMITS } from '../../public/js/import-formats.js';
 import { clientError } from '../util/clientError.js';
 
@@ -71,20 +74,50 @@ export function mountAccountRoutes(api, admin, { wrap }) {
         store.listProjects(req.user.id, { archived: true }),
       ]);
       const names = new Map([...projects, ...archived].map((p) => [p.id, p.name]));
+      // Where each note and each earlier version was saved, by title — one query (owner, 2026-11-12).
+      const chats = new Set();
+      for (const { value } of buckets) {
+        for (const note of Object.values(value || {})) {
+          if (note?.chatId) chats.add(note.chatId);
+          for (const version of noteHistory(note)) if (version.chatId) chats.add(version.chatId);
+        }
+      }
+      const titles = await store.chatTitles(req.user.id, [...chats]);
+      const savedIn = (n) =>
+        n?.chatId ? { chatId: n.chatId, chatTitle: titles.get(n.chatId) ?? null, seq: n.seq ?? null, outside: n.outside || null } : null;
+      const today = new Date();
       const groups = buckets
         .map(({ key, value }) => {
           const projectId = key === MEMORY_KEY ? null : key.slice(MEMORY_KEY.length + 1);
           const notes = Object.entries(value || {})
-            .filter(([, note]) => note && typeof note.content === 'string')
-            .map(([name, note]) => ({
-              key: name,
-              content: note.content,
-              updatedAt: note.updatedAt || null,
-              // Where it came from, and whether there is a change to take back (HAR-002).
-              by: note.by || null,
-              chatId: note.chatId || null,
-              canUndo: typeof note.previous?.content === 'string',
-            }))
+            .filter(([, note]) => isLive(note) || (note?.removed === true && noteHistory(note).length))
+            .map(([name, note]) => {
+              const history = noteHistory(note);
+              return {
+                key: name,
+                content: isLive(note) ? note.content : null,
+                updatedAt: note.updatedAt || null,
+                // Where it came from, and whether there is a change to take back (HAR-002).
+                by: note.by || null,
+                chatId: note.chatId || null,
+                saved: savedIn(note),
+                kind: kindOf(note),
+                expires: note.expires || null,
+                expired: isExpired(note, today),
+                validFrom: note.validFrom || null,
+                // Removed by the assistant: read into nothing, still the person's to bring back.
+                removed: note.removed === true,
+                canUndo: history.length > 0,
+                history: history.map((v) => ({
+                  content: v.content,
+                  validFrom: v.validFrom || null,
+                  invalidAt: v.invalidAt || null,
+                  by: v.by || null,
+                  kind: kindOf(v),
+                  saved: savedIn(v),
+                })),
+              };
+            })
             .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
           return {
             scope: projectId ? 'project' : 'account',
@@ -135,40 +168,88 @@ export function mountAccountRoutes(api, admin, { wrap }) {
       }
       const refusal = memoryRefusal(text, { allowSensitive: true });
       if (refusal) return res.status(400).json({ error: refusalMessage(refusal) });
+      // A kind or an end date the person sets is checked here as the tool checks the assistant's.
+      let kind;
+      let expires;
+      try {
+        kind = noteKind(req.body?.kind);
+        expires = noteDay(req.body?.expires, 'expires');
+      } catch (err) {
+        return res.status(400).json({ error: clientError(err) });
+      }
       // A person's own edit keeps no earlier version (PRV-006). What it keeps is
       // the "from Google" mark (PRV-025): an edited note made from someone's mail
       // is still made from it, and without the mark it went to every provider.
+      // And its kind and end date unless the person changes them: an edit of a
+      // rule's wording is still a rule.
       const notes = (await getStore().getUserSetting(req.user.id, bucket)) || {};
-      const google = Object.hasOwn(notes, key) && notes[key]?.google === true;
-      await getStore().mergeUserSetting(req.user.id, bucket, { [key]: stampNote(text, { by: 'user', google }) });
+      const before = Object.hasOwn(notes, key) ? notes[key] : null;
+      const google = before?.google === true;
+      // An end date sent empty clears it; none sent keeps the one there was.
+      const datesGiven = !!req.body && Object.hasOwn(req.body, 'expires');
+      const next = stampNote(text, { by: 'user', google, before, kind, expires: datesGiven ? expires : undefined });
+      await getStore().mergeUserSetting(req.user.id, bucket, { [key]: next });
       res.json({ ok: true });
     }),
   );
 
   /**
-   * Take back the last change to a note (HAR-002): the version it replaced
-   * becomes the note again. One step only, and the undone text is not kept —
-   * undoing is the person deciding that change should not have happened.
+   * Bring an earlier version back (owner, 2026-11-12): one an assistant's change
+   * replaced, or the last one of a note the assistant removed. The versions after
+   * it are not kept — restoring is the person deciding those changes should not
+   * have happened — and the ones before it stay, so a second look is possible.
+   * `/undo` is the newest, as it was when a note kept one step.
    */
-  api.post(
-    '/memory/:scope/:key/undo',
+  async function restoreNote(req, res, index) {
+    const bucket = await bucketFor(req);
+    if (!bucket) return res.status(404).json({ error: 'No such project.' });
+    const notes = (await getStore().getUserSetting(req.user.id, bucket)) || {};
+    const note = Object.hasOwn(notes, req.params.key) ? notes[req.params.key] : null;
+    if (!note) return res.status(404).json({ error: 'No such note.' });
+    const history = noteHistory(note);
+    const version = Number.isInteger(index) && index >= 0 ? history[index] : null;
+    if (!version) return res.status(400).json({ error: 'There is no earlier version of this note.' });
+    const older = history.slice(index + 1);
+    await getStore().mergeUserSetting(req.user.id, bucket, {
+      [req.params.key]: {
+        content: version.content,
+        updatedAt: new Date().toISOString(),
+        ...(version.by ? { by: version.by } : {}),
+        ...(version.chatId ? { chatId: version.chatId } : {}),
+        ...(version.seq != null ? { seq: version.seq } : {}),
+        ...(version.outside ? { outside: version.outside } : {}),
+        ...(version.google ? { google: true } : {}),
+        ...(version.kind && version.kind !== 'fact' ? { kind: version.kind } : {}),
+        ...(version.expires ? { expires: version.expires } : {}),
+        ...(version.validFrom ? { validFrom: version.validFrom } : {}),
+        ...(older.length ? { history: older } : {}),
+      },
+    });
+    res.json({ ok: true });
+  }
+  api.post('/memory/:scope/:key/undo', wrap((req, res) => restoreNote(req, res, 0)));
+  api.post('/memory/:scope/:key/restore', wrap((req, res) => restoreNote(req, res, Number(req.body?.index ?? 0))));
+
+  /**
+   * Delete a note's earlier versions and keep the note (PRV-006, Decree 13/2023:
+   * what is remembered about a person, they can delete). A note the assistant
+   * removed is only its history, so this deletes it outright.
+   */
+  api.delete(
+    '/memory/:scope/:key/history',
     wrap(async (req, res) => {
       const bucket = await bucketFor(req);
       if (!bucket) return res.status(404).json({ error: 'No such project.' });
       const notes = (await getStore().getUserSetting(req.user.id, bucket)) || {};
       const note = Object.hasOwn(notes, req.params.key) ? notes[req.params.key] : null;
       if (!note) return res.status(404).json({ error: 'No such note.' });
-      const previous = note.previous;
-      if (typeof previous?.content !== 'string') return res.status(400).json({ error: 'There is no earlier version of this note.' });
-      await getStore().mergeUserSetting(req.user.id, bucket, {
-        [req.params.key]: {
-          content: previous.content,
-          updatedAt: new Date().toISOString(),
-          ...(previous.by ? { by: previous.by } : {}),
-          ...(previous.chatId ? { chatId: previous.chatId } : {}),
-          ...(previous.google ? { google: true } : {}),
-        },
-      });
+      if (!isLive(note)) {
+        await getStore().removeMemoryNote(req.user.id, bucket, req.params.key);
+        return res.json({ ok: true, removed: true });
+      }
+      // Only this note's entry, so a save to another note meanwhile is not undone.
+      const { history: _history, previous: _previous, ...kept } = note;
+      await getStore().mergeUserSetting(req.user.id, bucket, { [req.params.key]: kept });
       res.json({ ok: true });
     }),
   );
@@ -356,35 +437,68 @@ export function mountAccountRoutes(api, admin, { wrap }) {
       for (const { key, value } of buckets) {
         const projectId = key === MEMORY_KEY ? null : key.slice(MEMORY_KEY.length + 1);
         for (const [name, note] of Object.entries(value || {})) {
+          const history = noteHistory(note);
           memory.push({
             scope: projectId ? 'project' : 'account',
             projectId,
             key: name,
             content: String(note?.content ?? ''),
             updatedAt: note?.updatedAt || null,
-            // Everything the account holds about a note, the earlier version an
+            // Everything the account holds about a note, the earlier versions an
             // assistant change left included (PRV-006): an export that leaves
-            // out stored text is not the whole of what is kept.
+            // out stored text is not the whole of what is kept. And where each
+            // was saved — the conversation, the message, what it had read from
+            // outside — and what kind of note it is (owner, 2026-11-12).
             by: note?.by || null,
             chatId: note?.chatId || null,
+            ...(note?.seq != null ? { seq: note.seq } : {}),
+            ...(note?.outside ? { readFromOutside: note.outside } : {}),
+            kind: kindOf(note),
+            ...(note?.expires ? { expires: note.expires } : {}),
+            ...(note?.validFrom ? { validFrom: note.validFrom } : {}),
+            ...(note?.removed === true ? { removedByAssistant: true } : {}),
             ...(note?.google === true ? { google: true } : {}),
-            ...(typeof note?.previous?.content === 'string'
+            ...(history.length
               ? {
-                  previous: {
-                    content: note.previous.content,
-                    updatedAt: note.previous.updatedAt || null,
-                    by: note.previous.by || null,
-                    chatId: note.previous.chatId || null,
-                  },
+                  history: history.map((v) => ({
+                    content: v.content,
+                    validFrom: v.validFrom || null,
+                    invalidAt: v.invalidAt || null,
+                    by: v.by || null,
+                    chatId: v.chatId || null,
+                    ...(v.seq != null ? { seq: v.seq } : {}),
+                    ...(v.outside ? { readFromOutside: v.outside } : {}),
+                    kind: kindOf(v),
+                  })),
                 }
               : {}),
           });
         }
       }
+      // A bot's and a group's memory, the versions a bot or a review replaced included (schema 50).
+      const botMemory = (await store.exportBotMemory(userId).catch(() => [])).map((m) => ({
+        bot: m.bot_name || null,
+        group: m.group_name || null,
+        text: m.text,
+        source: m.source,
+        pinned: !!m.pinned,
+        validFrom: m.valid_from || m.created_at,
+        invalidAt: m.invalid_at || null,
+        closedBy: m.closed_by || null,
+        version: m.chain_id,
+        chatId: m.chat_id || null,
+        ...(m.message_seq != null ? { seq: Number(m.message_seq) } : {}),
+        ...(m.outside_from ? { readFromOutside: m.outside_from } : {}),
+      }));
+      // The conversations named by title as well as by id: the export's chats carry no ids.
+      const named = await store.chatTitles(userId, [...memory, ...memory.flatMap((n) => n.history || []), ...botMemory].map((n) => n.chatId).filter(Boolean)).catch(() => new Map());
+      const titled = (n) => (n.chatId && named.get(n.chatId) ? { ...n, chatTitle: named.get(n.chatId) } : n);
+      for (const [i, n] of memory.entries()) memory[i] = { ...titled(n), ...(n.history ? { history: n.history.map(titled) } : {}) };
+      for (const [i, n] of botMemory.entries()) botMemory[i] = titled(n);
 
       let count = 0;
       try {
-        count = await writeExport(write, { store, userId, user: req.user, prefs, memory, skills, tasks, workflows, projects, feedback, skillDraft, artifactData, research, mcpServers, holdings });
+        count = await writeExport(write, { store, userId, user: req.user, prefs, memory, botMemory, skills, tasks, workflows, projects, feedback, skillDraft, artifactData, research, mcpServers, holdings });
       } catch (err) {
         /*
          * Half a JSON file that downloads as "complete" is worse than a failed
@@ -458,7 +572,16 @@ export function mountAccountRoutes(api, admin, { wrap }) {
             const { text } = redactSecrets(String(n?.content ?? ''));
             if (!text.trim() || text.length > MAX_NOTE_CHARS) continue;
             if (memoryRefusal(text, { allowSensitive: prefs.memorySensitive === true })) continue;
-            patch[key] = stampNote(text, { by: 'import' });
+            // A Synapsez export says what kind each note is (2026-11-12); anything else comes in as a fact.
+            let kind = null;
+            let expires = null;
+            try {
+              kind = noteKind(n?.kind);
+              expires = kind === 'event' ? noteDay(n?.expires, 'expires') : null;
+            } catch {
+              kind = null;
+            }
+            patch[key] = stampNote(text, { by: 'import', kind, expires });
             notes += 1;
           } catch {
             /* an unusable note name: skipped, the rest still come in */
@@ -581,7 +704,7 @@ export function argsWithoutSecrets(args) {
  *
  * @returns how many conversations went into it
  */
-async function writeExport(write, { store, userId, user, prefs, memory, skills, tasks, workflows, projects, feedback = [], skillDraft = null, artifactData = null, research = [], mcpServers = [], holdings = { themes: [], titles: [], places: [], answers: [] } }) {
+async function writeExport(write, { store, userId, user, prefs, memory, botMemory = [], skills, tasks, workflows, projects, feedback = [], skillDraft = null, artifactData = null, research = [], mcpServers = [], holdings = { themes: [], titles: [], places: [], answers: [] } }) {
   // The username, a skill's files, the feedback sent (PRV-014), the skill draft
   // kept on the account (PRV-027), what artifacts' pages saved (PRV-028), the
   // deep-research runs and the MCP servers added (PRV-029) are held too, so they
@@ -596,6 +719,7 @@ async function writeExport(write, { store, userId, user, prefs, memory, skills, 
       `"account":${JSON.stringify({ name: user.name, username: user.username ?? null, email: user.email, createdAt: user.created_at })},` +
       `"prefs":${JSON.stringify(prefs)},` +
       `"memory":${JSON.stringify(memory)},` +
+      `"botMemory":${JSON.stringify(botMemory)},` +
       `"skills":${JSON.stringify(skills.map((s) => ({ name: s.name, description: s.description, instructions: s.instructions, enabled: s.enabled, shared: !!s.shared_at, files: Array.isArray(s.files) ? s.files : [] })))},` +
       `"addedSkills":${JSON.stringify(added.map((a) => ({ name: a.status === 'ok' ? a.name : a.added_name, addedAt: a.added_at, status: a.status })))},` +
       `"skillDraft":${JSON.stringify(skillDraft || null)},` +

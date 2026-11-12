@@ -336,7 +336,8 @@ export async function runBotTool({ userId, chatId, name, input = {}, turnId = nu
       }
       case 'remember': {
         const scope = groupId && input.scope !== 'own' ? { groupId } : { botId: self.id };
-        const { saved, entries } = await remember(userId, scope, input.text, 'bot', { turnId: turnId || null, replace: input.replace });
+        // `chatId`: where it was saved, and what this conversation had read from outside first (schema 50).
+        const { saved, entries } = await remember(userId, scope, input.text, 'bot', { turnId: turnId || null, replace: input.replace, chatId });
         if (input.replace) return { isError: false, content: `Replaced it in ${scope.groupId ? "the group's memory" : 'your memory'}.` };
         const where = scope.groupId ? "the group's memory" : 'your memory';
         if (!saved) return { isError: false, content: `That is already in ${where}.` };
@@ -376,7 +377,8 @@ export async function runBotTool({ userId, chatId, name, input = {}, turnId = nu
       }
       case 'forget': {
         const scope = groupId && input.scope !== 'own' ? { groupId } : { botId: self.id };
-        const gone = await forget(userId, scope, input.entry);
+        // Kept as history the person can bring back; a stopped turn opens it again.
+        const gone = await forget(userId, scope, input.entry, { turnId: turnId || null });
         return { isError: false, content: `Forgot: ${gone.text}` };
       }
       default:

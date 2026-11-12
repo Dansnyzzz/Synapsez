@@ -174,7 +174,13 @@ export function normaliseImport(data) {
     source === 'synapsez' && Array.isArray(data.memory)
       ? data.memory
           .filter((n) => n && n.scope === 'account' && typeof n.key === 'string' && typeof n.content === 'string')
-          .map((n) => ({ key: n.key.trim().slice(0, 120), content: n.content.slice(0, 8_000) }))
+          // Its kind and an event's end date travel with it (2026-11-12); the server checks both again.
+          .map((n) => ({
+            key: n.key.trim().slice(0, 120),
+            content: n.content.slice(0, 8_000),
+            ...(typeof n.kind === 'string' ? { kind: n.kind.slice(0, 20) } : {}),
+            ...(typeof n.expires === 'string' ? { expires: n.expires.slice(0, 10) } : {}),
+          }))
           .filter((n) => n.key && n.content.trim())
       : [];
   return { source, conversations, memory };

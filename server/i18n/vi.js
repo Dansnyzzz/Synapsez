@@ -1230,6 +1230,19 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Đây là cuộc trò chuyện ẩn danh: không ghi nhớ gì từ nó, và các ghi chú đã lưu không được dùng ở đây.",
   "That note would be {0} characters; the limit is {1}, because every note is read into every conversation. Keep the facts that will matter later and drop the rest, or split it by subject.":
     "Ghi chú đó sẽ dài {0} ký tự; giới hạn là {1}, vì mọi ghi chú đều được đọc vào mọi cuộc trò chuyện. Hãy giữ những điều sẽ cần sau này và bỏ phần còn lại, hoặc tách theo chủ đề.",
+  // Loại ghi chú, thời hạn, và giới hạn cho mỗi nơi (2026-11-12).
+  "A note's kind is one of: {0}.":
+    "Loại của ghi chú phải là một trong: {0}.",
+  'Give {0} as a date, YYYY-MM-DD.':
+    'Hãy nhập {0} dạng ngày, YYYY-MM-DD.',
+  'Only an event has an end date: pass kind "event" with expires.':
+    'Chỉ sự kiện mới có ngày kết thúc: hãy truyền kind "event" cùng expires.',
+  'Not saved: {0} already has {1} notes, and {2} is the most one place keeps, because every note is read into every conversation. Merge notes about the same subject into one (memory_write the merged note, then memory_delete the others) or remove ones that are no longer true, then save this.':
+    'Chưa lưu: {0} đã có {1} ghi chú, và {2} là mức tối đa một nơi giữ, vì mọi ghi chú đều được đọc vào mọi cuộc trò chuyện. Hãy gộp các ghi chú cùng chủ đề thành một (memory_write ghi chú đã gộp, rồi memory_delete các ghi chú kia) hoặc xoá những ghi chú không còn đúng, rồi lưu ghi chú này.',
+  'Not saved: the notes in {0} would come to {1} characters, past the {2} one place keeps, because every note is read into every conversation. Shorten or merge notes that overlap, or remove ones that are no longer true (memory_read lists them), then save this.':
+    'Chưa lưu: các ghi chú trong {0} sẽ lên tới {1} ký tự, vượt mức {2} một nơi giữ, vì mọi ghi chú đều được đọc vào mọi cuộc trò chuyện. Hãy rút gọn hoặc gộp các ghi chú trùng nhau, hoặc xoá những ghi chú không còn đúng (memory_read liệt kê chúng), rồi lưu ghi chú này.',
+  'This writes or changes a rule — a standing instruction read at the start of every conversation. The assistant never sets or changes one without your yes, whatever the approval setting.':
+    'Thao tác này viết hoặc đổi một quy tắc — chỉ dẫn cố định được đọc ở đầu mọi cuộc trò chuyện. Trợ lý không bao giờ đặt hay đổi quy tắc khi chưa được bạn đồng ý, dù chế độ phê duyệt là gì.',
   "Say what to look for.":
     "Hãy nói cần tìm gì.",
   'Connector search is switched off for this account (Settings → Capabilities). Say which service would help instead.':
@@ -1428,6 +1441,7 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'No such bot or group.': 'Không có bot hoặc nhóm này.',
   'Say which entry.': 'Hãy nói mục nào.',
   'No entry holds those words.': 'Không mục nào có những chữ đó.',
+  'No such earlier version.': 'Không có phiên bản trước này.',
   '{0} entries hold those words; quote more of the one you mean.': 'Có {0} mục chứa những chữ đó; hãy trích nhiều hơn của mục bạn muốn nói.',
   'A replacement is one fact, at most {0} characters. Save the rest as new entries.': 'Mục thay thế chỉ ghi một điều, tối đa {0} ký tự. Hãy lưu phần còn lại thành mục mới.',
   'The person pinned that entry; only they can unpin it.': 'Người dùng đã ghim mục này; chỉ họ mới bỏ ghim được.',

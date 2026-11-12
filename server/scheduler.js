@@ -939,6 +939,9 @@ export async function sweep() {
     store.pruneAudit(AUDIT_KEEP_DAYS),
     // A bot's forgotten entries, once Undo can no longer bring them back (owner, 2026-11-10).
     store.pruneForgottenMemory(),
+    // Versions a bot replaced, 90 days on; a note's event a month past its date; a removed
+    // note's marker 90 days on (owner, 2026-11-12, schema 50).
+    store.pruneMemoryHistory(),
     // Sign-ins a week after they could last be used — expired or signed out.
     store.pruneSessions(),
     // After retention has run, so a conversation it deletes takes its copy in

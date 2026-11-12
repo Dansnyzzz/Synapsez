@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { getStore } from '../store/index.js';
 import { redactSecrets } from '../redact.js';
+import { provenanceFor } from '../memory.js';
 import { BotError, LIMITS } from './team.js';
 
 /**
@@ -75,29 +76,46 @@ export function splitEntry(text, max = LIMITS.entry) {
   return out;
 }
 
+/** Who may write an entry: the bot, the person (the panel), or the memory review (server/bots/review.js). */
+const SOURCES = new Set(['bot', 'user', 'review']);
+
 /**
  * Save a note: one entry, or several when it is longer than one and can be cut at its
  * sentence ends. Refused, with a sentence the writer can act on: empty, a sentence too
  * long, a key or password, or the scope is full. A piece already saved is not saved
  * twice. Text is stored composed (NFC), so a Vietnamese mark counts once.
  *
+ * Time and provenance (owner, 2026-11-12, schema 50). A bot's or a review's `replace`
+ * closes the entry it replaces and saves the new words as its next version, so what it
+ * said before stays visible in the panel and can be brought back; the person's own edit
+ * replaces the words where they are and deletes every earlier version (PRV-006). An
+ * entry the bot or a review saves records the conversation (`chatId`), the assistant
+ * message's seq there, and where the conversation last read from outside — the host or
+ * the kind of tool, never what it said (server/memory.js, `provenanceFor`).
+ *
  * @param {string} userId
  * @param {{ botId?: string | null, groupId?: string | null }} scope
- * @param {unknown} text @param {'bot' | 'user'} [source]
- * @param {{ turnId?: string | null, replace?: unknown }} [options]  `turnId`: the turn that saved it, taken
- *   back if that turn fails; `replace`: an entry's id or words — that entry is changed to the
- *   new text rather than a second one saved beside it (owner, 2026-11-10)
+ * @param {unknown} text @param {'bot' | 'user' | 'review'} [source]
+ * @param {{ turnId?: string | null, replace?: unknown, chatId?: string | null }} [options]  `turnId`: the turn
+ *   that saved it, taken back if that turn fails; `replace`: an entry's id or words — that entry is
+ *   changed to the new text rather than a second one saved beside it (owner, 2026-11-10)
  * @returns {Promise<{ saved: boolean, entry: any, entries: any[] }>}
  */
-export async function remember(userId, scope, text, source = 'bot', { turnId = null, replace = undefined } = {}) {
+export async function remember(userId, scope, text, source = 'bot', { turnId = null, replace = undefined, chatId = null } = {}) {
   const raw = String(text ?? '').normalize('NFC').trim();
   if (!raw) throw new BotError('An entry needs some words.', 400, 'empty');
+  const by = SOURCES.has(source) ? source : 'bot';
+  const origin = by !== 'user' && chatId ? { chatId, ...(await provenanceFor(userId, chatId)) } : {};
   if (replace !== undefined && replace !== null && String(replace).trim()) {
     const pieces = splitEntry(raw);
     if (!pieces || pieces.length > 1) throw new BotError(`A replacement is one fact, at most ${LIMITS.entry} characters. Save the rest as new entries.`, 400, 'too_long');
     if (redactSecrets(pieces[0]).text !== pieces[0]) throw new BotError('That looks like a key, token or password, which memory never keeps.', 400, 'secret');
     const target = await findOne(userId, scope, replace);
-    const row = await getStore().updateBotMemory(userId, target.id, scope, { text: pieces[0], textFolded: fold(pieces[0]) });
+    const store = getStore();
+    const row =
+      by === 'user'
+        ? await store.editBotMemoryByPerson(userId, target.id, scope, { text: pieces[0], textFolded: fold(pieces[0]) })
+        : await store.replaceBotMemory(userId, target.id, scope, { id: crypto.randomUUID(), text: pieces[0], textFolded: fold(pieces[0]), source: by, turnId, ...origin });
     if (!row) throw new BotError('No entry holds those words.', 404, 'not_found');
     return { saved: true, entry: row, entries: [row] };
   }
@@ -122,8 +140,9 @@ export async function remember(userId, scope, text, source = 'bot', { turnId = n
       groupId: scope.groupId || null,
       text: piece,
       textFolded: fold(piece),
-      source: source === 'user' ? 'user' : 'bot',
+      source: by,
       turnId,
+      ...origin,
     });
     if (!row) throw new BotError('No such bot or group.', 404, 'not_found');
     entries.push(row);
@@ -132,16 +151,35 @@ export async function remember(userId, scope, text, source = 'bot', { turnId = n
 }
 
 /**
- * Remove the entry whose text holds `match` (or whose id it is). Refused when no
- * entry or more than one holds it, so a vague word never removes the wrong fact.
+ * A bot's forget: the entry whose text holds `match` (or whose id it is) stops holding.
+ * Refused when no entry or more than one holds it, so a vague word never removes the
+ * wrong fact.
+ *
+ * Closed, not deleted (owner, 2026-11-12, schema 50): it leaves the prompt and the
+ * count, and stays in the panel as something the bot forgot, which the person can
+ * bring back or delete; it goes for good 90 days on. The person's own delete is the
+ * panel's, and keeps nothing (`softDeleteBotMemory`).
  *
  * @param {string} userId @param {{ botId?: string | null, groupId?: string | null }} scope @param {unknown} match
+ * @param {{ by?: 'bot' | 'review', turnId?: string | null }} [options]  `turnId`: a stopped turn opens it again
  */
-export async function forget(userId, scope, match) {
+export async function forget(userId, scope, match, { by = 'bot', turnId = null } = {}) {
   const hit = await findOne(userId, scope, match);
-  // Soft: Undo brings it back for ten minutes, then it is deleted for good (FORGOTTEN_KEEP_MS in the store).
-  await getStore().softDeleteBotMemory(userId, hit.id, scope);
+  await getStore().closeBotMemory(userId, hit.id, scope, { by: by === 'review' ? 'review' : 'bot', turnId });
   return hit;
+}
+
+/**
+ * Bring back a version a bot or a review replaced or forgot — the person's choice in
+ * the panel. Whatever came after it is deleted, as Undo on a note does: the person
+ * deciding those changes should not have happened.
+ *
+ * @param {string} userId @param {{ botId?: string | null, groupId?: string | null }} scope @param {string} id
+ */
+export async function restoreVersion(userId, scope, id) {
+  const row = await getStore().restoreBotMemoryVersion(userId, id, scope);
+  if (!row) throw new BotError('No such earlier version.', 404, 'not_found');
+  return row;
 }
 
 /**

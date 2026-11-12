@@ -50,7 +50,7 @@ import { searchProject } from '../projects.js';
 import { normaliseQuestions, answerText } from './askOptions.js';
 import {
   MEMORY_KEY, MAX_NOTE_CHARS, memoryScope, readBothScopes, noteName, memoryRefusal, refusalMessage, rankNotes, stampNote,
-  withoutGoogleNotes, heldNotesLine,
+  withoutGoogleNotes, heldNotesLine, noteKind, noteDay, kindOf, isLive, isExpired, removedNote, provenanceFor, scopeCapRefusal,
 } from '../memory.js';
 import { carriesGoogleData, googleDataInScope } from '../googleData.js';
 // Only to tell a real tool name from one the model invented — see loadToolsTool.
@@ -1061,10 +1061,26 @@ function boundedNote(text) {
   );
 }
 
-async function memoryWrite({ key, content, scope }, { userId, chatId }) {
+/**
+ * The most one set of notes may hold, checked before a write lands (owner,
+ * 2026-11-12) — see `scopeCapRefusal`. Read from the set as stored, so it is the
+ * set the write actually goes into.
+ */
+function withinScopeCap(notes, key, next, where) {
+  const refusal = scopeCapRefusal(notes || {}, key, next, where);
+  if (refusal) throw refusal;
+}
+
+async function memoryWrite({ key, content, scope, kind, valid_from: validFromRaw, expires: expiresRaw }, { userId, chatId }) {
   const store = getStore();
   const allowed = await memoryAllowed(userId, chatId);
   const where = await memoryScope({ userId, chatId, scope });
+  // What it is, and when it holds from or until (owner, 2026-11-12). A rule asks
+  // the person before this runs at all — agent.js, `changesRule`.
+  const type = noteKind(kind);
+  const validFrom = noteDay(validFromRaw, 'valid_from');
+  const expires = noteDay(expiresRaw, 'expires');
+  if (expires && type !== 'event') throw new Error('Only an event has an end date: pass kind "event" with expires.');
 
   // A note outlives the conversation it came from and is read back into every
   // future one, so a credential that lands here keeps escaping. Strip them on
@@ -1090,11 +1106,14 @@ async function memoryWrite({ key, content, scope }, { userId, chatId }) {
    * note, which then vanishes on serialisation while the tool reports it saved.
    */
   const name = noteName(key);
-  // What it replaces, kept one step back so a bad write can be undone (HAR-002).
-  const before = ((await store.getUserSetting(userId, where.key).catch(() => null)) || {})[name] || null;
+  // What it replaces goes into the note's history, so a bad write can be undone (HAR-002).
+  const stored = (await store.getUserSetting(userId, where.key).catch(() => null)) || {};
+  const before = Object.hasOwn(stored, name) ? stored[name] : null;
+  withinScopeCap(stored, name, text, where.where);
+  const origin = await provenanceFor(userId, chatId);
   await store.mergeUserSetting(userId, where.key, {
     // Marked when written from a conversation holding Google data (googleData.js).
-    [name]: stampNote(text, { by: 'assistant', chatId, before, google: googleDataInScope() }),
+    [name]: stampNote(text, { by: 'assistant', chatId, before, google: googleDataInScope(), kind: type, expires: expires ?? undefined, validFrom, ...origin }),
   });
 
   if (!found.length) return `Saved note "${name}" for ${where.where}.`;
@@ -1135,7 +1154,9 @@ async function memoryRead({ key }, { userId, chatId }) {
     return typeof note?.content === 'string' ? note.content : `No note saved under "${key}".`;
   }
 
-  const line = (notes, k) => `- ${k}: ${notes[k].content.slice(0, 120)}`;
+  // A kind other than fact is named, so a rule is known to be one before it is changed.
+  const tag = (note) => (kindOf(note) === 'fact' ? '' : ` [${note.kind}${note.expires ? ` until ${note.expires}` : ''}]`);
+  const line = (notes, k) => `- ${k}${tag(notes[k])}: ${notes[k].content.slice(0, 120)}`;
   if (!here.projectId) {
     const all = Object.keys(account).map((k) => line(account, k));
     return withHeld(all.length ? all.join('\n') : 'No notes saved yet.');
@@ -1617,15 +1638,22 @@ async function memoryAppend({ key: rawKey, content, scope }, { userId, chatId })
   guardNote(text, allowed);
 
   const memory = (await store.getUserSetting(userId, where.key)) || {};
-  const existing = memory[key]?.content || '';
+  const held = Object.hasOwn(memory, key) ? memory[key] : null;
+  // A note the assistant removed, or an event past its date, is not added to: the
+  // append starts it again, with what it said before kept in its history.
+  const current = isLive(held) ? held : null;
+  const existing = current && !isExpired(current) ? current.content : '';
   // A blank line between entries, so an appended list stays readable rather than
   // running together into one paragraph.
-  memory[key] = stampNote(boundedNote(existing ? `${existing.replace(/\s+$/, '')}\n\n${text}` : text), {
+  const next = boundedNote(existing ? `${existing.replace(/\s+$/, '')}\n\n${text}` : text);
+  withinScopeCap(memory, key, next, where.where);
+  memory[key] = stampNote(next, {
     by: 'assistant',
     chatId,
-    before: memory[key] || null,
+    before: held,
     // What was there stays, so a mark stays with it.
-    google: googleDataInScope() || !!memory[key]?.google,
+    google: googleDataInScope() || (!!existing && !!current?.google),
+    ...(await provenanceFor(userId, chatId)),
   });
   // Merged, not overwritten: the agent runs up to four tool calls at once, so
   // two memory writes in one step both read the same object and a whole-value
@@ -1691,11 +1719,14 @@ async function memoryEdit({ key: rawKey, old_string: oldString, new_string: newS
   guardNote(text, allowed);
   // A function, not the string: `replace` reads `$&` and `` $` `` in a string
   // replacement as patterns, so a note edited to say "costs $&5" came out wrong.
-  memory[key] = stampNote(boundedNote(note.content.replace(find, () => text)), {
+  const next = boundedNote(note.content.replace(find, () => text));
+  withinScopeCap(memory, key, next, inProject ? here.where : 'this account');
+  memory[key] = stampNote(next, {
     by: 'assistant',
     chatId,
     before: note,
     google: googleDataInScope() || !!note.google,
+    ...(await provenanceFor(userId, chatId)),
   });
   // Only this note, so a concurrent write to a different one is not undone.
   await store.mergeUserSetting(userId, target, { [key]: memory[key] });
@@ -1723,11 +1754,17 @@ async function memoryDelete({ key: rawKey }, { userId, chatId }) {
     );
   }
 
-  // Removes the one entry in SQL rather than writing back a copy of the object
-  // that happens to be missing it — which would undo anything saved meanwhile.
-  await store.removeMemoryNote(userId, inProject ? here.key : MEMORY_KEY, key);
+  /*
+   * The assistant's delete leaves a marker holding what the note said (owner,
+   * 2026-11-12): it is read into nothing, and the person can see it and bring it
+   * back in Settings → Memory — a page that talked the assistant into removing a
+   * note the person relied on is undone in one press. Written as this one entry,
+   * never a copy of the whole set, so a save meanwhile is not undone.
+   */
+  const bucket = inProject ? here.key : MEMORY_KEY;
+  await store.removeMemoryNote(userId, bucket, key, removedNote((inProject ? project : account)[key], { chatId, ...(await provenanceFor(userId, chatId)) }));
   const scope = inProject ? ` from ${here.where}` : '';
-  return `Deleted the note "${key}"${scope}. It will not be read into future conversations any more.`;
+  return `Deleted the note "${key}"${scope}. It will not be read into future conversations any more; the user can still bring it back from Settings → Memory.`;
 }
 
 /**

@@ -34,7 +34,7 @@ import { validZone } from './util/zone.js';
 import { sandboxConfigured } from './sandbox.js';
 import { firecrawlReady } from './firecrawl.js';
 import { lendEyes } from './vision.js';
-import { memoryForTurn, withheldTools, MEMORY_WRITE_TOOLS } from './memory.js';
+import { memoryForTurn, withheldTools, MEMORY_WRITE_TOOLS, changesRule, ruleNotesInReach, RULE_REASON } from './memory.js';
 import { botPersona } from './bots/prompt.js';
 import { botTools } from './bots/tools.js';
 import { carriesGoogleData, withGoogleData } from './googleData.js';
@@ -1068,11 +1068,17 @@ export const PERSONAL_LEAVING_REASON =
  * data and words from outside asks before any address on a host the person did not name
  * is opened — the way out a page would use to carry the first off (`reachesUnnamed`).
  *
- * @param {{ readOutside?: boolean, groupOutside?: boolean, readPrivate?: boolean, named?: Set<string> }} [context]
+ * `rules` (owner, 2026-11-12): the rule notes in reach (`ruleNotesInReach`). A call that
+ * writes, changes or removes a rule asks under every policy, `auto` included — a rule
+ * steers every later conversation as the person's own words do (memory.js, `changesRule`).
+ *
+ * @param {{ readOutside?: boolean, groupOutside?: boolean, readPrivate?: boolean, named?: Set<string>, rules?: Set<string>|null }} [context]
  */
-export function needsApproval(toolCalls, policy, { readOutside = false, groupOutside = false, readPrivate = false, named = new Set() } = {}) {
-  if (policy === 'auto' || policy === 'readonly' || policy === 'plan') return [];
+export function needsApproval(toolCalls, policy, { readOutside = false, groupOutside = false, readPrivate = false, named = new Set(), rules = null } = {}) {
+  if (policy === 'readonly' || policy === 'plan') return [];
+  if (policy === 'auto') return toolCalls.filter((call) => changesRule(call, rules));
   return toolCalls.filter((call) => {
+    if (changesRule(call, rules)) return true;
     if (readOutside && policy === 'guarded' && MEMORY_WRITES.has(call.name)) return true;
     if (readOutside && readPrivate && policy === 'guarded' && reachesUnnamed(call, named)) return true;
     if (groupOutside && policy === 'guarded' && MEMORY_WRITES.has(call.name) && !(call.name === 'remember' && call.input?.scope !== 'own')) return true;
@@ -1097,9 +1103,10 @@ function monitorHolds({ toolCalls, pending, policy, readOutside, thought, prefs,
 /**
  * The reason shown for one call in an approval prompt.
  * @param {any} call @param {string} policy @param {boolean} readOutside
- * @param {{ readPrivate?: boolean, named?: Set<string>, source?: string|null }} [taint]
+ * @param {{ readPrivate?: boolean, named?: Set<string>, source?: string|null, rules?: Set<string>|null }} [taint]
  */
-function approvalReason(call, policy, readOutside, { readPrivate = false, named = new Set(), source = null } = {}) {
+function approvalReason(call, policy, readOutside, { readPrivate = false, named = new Set(), source = null, rules = null } = {}) {
+  if (changesRule(call, rules)) return RULE_REASON;
   if (readOutside && policy === 'guarded' && MEMORY_WRITES.has(call.name)) return READ_OUTSIDE_REASON;
   if (readOutside && readPrivate && policy === 'guarded' && reachesUnnamed(call, named)) return trifectaReason(call, source);
   if (personalInAddress(call)) return PERSONAL_IN_ADDRESS_REASON;
@@ -2102,7 +2109,8 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
     // Re-check the policy rather than trusting that a decision was made. A run
     // cut short before it could ask must still ask on resume.
     const readOutside = turnReadOutside(messages);
-    const taint = { readPrivate: turnReadPrivate(messages), named: hostsNamed(messages), source: lastOutsideSource(messages) };
+    // `rules`: a rule note is never written or changed unasked, under any policy (memory.js).
+    const taint = { readPrivate: turnReadPrivate(messages), named: hostsNamed(messages), source: lastOutsideSource(messages), rules: await ruleNotesInReach(userId, chat, last.toolCalls) };
     const stillPending = needsApproval(last.toolCalls, policy, { readOutside, groupOutside, ...taint });
 
     /**
@@ -3031,7 +3039,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
     }
 
     const readOutside = turnReadOutside(messages);
-    const taint = { readPrivate: turnReadPrivate(messages), named: hostsNamed(messages), source: lastOutsideSource(messages) };
+    const taint = { readPrivate: turnReadPrivate(messages), named: hostsNamed(messages), source: lastOutsideSource(messages), rules: await ruleNotesInReach(userId, chat, assistant.toolCalls) };
     const pending = needsApproval(assistant.toolCalls, policy, { readOutside, groupOutside, ...taint });
     const held = await monitorHolds({ toolCalls: assistant.toolCalls, pending, policy, readOutside, thought: assistant.thinking, prefs, entry, userId, chatId, messages, signal, googleData, stream });
     if (held.size) await store.holdToolCalls(userId, chatId, assistant.id, Object.fromEntries(held));

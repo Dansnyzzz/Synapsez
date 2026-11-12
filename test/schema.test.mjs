@@ -229,7 +229,9 @@ section('schema.sql and SCHEMA_VERSION move together');
   // 42: bots, bot_groups, bot_group_members, bot_memory, chats.bot_id/.bot_group_id,
   // usage_events.bot_id — the Bot page.
   // 43: bots.hue, scheduled_tasks.bot_id, and incognito chats with a bot left out of one-chat-per-bot.
-  const STAMPED = { version: 48, fingerprint: '38697159d5d115a5' };
+  // 50: bot_memory versions (valid_from, invalid_at, chain_id, closed_*) and provenance (chat_id,
+  // message_seq, outside_from). 49 is the row-level-security change, made in parallel.
+  const STAMPED = { version: 50, fingerprint: 'ff6bcecc15722c63' };
 
   check(
     'the recorded version matches the code',
