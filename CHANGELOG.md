@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-11-13 — Every search service keeps spare keys (1.29.0)
+
+**Exa, Tavily and Firecrawl take up to 10 keys each**, added by the deployment's owner in Settings → Administration → Free allowances (the `*_API_KEY` variable stays key 1). A service's allowance is the sum of its keys, counted at once when one is added or removed. A key that is spent, refused or rate-limited hands over to the next; a slow provider (a timeout) is not retried on another key — the search moves to the next engine. Tavily and Firecrawl show each key's plan and use as the provider reports it. Brave and E2B still hold one key.
+
+**A paid key, chosen by the owner**: one per service, used only after every free key is full and only for charged calls (nothing is charged yet), with an optional monthly cap.
+
+**Firecrawl's allowance follows the plan its key is on** (Hobby: 5,000 credits); the shares are 60% / 35% / 5% of the summed capacity of all Firecrawl keys, and the `FIRECRAWL_*_FREE` variables become fixed overrides. A key out of credits still answers the free paper and law indexes. Two keys of the same Firecrawl team share credits, so the page warns when it sees that. The page also says when Tavily ran above 80% two months running.
+
 ## 2026-11-12 — The old key envelope retired by the deployment itself; the tidy keeps to your sharing choice (1.28.2)
 
 **Every stored credential moved off the v1 envelope, by the deployment** (owner, 2026-11-12: "bạn làm full giúp tôi"). `npm run secrets:reseal` needs the deployment's database and key on the machine that runs it; the deployment has both, so its sweep does it (`server/secretsCutover.js`): every credential sealed again under the key that seals now (compare-and-set), then counted; when two counts at least an hour apart are both clean — nothing left to seal again, nothing that will not open — v1 is refused from then on. The flag lives in the database and every instance reads it (no environment variable to change). Settings → Admin → Free tier says where it stands, in counts only; the owner can let v1 in again (the automatic move then holds until they refuse it), recorded in the security log. `ENCRYPTION_REFUSE_V1` still refuses v1 on its own.

@@ -1230,9 +1230,11 @@ never reaches Exa, and a readable page never goes there.
   paper's passages that answer a question, related, citing and cited papers — and US law. Free: a
   thousand calls a day.
 
-The 1,000 credits are kept to 950 and shared as the owner chose: searches 570, pages read 332, site maps,
-crawls and code 47 — each share and the whole counted before a call, given back when Firecrawl charged
-nothing. Firecrawl's own count (`/v2/team/credit-usage`) is asked every ten minutes and believed when it is
+The month's credits are kept to 95% of what the key's plan holds (Free 1,000, Hobby 5,000 — read from the
+plan, not guessed) and shared 60% searches, 35% pages read, 5% site maps, crawls and code (on Free:
+570 / 332 / 47) — of the summed capacity of all Firecrawl keys. Each share and the whole are counted before
+a call, given back when Firecrawl charged nothing. Two keys of the same Firecrawl team share credits, so
+the page warns when it sees that. A key out of credits still answers the free paper and law indexes. Firecrawl's own count (`/v2/team/credit-usage`) is asked every ten minutes and believed when it is
 lower, since its month need not start on the 1st; Settings → Admin shows it. Not used: Interact sessions
 (2–7 credits a browser minute — the cloud computer has a browser), Agent, Monitor (a credit a page a check),
 Parse, webhooks.
@@ -1301,6 +1303,13 @@ aside until it resets while DuckDuckGo and Stack Exchange carry on.
   searches use the free engines, so one person cannot spend everyone's month in an afternoon.
 - **The same search, asked again within ten minutes,** is answered from memory and spends nothing.
 - **Administrators see each service's use** this period in Settings → People → *Free allowances*.
+- **Several keys per service.** Exa, Tavily and Firecrawl take up to 10 keys each, added by the owner in
+  Settings → Administration → *Free allowances* (the `*_API_KEY` variable is key 1 of its service; Brave and
+  E2B hold one key). A service's allowance is the sum of its keys; one that is spent, refused or
+  rate-limited hands over to the next (a timeout does not — the search moves to the next engine). Tavily
+  and Firecrawl show each key's plan and use as the provider reports it. The owner may choose one **paid
+  key** per service: used only once every free key is full, only for calls that are charged (none yet),
+  with an optional monthly cap.
 - Models are not on this list: each account brings its own key (or OpenRouter's free models on its own
   OpenRouter key), so a model call is never the deployment's bill. If the deployment sets a shared key
   (`ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`…), it serves **free models only** (1.27.0) — a paid model
@@ -2071,7 +2080,8 @@ step, with the optional certificate and how to bring data over from another data
 | `PROVIDER_REQUEST_BUDGET_MS` | optional | How long one call to a model may take, every key and retry together (default `240000`, under the 300 s a Vercel function lives). Waits and first-word timeouts are cut to what is left, and a stumble's Retry-After is waited a minute at most, so a provider that will not answer ends the turn with a reason rather than a cut-off stream. This budget starts again with each call, so a turn also has a deadline, 270 s after it began on this function, that bounds what a call waits for — a stumble's retry, a rate-limited key's rest, the wait for a first word — on the turn's steps and when it folds the conversation. It does not cut a reply that is already streaming, and a call still gets 20 s to start (the least worth trying), so a long turn can outlive the function; a turn cut off that way is picked up again (`server/resume.js`) rather than ended early.
 | `EXA_FREE_MILLS`, `TAVILY_FREE_CREDITS`, `BRAVE_FREE_REQUESTS`, `GOOGLE_FREE_DAILY`, `STACKEXCHANGE_FREE_DAILY` | optional | Each service's ceiling, if its free tier is not the default one: Exa in thousandths of a dollar a month (9500), Tavily credits a month (950), Brave requests a month (950), Google grounded searches a day on the deployment's Gemini key (450), Stack Exchange requests a day (280, or 9500 with a key). |
 | `FIRECRAWL_API_KEY` | optional | Firecrawl (firecrawl.dev, Free plan, no card): a search engine, pages that refuse this server, a site's pages, code discussions and the free paper and law indexes. See "Searching the web". |
-| `FIRECRAWL_FREE_CREDITS`, `FIRECRAWL_SEARCH_FREE`, `FIRECRAWL_SCRAPE_FREE`, `FIRECRAWL_MORE_FREE`, `FIRECRAWL_INDEX_FREE_DAILY` | optional | Firecrawl's ceilings: all credits a month (950), searches (570), pages read (332), site maps, crawls and code (47), and the free indexes' calls a day (950). |
+| `FIRECRAWL_FREE_CREDITS`, `FIRECRAWL_SEARCH_FREE`, `FIRECRAWL_SCRAPE_FREE`, `FIRECRAWL_MORE_FREE`, `FIRECRAWL_INDEX_FREE_DAILY` | optional | Fixed overrides for Firecrawl's ceilings: all credits a month, searches, pages read, site maps, crawls and code, and the free indexes' calls a day (950). Unset, they follow the summed capacity of all Firecrawl keys, shared 60% / 35% / 5%. |
+| more keys for `EXA_API_KEY`, `TAVILY_API_KEY`, `FIRECRAWL_API_KEY` | in the app | The variable is key 1; up to 10 per service are added by the owner in Settings → Administration → Free allowances, with one optional paid key each. |
 | `SEC_USER_AGENT` | recommended | Market data: how SEC EDGAR is asked, as SEC requires — `Synapsez <contact email>`, the owner's real contact. Without it SEC is never asked, and US statements, filings and the US screen fall back to Yahoo or say so. See `docs/vercel-config.md`. |
 | `COINGECKO_DEMO_KEY` | optional | Market data: CoinGecko's free Demo key (no card) — 100 calls a minute of the deployment's own instead of a share of the server address's. |
 | `FRED_API_KEY` | optional | Market data: FRED's free key, for US rates, inflation, unemployment and GDP. Without it US series come from the World Bank (annual). |

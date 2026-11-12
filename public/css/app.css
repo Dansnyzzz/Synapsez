@@ -11794,6 +11794,11 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 .freepool__paidbox { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; padding-top: 8px; border-top: 1px solid var(--line-soft); }
 .freepool__paidbox .hint { flex-basis: 100%; margin: 0; }
 .freepool__cap input { width: 8em; }
+/* Plain inputs took the browser's white in the dark theme; give them the app's own surface. */
+.freepool__cap input, .freepool__add input[type="password"], .freepool__add input[type="text"] { padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); font-size: 13px; }
+/* A key's usage line wraps rather than running under the state beside it. */
+.freepool__key .freetier__used > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.freepool__key .crow__desc { white-space: normal; overflow: visible; text-overflow: clip; }
 .freepool__add { display: grid; grid-template-columns: max-content minmax(0, 24em); align-items: center; gap: 8px 12px; margin-top: 10px; }
 .freepool__add .freepool__acts { grid-column: 2; }
 .freepool__warn { color: var(--warn); }
