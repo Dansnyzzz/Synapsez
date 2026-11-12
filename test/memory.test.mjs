@@ -489,6 +489,21 @@ section('memory remembers where a note came from, and what it said before');
   await dana.call('PUT', '/api/prefs', { memory: false });
   check('with memory off nothing is read, switch or no switch', (await tidy.proposeTidy({ userId: danaId, stream: answer({ proposals: [] }), resolve })).status === 'memory_off');
   await dana.call('PUT', '/api/prefs', { memory: true });
+  // Owner, 2026-11-12: what the person chose not to share is not shared.
+  await dana.call('PUT', '/api/prefs', { providerPrivacy: 'strict', maskPersonal: true });
+  let asked = null;
+  const capture = async function* (request) {
+    asked = request;
+    yield { type: 'text', delta: '{"proposals": []}' };
+    yield { type: 'done', usage: { input: 1, output: 1 } };
+  };
+  const strictRun = await tidy.proposeTidy({ userId: danaId, stream: capture, resolve });
+  check('with strict provider privacy the tidy asks for it outright, and hides personal details when that is on', strictRun.status === 'proposed' && asked?.privacy === 'strict' && asked?.maskPersonal === true, JSON.stringify({ status: strictRun.status, privacy: asked?.privacy, mask: asked?.maskPersonal }));
+  asked = null;
+  const orca = async () => ({ id: 'orcarouter/some-free-model', provider: 'orcarouter' });
+  const refusedTidy = await tidy.proposeTidy({ userId: danaId, stream: capture, resolve: orca });
+  check('  and never goes a way that cannot hold it to that — it does not run', refusedTidy.status === 'privacy' && asked === null, JSON.stringify(refusedTidy));
+  await dana.call('PUT', '/api/prefs', { providerPrivacy: 'standard', maskPersonal: false });
   await store.mergeUserSetting(danaId, 'memoryTidy', { proposals: [{ id: 'p-x', type: 'remove', bucket: 'memory', keys: ['old-job'], seen: {}, why: 'x' }] });
   check('the export carries pending proposals', Array.isArray((await dana.call('GET', '/api/account/export')).body?.memoryProposals));
   await dana.call('DELETE', '/api/memory');

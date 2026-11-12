@@ -341,8 +341,16 @@ export function secretVersion(payload) {
   return { version: null, keyId: null };
 }
 
-/** v1 refused outright, once every stored value has been re-sealed (ENCRYPTION_REFUSE_V1). */
-const refusingV1 = () => /^(1|true|yes|on)$/i.test(String(process.env.ENCRYPTION_REFUSE_V1 || '').trim());
+/** The deployment's own word on v1, kept in its database (secretsCutover.js) and read in here. */
+let policyRefusesV1 = false;
+
+/** Set from the database by secretsCutover.js; the environment variable refuses v1 whatever this says. */
+export function setSecretPolicy({ refuseV1 = false } = {}) {
+  policyRefusesV1 = refuseV1 === true;
+}
+
+/** v1 refused outright, once every stored value has been re-sealed (ENCRYPTION_REFUSE_V1, or the deployment's cutover). */
+const refusingV1 = () => policyRefusesV1 || /^(1|true|yes|on)$/i.test(String(process.env.ENCRYPTION_REFUSE_V1 || '').trim());
 
 /**
  * One AES-256-GCM open, with the nonce and tag at the lengths sealing writes and nothing

@@ -28,6 +28,8 @@ export const AUDIT_KINDS = [
   // An administrator setting a theme's badge, giving one or taking one back (written since 1.13.0,
   // dropped until 2026-11-10 because the kinds were missing here).
   'admin_theme_badge', 'admin_theme_given', 'admin_theme_taken',
+  // The owner refusing the v1 credential envelope, or letting it in again (secretsCutover.js, 2026-11-12).
+  'secrets_policy_changed',
 ];
 
 /** The network a request came from, never the address itself. */

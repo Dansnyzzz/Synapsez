@@ -6987,6 +6987,31 @@ $('admin-feedback').addEventListener(
 );
 
 /**
+ * Where the move off the old credential envelope is (server/secretsCutover.js, owner
+ * 2026-11-12), in one line — counts only — and, for the owner, the switch on it.
+ *
+ * @param {any} secrets  `cutoverStatus()`
+ * @param {boolean} owner
+ * @param {(iso: string) => string} day
+ */
+function secretsLine(secrets, owner, day) {
+  if (!secrets) return '';
+  const when = (iso) => (iso ? day(iso) : '—');
+  const count = secrets.lastCount;
+  let text;
+  if (secrets.refuseV1?.on || secrets.envRefuses) text = t('freetier.secretsRefused', { when: when(secrets.refuseV1?.at) });
+  else if (secrets.refuseV1?.by === 'owner') text = t('freetier.secretsHeld');
+  else if (!count) text = t('freetier.secretsPending');
+  else if (count.safe) text = t('freetier.secretsSafe');
+  else text = t('freetier.secretsMoving', { left: String(count.resealed || 0), stuck: String(count.unopenable || 0), when: when(count.at) });
+  const refused = secrets.refuseV1?.on === true;
+  const button = owner && !secrets.envRefuses
+    ? ` <button type="button" class="btn btn--ghost btn--small" data-secrets-policy="${refused ? 'allow' : 'refuse'}">${escapeHtml(t(refused ? 'freetier.secretsAllow' : 'freetier.secretsRefuse'))}</button>`
+    : '';
+  return `<p class="hint">${escapeHtml(text)}${button}</p>`;
+}
+
+/**
  * The deployment's free allowances this period (server/freeTier.js, owner
  * 2026-11-02): one per service, shared by every account — Exa in dollars,
  * the rest in requests or credits — and when each starts again.
@@ -7024,7 +7049,19 @@ async function loadFreeTier() {
       }${
         // The id `npm run secrets:reseal -- --apply --key-id` must be given (a hash, never the key).
         report.encryptionKeyId ? `<p class="hint">${escapeHtml(t('freetier.keyId'))} <code>${escapeHtml(report.encryptionKeyId)}</code></p>` : ''
-      }`;
+      }${secretsLine(report.secrets, report.owner, day)}`;
+    // The owner's switch on the old envelope (secretsCutover.js).
+    host.querySelector('[data-secrets-policy]')?.addEventListener('click', async (event) => {
+      const button = /** @type {HTMLButtonElement} */ (event.currentTarget);
+      button.disabled = true;
+      try {
+        await api.secretsPolicy(button.dataset.secretsPolicy === 'refuse');
+        await loadFreeTier();
+      } catch (err) {
+        toast(err.message, 'error');
+        button.disabled = false;
+      }
+    });
   } catch (err) {
     host.textContent = err.message;
   }

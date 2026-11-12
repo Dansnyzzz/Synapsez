@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-11-12 — The old key envelope retired by the deployment itself; the tidy keeps to your sharing choice (1.28.2)
+
+**Every stored credential moved off the v1 envelope, by the deployment** (owner, 2026-11-12: "bạn làm full giúp tôi"). `npm run secrets:reseal` needs the deployment's database and key on the machine that runs it; the deployment has both, so its sweep does it (`server/secretsCutover.js`): every credential sealed again under the key that seals now (compare-and-set), then counted; when two counts at least an hour apart are both clean — nothing left to seal again, nothing that will not open — v1 is refused from then on. The flag lives in the database and every instance reads it (no environment variable to change). Settings → Admin → Free tier says where it stands, in counts only; the owner can let v1 in again (the automatic move then holds until they refuse it), recorded in the security log. `ENCRYPTION_REFUSE_V1` still refuses v1 on its own.
+
+**The monthly tidy keeps to what you chose to share.** With strict provider privacy ("not shared"), the tidy asks for it outright — only providers that neither keep nor train on what is sent — and goes only by OpenRouter, the route where that is enforced; with no such route it does not run. With personal details hidden, the notes are hidden before they go. Said beside the switch in Settings → Memory.
+
+**Privacy notice privacy-2026-11-12**: memory records where each note came from and keeps the versions the assistant replaced (90 days at most); the optional monthly tidy and where it may send notes; indexed documents in Your data. Asked once, by the banner.
+
 ## 2026-11-12 — A long answer carries on by itself (1.28.1)
 
 **A turn that reaches the end of the time one function may run carries on by itself** (owner, 2026-11-12: "tự động tiếp tục full hết", the same for free and paid models). 1.27.0 made such a turn stop cleanly between steps rather than be cut off, with a Continue button — and so ended the browser's own reconnect loop, which used to carry a long turn on without asking. Now the stop says it is carrying on: the browser asks again at once, the same run, nothing to press; with the browser closed, the server asks itself for the next part (`server/turnContinue.js`, the internal route `/api/internal/turns/continue` on `CRON_SECRET`, as group rounds do), waiting a moment first and standing down if a browser has taken the conversation up again — never both. It ends where a turn ends: finished, stopped, out of credit or free quota, at the account's step limit or the shared key's token limit, and after 40 carries-on from one message (about three hours), as a guard against a loop.
