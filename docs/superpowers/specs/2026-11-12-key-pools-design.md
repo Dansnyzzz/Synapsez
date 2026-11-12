@@ -22,13 +22,19 @@ memory `billing-and-key-pools-decisions`. Spec B (billing) follows this one.
 
 ## Which services pool
 
+**Narrowed by the owner later that day:** "only Exa, Tavily and Firecrawl have four or five keys,
+maybe more later; the rest have one." So the pool holds `exa`, `tavily`, `firecrawl` (up to 10 keys
+each) and `brave`, `e2b` (one key each, in the pool only for the paid-key rule and key states).
+Google search, CoinGecko, FRED and Resend keep their single key exactly as today; the table below
+is the research behind that, kept for when a second key comes.
+
 | Service | Extra keys add capacity? | Live figure per key | Validity check (free) | Default ceiling per key |
 |---|---|---|---|---|
 | Exa | yes, if each key is its own Exa **user** (the $10 grant goes only to a user's first team) | no — counted from `costDollars` on every answer | `GET api.exa.ai/websets/v0/teams/me` | $9.50/month (9,500 mills), 1st of the month |
 | Tavily | yes | **`GET /usage`** → `key.usage/limit`, `account.plan_usage/plan_limit` (≤10 calls/10 min: cached 5 min) | `/usage` | 950 credits/month |
 | Brave | yes (each account has a card on file and no cap of its own) | no — counted, $0.005 a request | none free; checked on first use | 950 requests ($4.75)/month |
 | Firecrawl | yes | **`GET /v2/team/credit-usage`** → `remainingCredits`, `planCredits`, `billingPeriodEnd` | the same call | 95% of the live `planCredits` (Hobby 5,000 → 4,750; Free 1,000 → 950), its own billing period |
-| E2B | yes — but a machine stays on the account that made it, and the template must exist in each account | no — counted in mills | `GET api.e2b.app/v2/sandboxes` | its own one-time credit (default $100, lapsing as `E2B_CREDIT_EXPIRES`) spread by month as today |
+| E2B | one key only for now (`maxKeys` 1) — see "E2B holds one key" | no — counted in mills | `GET api.e2b.app/v2/sandboxes` | its own one-time credit (default $100, lapsing as `E2B_CREDIT_EXPIRES`) spread by month as today |
 | Google search (Gemini key) | only if the keys are from **different Google projects** (quota is per project) | no | `GET …/v1beta/models?pageSize=1` | 450/day |
 | CoinGecko Demo | yes | no (`/key` is paid plans only) | `GET /api/v3/ping` | 9,500/month, 90/minute |
 | FRED | yes (rate limit is per key) | no | `GET /fred/category?category_id=0` | 100/minute |
@@ -101,12 +107,11 @@ they are about people, not keys. Their pot grows with the capacity.
   - **429** → that key `cooling` for `Retry-After` (30 s at least, 10 min at most), next key;
   - a timeout or 5xx → next key once, the key left as it is (the service may be down for all).
   Counting stays where it is today (`take`/`spend`/`hold`/`settle`), now with the key's id.
-- **E2B is sticky:** the machine record keeps `keyId`; reconnecting, pausing and killing use that
-  key. A new machine goes to `pickKey`. A key that is removed while machines run on it: those
-  machines are left to time out (they pause on their own) and the next start makes a new one on a
-  remaining key — the owner is told so before removing. A key whose account lacks the template is
-  marked `invalid` with "the Synapsez template is not built in this E2B account"; the owner builds
-  it there by running `scripts/e2b-template.mjs` once with that account's key in `E2B_API_KEY`.
+- **E2B holds one key** (owner, 2026-11-12: "for E2B I have only one key"): `maxKeys` 1, no Add
+  button; it is counted through the pool on its environment key and may be the service's paid key
+  (pay-as-you-go after its $100 credit, when a call is charged). Several E2B accounts would need a
+  machine to stay on the account that made it and the template built in each — left until there
+  is a second key.
 
 The Gemini key here is only the deployment's search grounding (`search.js` google engine); the
 deployment's model keys already rotate (providers).
