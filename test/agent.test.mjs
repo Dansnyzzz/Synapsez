@@ -79,6 +79,36 @@ function scriptedProvider(turns) {
   return { stream, seen };
 }
 
+// ── the deployment's stored keys, read before a turn chooses its tools (spec A) ──
+// First in the suite on purpose: nothing has read the stored keys yet, as on a cold instance.
+section("a service whose keys are all stored is offered from a cold instance's first turn (spec A, review 2026-11-12)");
+{
+  const pool = await import('../server/keyPool.js');
+  const { encryptSecret, sha256 } = await import('../server/crypto.js');
+  const { serviceKeyContext } = await import('../server/secretContexts.js');
+  const had = process.env.FIRECRAWL_API_KEY;
+  delete process.env.FIRECRAWL_API_KEY;
+  const stored = 'fc-stored-only-8888';
+  await store.addServiceKey({ id: 'sk-agent-fc', service: 'firecrawl', sealed: encryptSecret(stored, serviceKeyContext('firecrawl', 'sk-agent-fc')), fingerprint: sha256(`firecrawl:${stored}`), hint: stored.slice(-4), addedBy: null });
+  const cold = !pool.poolHas('firecrawl');
+  const owner = await store.createUser({ id: 'u-keys', email: 'keys@example.com', name: 'Keys', passwordHash: 'x', role: 'user' });
+  // Every tool every step, so what the turn offers is the whole of what it may have.
+  await setPrefs(owner.id, { toolLoading: 'all' });
+  await store.createChat(owner.id, { id: 'c-keys', title: 'keys' });
+  await store.appendMessage(owner.id, 'c-keys', { id: 'u-c-keys', role: 'user', text: 'List the pages of example.com' });
+  const { stream, seen } = scriptedProvider([{ text: 'Done.' }]);
+  await runAgent({ userId: owner.id, user: owner, chatId: 'c-keys', emit: () => {}, stream });
+  const offered = (seen.tools || []).map((t) => t.name);
+  check(
+    'with no key in the environment and one stored, the first turn offers site_pages and research_index',
+    cold && offered.includes('site_pages') && offered.includes('research_index'),
+    `${cold ? 'no keys read before the turn' : 'keys already read'} — ${offered.filter((n) => n === 'site_pages' || n === 'research_index').join(',') || 'neither offered'}`,
+  );
+  await store.deleteServiceKey('sk-agent-fc');
+  await pool.bumpKeysVersion();
+  if (had !== undefined) process.env.FIRECRAWL_API_KEY = had;
+}
+
 // ── sub-agents actually run ──────────────────────────────────────────
 section('sub-agents (run_parallel)');
 {

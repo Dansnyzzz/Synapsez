@@ -388,7 +388,8 @@ export async function keyUsage(service, key, now = new Date()) {
   const used = await getStore().readCounter(keyBucket(service, key.id, now).bucket);
   const ceiling = await ceilingOf(service, key, now);
   const { state } = effective(key);
-  let left = state === 'invalid' || state === 'exhausted' ? 0 : Math.max(0, ceiling - used);
+  // Spent is its service's credit: a window of its own (Firecrawl's free index) is not spent with it.
+  let left = state === 'invalid' || (state === 'exhausted' && !window.own) ? 0 : Math.max(0, ceiling - used);
   const theirs = liveLeft(window, key, now);
   if (theirs !== null) left = Math.min(left, theirs);
   return { used, ceiling, left };
@@ -490,7 +491,11 @@ async function choose(service, need, { paid = false, exclude = new Set() } = {})
   const now = new Date();
   const want = Math.max(0, Number(need) || 0);
   const lifted = !freeTierOnly();
-  const keys = (await keysFor(call.service)).filter((key) => key.state === 'ok' && key.key && !exclude.has(key.id));
+  // A key spent on its credits still serves a call counted only in windows of its own — Firecrawl's
+  // free index, which costs no credits (review, 2026-11-12): `exhausted` is the credit window's state.
+  const spentServes = call.windows.every((id) => WINDOWS[id].own);
+  const usable = (state) => state === 'ok' || (spentServes && state === 'exhausted');
+  const keys = (await keysFor(call.service)).filter((key) => usable(key.state) && key.key && !exclude.has(key.id));
   let best = null;
   let fullest = null;
   for (const key of keys) {
@@ -645,10 +650,14 @@ export async function markKey(service, key, state, { retryAfterMs = 0, error = '
 /**
  * Run a call with a key, moving to the next on a refusal: `run(key, { id, paid })` makes the
  * call, and may throw an error carrying the provider's `status`, `code` and `body`. A
- * refused, spent or rate-limited key is set aside and the next is tried; a timeout or a
- * failing service, the next key once, the first left as it was; anything else is the
- * caller's to see. Counting stays with the caller (`take`/`spend`, with `id` and `paid`).
- * Every key out: an error with `skip`, the service standing aside as a spent allowance does.
+ * refused, spent or rate-limited key is set aside and the next is tried; a failing service
+ * (a 5xx), the next key once, the first left as it was; a timeout, or a connection that did
+ * not get through, goes straight back, no key blamed — it is the same for every key, and the
+ * caller's own fallback (the search chain) is the retry (owner, 2026-11-12). An error with
+ * `passOver` — this key cannot take this call, though it may a smaller one — tries the next
+ * key and marks nothing. Anything else is the caller's to see. Counting stays with the caller
+ * (`take`/`spend`, with `id` and `paid`). Every key out: an error with `skip`, the service
+ * standing aside as a spent allowance does.
  *
  * **A charged call (`meta.paid`) must be held with `take(service, need, now, { keyId: meta.id,
  * paid: true })` inside `run`, before the request is made, and not made when that says no.**
@@ -679,16 +688,18 @@ export async function withKey(service, need, run, { paid = false } = {}) {
     try {
       return await run(pick.key.key, { id: pick.key.id, paid: pick.paid });
     } catch (err) {
+      if (err?.passOver) continue;
       const kind = classify(id, err);
       if (kind === 'transient') {
-        if (retried) throw err;
+        if (retried || !(Number(err?.status) >= 500)) throw err;
         retried = true;
         failing = err;
         continue;
       }
       if (!kind) throw err;
       failing = null;
-      const status = Number(err?.status) || 0;
+      // A refusal this server said itself (`local`) carries no status of the provider's to report.
+      const status = err?.local ? 0 : Number(err?.status) || 0;
       await markKey(id, pick.key, kind, {
         retryAfterMs: kind === 'cooling' ? retryAfterOf(err) : kind === 'exhausted' ? spentFor(pick.key) : 0,
         error: `${status ? `HTTP ${status}: ` : ''}${String(err?.message || err)}`,

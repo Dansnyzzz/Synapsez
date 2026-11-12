@@ -115,7 +115,8 @@ async function call(path, { key, keyId, method = 'POST', body, query, timeoutMs 
     /* an error page, said below */
   }
   if (res.ok && json?.success !== false) return json ?? {};
-  const said = withoutKey(String(json?.error || json?.message || text || res.statusText).replace(/\s+/g, ' ').slice(0, 200), key);
+  // The key out first, then cut: cut first, a key across the cut would keep its first characters.
+  const said = withoutKey(String(json?.error || json?.message || text || res.statusText), key).replace(/\s+/g, ' ').slice(0, 200);
   const retryAfterMs = Math.max(0, Number(res.headers.get('retry-after')) || 0) * 1000;
   // A 402, out of credits, is believed for the rest of the key's period on the way back (keyCall.js).
   if (res.status === 429) asideUntil.set(keyId, Date.now() + Math.min(Math.max(retryAfterMs, 30_000), 10 * 60_000));
@@ -181,9 +182,11 @@ export async function firecrawlAccount() {
 /**
  * Hold `n` credits of one share and of the month of the key that will make the call. Null
  * when either has no room — the share is every key's together, so no other key would do.
- * A key Firecrawl asked to wait, or whose own count is short of this, is refused here as it
- * would be there (`local`), so the next key is tried. `settle(used)` afterwards gives back
- * what the call did not use, or counts what it used past the hold; settling twice does nothing.
+ * A key Firecrawl asked to wait, or whose own count is too short for any call, is refused here
+ * as it would be there (`local`: waiting, or spent); one short for this call only is passed
+ * over for it and left as it is (`passOver`). Either way the next key is tried. `settle(used)`
+ * afterwards gives back what the call did not use, or counts what it used past the hold;
+ * settling twice does nothing.
  *
  * @param {string} share
  * @param {number} n
@@ -195,9 +198,13 @@ async function hold(share, n, meta) {
   if (until > now) throw new FirecrawlError('Firecrawl asked this key to wait a while', { status: 429, retryAfterMs: until - now, local: true });
   const key = (await keysFor('firecrawl')).find((one) => one.id === meta.id);
   const { left } = key ? await figureOf(key) : { left: null };
+  if (left !== null && left < 1 + MARGIN) {
+    // Too little for the smallest call: spent, by Firecrawl's own count, until its period turns — its free index still answers (keyPool.js).
+    throw new FirecrawlError(`Firecrawl says this key has ${left} credits left`, { status: 402, local: true });
+  }
   if (left !== null && left < n + MARGIN) {
-    // Set aside until Firecrawl is asked again, as a wait is: its own count says this key is all but spent.
-    throw new FirecrawlError(`Firecrawl says this key has ${left} credits left`, { status: 429, retryAfterMs: REMAINING_MS, local: true });
+    // Room for a smaller call, not this one: the next key for this call alone, this one left as it is.
+    throw Object.assign(new FirecrawlError(`Firecrawl says this key has ${left} credits left`, { local: true }), { passOver: true });
   }
   const counted = { keyId: meta.id, paid: meta.paid };
   if (!(await take(share, n, undefined, counted))) return null;
@@ -460,7 +467,8 @@ export async function firecrawlCrawl(url, { limit = 5, includePaths = [], deadli
       } catch (err) {
         const charged = !chargedNothing(err);
         await held.settle(charged ? pages : 0);
-        // A start that timed out may have begun a crawl: not started again with the next key, a second crawl paid twice.
+        // A start that timed out may have begun a crawl: never started again with the next key, a second crawl paid
+        // twice — kept here whatever the pool's rules (it sends a timeout straight back already, owner 2026-11-12).
         if (charged && classify('firecrawl', err) === 'transient') throw new FirecrawlError(String(err?.message || err));
         throw err;
       }

@@ -158,6 +158,8 @@ try {
     clearSearchCache();
     await search('again', { plan: SEARCH_LEVELS.medium });
     check('  so the next search does not ask it', callsTo('/v2/search').length === before);
+    const papers = await fc.researchPapers('attention').then((rows) => rows.length, (err) => err.message);
+    check('  but the free index, which costs no credits, still answers on that key (review, 2026-11-12)', papers === 1, String(papers));
     answer.delete('POST /v2/search');
     await resetCounts();
     await heal();
@@ -167,9 +169,27 @@ try {
     clearSearchCache();
     const low = await search('low', { plan: SEARCH_LEVELS.medium });
     check("Firecrawl's own count is believed when lower than ours: it stands aside", !low.results.length && callsTo('/v2/search').length === before, JSON.stringify(low.attempts));
+    const allButSpent = (await pool.keysFor('firecrawl')).find((k) => k.id === 'env');
+    const indexStill = await fc.researchPapers('attention').then((rows) => rows.length, (err) => err.message);
+    check('  too little for any call: the key is spent until its period turns — not waiting — and the free index still answers', allButSpent?.state === 'exhausted' && indexStill === 1, `${allButSpent?.state} ${indexStill}`);
     left = 1000;
     fc.resetFirecrawlState();
     await heal();
+
+    // Short for one call but not for a smaller one (review, 2026-11-12): passed over for that call alone.
+    left = 12;
+    fc.resetFirecrawlState();
+    // Read now, so the pool chooses the key on twelve and it is `hold`'s own check that decides.
+    const twelve = await fc.remainingCredits({ fresh: true });
+    const crawl = await fc.firecrawlCrawl('https://example.com', { limit: 10 }).then(() => 'crawled', (err) => (err.skip ? 'stood aside' : err.message));
+    const afterCrawl = (await pool.keysFor('firecrawl')).find((k) => k.id === 'env');
+    clearSearchCache();
+    const small = await search('twelve left', { plan: SEARCH_LEVELS.medium });
+    check('twelve credits left: a ten-page crawl stands aside, the key is not set aside, and a two-credit search still goes', twelve === 12 && crawl === 'stood aside' && afterCrawl?.state === 'ok' && small.engine === 'Firecrawl', `${twelve} ${crawl} ${afterCrawl?.state} ${small.engine}`);
+    left = 1000;
+    fc.resetFirecrawlState();
+    await heal();
+    await resetCounts();
     delete process.env.SEARCH_ORDER;
     clearSearchCache();
   }
@@ -271,6 +291,15 @@ try {
     await resetCounts();
   }
 
+  section("the key taken out of Firecrawl's words before they are cut (review, 2026-11-12)");
+  {
+    answer.set('POST /v2/scrape', ({ auth }) => json({ success: false, error: `${'b'.repeat(192)}${String(auth).replace(/^Bearer /, '')} may not read this` }, 400));
+    const echoed = await fc.firecrawlScrape('https://example.com/echo').then(() => '', (err) => String(err.message));
+    check('a key Firecrawl repeats back across the 200th character is taken out whole', echoed !== '' && !echoed.includes('fc-test'), echoed.includes('fc-test') ? 'part of the key is in it' : `${echoed.length} characters, none of the key`);
+    answer.delete('POST /v2/scrape');
+    await resetCounts();
+  }
+
   section('several keys: one asked to wait hands over to the next (spec A, owner 2026-11-12)');
   {
     const { search, SEARCH_LEVELS, clearSearchCache } = await import('../server/search.js');
@@ -297,13 +326,25 @@ try {
     const again = callsTo('/v2/search').length;
     await search('two Firecrawl keys, again', { plan: SEARCH_LEVELS.medium });
     check('  while A cools, the next search goes to B alone', callsTo('/v2/search').slice(again).map((c) => named(c.auth)).join() === 'second', callsTo('/v2/search').slice(again).map((c) => named(c.auth)).join());
+
+    // A timeout is the same for every key (owner, 2026-11-12): both in use, the first that times out is the only one asked.
+    await heal();
+    fc.resetFirecrawlState();
+    answer.set('POST /v2/search', () => {
+      throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+    });
+    clearSearchCache();
+    const slowFrom = callsTo('/v2/search').length;
+    const slow = await search('a slow Firecrawl', { plan: SEARCH_LEVELS.medium });
+    const slowAsked = callsTo('/v2/search').length - slowFrom;
+    check('a timeout: no second key asked, and neither key set aside', slowAsked === 1 && !slow.results.length && (await pool.keysFor('firecrawl')).every((k) => k.state === 'ok'), `${slowAsked} asked`);
     answer.delete('POST /v2/search');
 
     // Firecrawl turns some sites away with a 403 (2026-11): that is the page's, not the key's.
     answer.set('POST /v2/scrape', () => json({ success: false, error: 'This website is no longer supported, please reach out to help@firecrawl.com for more info on how to activate it on your account.' }, 403));
     const scraped = callsTo('/v2/scrape').length;
     const refused = await fc.firecrawlScrape('https://social.example/post').then(() => 'read', (err) => err.status);
-    check("a 403 for a site Firecrawl does not read is the caller's, and leaves the key in use", refused === 403 && (await pool.keysFor('firecrawl')).find((k) => k.id === id)?.state === 'ok' && callsTo('/v2/scrape').length === scraped + 1, String(refused));
+    check("a 403 for a site Firecrawl does not read is the caller's, and leaves every key in use", refused === 403 && (await pool.keysFor('firecrawl')).every((k) => k.state === 'ok') && callsTo('/v2/scrape').length === scraped + 1, String(refused));
     answer.delete('POST /v2/scrape');
 
     const account = await fc.firecrawlAccount();

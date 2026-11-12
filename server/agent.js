@@ -33,6 +33,7 @@ import { mapWithLimit, MAX_PARALLEL_TOOLS } from './util/parallel.js';
 import { validZone } from './util/zone.js';
 import { sandboxConfigured } from './sandbox.js';
 import { firecrawlReady } from './firecrawl.js';
+import { warmPools } from './keyPool.js';
 import { lendEyes } from './vision.js';
 import { memoryForTurn, withheldTools, MEMORY_WRITE_TOOLS, changesRule, ruleNotesInReach, RULE_REASON } from './memory.js';
 import { botPersona } from './bots/prompt.js';
@@ -1946,6 +1947,10 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
     // Alongside what it fingerprints rather than after it, so a change that lands
     // while these are read is still a change at the next step.
     connectionsSignature(userId).catch(() => null),
+    // The deployment's stored service keys (keyPool.js), read before the tools are chosen: which
+    // services this deployment has is asked without waiting (`hostCapabilities`), and on a cold
+    // instance only the environment's keys were known. Read at most every 30 s; never throws.
+    warmPools(),
   ]);
   let connectionsSeen = seenAtStart;
   // Re-read mid-turn when what is plugged in changes — see `refreshConnections`.

@@ -199,9 +199,21 @@ try {
     check('a key whose wait is over is healthy again', (await entry('tavily', a)).state === 'ok' && (await entry('tavily', a)).retryAt === null);
     await healthy();
 
+    // Owner, 2026-11-12: a slow provider is slow for every key, and the search chain is already the retry.
     const timeout = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
-    got = await pool.withKey('tavily', 1, run((key) => (key === KEYS.env ? timeout : null)));
-    check('a timeout: the next key once, and the first left as it was', got === a && order.join() === `env,${a}` && (await entry('tavily', 'env')).state === 'ok', order.join());
+    const slow = await caught(pool.withKey('tavily', 1, run((key) => (key === KEYS.env ? timeout : null))));
+    check('a timeout: straight back — no other key asked, and the key left as it was', slow?.name === 'TimeoutError' && order.join() === 'env' && (await entry('tavily', 'env')).state === 'ok', order.join());
+    await healthy();
+    const unreachable = await caught(pool.withKey('tavily', 1, run((key) => (key === KEYS.env ? Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } }) : null))));
+    check('  and so is a connection that did not get through', unreachable?.cause?.code === 'ECONNRESET' && order.join() === 'env', order.join());
+    await healthy();
+    got = await pool.withKey('tavily', 1, run((key) => (key === KEYS.env ? refusal(502) : null)));
+    check('a 5xx: the next key once, and the first left as it was', got === a && order.join() === `env,${a}` && (await entry('tavily', 'env')).state === 'ok', order.join());
+    await healthy();
+
+    const unmoved = await store.getSetting('service_keys_version');
+    const passed = await pool.withKey('tavily', 1, run((key) => (key === KEYS.env ? Object.assign(new Error('short for this call'), { passOver: true }) : null))).catch((err) => err);
+    check('a key passed over for one call: the next answers, and nothing is marked or saved', passed === a && order.join() === `env,${a}` && (await entry('tavily', 'env')).state === 'ok' && (await store.getSetting('service_keys_version')) === unmoved, `${passed?.message || passed} · ${order.join()}`);
     await healthy();
 
     const down = await caught(pool.withKey('tavily', 1, run(() => refusal(503))));

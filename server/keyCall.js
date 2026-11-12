@@ -118,12 +118,14 @@ export async function refusal(label, res, key = '') {
   try {
     const text = await res.text();
     json = JSON.parse(text);
-    detail = json?.error?.detail || json?.error?.message || json?.error || json?.message || text.slice(0, 200);
+    detail = json?.error?.detail || json?.error?.message || json?.error || json?.message || text;
   } catch {
     /* not JSON, or already consumed — the status still says something */
   }
-  let said = detail ? clip(typeof detail === 'string' ? detail : JSON.stringify(detail), 200) : '';
+  let said = detail ? (typeof detail === 'string' ? detail : JSON.stringify(detail)) : '';
+  // The key out first, then cut: cut first, a key across the cut would keep its first characters.
   if (key && key.length >= 4) said = said.split(key).join(`…${key.slice(-4)}`);
+  said = clip(said, 200);
   return Object.assign(new Error(`${label} returned HTTP ${res.status}${said ? `: ${said}` : ''}`), {
     status: res.status,
     code: json?.tag ?? json?.error?.code ?? json?.code ?? null,

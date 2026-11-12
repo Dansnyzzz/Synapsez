@@ -520,6 +520,27 @@ section('several keys: a spent or refused key hands over to the next (spec A)');
   const after = await search('brave refused, asked again', { plan: searchPlan('medium') });
   check('  and it is not asked again: Brave is out of the chain until the owner checks it', !calls.some((c) => c.url.includes('search.brave.com')) && !searchChain().includes('brave') && after.engine === 'DuckDuckGo', searchChain().join(','));
 
+  // The key taken out before the reason is cut (review, 2026-11-12): cut first, one repeated across the cut kept its start.
+  await heal();
+  const padded = () => json({ type: 'ErrorResponse', error: { status: 422, detail: `${'a'.repeat(190)}${ENV.brave} is not valid`, code: 'SUBSCRIPTION_TOKEN_INVALID' } }, 422);
+  stubFetch({ 'api.search.brave.com': padded, 'duckduckgo.com': () => html(ddgPage(2)) });
+  const cut = await search('brave refused at length', { plan: searchPlan('medium') });
+  const partly = String(cut.attempts[0]?.error || '').includes(ENV.brave.slice(0, 8));
+  check('  a key repeated back across the 200th character is taken out whole, none of it left', !!cut.attempts[0] && !partly, partly ? 'part of the key is in it' : `${String(cut.attempts[0]?.error || '').length} characters, none of the key`);
+
+  // A timeout is the same for every key (owner, 2026-11-12): no second key; the chain goes on.
+  // Both Exa keys with room, so a second key is there to be asked.
+  await heal();
+  await store.clearRateLimit(`free:exa:${month}`);
+  process.env.SEARCH_ORDER = 'exa,duckduckgo';
+  const timedOut = () => {
+    throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+  };
+  stubFetch({ 'api.exa.ai/search': timedOut, 'duckduckgo.com': () => html(ddgPage(2)) });
+  const slow = await search('a slow Exa', { plan: searchPlan('medium') });
+  const exaAsked = calls.filter((c) => c.url.includes('api.exa.ai')).length;
+  check('Exa timing out: no second key asked, the next engine answers, and no key is set aside', exaAsked === 1 && slow.engine === 'DuckDuckGo' && /timeout/.test(slow.attempts[0]?.error || '') && (await pool.keysFor('exa')).every((k) => k.state === 'ok'), `${exaAsked} Exa call(s) — ${slow.engine}`);
+
   delete process.env.SEARCH_ORDER;
   await heal();
 }
