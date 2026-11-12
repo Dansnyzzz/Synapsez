@@ -1,5 +1,10 @@
 import { getStore } from './store/index.js';
 import { log } from './util/trace.js';
+import { periodOf, freeTierOnly, num, numIn, noDatabase } from './freeTierPeriod.js';
+import { poolWindow, capacityOf, keyBucket, keyEntry, keyUsage, ceilingOf, countPaid, noteUse, creditBucket, paidKeyOf, poolReport } from './keyPool.js';
+
+// Moved to freeTierPeriod.js so keyPool.js can read them without importing this file; still exported here.
+export { periodOf, freeTierOnly, e2bMonthCap } from './freeTierPeriod.js';
 
 /**
  * Free tiers, kept to (owner, 2026-11-02): this deployment pays nothing.
@@ -27,11 +32,12 @@ import { log } from './util/trace.js';
  *   - E2B, the cloud computer: a one-off credit, spread over the months before
  *     it lapses (`e2bMonthCap`). Its ceiling is worked out, not set.
  *   - Firecrawl (checked 2026-11-11, server/firecrawl.js): 1,000 credits a month on its
- *     Free plan, no card, a 402 at zero. Kept to 950 in all (FIRECRAWL_FREE_CREDITS),
- *     shared as the owner chose: searches 570 (FIRECRAWL_SEARCH_FREE), pages read 332
- *     (FIRECRAWL_SCRAPE_FREE), site maps, crawls and code 47 (FIRECRAWL_MORE_FREE) — each
+ *     Free plan, no card, a 402 at zero. Kept to 950 a key until Firecrawl says the
+ *     key's plan (FIRECRAWL_FREE_CREDITS), shared as the owner chose: searches 60%
+ *     (570 of one Free key; FIRECRAWL_SEARCH_FREE sets a figure outright), pages read 35%
+ *     (FIRECRAWL_SCRAPE_FREE), site maps, crawls and code 5% (FIRECRAWL_MORE_FREE) — each
  *     share and the whole counted. Its Research and Government Indexes cost no credits
- *     but a thousand calls a day: 950 (FIRECRAWL_INDEX_FREE_DAILY).
+ *     but a thousand calls a day: 950 a key (FIRECRAWL_INDEX_FREE_DAILY).
  *
  * Each ceiling can be set (EXA_FREE_MILLS, TAVILY_FREE_CREDITS,
  * BRAVE_FREE_REQUESTS, GOOGLE_FREE_DAILY, STACKEXCHANGE_FREE_DAILY), and
@@ -55,77 +61,49 @@ import { log } from './util/trace.js';
  * These go through `take` only, never the per-account fair share (`mayMeter`):
  * a price is cached for everyone, so one account asking does not use another's.
  * A ceiling reached moves the finance chain to its next source.
+ *
+ * Several keys (spec A, owner 2026-11-12, server/keyPool.js): Exa, Tavily and
+ * Firecrawl may each have up to ten, the environment's first; Brave and E2B keep one.
+ * Each is counted on its own — `take`, `spend`, `refund` and `exhaust` take `{ keyId }`,
+ * the environment key's when it is left out, so a call written before keys keeps
+ * working — and each figure above is now a key's: a service's allowance is the sum
+ * of its keys'. Firecrawl's ceiling for a key is 95% of the plan Firecrawl reports
+ * for it (Hobby's 5,000 → 4,750), its shares (searches 60%, pages 35%, the rest 5%)
+ * shares of the sum, and its free indexes 950 calls a day for each key. A key's
+ * calls past its free ceiling on the owner's paid key (`{ paid: true }`) are counted
+ * apart as well (`paid:<service>@<keyId>:<month>`), up to that key's monthly cap.
+ * The fair shares (`mayMeter`, `e2bAccountAllowance`) stay per person; only their
+ * pot, the service's sum, grows.
  */
 
-const numIn = (env, name, fallback) => {
-  const raw = env[name];
-  const value = Number(raw);
-  return raw !== undefined && raw !== '' && Number.isFinite(value) && value >= 0 ? value : fallback;
-};
-const num = (name, fallback) => numIn(process.env, name, fallback);
-
-/*
- * E2B's credit (owner, 2026-11-02): $100 that lapses on 1 December 2027 and $5
- * that never does, on the Hobby plan with no card — so a spent credit is a
- * refusal, never a bill. The owner wants all of it used. A fixed ceiling a
- * month would let whatever a quiet month left over lapse; instead a month may
- * use what was left of the lapsing part when it began, divided by the months
- * left before it lapses — so a quiet month passes its share on, and the last
- * month may use everything still there. Once that part is gone, or has lapsed,
- * the month may use what is left of the lasting part. Both are taken a little
- * under the real figures, so a count a call or two behind never crosses them.
- * Thousandths of a dollar, like Exa: E2B_CREDIT_MILLS, E2B_CREDIT_LASTING_MILLS,
- * E2B_CREDIT_EXPIRES.
- */
-const CREDIT_MARGIN = 0.97;
-const E2B_TOTAL = 'free:e2b:total';
 /** The whole credit's count outlives any month; it only has to outlast the credit. */
 const LIFETIME_END = new Date(Date.UTC(2100, 0, 1));
 
-/**
- * What E2B may spend in the month `now` falls in, given what the whole credit
- * had spent before that month began.
- *
- * @param {{ usedBefore?: number, now?: Date, env?: Record<string, string | undefined> }} [options]
- */
-export function e2bMonthCap({ usedBefore = 0, now = new Date(), env = process.env } = {}) {
-  const lapsing = numIn(env, 'E2B_CREDIT_MILLS', 100_000) * CREDIT_MARGIN;
-  const lasting = numIn(env, 'E2B_CREDIT_LASTING_MILLS', 5_000) * CREDIT_MARGIN;
-  const parsed = new Date(env.E2B_CREDIT_EXPIRES || '2027-12-01T00:00:00Z');
-  const expires = Number.isNaN(parsed.getTime()) ? new Date(Date.UTC(2027, 11, 1)) : parsed;
-  // The credit is assumed spent lapsing-first, so the lasting part is what was spent past the lapsing one.
-  const lastingLeft = Math.max(0, lasting - Math.max(0, usedBefore - lapsing));
-  const lapsingLeft = Math.max(0, lapsing - usedBefore);
-  if (now >= expires || lapsingLeft <= 0) return Math.floor(lastingLeft);
-  const last = new Date(expires.getTime() - 1);
-  const monthsLeft = (last.getUTCFullYear() - now.getUTCFullYear()) * 12 + (last.getUTCMonth() - now.getUTCMonth()) + 1;
-  return Math.floor(lapsingLeft / Math.max(1, monthsLeft));
-}
+/** A service counted per key (keyPool.js): its period and ceilings are the pool's. */
+const pooled = (id) => ({ per: poolWindow(id).per, pooled: true, billed: !!poolWindow(id).billed });
+/** One of Firecrawl's shares of all its keys' credits — or the absolute figure the owner set, as before. */
+const share = (fraction, name) => ({ per: 'month', share: fraction, env: name });
 
-/** Each service's ceiling and the period it resets on. */
+/**
+ * Each service's ceiling and the period it resets on.
+ *
+ * @type {Record<string, { per: string, limit?: () => number, pooled?: boolean, billed?: boolean, share?: number, env?: string }>}
+ */
 const TIERS = {
-  exa: { per: 'month', limit: () => num('EXA_FREE_MILLS', 9_500) },
-  tavily: { per: 'month', limit: () => num('TAVILY_FREE_CREDITS', 950) },
+  exa: pooled('exa'),
+  tavily: pooled('tavily'),
   // `billed`: a card on file and no cap of the service's own — see `take`.
-  brave: { per: 'month', limit: () => num('BRAVE_FREE_REQUESTS', 950), billed: true },
+  brave: pooled('brave'),
   google: { per: 'day', limit: () => num('GOOGLE_FREE_DAILY', 450) },
   stackexchange: { per: 'day', limit: () => num('STACKEXCHANGE_FREE_DAILY', process.env.STACKEXCHANGE_KEY ? 9_500 : 280) },
-  // The cloud computer's machine time, in thousandths of a dollar (server/e2b.js).
-  e2b: {
-    per: 'month',
-    limit: () => e2bMonthCap(),
-    /** This month's ceiling, from what the whole credit had spent before the month began. */
-    async capFor(now, usedThisMonth) {
-      const total = await getStore().readCounter(E2B_TOTAL);
-      return e2bMonthCap({ usedBefore: Math.max(0, total - usedThisMonth), now });
-    },
-  },
+  // The cloud computer's machine time, in thousandths of a dollar (server/e2b.js), its ceiling worked out per key.
+  e2b: pooled('e2b'),
   // Firecrawl: the month's credits, and each share of them (server/firecrawl.js).
-  firecrawl: { per: 'month', limit: () => num('FIRECRAWL_FREE_CREDITS', 950) },
-  firecrawl_search: { per: 'month', limit: () => num('FIRECRAWL_SEARCH_FREE', 570) },
-  firecrawl_scrape: { per: 'month', limit: () => num('FIRECRAWL_SCRAPE_FREE', 332) },
-  firecrawl_more: { per: 'month', limit: () => num('FIRECRAWL_MORE_FREE', 47) },
-  firecrawl_index: { per: 'day', limit: () => num('FIRECRAWL_INDEX_FREE_DAILY', 950) },
+  firecrawl: pooled('firecrawl'),
+  firecrawl_search: share(0.6, 'FIRECRAWL_SEARCH_FREE'),
+  firecrawl_scrape: share(0.35, 'FIRECRAWL_SCRAPE_FREE'),
+  firecrawl_more: share(0.05, 'FIRECRAWL_MORE_FREE'),
+  firecrawl_index: pooled('firecrawl_index'),
   // Market data (server/finance/http.js): see the header for each figure.
   coingecko: { per: 'month', limit: () => num('COINGECKO_FREE_MONTHLY', 9_500) },
   coingecko_minute: { per: 'minute', limit: () => num('COINGECKO_FREE_MINUTE', 90) },
@@ -139,77 +117,100 @@ const TIERS = {
 
 export const FREE_SERVICES = Object.keys(TIERS);
 
-/** Whether the ceilings hold — they do unless FREE_TIER_ONLY says otherwise. */
-export const freeTierOnly = () => !/^(0|false|no|off)$/i.test(String(process.env.FREE_TIER_ONLY || '').trim());
-
-/**
- * The period a moment falls in, in UTC — the month for monthly credit, the day for
- * daily quotas, the hour and the minute for the per-minute ones (CoinGecko, FRED) —
- * and when it ends.
- */
-export function periodOf(per, now = new Date()) {
-  const y = now.getUTCFullYear();
-  const m = now.getUTCMonth();
-  const d = now.getUTCDate();
-  const month = `${y}-${String(m + 1).padStart(2, '0')}`;
-  if (per === 'month') return { key: month, ends: new Date(Date.UTC(y, m + 1, 1)) };
-  const day = `${month}-${String(d).padStart(2, '0')}`;
-  const pad = (n) => String(n).padStart(2, '0');
-  if (per === 'minute') {
-    const h = now.getUTCHours();
-    const mi = now.getUTCMinutes();
-    return { key: `${day}T${pad(h)}:${pad(mi)}`, ends: new Date(Date.UTC(y, m, d, h, mi + 1)) };
-  }
-  if (per === 'hour') {
-    const h = now.getUTCHours();
-    return { key: `${day}T${pad(h)}`, ends: new Date(Date.UTC(y, m, d, h + 1)) };
-  }
-  return { key: day, ends: new Date(Date.UTC(y, m, d + 1)) };
-}
-
+/** A service's bucket by period alone: a service not counted per key, or one of Firecrawl's shares, which are of every key's credits together. */
 const bucketOf = (service, now) => {
   const { key, ends } = periodOf(TIERS[service].per, now);
   return { bucket: `free:${service}:${key}`, ends };
 };
 
+/** The bucket a call is counted in: the key's, for a service counted per key. */
+const countedIn = (service, keyId, now) => (TIERS[service].pooled ? keyBucket(service, keyId, now) : bucketOf(service, now));
+/** A paid call is counted apart against the service's own window only, so one call is never counted there twice. */
+const paidHere = (service, paid) => paid && TIERS[service].pooled && poolWindow(service).of === service;
+
+/** A share of all Firecrawl's keys' credits this month, or the owner's own figure for it. */
+async function shareLimit(tier, now) {
+  const set = numIn(process.env, tier.env, null);
+  if (set !== null) return set;
+  // Not floored by the float's own dust: 5,700 × 0.35 is 1994.9999999999998.
+  return Math.floor((await capacityOf('firecrawl', now)).limit * tier.share + 1e-6);
+}
+
+/** A ceiling to say when the count cannot be read: one key's default, as before several keys. */
+function defaultLimit(service) {
+  const tier = TIERS[service];
+  if (tier.pooled) return poolWindow(service).limit();
+  if (tier.share) return Math.floor(poolWindow('firecrawl').limit() * tier.share + 1e-6);
+  return tier.limit();
+}
+
 /**
- * What is left of a service's allowance this period, beside its ceiling.
- * Unbounded when the ceilings are off, or when the count cannot be read — the
- * services with no card on file refuse by themselves once they are spent. A
- * `billed` one does not, so an unreadable count is none left (HAR-009).
+ * What is left of a service's allowance this period, beside its ceiling — for a
+ * service with several keys, the sum over them. Unbounded when the ceilings are
+ * off, or when the count cannot be read — the services with no card on file refuse
+ * by themselves once they are spent. A `billed` one does not, so an unreadable count
+ * is none left (HAR-009).
  *
  * @returns {Promise<{ left: number, limit: number }>}
  */
 export async function allowance(service, now = new Date()) {
   const tier = TIERS[service];
   if (!tier || !freeTierOnly()) return { left: Infinity, limit: Infinity };
-  let limit = tier.limit();
   try {
+    if (tier.pooled) {
+      const { left, limit } = await capacityOf(service, now);
+      return { left, limit };
+    }
+    const limit = tier.share ? await shareLimit(tier, now) : tier.limit();
     const used = await getStore().readCounter(bucketOf(service, now).bucket);
-    if (tier.capFor) limit = await tier.capFor(now, used);
     return { left: Math.max(0, limit - used), limit };
   } catch (err) {
-    return { left: tier.billed && !noDatabase(err) ? 0 : Infinity, limit };
+    return { left: tier.billed && !noDatabase(err) ? 0 : Infinity, limit: defaultLimit(service) };
   }
 }
 
-/** No database at all is a script or a test, with nothing to count against — not a database that is down. */
-const noDatabase = (err) => /not ready yet/.test(String(err?.message));
+/** Whether what the paid key has now spent this month is inside its cap. */
+async function underCap(service, keyId, total) {
+  const choice = await paidKeyOf(service);
+  return choice?.keyId === keyId && (choice.capMonthly == null || total <= choice.capMonthly);
+}
 
 /**
  * Count a call before it is made, and say whether it fits (HAR-009). Reading
  * the count, calling, then adding let every call made at the same moment near
  * the ceiling through; this adds first, in one upsert, and takes it back when
  * the total has gone over. For a `billed` service, where going over is a bill.
+ *
+ * Counted against the key that will make the call (`keyId`; the environment's by
+ * default) and its own ceiling. A call on the paid key past its free ceiling
+ * (`paid`) is held to that key's monthly cap instead.
  */
-export async function take(service, amount, now = new Date()) {
+export async function take(service, amount, now = new Date(), { keyId = 'env', paid = false } = {}) {
   const tier = TIERS[service];
   if (!tier || !(Number(amount) > 0)) return true;
-  const { bucket, ends } = bucketOf(service, now);
   try {
-    const total = await getStore().addToCounter(bucket, amount, ends);
-    if (!freeTierOnly() || total <= tier.limit()) return true;
-    await getStore().addToCounter(bucket, -amount, ends);
+    const store = getStore();
+    const { bucket, ends } = countedIn(service, keyId, now);
+    const total = await store.addToCounter(bucket, amount, ends);
+    const counted = [[bucket, ends]];
+    let fits;
+    if (paidHere(service, paid)) {
+      const apart = keyBucket(service, keyId, now, { paid: true });
+      counted.push([apart.bucket, apart.ends]);
+      fits = await underCap(service, keyId, await countPaid(service, keyId, amount, now));
+    } else if (!freeTierOnly() || (paid && (tier.pooled || tier.share))) {
+      // The ceilings off; or a paid call in Firecrawl's index or one of its shares — free splits, not a paid call's.
+      fits = true;
+    } else if (tier.pooled) {
+      fits = total <= (await ceilingOf(service, await keyEntry(service, keyId), now));
+    } else {
+      fits = total <= (tier.share ? await shareLimit(tier, now) : tier.limit());
+    }
+    if (fits) {
+      if (tier.pooled) noteUse(service, keyId, amount);
+      return true;
+    }
+    for (const [name, until] of counted) await store.addToCounter(name, -amount, until);
     return false;
   } catch (err) {
     return !freeTierOnly() || !tier.billed || noDatabase(err);
@@ -217,35 +218,40 @@ export async function take(service, amount, now = new Date()) {
 }
 
 /**
- * Count what a call spent. Always counted — the totals are worth having even
- * with the ceilings off. E2B's is counted against its whole credit too, unless
- * it is only a month being closed (`exhaust`), which spent nothing.
+ * Count what a call spent, against the key that made it. Always counted — the
+ * totals are worth having even with the ceilings off. E2B's is counted against
+ * its whole credit too, unless it is only a month being closed (`exhaust`), which
+ * spent nothing; a call on the paid key (`paid`) against its month apart as well.
  */
-export async function spend(service, amount, now = new Date(), { ofCredit = true } = {}) {
+export async function spend(service, amount, now = new Date(), { ofCredit = true, keyId = 'env', paid = false } = {}) {
   if (!TIERS[service] || !(Number(amount) > 0)) return;
   try {
-    const { bucket, ends } = bucketOf(service, now);
+    const { bucket, ends } = countedIn(service, keyId, now);
     await getStore().addToCounter(bucket, amount, ends);
-    if (service === 'e2b' && ofCredit) await getStore().addToCounter(E2B_TOTAL, amount, LIFETIME_END);
+    if (service === 'e2b' && ofCredit) await getStore().addToCounter(creditBucket(keyId), amount, LIFETIME_END);
+    if (paidHere(service, paid)) await countPaid(service, keyId, amount, now);
+    if (TIERS[service].pooled) noteUse(service, keyId, amount);
   } catch (err) {
     // No database at all is a script or a test, with nothing to count against.
-    if (!/not ready yet/.test(String(err?.message))) log.warn('free tier: not counted', { service, error: String(err?.message || err).slice(0, 160) });
+    if (!noDatabase(err)) log.warn('free tier: not counted', { service, error: String(err?.message || err).slice(0, 160) });
   }
 }
 
 /**
  * Give back what was counted for work that never ran (HAR-010): a cloud
  * computer paid for before it started, whose start then failed. Taken off the
- * period and, for E2B, off its whole credit — as `spend` put it on both.
+ * key's period and, for E2B, off its whole credit — as `spend` put it on both.
  */
-export async function refund(service, amount, now = new Date()) {
+export async function refund(service, amount, now = new Date(), { keyId = 'env', paid = false } = {}) {
   if (!TIERS[service] || !(Number(amount) > 0)) return;
   try {
-    const { bucket, ends } = bucketOf(service, now);
+    const { bucket, ends } = countedIn(service, keyId, now);
     await getStore().addToCounter(bucket, -amount, ends);
-    if (service === 'e2b') await getStore().addToCounter(E2B_TOTAL, -amount, LIFETIME_END);
+    if (service === 'e2b') await getStore().addToCounter(creditBucket(keyId), -amount, LIFETIME_END);
+    if (paidHere(service, paid)) await countPaid(service, keyId, -amount, now);
+    if (TIERS[service].pooled) noteUse(service, keyId, -amount);
   } catch (err) {
-    if (!/not ready yet/.test(String(err?.message))) log.warn('free tier: not given back', { service, error: String(err?.message || err).slice(0, 160) });
+    if (!noDatabase(err)) log.warn('free tier: not given back', { service, error: String(err?.message || err).slice(0, 160) });
   }
 }
 
@@ -343,10 +349,25 @@ export async function e2bAccountSpend(userId, amount, now = new Date()) {
   }
 }
 
-/** Mark a service's allowance as used up for the period — when the service itself says so. */
-export async function exhaust(service, now = new Date()) {
-  const { left } = await allowance(service, now);
-  if (Number.isFinite(left) && left > 0) await spend(service, left, now, { ofCredit: false });
+/**
+ * Mark a service's allowance as used up for the period — when the service itself says
+ * so. One key's (`keyId`, the environment's by default), filled to its own ceiling.
+ */
+export async function exhaust(service, now = new Date(), { keyId = 'env' } = {}) {
+  const tier = TIERS[service];
+  if (!tier) return;
+  if (!tier.pooled) {
+    const { left } = await allowance(service, now);
+    if (Number.isFinite(left) && left > 0) await spend(service, left, now, { ofCredit: false });
+    return;
+  }
+  if (!freeTierOnly()) return;
+  try {
+    const { used, ceiling } = await keyUsage(service, await keyEntry(service, keyId), now);
+    if (ceiling - used > 0) await spend(service, ceiling - used, now, { ofCredit: false, keyId });
+  } catch (err) {
+    if (!noDatabase(err)) log.warn('free tier: not marked spent', { service, error: String(err?.message || err).slice(0, 160) });
+  }
 }
 
 const userBucket = (userId, now) => `free:user:${userId}:${periodOf('day', now).key}`;
@@ -390,15 +411,30 @@ export const exaSpent = (json, estimate) => {
   return Number.isFinite(total) && total > 0 ? Math.ceil(total * 1000 - 1e-6) : estimate;
 };
 
-/** Each service's use this period, for the administrators' view. */
+/**
+ * Each service's use this period, for the administrators' view — summed over its keys
+ * where it has several — and `pool`: every pooled service's keys, by hint (keyPool.js).
+ */
 export async function freeTierReport(now = new Date()) {
   const rows = [];
   for (const service of FREE_SERVICES) {
-    const { per, limit, capFor } = TIERS[service];
-    const { bucket, ends } = bucketOf(service, now);
-    const used = await getStore().readCounter(bucket).catch(() => null);
-    const ceiling = capFor ? await capFor(now, used || 0).catch(() => limit()) : limit();
-    rows.push({ service, per, limit: ceiling, used, resets: ends.toISOString() });
+    const tier = TIERS[service];
+    const { ends } = bucketOf(service, now);
+    let used = null;
+    let limit = defaultLimit(service);
+    if (tier.pooled) {
+      const sum = await capacityOf(service, now).catch(() => null);
+      used = sum?.used ?? null;
+      limit = sum?.limit ?? limit;
+    } else {
+      used = await getStore().readCounter(bucketOf(service, now).bucket).catch(() => null);
+      if (tier.share) limit = await shareLimit(tier, now).catch(() => limit);
+    }
+    rows.push({ service, per: tier.per, limit, used, resets: ends.toISOString() });
   }
-  return { enforced: freeTierOnly(), userDaily: num('FREE_TIER_USER_DAILY', 30), services: rows };
+  const pool = await poolReport(now).catch((err) => {
+    if (!noDatabase(err)) log.warn('free tier: the keys could not be listed', { error: String(err?.message || err).slice(0, 160) });
+    return [];
+  });
+  return { enforced: freeTierOnly(), userDaily: num('FREE_TIER_USER_DAILY', 30), services: rows, pool };
 }

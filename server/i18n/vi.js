@@ -522,6 +522,12 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   '{0}: the provider dropped that reply; starting it again.': '{0}: nhà cung cấp đã bỏ dở câu trả lời; đang chạy lại.',
   '{0}: {1} stopped mid-answer; starting that reply again.': '{0}: {1} dừng giữa chừng; đang viết lại câu trả lời.',
   '{0}: every key was refused{1}.': '{0}: mọi key đều bị từ chối{1}.',
+  /* ── nhiều key cho một dịch vụ của bản triển khai (server/keyPool.js) ── */
+  '{0}: no key with room': '{0}: không còn key nào còn hạn mức',
+  'That key is already in this service.': 'Key đó đã có trong dịch vụ này.',
+  'That service does not take several keys.': 'Dịch vụ đó không nhận nhiều key.',
+  'A monthly cap is a number of zero or more.': 'Mức trần mỗi tháng phải là một số từ 0 trở lên.',
+  "That is not one of this service's keys.": 'Đó không phải là một key của dịch vụ này.',
   '{0} could not reach this model on any key: {1}': '{0} không gọi được mô hình này bằng key nào: {1}',
   '{0}: {1} could not reach the model, trying the next key.': '{0}: {1} không gọi được mô hình, đang thử key tiếp theo.',
   '{0} is not answering right now, so this reply comes from {1}. Your chosen model is unchanged.':
