@@ -429,6 +429,70 @@ section('memory remembers where a note came from, and what it said before');
   const over = await as('memory_write', { key: 'big3', content: big });
   check('a note that would take the set past 24,000 characters is refused', over.isError && /24,000/.test(over.content), over.content);
   await dana.call('DELETE', '/api/memory');
+
+  section('"Tidy my notes monthly" proposes, and only the person changes anything');
+  const tidy = await import('../server/memoryTidy.js');
+  const resolve = async () => ({ id: 'openrouter/free-model', provider: 'openrouter' });
+  let sent = '';
+  let calls = 0;
+  const answer = (json) => async function* stream(request) {
+    calls += 1;
+    sent = request.messages.map((m) => m.text).join('\n');
+    yield { type: 'text', delta: `Here you go: ${JSON.stringify(json)}` };
+    yield { type: 'done', usage: { input: 50, output: 20 } };
+  };
+  await store.mergeUserSetting(danaId, 'memory', {
+    coffee: memory.stampNote('Dana drinks coffee black.', { by: 'assistant' }),
+    'coffee-2': memory.stampNote('Dana takes no sugar in coffee.', { by: 'assistant' }),
+    'old-job': memory.stampNote('Dana works at Acme (2019).', { by: 'assistant' }),
+    'mail-trip': memory.stampNote('Flight VN123 from the inbox.', { by: 'assistant', google: true }),
+  });
+  const off = await tidy.proposeTidy({ userId: danaId, stream: answer({ proposals: [] }), resolve });
+  check('nothing is read while the switch is off (the default)', off.status === 'off' && calls === 0);
+  check('  and such an account is never due', !(await store.memoryTidyDue(new Date().toISOString(), 10)).includes(danaId));
+  await dana.call('PUT', '/api/prefs', { memoryTidy: true });
+  check('switched on, the account is due', (await store.memoryTidyDue(new Date().toISOString(), 10)).includes(danaId));
+  const before = JSON.stringify(await notes());
+  // The ids it numbered the notes with, read from what it sent: the database orders a note set's keys.
+  await tidy.proposeTidy({ userId: danaId, stream: answer({ proposals: [] }), resolve });
+  const idOf = (key) => new RegExp(`\\[(n\\d+)\\] \\([^)]*\\) ${key}:`).exec(sent)?.[1];
+  const [c1, c2, job] = [idOf('coffee'), idOf('coffee-2'), idOf('old-job')];
+  const plan = {
+    proposals: [
+      { type: 'merge', notes: [c1, c2], into: c1, text: 'Dana drinks coffee black, no sugar.', why: 'Both are about coffee.' },
+      { type: 'remove', notes: [job], why: 'An old job.' },
+      { type: 'merge', notes: [c1, c2], into: c1, text: 'Card 4111 1111 1111 1111', why: 'smuggled' },
+      { type: 'remove', notes: ['n99'], why: 'no such note' },
+    ],
+  };
+  const done = await tidy.proposeTidy({ userId: danaId, stream: answer(plan), resolve });
+  check('it proposes, and the notes are exactly as they were', done.status === 'proposed' && done.proposals === 2 && JSON.stringify(await notes()) === before, JSON.stringify(done));
+  check('  a note saved from Google data is never sent', !/VN123/.test(sent) && /coffee black/.test(sent) && done.held === 1, sent.slice(0, 200));
+  check('  a proposal that would hold what no note may, or names no note, is dropped', !(await store.getUserSetting(danaId, 'memoryTidy')).proposals.some((p) => /4111/.test(p.text || '')));
+  const monthAgo = new Date(Date.now() - tidy.TIDY_EVERY_DAYS * 86_400_000).toISOString();
+  check('  and the account is not due again for a month', !(await store.memoryTidyDue(monthAgo, 10)).includes(danaId));
+  const listed = (await dana.call('GET', '/api/memory')).body.tidy.proposals;
+  check('Settings → Memory lists the proposals', listed.length === 2 && listed[0].type === 'merge' && listed[0].keys.join() === 'coffee,coffee-2', JSON.stringify(listed));
+  const merge = listed.find((p) => p.type === 'merge');
+  const remove = listed.find((p) => p.type === 'remove');
+  check('another account cannot accept them', (await bob.call('POST', `/api/memory/tidy/${merge.id}/accept`)).status === 404);
+  const accepted = await dana.call('POST', `/api/memory/tidy/${merge.id}/accept`);
+  const after = await notes();
+  check('accepted, a merge is applied as an approved assistant change: history kept, the other note marked removed', accepted.status === 200 && after.coffee.content === 'Dana drinks coffee black, no sugar.' && memory.noteHistory(after.coffee)[0]?.content === 'Dana drinks coffee black.' && after['coffee-2'].removed === true, JSON.stringify(after.coffee));
+  const rejected = await dana.call('POST', `/api/memory/tidy/${remove.id}/reject`);
+  check('rejected, a proposal goes and the note stays', rejected.status === 200 && after['old-job'].content === 'Dana works at Acme (2019).' && (await dana.call('GET', '/api/memory')).body.tidy.proposals.length === 0);
+  // A proposal whose notes changed since is refused, not applied.
+  await tidy.proposeTidy({ userId: danaId, stream: answer({ proposals: [{ type: 'remove', notes: ['n1'], why: 'stale' }] }), resolve, now: new Date(Date.now() + 31 * 86_400_000) });
+  const stale = (await store.getUserSetting(danaId, 'memoryTidy')).proposals[0];
+  await dana.call('PUT', `/api/memory/account/${stale.keys[0]}`, { content: 'Changed by Dana.' });
+  check('a proposal whose notes changed since is not applied', (await dana.call('POST', `/api/memory/tidy/${stale.id}/accept`)).status === 409 && (await notes())[stale.keys[0]].content === 'Changed by Dana.');
+  await dana.call('PUT', '/api/prefs', { memory: false });
+  check('with memory off nothing is read, switch or no switch', (await tidy.proposeTidy({ userId: danaId, stream: answer({ proposals: [] }), resolve })).status === 'memory_off');
+  await dana.call('PUT', '/api/prefs', { memory: true });
+  await store.mergeUserSetting(danaId, 'memoryTidy', { proposals: [{ id: 'p-x', type: 'remove', bucket: 'memory', keys: ['old-job'], seen: {}, why: 'x' }] });
+  check('the export carries pending proposals', Array.isArray((await dana.call('GET', '/api/account/export')).body?.memoryProposals));
+  await dana.call('DELETE', '/api/memory');
+  check('Delete all memory takes the proposals with the notes', !(await store.getUserSetting(danaId, 'memoryTidy')) && !(await store.getUserSetting(danaId, 'memory')));
 }
 
 /* ── incognito ─────────────────────────────────────────────────────── */

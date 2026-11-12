@@ -15,6 +15,7 @@ import {
   MEMORY_KEY, projectMemoryKey, noteName, MAX_NOTE_CHARS, memoryRefusal, refusalMessage, stampNote,
   noteHistory, noteKind, noteDay, kindOf, isLive, isExpired,
 } from '../memory.js';
+import { TIDY_KEY, standingProposals, acceptProposal, rejectProposal } from '../memoryTidy.js';
 import { normaliseImport, IMPORT_LIMITS } from '../../public/js/import-formats.js';
 import { clientError } from '../util/clientError.js';
 
@@ -128,7 +129,46 @@ export function mountAccountRoutes(api, admin, { wrap }) {
         })
         .filter((group) => group.notes.length)
         .sort((a, b) => (a.scope === b.scope ? 0 : a.scope === 'account' ? -1 : 1));
-      res.json({ groups });
+      // The monthly tidy's proposals that still stand — each the person's to accept or reject.
+      const tidy = (await store.getUserSetting(req.user.id, TIDY_KEY).catch(() => null)) || {};
+      const proposals = standingProposals(tidy, buckets).map((p) => {
+        const projectId = p.bucket === MEMORY_KEY ? null : p.bucket.slice(MEMORY_KEY.length + 1);
+        return {
+          id: p.id,
+          type: p.type,
+          keys: p.keys,
+          into: p.into || null,
+          keep: p.keep || null,
+          text: p.text || null,
+          why: p.why || '',
+          scope: projectId ? 'project' : 'account',
+          projectName: projectId ? names.get(projectId) || null : null,
+        };
+      });
+      res.json({ groups, tidy: { at: tidy.at || null, proposals } });
+    }),
+  );
+
+  /**
+   * Accept or reject one of the monthly tidy's proposals (owner, 2026-11-12). Only the
+   * person does either: accepted, it is applied as an assistant's change they approved,
+   * so what it replaced stays in the notes' history; rejected, it simply goes.
+   */
+  api.post(
+    '/memory/tidy/:id/accept',
+    wrap(async (req, res) => {
+      const done = await acceptProposal(req.user.id, String(req.params.id || '').slice(0, 80));
+      if (done === 'gone') return res.status(404).json({ error: 'That suggestion is no longer there.' });
+      if (done === 'changed') return res.status(409).json({ error: 'Those notes have changed since this was suggested, so it was dropped.' });
+      res.json({ ok: true });
+    }),
+  );
+  api.post(
+    '/memory/tidy/:id/reject',
+    wrap(async (req, res) => {
+      const gone = await rejectProposal(req.user.id, String(req.params.id || '').slice(0, 80));
+      if (!gone) return res.status(404).json({ error: 'That suggestion is no longer there.' });
+      res.json({ ok: true });
     }),
   );
 
@@ -495,10 +535,13 @@ export function mountAccountRoutes(api, admin, { wrap }) {
       const titled = (n) => (n.chatId && named.get(n.chatId) ? { ...n, chatTitle: named.get(n.chatId) } : n);
       for (const [i, n] of memory.entries()) memory[i] = { ...titled(n), ...(n.history ? { history: n.history.map(titled) } : {}) };
       for (const [i, n] of botMemory.entries()) botMemory[i] = titled(n);
+      // The tidy's pending proposals quote notes, so they are part of what is held (memoryTidy.js).
+      const tidy = (await store.getUserSetting(userId, TIDY_KEY).catch(() => null)) || null;
+      const memoryProposals = (tidy?.proposals || []).map((p) => ({ type: p.type, keys: p.keys, into: p.into || null, keep: p.keep || null, text: p.text || null, why: p.why || '', createdAt: p.createdAt || null }));
 
       let count = 0;
       try {
-        count = await writeExport(write, { store, userId, user: req.user, prefs, memory, botMemory, skills, tasks, workflows, projects, feedback, skillDraft, artifactData, research, mcpServers, holdings });
+        count = await writeExport(write, { store, userId, user: req.user, prefs, memory, botMemory, memoryProposals, skills, tasks, workflows, projects, feedback, skillDraft, artifactData, research, mcpServers, holdings });
       } catch (err) {
         /*
          * Half a JSON file that downloads as "complete" is worse than a failed
@@ -704,7 +747,7 @@ export function argsWithoutSecrets(args) {
  *
  * @returns how many conversations went into it
  */
-async function writeExport(write, { store, userId, user, prefs, memory, botMemory = [], skills, tasks, workflows, projects, feedback = [], skillDraft = null, artifactData = null, research = [], mcpServers = [], holdings = { themes: [], titles: [], places: [], answers: [] } }) {
+async function writeExport(write, { store, userId, user, prefs, memory, botMemory = [], memoryProposals = [], skills, tasks, workflows, projects, feedback = [], skillDraft = null, artifactData = null, research = [], mcpServers = [], holdings = { themes: [], titles: [], places: [], answers: [] } }) {
   // The username, a skill's files, the feedback sent (PRV-014), the skill draft
   // kept on the account (PRV-027), what artifacts' pages saved (PRV-028), the
   // deep-research runs and the MCP servers added (PRV-029) are held too, so they
@@ -720,6 +763,7 @@ async function writeExport(write, { store, userId, user, prefs, memory, botMemor
       `"prefs":${JSON.stringify(prefs)},` +
       `"memory":${JSON.stringify(memory)},` +
       `"botMemory":${JSON.stringify(botMemory)},` +
+      `"memoryProposals":${JSON.stringify(memoryProposals)},` +
       `"skills":${JSON.stringify(skills.map((s) => ({ name: s.name, description: s.description, instructions: s.instructions, enabled: s.enabled, shared: !!s.shared_at, files: Array.isArray(s.files) ? s.files : [] })))},` +
       `"addedSkills":${JSON.stringify(added.map((a) => ({ name: a.status === 'ok' ? a.name : a.added_name, addedAt: a.added_at, status: a.status })))},` +
       `"skillDraft":${JSON.stringify(skillDraft || null)},` +

@@ -1230,6 +1230,10 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Đây là cuộc trò chuyện ẩn danh: không ghi nhớ gì từ nó, và các ghi chú đã lưu không được dùng ở đây.",
   "That note would be {0} characters; the limit is {1}, because every note is read into every conversation. Keep the facts that will matter later and drop the rest, or split it by subject.":
     "Ghi chú đó sẽ dài {0} ký tự; giới hạn là {1}, vì mọi ghi chú đều được đọc vào mọi cuộc trò chuyện. Hãy giữ những điều sẽ cần sau này và bỏ phần còn lại, hoặc tách theo chủ đề.",
+  // Dọn ghi chú hằng tháng — chỉ đề xuất (2026-11-12).
+  'That suggestion is no longer there.': 'Đề xuất đó không còn nữa.',
+  'Those notes have changed since this was suggested, so it was dropped.':
+    'Các ghi chú đó đã thay đổi kể từ khi có đề xuất này, nên đề xuất đã bị bỏ.',
   // Loại ghi chú, thời hạn, và giới hạn cho mỗi nơi (2026-11-12).
   "A note's kind is one of: {0}.":
     "Loại của ghi chú phải là một trong: {0}.",

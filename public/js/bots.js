@@ -570,7 +570,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
   }
 
   /** What the panel last read, for the subject it was read for: drawn again at once, never a spinner where numbers were. */
-  let detailsData = /** @type {{ key: string, entries: any[], usage: any[], tasks: any[] } | null} */ (null);
+  let detailsData = /** @type {{ key: string, entries: any[], forgotten?: any[], usage: any[], tasks: any[] } | null} */ (null);
   let detailsTimer = /** @type {any} */ (null);
   let detailsKey = '';
 
@@ -631,7 +631,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       (isGroup ? api.groupTasks(it.id) : api.botTasks(it.id)).catch(() => ({ tasks: detailsData?.key === key ? detailsData.tasks : [] })),
     ]);
     if (turn !== detailsTurn) return;
-    detailsData = { key, entries: memory.entries || [], usage, tasks: tasks.tasks || [] };
+    detailsData = { key, entries: memory.entries || [], forgotten: memory.forgotten || (detailsData?.key === key ? detailsData.forgotten : []) || [], usage, tasks: tasks.tasks || [] };
     drawDetailsBody(it, detailsData);
   }
 
@@ -868,6 +868,32 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
   let editingEntry = '';
   let forgotten = /** @type {{ id: string, text: string, timer: any } | null} */ (null);
 
+  /**
+   * Who saved an entry and where (owner, 2026-11-12): the memory review's own line,
+   * and the chat it was saved in with what that chat had last read from outside — a
+   * host or a kind of tool, never what it said.
+   */
+  function savedHtml(e) {
+    const parts = [];
+    if (e.source === 'review') parts.push(t('bots.memoryByReview'));
+    if (e.saved?.chatId) {
+      parts.push(e.saved.chatTitle ? t('bots.memorySavedIn', { chat: e.saved.chatTitle }) : t('bots.memorySavedInGone'));
+      if (e.saved.outside) parts.push(t('bots.memoryAfterReading', { source: e.saved.outside }));
+    }
+    return parts.length ? `<span class="botmemory__meta">${escapeHtml(parts.join(' · '))}</span>` : '';
+  }
+
+  /** The versions a bot or its review replaced, each with a way back. */
+  function earlierHtml(e) {
+    if (!e.history?.length) return '';
+    const what = escapeHtml(e.text.slice(0, 40));
+    const day = (iso) => (iso ? new Date(iso).toLocaleDateString(localeTag()) : '');
+    const rows = e.history
+      .map((v) => `<li><span class="botmemory__text">${escapeHtml(v.text)}</span><span class="botmemory__meta">${escapeHtml([day(v.validFrom), day(v.invalidAt)].filter(Boolean).join(' – '))}</span><button class="botmemory__forget" type="button" data-restore="${escapeHtml(v.id)}" aria-label="${escapeHtml(t('bots.memoryRestore'))}: ${escapeHtml(v.text.slice(0, 40))}">${escapeHtml(t('bots.memoryRestore'))}</button></li>`)
+      .join('');
+    return `<details class="botmemory__earlier"><summary aria-label="${escapeHtml(t('bots.memoryEarlier', { count: e.history.length }))}: ${what}">${escapeHtml(t('bots.memoryEarlier', { count: e.history.length }))}</summary><ul>${rows}</ul></details>`;
+  }
+
   /** One entry: its words (or the box to change them), Pin, Edit and Forget (owner, 2026-11-10). */
   function entryHtml(e) {
     const id = escapeHtml(e.id);
@@ -875,12 +901,24 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     if (editingEntry === e.id) {
       return `<li class="is-editing"><form class="botmemory__edit" data-memory-edit="${id}"><input type="text" maxlength="300" data-edit-text value="${escapeHtml(e.text)}" aria-label="${escapeHtml(t('bots.memoryEdit'))}: ${what}" /><button class="btn btn--small btn--primary" type="submit">${escapeHtml(t('bots.memorySave'))}</button><button class="btn btn--small" type="button" data-edit-cancel>${escapeHtml(t('action.cancel'))}</button></form></li>`;
     }
-    return `<li class="${e.pinned ? 'is-pinned' : ''}"><span class="botmemory__text">${e.pinned ? `<span class="botmemory__pin" aria-label="${escapeHtml(t('bots.memoryPinned'))}">📌</span>` : ''}${escapeHtml(e.text)}</span>
+    // A review's change can be taken back where it is: its earlier version, or the entry it added.
+    const undoReview = e.source === 'review' ? `<button class="botmemory__forget" type="button" data-undo-review="${id}" aria-label="${escapeHtml(t('bots.memoryUndoReview'))}: ${what}">${escapeHtml(t('bots.memoryUndoReview'))}</button>` : '';
+    return `<li class="${e.pinned ? 'is-pinned' : ''}"><span class="botmemory__main"><span class="botmemory__text">${e.pinned ? `<span class="botmemory__pin" aria-label="${escapeHtml(t('bots.memoryPinned'))}">📌</span>` : ''}${escapeHtml(e.text)}</span>${savedHtml(e)}${earlierHtml(e)}</span>
       <span class="botmemory__acts">
+        ${undoReview}
         <button class="botmemory__forget" type="button" data-pin="${id}" aria-pressed="${!!e.pinned}" aria-label="${escapeHtml(t(e.pinned ? 'bots.memoryUnpin' : 'bots.memoryPin'))}: ${what}">${escapeHtml(t(e.pinned ? 'bots.memoryUnpin' : 'bots.memoryPin'))}</button>
         <button class="botmemory__forget" type="button" data-edit="${id}" aria-label="${escapeHtml(t('bots.memoryEdit'))}: ${what}">${escapeHtml(t('bots.memoryEdit'))}</button>
         <button class="botmemory__forget" type="button" data-forget="${id}" aria-label="${escapeHtml(t('bots.forget'))}: ${what}">${escapeHtml(t('bots.forget'))}</button>
       </span></li>`;
+  }
+
+  /** What the bot or its review forgot: kept for a while, to bring back or leave to go (schema 50). */
+  function forgottenHtml(list) {
+    if (!list?.length) return '';
+    const rows = list
+      .map((f) => `<li><span class="botmemory__main"><span class="botmemory__text">${escapeHtml(f.text)}</span>${savedHtml(f)}</span><span class="botmemory__acts"><button class="botmemory__forget" type="button" data-restore="${escapeHtml(f.id)}" aria-label="${escapeHtml(t('bots.memoryRestore'))}: ${escapeHtml(f.text.slice(0, 40))}">${escapeHtml(t('bots.memoryRestore'))}</button><button class="botmemory__forget" type="button" data-forget="${escapeHtml(f.id)}" aria-label="${escapeHtml(t('action.delete'))}: ${escapeHtml(f.text.slice(0, 40))}">${escapeHtml(t('action.delete'))}</button></span></li>`)
+      .join('');
+    return `<details class="botmemory__forgotten"><summary>${escapeHtml(t('bots.memoryForgottenList', { count: list.length }))}</summary><ul class="botmemory__list">${rows}</ul></details>`;
   }
 
   function memoryHtml(entries) {
@@ -889,6 +927,7 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
     const ordered = [...entries.filter((e) => e.pinned), ...entries.filter((e) => !e.pinned)];
     return `<div class="botmemory">
       ${entries.length || undo ? `<ul class="botmemory__list">${undo}${ordered.map(entryHtml).join('')}</ul>` : `<p class="hint">${escapeHtml(t('bots.memoryEmpty'))}</p>`}
+      ${forgottenHtml(detailsData?.forgotten)}
       <form class="botmemory__add" data-memory-add>
         <input type="text" maxlength="300" data-memory-text aria-label="${escapeHtml(t('bots.memoryAdd'))}" placeholder="${escapeHtml(t('bots.memoryPlaceholder'))}" />
         <button class="btn btn--small" type="submit">${escapeHtml(t('bots.memoryAdd'))}</button>
@@ -1749,6 +1788,24 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       paintMemory();
       return;
     }
+    // An earlier version or a forgotten entry back, or a review's change taken back (owner, 2026-11-12).
+    const restoreBtn = /** @type {HTMLElement | null} */ (target.closest('[data-restore], [data-undo-review]'));
+    if (restoreBtn && open && detailsData) {
+      const reviewed = restoreBtn.dataset.undoReview ? detailsData.entries.find((e) => e.id === restoreBtn.dataset.undoReview) : null;
+      try {
+        if (restoreBtn.dataset.restore) await api.restoreBotMemory(kindNow, open.id, restoreBtn.dataset.restore);
+        else if (reviewed?.history?.length) await api.restoreBotMemory(kindNow, open.id, reviewed.history[0].id);
+        else if (reviewed) await api.deleteBotMemory(kindNow, open.id, reviewed.id);
+        const fresh = await api.botMemory(kindNow, open.id);
+        detailsData.entries = fresh.entries || [];
+        detailsData.forgotten = fresh.forgotten || [];
+        toast(t('bots.memoryRestored'), 'ok');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+      paintMemory();
+      return;
+    }
     const undoBtn = /** @type {HTMLElement | null} */ (target.closest('[data-undo-forget]'));
     if (undoBtn && open && forgotten) {
       const back = forgotten;
@@ -1781,6 +1838,8 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       const held = detailsData?.entries || [];
       const before = [...held];
       if (detailsData) detailsData.entries = held.filter((e) => e.id !== id);
+      // One the bot forgot, deleted by the person: gone from that list too, every version with it.
+      if (detailsData?.forgotten) detailsData.forgotten = detailsData.forgotten.filter((f) => f.id !== id);
       // Undo, where it was, for eight seconds.
       if (forgotten) clearTimeout(forgotten.timer);
       forgotten = {
@@ -1958,7 +2017,8 @@ export function createBotPage({ toast, openSettings, openFeedback, openAutomatio
       paintMemory();
       try {
         const { entry: saved } = await api.editBotMemory(open.kind === 'group' ? 'bot-groups' : 'bots', open.id, entry.id, { text });
-        Object.assign(entry, saved);
+        // The person's own words now: no earlier version is kept, nor where a bot saved it (PRV-006).
+        Object.assign(entry, saved, { history: [], saved: null });
       } catch (err) {
         entry.text = was;
         toast(err.message, 'error');

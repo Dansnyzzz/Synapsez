@@ -258,6 +258,8 @@ export const api = {
   /** Edit an entry (`{ text }`) or pin it (`{ pinned }`). */
   editBotMemory: (kind, id, entry, patch) => request('PATCH', `/api/${kind}/${encodeURIComponent(id)}/memory/${encodeURIComponent(entry)}`, patch),
   undoBotMemory: (kind, id, ids) => request('POST', `/api/${kind}/${encodeURIComponent(id)}/memory/undo`, { ids }),
+  /** Bring back a version a bot or its review replaced or forgot. */
+  restoreBotMemory: (kind, id, entry) => request('POST', `/api/${kind}/${encodeURIComponent(id)}/memory/${encodeURIComponent(entry)}/restore`),
   createGroup: (group) => request('POST', '/api/bot-groups', group),
   updateGroup: (id, patch) => request('PATCH', `/api/bot-groups/${encodeURIComponent(id)}`, patch),
   deleteGroup: (id) => request('DELETE', `/api/bot-groups/${encodeURIComponent(id)}`),
@@ -334,10 +336,16 @@ export const api = {
 
   // Memory, the security record, and the account's data (server/routes/account.js).
   memory: () => request('GET', '/api/memory'),
-  saveNote: (scope, key, content) =>
-    request('PUT', `/api/memory/${encodeURIComponent(scope)}/${encodeURIComponent(key)}`, { content }),
+  /** `extra`: the note's `kind` and an event's `expires` (YYYY-MM-DD, '' for none). */
+  saveNote: (scope, key, content, extra = {}) =>
+    request('PUT', `/api/memory/${encodeURIComponent(scope)}/${encodeURIComponent(key)}`, { content, ...extra }),
   deleteNote: (scope, key) => request('DELETE', `/api/memory/${encodeURIComponent(scope)}/${encodeURIComponent(key)}`),
   undoNote: (scope, key) => request('POST', `/api/memory/${encodeURIComponent(scope)}/${encodeURIComponent(key)}/undo`),
+  /** Bring back one of a note's earlier versions, by its place in the list (0 is the newest). */
+  restoreNote: (scope, key, index) => request('POST', `/api/memory/${encodeURIComponent(scope)}/${encodeURIComponent(key)}/restore`, { index }),
+  purgeNoteHistory: (scope, key) => request('DELETE', `/api/memory/${encodeURIComponent(scope)}/${encodeURIComponent(key)}/history`),
+  /** Accept or reject one of the monthly tidy's suggestions (`answer`: 'accept' | 'reject'). */
+  answerTidy: (id, answer) => request('POST', `/api/memory/tidy/${encodeURIComponent(id)}/${answer === 'accept' ? 'accept' : 'reject'}`),
   clearMemory: () => request('DELETE', '/api/memory'),
   importMemory: (text) => request('POST', '/api/memory/import', { text }),
   activity: () => request('GET', '/api/account/activity'),

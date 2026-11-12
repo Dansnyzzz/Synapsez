@@ -1709,6 +1709,33 @@ a tenth of their size on the providers that cache.
 Inside a project, notes are filed under the project and read only there. Outside, they belong to the
 account and are read everywhere.
 
+**Each note keeps time and says where it came from** (2026-11-12):
+
+- **Kinds.** A note is a *fact* (the default), a *preference*, a *rule* or an *event*. The prompt reads
+  them grouped by kind, rules first. A **rule** is a standing instruction, so the assistant never writes,
+  changes or removes one without asking you — under every approval setting, Auto included. An **event**
+  may carry an end date (`expires`); after it, the note is no longer read into conversations, stays
+  listed for you, and is deleted a month later. `memory_write` also takes `valid_from` for a fact that
+  became true on an earlier day.
+- **History.** When the assistant replaces or removes a note, the version it had goes into the note's
+  history — up to five, each with when it held, who wrote it and where. The prompt reads only the
+  current version. Settings → Memory shows the history, restores any version, and deletes the history
+  on its own. Your own edit or delete keeps **no** earlier version: what you take out is gone.
+- **Provenance.** A note the assistant saves records the conversation and the message that saved it,
+  and — when that conversation had read something from outside first — the host of the page or the
+  kind of tool (never what it said). Settings → Memory says "Saved in … after reading …"; the export
+  carries it.
+- **A cap.** One place — the account, or one project — keeps at most 40 notes or 24,000 characters.
+  Past either, the assistant is told to merge or remove notes first, so memory stays readable instead
+  of growing into a list of names the prompt has no room for.
+
+A bot's own memory works the same way where it can (Bot page → a bot → Memory): a bot's or its review's
+change closes the old entry and keeps it as an earlier version you can restore; what the bot forgets is
+listed apart until you restore or delete it; your own edit or delete keeps nothing; closed versions go
+after 90 days. Each entry says the chat it was saved in and what that chat had read from outside. The
+every-N-turns memory review writes nothing when the turns it would read had read anything from outside,
+and its own changes are marked, with an Undo beside them.
+
 **What is never written into a note:**
 
 | Never, even when asked | Only if Settings → Memory allows sensitive topics |
@@ -1724,6 +1751,12 @@ not a guarantee: it misses what is said obliquely. The tool descriptions carry t
 
 - **Use memory** — off means nothing is read or saved; the notes stay until deleted.
 - **Remember sensitive topics** — off by default.
+- **Tidy my notes monthly** — off by default. Once a month the free Auto model reads your notes (never
+  one saved from your Google data) and suggests merges, removals and contradictions. It changes
+  nothing: each suggestion waits in Settings → Memory for Accept or Reject, and one whose notes have
+  changed since is dropped. An accepted one is applied like an assistant change you approved, so what
+  it replaced stays in the notes' history. Delete all memory takes the suggestions too; the export
+  carries them.
 - **Search earlier conversations** — lets the assistant use `search_chats` to look back through what
   was said (user and assistant text only, never tool output). Inside a project it searches that
   project's conversations; outside, conversations outside projects.
@@ -1732,8 +1765,10 @@ not a guarantee: it misses what is said obliquely. The tool descriptions carry t
 - **Provider privacy** — Strict asks OpenRouter to route only to zero-data-retention endpoints that
   neither store nor train on prompts (`provider: { data_collection: "deny", zdr: true }`). Many free
   models are not served that way and stop working while it is on; the error says so.
-- Every note, grouped by where it applies, with Edit and Delete, a Delete-all, and a box to paste in
-  what Claude or ChatGPT says it remembers about you.
+- Every note, grouped by where it applies, with its kind, where it was saved and its earlier versions;
+  Edit (words, kind, an event's end date), Restore, delete the history, Delete, a Delete-all, and a box
+  to paste in what Claude or ChatGPT says it remembers about you. A note the assistant removed is shown
+  as removed, to bring back or delete for good.
 
 ### Incognito conversations
 
@@ -1747,7 +1782,8 @@ day after their last use.
 
 Settings → Privacy → **Your data**:
 
-- **Export my data** downloads one JSON file — profile and username, preferences, notes, skills with
+- **Export my data** downloads one JSON file — profile and username, preferences, notes (with their
+  kinds, earlier versions and where each was saved), bots' and groups' memory (likewise), skills with
   their files and whether each is shared, the shared skills added (by name), the skill draft, projects with their source text, scheduled tasks, workflows, the
   feedback you sent (with any conversation copy), what artifacts' pages saved, deep-research runs, the
   MCP servers you added (without their headers and environment, where their secrets are), and every

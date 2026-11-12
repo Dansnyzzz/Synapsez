@@ -1953,8 +1953,10 @@
             <p class="settings__lede" data-i18n="memory.lede">
               What the assistant remembers between conversations, and what it may look back at. All of it stays
               in this app's database; it reaches the model you chose only as part of a conversation — and that
-              model's provider handles it under its own terms. When the assistant changes a note, what it said
-              before is kept so you can undo the change; editing or deleting the note yourself removes it.
+              model's provider handles it under its own terms. When the assistant changes or removes a note, up
+              to five earlier versions are kept, with where each was saved, so you can bring one back; editing or
+              deleting the note yourself keeps none. A rule is never written or changed without your yes; an
+              event stops being used after its date.
             </p>
             <div class="srow">
               <div class="srow__text">
@@ -1986,6 +1988,17 @@
               </div>
               <div class="srow__control"><input type="checkbox" class="switch" id="memory-sensitive" /></div>
             </div>
+            <div class="srow">
+              <div class="srow__text">
+                <label class="srow__label" for="memory-tidy" data-i18n="memory.tidy">Tidy my notes monthly</label>
+                <p class="srow__desc" data-i18n="memory.tidyHint">
+                  Once a month the free Auto model reads your notes and suggests which to merge, remove or reconcile.
+                  It changes nothing: each suggestion waits below for you to accept or reject. Notes saved from your
+                  Google data are never sent.
+                </p>
+              </div>
+              <div class="srow__control"><input type="checkbox" class="switch" id="memory-tidy" /></div>
+            </div>
             <div class="srow srow--stack">
               <div class="srow__head">
                 <div class="srow__text">
@@ -2009,6 +2022,7 @@
             </div>
             <p class="settings__status" id="memory-saved" role="status" aria-live="polite"></p>
 
+            <div id="memory-tidy-list" aria-live="polite"></div>
             <h3 class="settings__title" data-i18n="memory.notes">Saved notes</h3>
             <div id="memory-list"></div>
           </section>

@@ -1357,13 +1357,32 @@ export function createPgStore(connectionString) {
       return new Map(rows.map((r) => [r.id, r.incognito ? null : r.title || '']));
     },
 
-    /** Forget everything: every set of notes on the account. Returns how many sets went. */
+    /**
+     * Forget everything: every set of notes on the account, and the tidy-up proposals
+     * that quote them (memoryTidy.js). Returns how many sets of notes went.
+     */
     async deleteAllMemory(userId) {
       const rows = await q(
-        `DELETE FROM user_settings WHERE user_id = $1 AND (key = 'memory' OR key LIKE 'memory:%') RETURNING key`,
+        `DELETE FROM user_settings WHERE user_id = $1 AND (key = 'memory' OR key LIKE 'memory:%' OR key = 'memoryTidy') RETURNING key`,
         [userId],
       );
-      return rows.length;
+      return rows.filter((r) => r.key !== 'memoryTidy').length;
+    },
+    /**
+     * The accounts due a monthly tidy of their notes (memoryTidy.js): switched on, memory
+     * on, and not looked at since `since` — the longest waiting first.
+     */
+    async memoryTidyDue(since, limit = 2) {
+      const rows = await q(
+        `SELECT p.user_id FROM user_settings p
+           LEFT JOIN user_settings t ON t.user_id = p.user_id AND t.key = 'memoryTidy'
+          WHERE p.key = 'prefs' AND p.value->>'memoryTidy' = 'true' AND COALESCE(p.value->>'memory', 'true') <> 'false'
+            AND COALESCE(t.value->>'at', '') < $1
+          ORDER BY COALESCE(t.value->>'at', ''), p.user_id
+          LIMIT $2`,
+        [String(since), Math.max(1, Math.min(Number(limit) || 2, 10))],
+      );
+      return rows.map((r) => r.user_id);
     },
 
     /**
@@ -5028,35 +5047,39 @@ export function createPgStore(connectionString) {
       return rows.length > 0;
     },
     /**
-     * Undo: bring forgotten entries back, each with the versions deleted beside it — or,
-     * for an entry a bot or a review forgot (closed, with nothing open after it in its
-     * chain), open it again. Returns how many of `ids` hold again.
+     * Undo: put entries back where they were. One the person deleted comes back with the
+     * versions deleted beside it, open or closed as it was; one a bot or a review forgot
+     * (closed, with nothing open after it in its chain) is opened again. Returns how
+     * many of `ids` are back.
      */
     async restoreBotMemory(userId, ids) {
       const list = JSON.stringify((Array.isArray(ids) ? ids : []).map(String));
-      await q(
-        `UPDATE bot_memory SET deleted_at = NULL
-          WHERE user_id = $1 AND deleted_at IS NOT NULL
-            AND COALESCE(chain_id, id) IN (
-              SELECT COALESCE(chain_id, id) FROM bot_memory
-               WHERE user_id = $1 AND deleted_at IS NOT NULL AND id IN (SELECT jsonb_array_elements_text($2::jsonb)))`,
+      const deleted = await q(
+        'SELECT id FROM bot_memory WHERE user_id = $1 AND deleted_at IS NOT NULL AND id IN (SELECT jsonb_array_elements_text($2::jsonb))',
         [userId, list],
       );
-      await q(
+      const undeleted = JSON.stringify(deleted.map((r) => r.id));
+      if (deleted.length) {
+        await q(
+          `UPDATE bot_memory SET deleted_at = NULL
+            WHERE user_id = $1 AND deleted_at IS NOT NULL
+              AND COALESCE(chain_id, id) IN (
+                SELECT COALESCE(chain_id, id) FROM bot_memory WHERE user_id = $1 AND id IN (SELECT jsonb_array_elements_text($2::jsonb)))`,
+          [userId, undeleted],
+        );
+      }
+      const reopened = await q(
         `UPDATE bot_memory m SET invalid_at = NULL, closed_by = NULL, closed_turn = NULL
           WHERE m.user_id = $1 AND m.deleted_at IS NULL AND m.invalid_at IS NOT NULL
             AND m.id IN (SELECT jsonb_array_elements_text($2::jsonb))
+            AND m.id NOT IN (SELECT jsonb_array_elements_text($3::jsonb))
             AND NOT EXISTS (SELECT 1 FROM bot_memory o
                              WHERE o.user_id = $1 AND COALESCE(o.chain_id, o.id) = COALESCE(m.chain_id, m.id)
-                               AND o.deleted_at IS NULL AND o.invalid_at IS NULL)`,
-        [userId, list],
+                               AND o.deleted_at IS NULL AND o.invalid_at IS NULL)
+          RETURNING m.id`,
+        [userId, list, undeleted],
       );
-      const rows = await q(
-        `SELECT id FROM bot_memory
-          WHERE user_id = $1 AND deleted_at IS NULL AND invalid_at IS NULL AND id IN (SELECT jsonb_array_elements_text($2::jsonb))`,
-        [userId, list],
-      );
-      return rows.length;
+      return deleted.length + reopened.length;
     },
     /**
      * Forgotten entries past their Undo, deleted for good — every account's (the sweep), or one
