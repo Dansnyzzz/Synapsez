@@ -264,8 +264,9 @@ section('schema.sql and SCHEMA_VERSION move together');
   // 43: bots.hue, scheduled_tasks.bot_id, and incognito chats with a bot left out of one-chat-per-bot.
   // 49: row-level security on every table (harness audit). 50: bot_memory history and provenance.
   // 51: skills.previous — a skill's words before the assistant last changed them.
-  // 52: service_keys — several keys per deployment service.
-  const STAMPED = { version: 52, fingerprint: '3d0053574e6b680c' };
+  // 52: service_keys — several keys per deployment service. Restamped without a bump for a
+  // comment-only change (the key limit, the page's path) before 52 left its branch (2026-11-13).
+  const STAMPED = { version: 52, fingerprint: '8b14ed9bb9ea5a5e' };
 
   check(
     'the recorded version matches the code',

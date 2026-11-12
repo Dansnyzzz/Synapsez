@@ -2,11 +2,11 @@
 
 ## 2026-11-13 — Every search service keeps spare keys (1.29.0)
 
-**Exa, Tavily and Firecrawl take up to 10 keys each**, added by the deployment's owner in Settings → Administration → Free allowances (the `*_API_KEY` variable stays key 1). A service's allowance is the sum of its keys, counted at once when one is added or removed. A key that is spent, refused or rate-limited hands over to the next; a slow provider (a timeout) is not retried on another key — the search moves to the next engine. Tavily and Firecrawl show each key's plan and use as the provider reports it. Brave and E2B still hold one key.
+**Exa, Tavily and Firecrawl take up to 10 keys each**, added by the deployment's owner in Settings → People → Free allowances, in the Administration group (the `*_API_KEY` variable stays key 1, and is one of the 10). A service's allowance is the sum of its keys, counted at once when one is added or removed. A key that is spent, refused or rate-limited hands over to the next; a slow provider (a timeout) is not retried on another key — the search moves to the next engine. Tavily and Firecrawl show each key's plan and use as the provider reports it. Brave and E2B still hold one key.
 
 **A paid key, chosen by the owner**: one per service, used only after every free key is full and only for charged calls (nothing is charged yet), with an optional monthly cap.
 
-**Firecrawl's allowance follows the plan its key is on** (Hobby: 5,000 credits); the shares are 60% / 35% / 5% of the summed capacity of all Firecrawl keys, and the `FIRECRAWL_*_FREE` variables become fixed overrides. A key out of credits still answers the free paper and law indexes. Two keys of the same Firecrawl team share credits, so the page warns when it sees that. The page also says when Tavily ran above 80% two months running.
+**Firecrawl's allowance follows the plan its key is on** (Hobby: 5,000 credits); the shares are 60% / 35% / 5% of the summed capacity of all Firecrawl keys. `FIRECRAWL_FREE_CREDITS` becomes each key's fallback until Firecrawl reports the key's plan; the share variables still fix a share outright. A key out of credits still answers the free paper and law indexes. Two keys of the same Firecrawl team share credits, so the page warns when it sees that. The page also says when Tavily ran above 80% two months running.
 
 ## 2026-11-12 — The old key envelope retired by the deployment itself; the tidy keeps to your sharing choice (1.28.2)
 

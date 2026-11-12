@@ -1,7 +1,8 @@
 # Key pools: several keys per deployment service (spec A)
 
 Owner, 2026-11-12: "every service has a fallback, because I have four more API keys for each"; the
-keys are added by an administrator in Settings → Administration → Free allowances, and the table
+keys are added by an administrator in Settings → People → Free allowances (in the Administration
+group; as shipped, by the owner alone), and the table
 counts the capacity of the keys actually added — "add two keys, add those two keys' capacity, in
 real time" — reading each key's plan and usage from the provider where the provider says it.
 Also that day: the owner moved Firecrawl to its **Hobby** plan.
@@ -53,7 +54,7 @@ Schema **52**, table `service_keys`:
 | id | TEXT PK | random |
 | service | TEXT NOT NULL | one of the pooled ids above |
 | sealed | TEXT NOT NULL | crypto.js v2, kind **`service-key`**, context `['service-key', service, id]` |
-| fingerprint | TEXT NOT NULL | HMAC-SHA256 of the key under the server's key-derivation secret; UNIQUE (service, fingerprint) — the same key twice is refused |
+| fingerprint | TEXT NOT NULL | HMAC-SHA256 of the key under the server's key-derivation secret; UNIQUE (service, fingerprint) — the same key twice is refused. **As shipped:** plain `sha256(service:key)`; the HMAC is deferred (security review L4) |
 | hint | TEXT NOT NULL | the last four characters |
 | label | TEXT | the owner's name for it ("account 2") |
 | ceiling | DOUBLE PRECISION | the owner's override of the default ceiling, in the service's unit; NULL = default/live |
@@ -80,7 +81,7 @@ A service's ceiling is the **sum of its keys' ceilings**; its use is the sum of 
 key added counts at once and a key removed stops counting at once, with no restart.
 
 Per-key ceiling, in order: the owner's override; else the provider's live limit × 0.95 (Tavily,
-Firecrawl, Resend); else the default above. A provider's live **remaining** is believed when it is
+Firecrawl — as shipped, Resend is not pooled); else the default above. A provider's live **remaining** is believed when it is
 lower than ours (as Firecrawl's is today), never when higher.
 
 Firecrawl's three shares (search 60%, pages 35%, the rest 5%) become shares of the service's whole
@@ -107,6 +108,10 @@ they are about people, not keys. Their pot grows with the capacity.
     key `exhausted` until its period ends (or the provider's `resets`), next key;
   - **429** → that key `cooling` for `Retry-After` (30 s at least, 10 min at most), next key;
   - a timeout or 5xx → next key once, the key left as it is (the service may be down for all).
+  - **As shipped** (owner, 2026-11-12 and 2026-11-13): a **timeout never moves to another key** — a
+    slow provider is slow for every key, and the search chain is already the retry; only a 5xx tries
+    the next key once. A **403 is the key's only when its body names the token or key** (401 always
+    is), for every service — otherwise it is the request's (a blocked site), no key marked.
   Counting stays where it is today (`take`/`spend`/`hold`/`settle`), now with the key's id.
 - **E2B holds one key** (owner, 2026-11-12: "for E2B I have only one key"): `maxKeys` 1, no Add
   button; it is counted through the pool on its environment key and may be the service's paid key
@@ -150,9 +155,10 @@ and bill it in full, so the owner pays the service."
 `/v2/team/credit-usage`, Resend `/usage`), each cached per key (Tavily 5 min, the others 2 min),
 written to `service_keys.live`. Asked when the Free allowances page is open (every 60 s while it is
 on screen, and by its Refresh button), and by the existing ten-minute Firecrawl refresh. Never on a
-person's request path.
+person's request path. **As shipped:** Tavily and Firecrawl only (no Resend); the page's request
+asks every key not refused (`refreshLive`) before the report is built from the figures.
 
-## Admin page (Settings → Administration → Free allowances)
+## Admin page (Settings → People → Free allowances, in the Administration group)
 
 - Each service row: name, `N keys` chip, the bar and `used / ceiling` summed, resets; pressed, it
   opens to its key rows: `…a1b2`, label, plan (live, e.g. "Hobby"), `used / limit`, "Firecrawl
@@ -172,7 +178,9 @@ person's request path.
   used, limit, resets, source: 'provider'|'counted', state, retryAt, fromEnv) and `pooled`.
 - `POST /api/admin/service-keys` `{ service, key, label?, ceiling? }` — **owner only**; validated,
   sealed, audited (`service_key_added`: service + hint); 409 on a duplicate; 400 on a 6th key; at
-  most 20 attempts an hour.
+  most 20 attempts an hour. **As shipped:** 400 past the service's `maxKeys`, the environment's key
+  counted (10 for Exa, Tavily, Firecrawl; 1 for Brave); 409 for the environment's own key too; an
+  E2B key is refused (its one key is `E2B_API_KEY`).
 - `DELETE /api/admin/service-keys/:id` — owner only; audited (`service_key_removed`).
 - `POST /api/admin/service-keys/:id/check` — owner only; re-runs the check, clears `invalid`.
 - `PUT /api/admin/service-keys/paid` `{ service, keyId: string|null, capMonthly?: number|null }` —
@@ -212,7 +220,7 @@ person's request path.
 - `test/key-pool.test.mjs`: pick by largest share; capacity = sum; add/remove changes it without a
   restart; each failure class → its state and the next key; cooling expires; exhausted until period
   end; legacy env bucket kept; Firecrawl shares of the summed capacity; E2B sticky key; duplicate
-  fingerprint refused; 6th key refused; hint only in every response and log line; the paid key is
+  fingerprint refused; a key past `maxKeys` refused (as shipped); hint only in every response and log line; the paid key is
   used only after every free key is full and only for `paid: true` (or ceilings off), stops at its
   monthly cap, is counted under `paid:`, and is never used for an unpaid call.
 - `test/database.test.mjs`: schema 52 table, RLS, cascade of `added_by`.

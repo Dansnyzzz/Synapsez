@@ -1446,8 +1446,10 @@ ALTER TABLE skills ADD COLUMN IF NOT EXISTS previous JSONB;
 
 -- ── Schema 52 ────────────────────────────────────────────────────────────────
 -- Several keys per deployment service (owner, 2026-11-12, server/keyPool.js): the
--- environment's key is key 1 and is never stored; the owner adds up to four more in
--- Settings → Administration → Free allowances. `sealed` is crypto v2 bound to
+-- environment's key is key 1 and is never stored; the owner adds the rest, up to the
+-- service's `maxKeys` with key 1 among them (keyPool.js POOLED: 10 for Exa, Tavily and
+-- Firecrawl, 1 for Brave and E2B), in Settings → People → Free allowances (in the
+-- Administration group). `sealed` is crypto v2 bound to
 -- ['service-key', service, id]; `fingerprint` is sha256(service:key) so the same key
 -- twice is refused; `hint` its last four characters — all the page ever shows.
 CREATE TABLE IF NOT EXISTS service_keys (

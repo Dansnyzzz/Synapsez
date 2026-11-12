@@ -5,12 +5,12 @@
       "date": "2026-11-13",
       "new": {
         "vi": [
-          "Exa, Tavily và Firecrawl mỗi dịch vụ nhận tới 10 khoá, do chủ triển khai thêm trong Cài đặt → Quản trị → Hạn mức miễn phí. Hạn mức của mỗi dịch vụ là tổng các khoá của nó, thêm hay bớt khoá có hiệu lực ngay. Khoá nào hết hạn mức, bị từ chối hoặc bị giới hạn tốc độ sẽ chuyển cho khoá kế tiếp.",
+          "Exa, Tavily và Firecrawl mỗi dịch vụ nhận tới 10 khoá, do chủ triển khai thêm trong Cài đặt → Người dùng → Hạn mức miễn phí (trong nhóm Quản trị). Hạn mức của mỗi dịch vụ là tổng các khoá của nó, thêm hay bớt khoá có hiệu lực ngay. Khoá nào hết hạn mức, bị từ chối hoặc bị giới hạn tốc độ sẽ chuyển cho khoá kế tiếp.",
           "Tavily và Firecrawl hiện gói và mức dùng của từng khoá đúng như nhà cung cấp báo.",
           "Chủ có thể chọn một khoá trả phí cho mỗi dịch vụ. Khoá này chỉ dùng khi mọi khoá miễn phí đã đầy, và chỉ cho các lệnh gọi tính phí (hiện chưa có lệnh nào tính phí), có thể đặt trần theo tháng."
         ],
         "en": [
-          "Exa, Tavily and Firecrawl each take up to 10 keys, added by the deployment's owner in Settings → Administration → Free allowances. Each service's allowance is the sum of its keys, and adding or removing a key counts at once. A key that is spent, refused or rate-limited hands over to the next.",
+          "Exa, Tavily and Firecrawl each take up to 10 keys, added by the deployment's owner in Settings → People → Free allowances (in the Administration group). Each service's allowance is the sum of its keys, and adding or removing a key counts at once. A key that is spent, refused or rate-limited hands over to the next.",
           "Tavily and Firecrawl show each key's plan and use as the provider reports it.",
           "The owner may choose one paid key per service. It is used only after every free key is full, and only for calls that are charged (nothing is charged yet), with an optional monthly cap."
         ]
