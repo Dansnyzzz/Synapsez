@@ -262,7 +262,9 @@ section('schema.sql and SCHEMA_VERSION move together');
   // 42: bots, bot_groups, bot_group_members, bot_memory, chats.bot_id/.bot_group_id,
   // usage_events.bot_id — the Bot page.
   // 43: bots.hue, scheduled_tasks.bot_id, and incognito chats with a bot left out of one-chat-per-bot.
-  const STAMPED = { version: 49, fingerprint: '64e84e9e720f0ae6' };
+  // 49: row-level security on every table (harness audit).
+  // 51: skills.previous — a skill's words before the assistant last changed them.
+  const STAMPED = { version: 51, fingerprint: '3d9f043788bf591e' };
 
   check(
     'the recorded version matches the code',

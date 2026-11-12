@@ -1002,7 +1002,7 @@ export function turnReadOutside(messages) {
 const PRIVATE_READS = new Set([
   'gmail', 'google_drive', 'google_calendar', 'google_contacts', 'google_docs', 'google_sheets', 'google_tasks',
   'read_file', 'fs_read_text', 'fs_search', 'grep', 'clipboard_read', 'search_docs', 'memory_read', 'memory_search',
-  'search_chats', 'notion_search', 'read_generated_file',
+  'search_chats', 'read_chat', 'notion_search', 'read_generated_file',
 ]);
 
 /** Whether this conversation has read the account's private data through a tool. */

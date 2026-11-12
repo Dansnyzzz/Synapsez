@@ -1413,6 +1413,14 @@ CREATE INDEX IF NOT EXISTS outbox_done_idx ON outbox (created_at) WHERE status <
 ALTER TABLE shared_models ADD COLUMN IF NOT EXISTS efforts TEXT;
 ALTER TABLE shared_models ADD COLUMN IF NOT EXISTS reasoning_mandatory BOOLEAN;
 
+-- ── Schema 51 ────────────────────────────────────────────────────────────────
+-- A skill's words before the assistant last changed them (owner, 2026-11-12):
+-- `{ description, instructions, updatedAt }`, one version, for the person to restore
+-- from Settings → Skills. Written only by `skill_write` / `skill_edit`; the person's own
+-- save, a restore and deleting the skill take it with them (PRV-006). Never read by
+-- anyone else: the shared-skill queries name their columns.
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS previous JSONB;
+
 -- ── Schema 49 ────────────────────────────────────────────────────────────────
 -- Row-level security on every table here (harness audit, 2026-11-12). On Supabase the
 -- tables in `public` are what its Data API (PostgREST) serves, and anyone holding the

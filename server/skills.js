@@ -103,11 +103,14 @@ const refusedShare = (scan) =>
  * shared and fails the scan is refused whole — the edit too, since everyone who
  * added it would be given it at once.
  *
+ * `by` says whose change it is (51): the assistant's keeps the words it replaced for
+ * the person to restore (`restoreSkill`); the person's own keeps nothing (PRV-006).
+ *
  * @param {string} userId
- * @param {{ name: string, description: string, instructions: string, files?: { name: string, content: string }[], shared?: boolean }} skill
+ * @param {{ name: string, description: string, instructions: string, files?: { name: string, content: string }[], shared?: boolean, by?: 'person' | 'assistant' }} skill
  * @returns {Promise<{ skill: any, change: 'on' | 'off' | null }>}
  */
-export async function writeSkill(userId, { name, description, instructions, files, shared }) {
+export async function writeSkill(userId, { name, description, instructions, files, shared, by = 'person' }) {
   const clean = String(name || '').trim();
   if (!clean) throw new Error('A skill needs a name.');
   if (clean.length > MAX_NAME) throw new Error(`Keep the name under ${MAX_NAME} characters.`);
@@ -146,9 +149,88 @@ export async function writeSkill(userId, { name, description, instructions, file
     files: existing && given === undefined ? carried : given,
     sharing,
     scan,
+    by: by === 'assistant' ? 'assistant' : 'person',
   });
   const now = !!skill?.shared_at;
   return { skill, change: now === wasShared ? null : now ? 'on' : 'off' };
+}
+
+/**
+ * How much shorter the assistant may make a skill's instructions in one `skill_write`
+ * without saying it means to: 30% (owner, 2026-11-12). A rewrite from memory drops
+ * the steps it did not remember, and a skill is how the person wants a job done.
+ */
+export const SHRINK_LIMIT = 0.3;
+
+/**
+ * The assistant's whole-instructions write over one that exists, checked: refused when
+ * it would cut them by more than `SHRINK_LIMIT`, unless `replace` says that is meant.
+ *
+ * @param {string} userId
+ * @param {{ name: string, instructions: string, replace?: boolean }} write
+ * @returns {Promise<any>} the skill it would write over, or null for a new one
+ */
+export async function guardShrink(userId, { name, instructions, replace = false }) {
+  const existing = await getStore().getSkillByName(userId, String(name || '').trim());
+  if (!existing || replace === true) return existing;
+  const before = String(existing.instructions || '').trim().length;
+  const after = String(instructions || '').trim().length;
+  if (!before || after >= before * (1 - SHRINK_LIMIT)) return existing;
+  throw new Error(
+    `The skill "${existing.name}" has ${before} characters of instructions, and this would replace them with ${after} — ` +
+      `${Math.round((1 - after / before) * 100)}% shorter. Change part of it with skill_edit, or send the whole procedure again; ` +
+      'only if the person wants the shorter version, write it with replace: true.',
+  );
+}
+
+/**
+ * One exact piece of a skill's instructions changed by the assistant — `skill_edit`,
+ * as `memory_edit` is for a note: correcting a step should not mean re-sending the
+ * procedure from memory. The words before are kept to restore, as any assistant change.
+ *
+ * @param {string} userId
+ * @param {{ name: string, oldString: string, newString: string }} edit
+ */
+export async function editSkill(userId, { name, oldString, newString }) {
+  const wanted = String(name || '').trim();
+  const store = getStore();
+  const skill = wanted ? await store.getSkillByName(userId, wanted) : null;
+  if (!skill) {
+    if (findBuiltinSkill(wanted.toLowerCase())) {
+      throw new Error(`"${wanted}" is one of Synapsez's own skills, which cannot be changed. Save one of the person's own under a new name with skill_write.`);
+    }
+    const names = (await store.listSkills(userId)).map((s) => s.name);
+    throw new Error(names.length ? `No skill of this account is called "${wanted}". Its skills: ${names.join(', ')}.` : 'This account has no skills of its own to change.');
+  }
+  const find = String(oldString ?? '');
+  if (!find) throw new Error('Give the text to replace.');
+  const occurrences = skill.instructions.split(find).length - 1;
+  if (occurrences === 0) {
+    throw new Error(`That text is not in the instructions of "${skill.name}". Read it with skill_read first — it must match exactly.`);
+  }
+  if (occurrences > 1) {
+    throw new Error(`That text appears ${occurrences} times in "${skill.name}". Include more of the words around it so it matches once only.`);
+  }
+  // A function, not a string: `replace` reads `$&` in a string replacement as a pattern.
+  const instructions = skill.instructions.replace(find, () => String(newString ?? ''));
+  return writeSkill(userId, { name: skill.name, description: skill.description, instructions, by: 'assistant' });
+}
+
+/**
+ * Put back the words the assistant last replaced — the person's own act, so it keeps
+ * no version of what it undid (PRV-006). Through `writeSkill`, so a shared skill's
+ * earlier words pass the same scan as any edit. Null when the account has no such skill.
+ *
+ * @returns {Promise<{ skill: any, change: 'on' | 'off' | null } | null>}
+ */
+export async function restoreSkill(userId, id) {
+  const skill = await getStore().getSkill(userId, String(id));
+  if (!skill) return null;
+  const before = skill.previous;
+  if (!before || typeof before.instructions !== 'string' || !before.instructions.trim()) {
+    throw Object.assign(new Error('This skill has no earlier version to restore.'), { status: 409 });
+  }
+  return writeSkill(userId, { name: skill.name, description: before.description || skill.description, instructions: before.instructions });
 }
 
 /**

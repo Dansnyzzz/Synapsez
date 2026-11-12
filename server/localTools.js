@@ -114,10 +114,14 @@ export const __testing = {
  * Shared by the in-process path above and the worker's HTTP endpoint, so a
  * folder indexed from a paired laptop and one indexed on the machine running the
  * server go through exactly the same code.
+ *
+ * `prune` (2026-11-12) comes once, after a walk that saw the whole folder, with every
+ * path still in it; an older server reads it as an empty batch and does nothing.
  */
 export async function handleIndexPayload(userId, payload) {
-  const { ingestBatch, knownStamps } = await import('./rag.js');
+  const { ingestBatch, knownStamps, pruneSource } = await import('./rag.js');
   if (payload?.op === 'stamps') return knownStamps(userId, payload.source);
+  if (payload?.op === 'prune') return pruneSource(userId, payload);
   return ingestBatch(userId, payload || {});
 }
 

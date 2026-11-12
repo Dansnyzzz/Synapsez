@@ -186,6 +186,8 @@ export const api = {
   saveSkill: (skill) => request('POST', '/api/skills', skill),
   setSkillEnabled: (id, enabled) => request('PATCH', `/api/skills/${id}`, { enabled }),
   deleteSkill: (id) => request('DELETE', `/api/skills/${id}`),
+  // The words the assistant last replaced in a skill, put back (schema 51).
+  restoreSkill: (id) => request('POST', `/api/skills/${encodeURIComponent(id)}/restore`),
   // Skills shared to Discover (schema 41): sharing one's own, adding by reference, moderating.
   setSkillShared: (id, shared) => request('PATCH', `/api/skills/${encodeURIComponent(id)}`, { shared }),
   sharedSkills: () => request('GET', '/api/skills/shared'),
@@ -473,6 +475,8 @@ export const api = {
   deleteUpload: (id) => request('DELETE', `/api/data/uploads/${encodeURIComponent(id)}`),
   deleteOwnFeedback: (id) => request('DELETE', `/api/data/feedback/${encodeURIComponent(id)}`),
   forgetFeedbackCopy: (id) => request('DELETE', `/api/data/feedback/${encodeURIComponent(id)}/transcript`),
+  // An indexed folder, forgotten with every passage of it (owner, 2026-11-12).
+  forgetIndexedFolder: (id) => request('DELETE', `/api/data/docs/${encodeURIComponent(id)}`),
 
   /* The folder on the machine, through the same worker tools the assistant uses. */
   workspace: (path = '.') => request('GET', `/api/workspace?path=${encodeURIComponent(path)}`),

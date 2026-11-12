@@ -262,8 +262,10 @@ export function splitStatements(sql) {
  *      outbox — work that starts outside the app (spec C)
  *  48  shared_models.efforts / reasoning_mandatory — the effort levels each model takes,
  *      so the reasoning dial asks a model only for what it lists (openaiCompatible.js)
+ *  51  skills.previous — the words before the assistant last changed a skill, to restore
+ *      (49 and 50 were taken by work done alongside this, 2026-11-12)
  */
-export const SCHEMA_VERSION = 49;
+export const SCHEMA_VERSION = 51;
 
 /** How long a forgotten bot memory entry waits for Undo before it is deleted for good. */
 export const FORGOTTEN_KEEP_MS = 10 * 60_000;
@@ -3581,8 +3583,12 @@ export function createPgStore(connectionString) {
      * a skill that turned out shared is taken off rather than shared unscanned. The
      * caller has refused an edit the scan flags on a skill it knew was shared; this
      * covers one shared by another tab in between. `scan` is kept with the skill.
+     *
+     * `by` (51): an assistant's change keeps the words it replaced in `previous` — one
+     * version, the one just before — for the person to restore; the person's own
+     * save keeps none (PRV-006), so what they wrote over is gone, as they meant.
      */
-    async saveSkill(userId, { id, name, description, instructions, files, sharing = 'keep', scan = null }) {
+    async saveSkill(userId, { id, name, description, instructions, files, sharing = 'keep', scan = null, by = 'person' }) {
       const rows = await q(
         `INSERT INTO skills (id, user_id, name, description, instructions, files, shared_at, scan)
          VALUES ($1, $2, $3, $4, $5, COALESCE($6::jsonb, '[]'::jsonb), CASE WHEN $7::text = 'on' THEN NOW() END, $8::jsonb)
@@ -3596,9 +3602,15 @@ export function createPgStore(connectionString) {
              ELSE CASE WHEN $9::boolean THEN skills.shared_at END
            END,
            scan = COALESCE($8::jsonb, skills.scan),
+           previous = CASE
+             WHEN $10::text <> 'assistant' THEN NULL
+             WHEN skills.instructions IS DISTINCT FROM EXCLUDED.instructions OR skills.description IS DISTINCT FROM EXCLUDED.description
+               THEN jsonb_build_object('description', skills.description, 'instructions', skills.instructions, 'updatedAt', skills.updated_at)
+             ELSE skills.previous
+           END,
            updated_at = NOW()
       RETURNING *`,
-        [id, userId, name, description, instructions, Array.isArray(files) ? toJson(files) : null, sharing, scan ? toJson(scan) : null, scan ? scan.ok !== false : true],
+        [id, userId, name, description, instructions, Array.isArray(files) ? toJson(files) : null, sharing, scan ? toJson(scan) : null, scan ? scan.ok !== false : true, by === 'assistant' ? 'assistant' : 'person'],
       );
       return rows[0];
     },
@@ -4020,6 +4032,35 @@ export function createPgStore(connectionString) {
         [userId, source ?? null],
       );
       return rows.length;
+    },
+
+    /**
+     * One source's files other than `keep`, deleted — the indexer's tidy after a walk
+     * that saw the whole folder (rag.js `pruneSource`). An empty `keep` is a folder
+     * with nothing left in it.
+     *
+     * @param {string} userId @param {string} source @param {string[]} keep
+     * @returns {Promise<{ files: number, chunks: number }>}
+     */
+    async pruneDocs(userId, source, keep) {
+      const rows = await q(
+        'DELETE FROM doc_chunks WHERE user_id = $1 AND source = $2 AND NOT (path = ANY($3::text[])) RETURNING path',
+        [userId, String(source), Array.isArray(keep) ? keep.map(String) : []],
+      );
+      return { files: new Set(rows.map((r) => r.path)).size, chunks: rows.length };
+    },
+
+    /**
+     * Every indexed file, by source — the account export's list of what is indexed
+     * (Decree 13: what is held, shown). Paths and counts only: the vectors are numbers
+     * nobody can read, and the text is the person's own files, still on their disk.
+     */
+    async docInventory(userId) {
+      return q(
+        `SELECT source, path, COUNT(*)::int AS chunks, MAX(model) AS model, MAX(created_at) AS indexed_at
+           FROM doc_chunks WHERE user_id = $1 GROUP BY source, path ORDER BY source, path`,
+        [userId],
+      );
     },
 
     // ── scheduled tasks ─────────────────────────────────────────────

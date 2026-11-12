@@ -64,7 +64,7 @@ internet ever connects inward to your machine.
 | **Live plan** | The assistant keeps a visible task list as it works through multi-step jobs. |
 | **Reasoning** | Streamed and collapsible, for models that expose it. |
 | **Memory** | Notes read back at the start of every conversation, project notes first, within a budget; `memory_search` for the rest. Identifiers are never saved and sensitive topics only if you allow it. Every note editable in Settings → Memory. |
-| **Earlier conversations** | `search_chats` looks back through what was said, scoped to the project you are in, as Claude's chat search does. Switchable. |
+| **Earlier conversations** | `search_chats` looks back through what was said, scoped to the project you are in, as Claude's chat search does; `read_chat` reads more of one it found. Switchable. |
 | **Incognito** | A conversation kept out of history, search, export and memory, deleted when you leave it. |
 | **Your data** | Export everything as one file; import conversations from Claude, ChatGPT or another Synapsez; delete the account; a security record of sign-ins, key and privacy changes; automatic deletion after 30–365 days if you want it. |
 | **Phone-first** | Responsive down to small screens, safe-area aware, installable to the home screen. |
@@ -1462,6 +1462,14 @@ Laid out as Claude's (2026-11-01): **Filter by** the plugin a skill comes with o
   `skill-creator` picked: the assistant asks what the skill should do, drafts it, and saves it with
   `skill_write` once you agree.
 
+**When the assistant changes a skill** (2026-11-12, schema 51): `skill_edit` changes one exact piece
+of the instructions, as `memory_edit` does a note, and `skill_write` over an existing skill refuses
+to make its instructions more than 30% shorter unless it says `replace: true` — a rewrite from memory
+drops the steps it did not remember. Either way the words it replaced are kept, one version, and the
+row is tagged *Changed by the assistant*; ⋯ → **Restore the earlier version** puts them back
+(`POST /api/skills/:id/restore`). Your own save, a restore, or deleting the skill keeps no earlier
+version (PRV-006). Both tools ask first, and neither is offered in an incognito conversation.
+
 ### Sharing skills (2026-11-09, schema 41)
 
 **Discover** lists the skills people on this site share — every account's, newest made first, each with
@@ -1663,7 +1671,20 @@ files stay where they are. The split is the same one the rest of the app runs on
 and chunks, the server holds the API key and does the embedding.
 
 Re-indexing is cheap — a file whose modification time has not moved is not read again — so pointing
-it at the same folder weekly costs almost nothing.
+it at the same folder weekly costs almost nothing. A file deleted or renamed since is forgotten, but
+only after a walk that saw the whole folder: one the person stopped, one cut at the 3,000-file cap,
+or one with a folder it could not read forgets nothing, because a file it did not find there is not
+a file that is gone.
+
+What comes in is cleaned and checked (2026-11-12): characters that draw nothing — zero-width and
+bidi marks, Unicode tag characters — are taken out before anything is embedded, here and on a
+project's shelf, and a passage that speaks to an AI ("ignore your previous instructions", "note to
+the AI:") is kept as written and marked *inside* the untrusted envelope each time a search returns
+it. Nothing is dropped.
+
+**Settings → Privacy → Your data → Indexed documents** lists every indexed folder with its files and
+passages, and forgets one — every passage and embedding of it — at the person's own press; the
+account export lists the folders and their files (never the passages or the vectors).
 
 **It needs an OpenAI or Google key.** Those are the two providers here that serve an embedding
 endpoint; Anthropic has never had one and OpenRouter routes chat only. Vectors from different models
@@ -1731,7 +1752,10 @@ not a guarantee: it misses what is said obliquely. The tool descriptions carry t
 - **Remember sensitive topics** — off by default.
 - **Search earlier conversations** — lets the assistant use `search_chats` to look back through what
   was said (user and assistant text only, never tool output). Inside a project it searches that
-  project's conversations; outside, conversations outside projects.
+  project's conversations; outside, conversations outside projects. Each result carries its id and
+  the number of each message it quotes, and `read_chat` reads a window of one (12 messages, 30 at
+  most) under the same rules: never incognito, a bot's or a group's conversation, nor another
+  project's, and one holding Google data only into a conversation that holds such data too.
 - **Keep conversations** — forever, or delete conversations not continued for 30/90/180/365 days, with
   their files. Pinned conversations are always kept.
 - **Provider privacy** — Strict asks OpenRouter to route only to zero-data-retention endpoints that
@@ -1755,8 +1779,10 @@ Settings → Privacy → **Your data**:
 - **Export my data** downloads one JSON file — profile and username, preferences, notes, skills with
   their files and whether each is shared, the shared skills added (by name), the skill draft, projects with their source text, scheduled tasks, workflows, the
   feedback you sent (with any conversation copy), what artifacts' pages saved, deep-research runs, the
-  MCP servers you added (without their headers and environment, where their secrets are), and every
-  conversation with its messages. Usage figures, sign-in sessions and the account's activity log are
+  MCP servers you added (without their headers and environment, where their secrets are), the indexed
+  folders and their files (not the passages or the vectors), the bot team as the Bot page exports it
+  (`team`: bots, their memory, groups and their tasks — the Bot page's Import reads it back), a skill's
+  earlier version while one is kept, and every conversation with its messages. Usage figures, sign-in sessions and the account's activity log are
   shown in Settings and not repeated in it. Streamed, so a large
   account does not hit the host's response limit. API keys, connector tokens and uploaded files' bytes
   are not in it; incognito conversations are not part of the record.
@@ -1825,11 +1851,13 @@ searched by name, twenty to a page:
 | Artifacts | files the assistant made, with a link | Private / Public |
 | Uploads | files sent in a shared conversation before it was shared — its visitors can open them | said, not switched: stop sharing the conversation |
 | Feedback | feedback sent with a copy of a conversation, which administrators can read | ⋯ → remove the copy |
+| Indexed documents | — nothing indexed is reachable by anyone else, so the page has one half | ⋯ → forget the folder |
 
 Each row's ⋯ copies its link, opens, downloads or deletes it. Making something public copies its new
 link; making it private takes the link back, and sharing again makes a new one. Incognito
 conversations and their files are never listed. Routes: `GET /api/data`, `GET /api/data/:kind`,
-`DELETE /api/data/uploads/:id`, `DELETE /api/data/feedback/:id[/transcript]`
+`DELETE /api/data/uploads/:id`, `DELETE /api/data/feedback/:id[/transcript]`,
+`DELETE /api/data/docs/:id` (an indexed folder, by a hash of its name)
 (`server/routes/yourData.js`); page: `public/js/your-data.js`.
 
 ### Usage, devices, feedback, changelog

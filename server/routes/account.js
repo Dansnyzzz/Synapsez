@@ -14,6 +14,7 @@ import { log } from '../util/trace.js';
 import { MEMORY_KEY, projectMemoryKey, noteName, MAX_NOTE_CHARS, memoryRefusal, refusalMessage, stampNote } from '../memory.js';
 import { normaliseImport, IMPORT_LIMITS } from '../../public/js/import-formats.js';
 import { clientError } from '../util/clientError.js';
+import { exportTeam } from '../bots/porting.js';
 
 /**
  * What was hidden in an account's conversations over thirty days, counted. The count reads
@@ -315,7 +316,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
     wrap(async (req, res) => {
       const store = getStore();
       const userId = req.user.id;
-      const [prefs, buckets, skills, active, archived, tasks, workflows, feedback, skillDraft, artifactData, research, mcpServers, holdings] = await Promise.all([
+      const [prefs, buckets, skills, active, archived, tasks, workflows, feedback, skillDraft, artifactData, research, mcpServers, holdings, indexed, team] = await Promise.all([
         getPrefs(userId),
         store.listMemoryBuckets(userId),
         store.listSkills(userId),
@@ -330,6 +331,10 @@ export function mountAccountRoutes(api, admin, { wrap }) {
         store.exportResearchRuns(userId),
         store.listMcpServers(userId),
         holdingsOf(userId, store),
+        // What is indexed, by folder and file — never the vectors (owner, 2026-11-12, Decree 13).
+        store.docInventory(userId),
+        // The bots, their memory and the groups, as the Bot page's own export writes them (spec B.5).
+        exportTeam(userId),
       ]);
 
       const stamp = new Date().toISOString().slice(0, 10);
@@ -384,7 +389,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
 
       let count = 0;
       try {
-        count = await writeExport(write, { store, userId, user: req.user, prefs, memory, skills, tasks, workflows, projects, feedback, skillDraft, artifactData, research, mcpServers, holdings });
+        count = await writeExport(write, { store, userId, user: req.user, prefs, memory, skills, tasks, workflows, projects, feedback, skillDraft, artifactData, research, mcpServers, holdings, indexed, team });
       } catch (err) {
         /*
          * Half a JSON file that downloads as "complete" is worse than a failed
@@ -581,7 +586,7 @@ export function argsWithoutSecrets(args) {
  *
  * @returns how many conversations went into it
  */
-async function writeExport(write, { store, userId, user, prefs, memory, skills, tasks, workflows, projects, feedback = [], skillDraft = null, artifactData = null, research = [], mcpServers = [], holdings = { themes: [], titles: [], places: [], answers: [] } }) {
+async function writeExport(write, { store, userId, user, prefs, memory, skills, tasks, workflows, projects, feedback = [], skillDraft = null, artifactData = null, research = [], mcpServers = [], holdings = { themes: [], titles: [], places: [], answers: [] }, indexed = [], team = null }) {
   // The username, a skill's files, the feedback sent (PRV-014), the skill draft
   // kept on the account (PRV-027), what artifacts' pages saved (PRV-028), the
   // deep-research runs and the MCP servers added (PRV-029) are held too, so they
@@ -590,13 +595,15 @@ async function writeExport(write, { store, userId, user, prefs, memory, skills, 
   // the account's activity log, each shown in Settings, and keys and tokens.
   // Whether each skill is shared, and the shared skills added (41): those are
   // references to somebody else's, so by the name each had, not their words.
+  // The indexed folders and the bot team are in it too (owner, 2026-11-12).
   const added = (await store.listAddedSkills?.(userId)) || [];
   await write(
     `{"format":"synapsez-export","version":1,"exportedAt":${JSON.stringify(new Date().toISOString())},` +
       `"account":${JSON.stringify({ name: user.name, username: user.username ?? null, email: user.email, createdAt: user.created_at })},` +
       `"prefs":${JSON.stringify(prefs)},` +
       `"memory":${JSON.stringify(memory)},` +
-      `"skills":${JSON.stringify(skills.map((s) => ({ name: s.name, description: s.description, instructions: s.instructions, enabled: s.enabled, shared: !!s.shared_at, files: Array.isArray(s.files) ? s.files : [] })))},` +
+      // With the words an assistant change replaced, while they are kept to restore (51).
+      `"skills":${JSON.stringify(skills.map((s) => ({ name: s.name, description: s.description, instructions: s.instructions, enabled: s.enabled, shared: !!s.shared_at, files: Array.isArray(s.files) ? s.files : [], ...(s.previous?.instructions ? { previous: s.previous } : {}) })))},` +
       `"addedSkills":${JSON.stringify(added.map((a) => ({ name: a.status === 'ok' ? a.name : a.added_name, addedAt: a.added_at, status: a.status })))},` +
       `"skillDraft":${JSON.stringify(skillDraft || null)},` +
       `"artifactData":${JSON.stringify(artifactData || {})},` +
@@ -622,6 +629,13 @@ async function writeExport(write, { store, userId, user, prefs, memory, skills, 
       )},` +
       `"scheduledTasks":${JSON.stringify(tasks.map((t) => ({ title: t.title, prompt: t.prompt, cron: t.cron, timezone: t.tz, enabled: t.enabled, projectId: t.project_id })))},` +
       `"workflows":${JSON.stringify(workflows.map((w) => ({ title: w.title, steps: w.steps, cron: w.cron, enabled: w.enabled })))},` +
+      // The folders indexed for search_docs, each file in them and how many passages it
+      // is (owner, 2026-11-12). Not the passages' text — a copy of files still on the
+      // person's computer — and not the embeddings, which nobody can read.
+      `"indexedDocuments":${JSON.stringify(foldersOf(indexed))},` +
+      // The bot team as the Bot page exports it (synapsez-bots/1): bots, their memory,
+      // groups, their tasks — so the one export holds them too, and the Bot page can read it back.
+      `"team":${JSON.stringify(team || null)},` +
       `"feedback":${JSON.stringify(
         feedback.map((f) => ({
           topic: f.topic_other || f.topic,
@@ -685,6 +699,27 @@ async function writeExport(write, { store, userId, user, prefs, memory, skills, 
   }
   await write(']}');
   return count;
+}
+
+/**
+ * `docInventory`'s rows, one entry per indexed folder with its files.
+ *
+ * @param {{ source: string, path: string, chunks: number, model: string, indexed_at: any }[]} rows
+ */
+export function foldersOf(rows) {
+  const folders = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const at = new Date(row.indexed_at);
+    let folder = folders.get(row.source);
+    if (!folder) {
+      folder = { source: row.source, model: row.model || null, indexedAt: at, passages: 0, files: [] };
+      folders.set(row.source, folder);
+    }
+    folder.files.push({ path: row.path, passages: Number(row.chunks) || 0, indexedAt: at });
+    folder.passages += Number(row.chunks) || 0;
+    if (at > folder.indexedAt) folder.indexedAt = at;
+  }
+  return [...folders.values()];
 }
 
 /**

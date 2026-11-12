@@ -355,11 +355,13 @@ const STEP_VERBS = {
   memory_delete: 'step.memory_delete',
   memory_search: 'step.memory_search',
   search_chats: 'step.search_chats',
+  read_chat: 'step.read_chat',
   search_connectors: 'step.search_connectors',
   code_context: 'step.code_context',
   suggest_connectors: 'step.suggest_connectors',
   skill_read: 'step.skill_read',
   skill_write: 'step.skill_write',
+  skill_edit: 'step.skill_edit',
   load_tools: 'step.load_tools',
   update_plan: 'step.update_plan',
 
@@ -596,6 +598,7 @@ const STEP_DETAILS = {
   memory_delete: (i) => clip(i.key),
   skill_read: (i) => clip(i.name),
   skill_write: (i) => clip(i.name),
+  skill_edit: (i) => clip(i.name),
   load_tools: (i) => (Array.isArray(i.names) ? clip(i.names.join(', ')) : clip(i.names)),
   update_plan: (i) => count((i.steps || []).length),
 
@@ -827,6 +830,8 @@ const LOOKUPS = {
   market_data: 'market',
   encyclopedia: 'encyclopedia',
   search_chats: 'chats',
+  // More of one conversation it found: in the same card, as the conversation it read.
+  read_chat: 'chats',
   memory_search: 'memory',
 };
 const LOOKUP_TITLES = {
