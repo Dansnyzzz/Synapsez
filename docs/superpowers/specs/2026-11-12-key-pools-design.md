@@ -67,7 +67,8 @@ Schema **52**, table `service_keys`:
 
 RLS on like every table (the DO block stays last). Removing a key deletes its row (1:1). The
 key in the environment stays **key 1** of its service, shown as "from the server's settings",
-not removable here. At most **5 keys per service** including that one.
+not removable here. At most `maxKeys` keys per service including that one — 10 for Exa, Tavily
+and Firecrawl, 1 for Brave and E2B.
 
 `secretsReseal.js` gains the table as a source so a key rotation reseals these too.
 
