@@ -4,6 +4,7 @@ import { resolveForUser } from '../autoPick.js';
 import { getStore } from '../store/index.js';
 import { pastedOpening, verifyOwned } from '../attachments.js';
 import { deriveTitle, needsApproval as pendingApproval } from '../agent.js';
+import { changesRule, ruleNotesInReach, RULE_REASON } from '../memory.js';
 import { normaliseQuestions, askLayout } from '../tools/askOptions.js';
 import { compact as compactChat, measure as measureContext, transcriptTokens } from '../compact.js';
 import { contextBreakdown } from '../contextParts.js';
@@ -171,7 +172,9 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
       }
       if (!question && last?.role === 'assistant' && last.toolCalls?.length) {
         const prefs = await getPrefs(req.user.id);
-        const gated = pendingApproval(last.toolCalls, prefs.toolPolicy);
+        // A rule note asks under every policy, so a reload still shows its card (memory.js, owner 2026-11-12).
+        const rules = await ruleNotesInReach(req.user.id, chat, last.toolCalls);
+        const gated = pendingApproval(last.toolCalls, prefs.toolPolicy, { rules });
         // What the independent check stopped still waits for an answer after a reload.
         const held = last.held || {};
         if (gated.length || Object.keys(held).length) {
@@ -180,7 +183,7 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
             name: c.name,
             input: c.input,
             needsApproval: gated.some((p) => p.id === c.id) || c.id in held,
-            reason: translateMessage(held[c.id] ?? riskReason(c.name, c.input), languageOf(req)),
+            reason: translateMessage(held[c.id] ?? (changesRule(c, rules) ? RULE_REASON : riskReason(c.name, c.input)), languageOf(req)),
           }));
         }
       }

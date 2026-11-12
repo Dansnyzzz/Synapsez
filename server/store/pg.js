@@ -262,11 +262,24 @@ export function splitStatements(sql) {
  *      outbox — work that starts outside the app (spec C)
  *  48  shared_models.efforts / reasoning_mandatory — the effort levels each model takes,
  *      so the reasoning dial asks a model only for what it lists (openaiCompatible.js)
+ *  49  row-level security on every table, no policy — Supabase's Data API roles reach no row
+ *  50  bot_memory.valid_from / invalid_at / chain_id / closed_by / closed_turn and
+ *      chat_id / message_seq / outside_from — a bot's memory keeps the versions a bot
+ *      or a review replaced, and where each was saved (server/bots/memory.js)
+ *  51  skills.previous — the words before the assistant last changed a skill, to restore
  */
-export const SCHEMA_VERSION = 49;
+export const SCHEMA_VERSION = 51;
 
 /** How long a forgotten bot memory entry waits for Undo before it is deleted for good. */
 export const FORGOTTEN_KEEP_MS = 10 * 60_000;
+
+/**
+ * How long a bot memory version a bot or a review replaced is kept (schema 50), and how
+ * long an account note's event stays listed for the person after its date: after that,
+ * each is deleted for good in the sweep (owner, 2026-11-12).
+ */
+export const MEMORY_HISTORY_DAYS = 90;
+export const EXPIRED_EVENT_DAYS = 30;
 
 /**
  * How long a run lease may go untouched before another run may take it.
@@ -1314,13 +1327,63 @@ export function createPgStore(connectionString) {
       );
     },
 
-    /** Forget everything: every set of notes on the account. Returns how many sets went. */
+    /**
+     * Where a note being saved now comes from (owner, 2026-11-12): the seq of the
+     * conversation's newest assistant message — the one whose call is running, stored
+     * before its calls run — and the newest tool message that read something from
+     * outside, for its envelope's source. Only those two rows leave the database, not
+     * the transcript; scoped through the conversation's owner.
+     */
+    async memoryProvenance(userId, chatId) {
+      const rows = await q(
+        `SELECT (SELECT m.seq FROM messages m WHERE m.chat_id = c.id AND m.role = 'assistant' ORDER BY m.seq DESC LIMIT 1) AS seq,
+                (SELECT m.content FROM messages m
+                  WHERE m.chat_id = c.id AND m.role = 'tool' AND strpos(m.content::text, '<untrusted source=') > 0
+                  ORDER BY m.seq DESC LIMIT 1) AS outside
+           FROM chats c WHERE c.id = $1 AND c.user_id = $2`,
+        [String(chatId ?? ''), userId],
+      );
+      const row = rows[0];
+      if (!row) return null;
+      return { seq: row.seq == null ? null : Number(row.seq), outside: row.outside || null };
+    },
+    /** The titles of some of the account's conversations, by id — for saying where a note was saved. */
+    async chatTitles(userId, ids) {
+      const list = [...new Set((Array.isArray(ids) ? ids : []).map(String).filter(Boolean))].slice(0, 500);
+      if (!list.length) return new Map();
+      const rows = await q(
+        `SELECT id, title, incognito FROM chats WHERE user_id = $1 AND id IN (SELECT jsonb_array_elements_text($2::jsonb))`,
+        [userId, JSON.stringify(list)],
+      );
+      return new Map(rows.map((r) => [r.id, r.incognito ? null : r.title || '']));
+    },
+
+    /**
+     * Forget everything: every set of notes on the account, and the tidy-up proposals
+     * that quote them (memoryTidy.js). Returns how many sets of notes went.
+     */
     async deleteAllMemory(userId) {
       const rows = await q(
-        `DELETE FROM user_settings WHERE user_id = $1 AND (key = 'memory' OR key LIKE 'memory:%') RETURNING key`,
+        `DELETE FROM user_settings WHERE user_id = $1 AND (key = 'memory' OR key LIKE 'memory:%' OR key = 'memoryTidy') RETURNING key`,
         [userId],
       );
-      return rows.length;
+      return rows.filter((r) => r.key !== 'memoryTidy').length;
+    },
+    /**
+     * The accounts due a monthly tidy of their notes (memoryTidy.js): switched on, memory
+     * on, and not looked at since `since` — the longest waiting first.
+     */
+    async memoryTidyDue(since, limit = 2) {
+      const rows = await q(
+        `SELECT p.user_id FROM user_settings p
+           LEFT JOIN user_settings t ON t.user_id = p.user_id AND t.key = 'memoryTidy'
+          WHERE p.key = 'prefs' AND p.value->>'memoryTidy' = 'true' AND COALESCE(p.value->>'memory', 'true') <> 'false'
+            AND COALESCE(t.value->>'at', '') < $1
+          ORDER BY COALESCE(t.value->>'at', ''), p.user_id
+          LIMIT $2`,
+        [String(since), Math.max(1, Math.min(Number(limit) || 2, 10))],
+      );
+      return rows.map((r) => r.user_id);
     },
 
     /**
@@ -1661,8 +1724,11 @@ export function createPgStore(connectionString) {
      * conversation's last step, a deleted one — or one made from Gmail —
      * included, until that conversation took another step.
      */
-    async removeMemoryNote(userId, bucket, key) {
-      await this.removeUserSettingKey(userId, bucket, key);
+    async removeMemoryNote(userId, bucket, key, marker = null) {
+      // `marker`: an assistant's delete leaves one holding the note's history, read by
+      // nothing (server/memory.js, `removedNote`); the person's delete leaves nothing.
+      if (marker) await this.mergeUserSetting(userId, bucket, { [key]: marker });
+      else await this.removeUserSettingKey(userId, bucket, key);
       await q(
         `UPDATE chats SET context_parts = jsonb_set(context_parts, '{details,memory,rows}',
             COALESCE((SELECT jsonb_agg(r) FROM jsonb_array_elements(context_parts #> '{details,memory,rows}') r WHERE r->>'name' IS DISTINCT FROM $2), '[]'::jsonb))
@@ -3581,8 +3647,12 @@ export function createPgStore(connectionString) {
      * a skill that turned out shared is taken off rather than shared unscanned. The
      * caller has refused an edit the scan flags on a skill it knew was shared; this
      * covers one shared by another tab in between. `scan` is kept with the skill.
+     *
+     * `by` (51): an assistant's change keeps the words it replaced in `previous` — one
+     * version, the one just before — for the person to restore; the person's own
+     * save keeps none (PRV-006), so what they wrote over is gone, as they meant.
      */
-    async saveSkill(userId, { id, name, description, instructions, files, sharing = 'keep', scan = null }) {
+    async saveSkill(userId, { id, name, description, instructions, files, sharing = 'keep', scan = null, by = 'person' }) {
       const rows = await q(
         `INSERT INTO skills (id, user_id, name, description, instructions, files, shared_at, scan)
          VALUES ($1, $2, $3, $4, $5, COALESCE($6::jsonb, '[]'::jsonb), CASE WHEN $7::text = 'on' THEN NOW() END, $8::jsonb)
@@ -3596,9 +3666,15 @@ export function createPgStore(connectionString) {
              ELSE CASE WHEN $9::boolean THEN skills.shared_at END
            END,
            scan = COALESCE($8::jsonb, skills.scan),
+           previous = CASE
+             WHEN $10::text <> 'assistant' THEN NULL
+             WHEN skills.instructions IS DISTINCT FROM EXCLUDED.instructions OR skills.description IS DISTINCT FROM EXCLUDED.description
+               THEN jsonb_build_object('description', skills.description, 'instructions', skills.instructions, 'updatedAt', skills.updated_at)
+             ELSE skills.previous
+           END,
            updated_at = NOW()
       RETURNING *`,
-        [id, userId, name, description, instructions, Array.isArray(files) ? toJson(files) : null, sharing, scan ? toJson(scan) : null, scan ? scan.ok !== false : true],
+        [id, userId, name, description, instructions, Array.isArray(files) ? toJson(files) : null, sharing, scan ? toJson(scan) : null, scan ? scan.ok !== false : true, by === 'assistant' ? 'assistant' : 'person'],
       );
       return rows[0];
     },
@@ -4020,6 +4096,35 @@ export function createPgStore(connectionString) {
         [userId, source ?? null],
       );
       return rows.length;
+    },
+
+    /**
+     * One source's files other than `keep`, deleted — the indexer's tidy after a walk
+     * that saw the whole folder (rag.js `pruneSource`). An empty `keep` is a folder
+     * with nothing left in it.
+     *
+     * @param {string} userId @param {string} source @param {string[]} keep
+     * @returns {Promise<{ files: number, chunks: number }>}
+     */
+    async pruneDocs(userId, source, keep) {
+      const rows = await q(
+        'DELETE FROM doc_chunks WHERE user_id = $1 AND source = $2 AND NOT (path = ANY($3::text[])) RETURNING path',
+        [userId, String(source), Array.isArray(keep) ? keep.map(String) : []],
+      );
+      return { files: new Set(rows.map((r) => r.path)).size, chunks: rows.length };
+    },
+
+    /**
+     * Every indexed file, by source — the account export's list of what is indexed
+     * (Decree 13: what is held, shown). Paths and counts only: the vectors are numbers
+     * nobody can read, and the text is the person's own files, still on their disk.
+     */
+    async docInventory(userId) {
+      return q(
+        `SELECT source, path, COUNT(*)::int AS chunks, MAX(model) AS model, MAX(created_at) AS indexed_at
+           FROM doc_chunks WHERE user_id = $1 GROUP BY source, path ORDER BY source, path`,
+        [userId],
+      );
     },
 
     // ── scheduled tasks ─────────────────────────────────────────────
@@ -4809,25 +4914,122 @@ export function createPgStore(connectionString) {
       );
     },
 
-    /** A bot's memory (`botId`) or a group's (`groupId`), oldest first; what was forgotten is left out. */
+    /**
+     * A bot's memory (`botId`) or a group's (`groupId`), oldest first: the entries that
+     * hold now. What was forgotten, and a version a bot or a review replaced (schema 50),
+     * is left out — `listBotMemoryHistory` has those.
+     */
     async listBotMemory(userId, { botId = null, groupId = null }) {
-      if (botId) return q('SELECT * FROM bot_memory WHERE user_id = $1 AND bot_id = $2 AND deleted_at IS NULL ORDER BY created_at, id', [userId, String(botId)]);
-      if (groupId) return q('SELECT * FROM bot_memory WHERE user_id = $1 AND group_id = $2 AND deleted_at IS NULL ORDER BY created_at, id', [userId, String(groupId)]);
+      if (botId) return q('SELECT * FROM bot_memory WHERE user_id = $1 AND bot_id = $2 AND deleted_at IS NULL AND invalid_at IS NULL ORDER BY created_at, id', [userId, String(botId)]);
+      if (groupId) return q('SELECT * FROM bot_memory WHERE user_id = $1 AND group_id = $2 AND deleted_at IS NULL AND invalid_at IS NULL ORDER BY created_at, id', [userId, String(groupId)]);
       return [];
+    },
+    /** The closed versions of a scope's entries, newest closed first — what the panel shows as earlier. */
+    async listBotMemoryHistory(userId, { botId = null, groupId = null }) {
+      if (!botId && !groupId) return [];
+      return q(
+        `SELECT * FROM bot_memory
+          WHERE user_id = $1 AND deleted_at IS NULL AND invalid_at IS NOT NULL
+            AND (($2::text IS NOT NULL AND bot_id = $2) OR ($3::text IS NOT NULL AND group_id = $3))
+          ORDER BY invalid_at DESC, id
+          LIMIT 400`,
+        [userId, botId, groupId],
+      );
     },
     /**
      * One entry, written only under a bot or group of this account; null when there is
      * none such. `turnId` is the turn that saved it, so a turn that is stopped or fails
-     * takes it back (`dropTurnMemory`); `textFolded` is the text for search.
+     * takes it back (`dropTurnMemory`); `textFolded` is the text for search. `chatId`,
+     * `seq` and `outside` say where it was saved (schema 50).
      */
-    async addBotMemory(userId, { id, botId = null, groupId = null, text, source = 'bot', turnId = null, pinned = false, pinnedBy = null, textFolded = null }) {
+    async addBotMemory(userId, { id, botId = null, groupId = null, text, source = 'bot', turnId = null, pinned = false, pinnedBy = null, textFolded = null, chatId = null, seq = null, outside = null }) {
       const rows = await q(
-        `INSERT INTO bot_memory (id, user_id, bot_id, group_id, text, source, turn_id, pinned, pinned_by, text_folded)
-         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+        `INSERT INTO bot_memory (id, user_id, bot_id, group_id, text, source, turn_id, pinned, pinned_by, text_folded, chain_id, valid_from, chat_id, message_seq, outside_from)
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $1, NOW(), $11, $12::bigint, $13
           WHERE ($3::text IS NOT NULL AND $4::text IS NULL AND EXISTS (SELECT 1 FROM bots WHERE user_id = $2 AND id = $3))
              OR ($4::text IS NOT NULL AND $3::text IS NULL AND EXISTS (SELECT 1 FROM bot_groups WHERE user_id = $2 AND id = $4))
          RETURNING *`,
-        [id, userId, botId, groupId, text, source, turnId, !!pinned, pinned ? pinnedBy || source : null, textFolded],
+        [id, userId, botId, groupId, text, source, turnId, !!pinned, pinned ? pinnedBy || source : null, textFolded, chatId, seq == null ? null : String(seq), outside],
+      );
+      return rows[0] ?? null;
+    },
+    /**
+     * A bot's or a review's change to an entry (schema 50): the open row is closed and
+     * the new words go in as the next row of its chain, keeping its pin. One statement,
+     * so two changes at once cannot both close the same row. Null when there is no such
+     * open entry in this scope.
+     */
+    async replaceBotMemory(userId, oldId, { botId = null, groupId = null } = {}, { id, text, textFolded = null, source = 'bot', turnId = null, chatId = null, seq = null, outside = null }) {
+      const rows = await q(
+        `WITH old AS (
+           UPDATE bot_memory SET invalid_at = NOW(), closed_by = $7, closed_turn = $8
+            WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL AND invalid_at IS NULL
+              AND ($3::text IS NULL OR bot_id = $3) AND ($4::text IS NULL OR group_id = $4)
+            RETURNING *
+         )
+         INSERT INTO bot_memory (id, user_id, bot_id, group_id, text, source, turn_id, pinned, pinned_by, text_folded, chain_id, valid_from, chat_id, message_seq, outside_from)
+         SELECT $5, old.user_id, old.bot_id, old.group_id, $6, $7, $8, old.pinned, old.pinned_by, $9, COALESCE(old.chain_id, old.id), NOW(), $10, $11::bigint, $12
+           FROM old
+         RETURNING *`,
+        [userId, String(oldId ?? ''), botId, groupId, id, text, source, turnId, textFolded, chatId, seq == null ? null : String(seq), outside],
+      );
+      return rows[0] ?? null;
+    },
+    /** A bot's or a review's forget (schema 50): the entry is closed, kept as history, not deleted. */
+    async closeBotMemory(userId, id, { botId = null, groupId = null } = {}, { by = 'bot', turnId = null } = {}) {
+      const rows = await q(
+        `UPDATE bot_memory SET invalid_at = NOW(), closed_by = $5, closed_turn = $6
+          WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL AND invalid_at IS NULL
+            AND ($3::text IS NULL OR bot_id = $3) AND ($4::text IS NULL OR group_id = $4)
+          RETURNING *`,
+        [userId, String(id ?? ''), botId, groupId, String(by), turnId],
+      );
+      return rows[0] ?? null;
+    },
+    /**
+     * The person's own change (PRV-006): the words of an open entry replaced where they
+     * are, marked as theirs, with every earlier version of it deleted for good.
+     */
+    async editBotMemoryByPerson(userId, id, { botId = null, groupId = null } = {}, { text, textFolded = null }) {
+      const rows = await q(
+        `UPDATE bot_memory SET text = $5, text_folded = $6, source = 'user', updated_at = NOW(), valid_from = NOW(),
+                chat_id = NULL, message_seq = NULL, outside_from = NULL
+          WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL AND invalid_at IS NULL
+            AND ($3::text IS NULL OR bot_id = $3) AND ($4::text IS NULL OR group_id = $4)
+          RETURNING *`,
+        [userId, String(id ?? ''), botId, groupId, text, textFolded],
+      );
+      const row = rows[0] ?? null;
+      if (row) {
+        await q('DELETE FROM bot_memory WHERE user_id = $1 AND COALESCE(chain_id, id) = $2 AND invalid_at IS NOT NULL', [userId, row.chain_id || row.id]);
+      }
+      return row;
+    },
+    /**
+     * Bring an earlier version back (the person's choice): the version is opened again
+     * and whatever came after it in its chain is deleted — the person deciding those
+     * changes should not have happened, as Undo on a note does. Null when there is no
+     * such closed version in this scope.
+     */
+    async restoreBotMemoryVersion(userId, id, { botId = null, groupId = null } = {}) {
+      const found = await q(
+        `SELECT * FROM bot_memory
+          WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL AND invalid_at IS NOT NULL
+            AND ($3::text IS NULL OR bot_id = $3) AND ($4::text IS NULL OR group_id = $4)`,
+        [userId, String(id ?? ''), botId, groupId],
+      );
+      const version = found[0];
+      if (!version) return null;
+      const chain = version.chain_id || version.id;
+      await q(
+        `DELETE FROM bot_memory
+          WHERE user_id = $1 AND COALESCE(chain_id, id) = $2 AND id <> $3
+            AND (invalid_at IS NULL OR invalid_at > $4::timestamptz)`,
+        [userId, chain, version.id, new Date(version.invalid_at).toISOString()],
+      );
+      const rows = await q(
+        'UPDATE bot_memory SET invalid_at = NULL, closed_by = NULL, closed_turn = NULL, updated_at = NOW() WHERE user_id = $1 AND id = $2 RETURNING *',
+        [userId, version.id],
       );
       return rows[0] ?? null;
     },
@@ -4864,29 +5066,60 @@ export function createPgStore(connectionString) {
       );
       return rows[0] ?? null;
     },
-    /** Forget an entry so that Undo can bring it back; deleted for good ten minutes on (FORGOTTEN_KEEP_MS). */
+    /**
+     * The person's delete: the entry and every version of it, so that Undo can bring
+     * them back; deleted for good ten minutes on (FORGOTTEN_KEEP_MS). The whole chain,
+     * open or closed (PRV-006, schema 50): a person's delete keeps no earlier version.
+     */
     async softDeleteBotMemory(userId, id, { botId = null, groupId = null } = {}) {
       // What this account forgot before, past its Undo, goes for good now (owner, 2026-11-11: delete 1:1).
       await this.pruneForgottenMemory(FORGOTTEN_KEEP_MS, userId);
       const rows = await q(
         `UPDATE bot_memory SET deleted_at = NOW()
-          WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL
-            AND ($3::text IS NULL OR bot_id = $3) AND ($4::text IS NULL OR group_id = $4)
+          WHERE user_id = $1 AND deleted_at IS NULL
+            AND COALESCE(chain_id, id) = (
+              SELECT COALESCE(chain_id, id) FROM bot_memory
+               WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL
+                 AND ($3::text IS NULL OR bot_id = $3) AND ($4::text IS NULL OR group_id = $4))
           RETURNING id`,
         [userId, String(id ?? ''), botId, groupId],
       );
       return rows.length > 0;
     },
-    /** Undo: bring forgotten entries back. */
+    /**
+     * Undo: put entries back where they were. One the person deleted comes back with the
+     * versions deleted beside it, open or closed as it was; one a bot or a review forgot
+     * (closed, with nothing open after it in its chain) is opened again. Returns how
+     * many of `ids` are back.
+     */
     async restoreBotMemory(userId, ids) {
       const list = JSON.stringify((Array.isArray(ids) ? ids : []).map(String));
-      const rows = await q(
-        `UPDATE bot_memory SET deleted_at = NULL
-          WHERE user_id = $1 AND deleted_at IS NOT NULL AND id IN (SELECT jsonb_array_elements_text($2::jsonb))
-          RETURNING id`,
+      const deleted = await q(
+        'SELECT id FROM bot_memory WHERE user_id = $1 AND deleted_at IS NOT NULL AND id IN (SELECT jsonb_array_elements_text($2::jsonb))',
         [userId, list],
       );
-      return rows.length;
+      const undeleted = JSON.stringify(deleted.map((r) => r.id));
+      if (deleted.length) {
+        await q(
+          `UPDATE bot_memory SET deleted_at = NULL
+            WHERE user_id = $1 AND deleted_at IS NOT NULL
+              AND COALESCE(chain_id, id) IN (
+                SELECT COALESCE(chain_id, id) FROM bot_memory WHERE user_id = $1 AND id IN (SELECT jsonb_array_elements_text($2::jsonb)))`,
+          [userId, undeleted],
+        );
+      }
+      const reopened = await q(
+        `UPDATE bot_memory m SET invalid_at = NULL, closed_by = NULL, closed_turn = NULL
+          WHERE m.user_id = $1 AND m.deleted_at IS NULL AND m.invalid_at IS NOT NULL
+            AND m.id IN (SELECT jsonb_array_elements_text($2::jsonb))
+            AND m.id NOT IN (SELECT jsonb_array_elements_text($3::jsonb))
+            AND NOT EXISTS (SELECT 1 FROM bot_memory o
+                             WHERE o.user_id = $1 AND COALESCE(o.chain_id, o.id) = COALESCE(m.chain_id, m.id)
+                               AND o.deleted_at IS NULL AND o.invalid_at IS NULL)
+          RETURNING m.id`,
+        [userId, list, undeleted],
+      );
+      return deleted.length + reopened.length;
     },
     /**
      * Forgotten entries past their Undo, deleted for good — every account's (the sweep), or one
@@ -4900,11 +5133,45 @@ export function createPgStore(connectionString) {
       );
       return rows.length;
     },
-    /** What one turn saved, taken back: the turn was stopped or failed. */
+    /**
+     * What one turn saved, taken back: the turn was stopped or failed. What it closed —
+     * an entry it replaced or forgot (schema 50) — holds again, or a replace taken back
+     * would take the fact it replaced with it.
+     */
     async dropTurnMemory(userId, turnId) {
       if (!turnId) return 0;
       const rows = await q('DELETE FROM bot_memory WHERE user_id = $1 AND turn_id = $2 RETURNING id', [userId, String(turnId)]);
+      await q(
+        'UPDATE bot_memory SET invalid_at = NULL, closed_by = NULL, closed_turn = NULL WHERE user_id = $1 AND closed_turn = $2',
+        [userId, String(turnId)],
+      );
       return rows.length;
+    },
+    /**
+     * Memory past its keeping, deleted for good in the sweep (owner, 2026-11-12): a bot
+     * memory version closed over MEMORY_HISTORY_DAYS ago; an account note's event
+     * EXPIRED_EVENT_DAYS past its date — it left the prompt on that date and stayed
+     * listed for the person until now; and the marker an assistant's delete left on a
+     * note, with the history it held, MEMORY_HISTORY_DAYS on. Every account's, or one's.
+     */
+    async pruneMemoryHistory(userId = null, now = new Date()) {
+      const closed = await q(
+        `DELETE FROM bot_memory WHERE invalid_at IS NOT NULL AND invalid_at < NOW() - ($1 || ' days')::interval AND ($2::text IS NULL OR user_id = $2) RETURNING id`,
+        [String(MEMORY_HISTORY_DAYS), userId],
+      );
+      const dayCut = new Date(now.getTime() - EXPIRED_EVENT_DAYS * 86_400_000).toISOString().slice(0, 10);
+      const markCut = new Date(now.getTime() - MEMORY_HISTORY_DAYS * 86_400_000).toISOString();
+      const gone = `((e.value->>'kind' = 'event' AND e.value->>'expires' < $1) OR (e.value->>'removed' = 'true' AND e.value->>'updatedAt' < $3))`;
+      const notes = await q(
+        `UPDATE user_settings s
+            SET value = (SELECT COALESCE(jsonb_object_agg(e.key, e.value), '{}'::jsonb) FROM jsonb_each(s.value) e WHERE NOT ${gone})
+          WHERE (s.key = 'memory' OR s.key LIKE 'memory:%') AND jsonb_typeof(s.value) = 'object'
+            AND ($2::text IS NULL OR s.user_id = $2)
+            AND EXISTS (SELECT 1 FROM jsonb_each(s.value) e WHERE ${gone})
+          RETURNING s.user_id`,
+        [dayCut, userId, markCut],
+      );
+      return { closed: closed.length, notes: notes.length };
     },
     /**
      * Entries holding every one of `words` (already folded: lower case, no diacritics),
@@ -5235,13 +5502,32 @@ export function createPgStore(connectionString) {
     async listTeamTasks(userId) {
       return q('SELECT * FROM scheduled_tasks WHERE user_id = $1 AND (bot_id IS NOT NULL OR bot_group_id IS NOT NULL) ORDER BY next_run_at', [userId]);
     },
+    /**
+     * Every bot and group memory entry the account holds, the versions a bot or a review
+     * replaced included, with whose it is and where each was saved — for the account's
+     * export (Decree 13/2023: what is kept about a person, they can see). What the person
+     * deleted is not kept, so it is not here.
+     */
+    async exportBotMemory(userId) {
+      return q(
+        `SELECT m.id, m.text, m.source, m.created_at, m.valid_from, m.invalid_at, m.closed_by, m.pinned,
+                COALESCE(m.chain_id, m.id) AS chain_id, m.chat_id, m.message_seq, m.outside_from,
+                b.name AS bot_name, g.name AS group_name
+           FROM bot_memory m
+           LEFT JOIN bots b ON b.id = m.bot_id AND b.user_id = m.user_id
+           LEFT JOIN bot_groups g ON g.id = m.group_id AND g.user_id = m.user_id
+          WHERE m.user_id = $1 AND m.deleted_at IS NULL
+          ORDER BY COALESCE(m.chain_id, m.id), m.created_at, m.id`,
+        [userId],
+      );
+    },
     /** A duplicate's memory: every kept entry of one bot copied to another of the same account. */
     async copyBotMemory(userId, fromBotId, toBotId) {
       const rows = await q(
         `INSERT INTO bot_memory (id, user_id, bot_id, text, source, created_at, pinned, pinned_by, text_folded)
          SELECT gen_random_uuid()::text, m.user_id, $3, m.text, m.source, m.created_at, m.pinned, m.pinned_by, m.text_folded
            FROM bot_memory m
-          WHERE m.user_id = $1 AND m.bot_id = $2 AND m.deleted_at IS NULL
+          WHERE m.user_id = $1 AND m.bot_id = $2 AND m.deleted_at IS NULL AND m.invalid_at IS NULL
             AND EXISTS (SELECT 1 FROM bots b WHERE b.user_id = $1 AND b.id = $3)
          RETURNING id`,
         [userId, String(fromBotId ?? ''), String(toBotId ?? '')],

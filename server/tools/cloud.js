@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { signedImagePath } from '../imageProxy.js';
 import { getStore } from '../store/index.js';
 import { redactSecrets } from '../redact.js';
-import { readSkill, saveSkill } from '../skills.js';
+import { readSkill, writeSkill, guardShrink, editSkill } from '../skills.js';
 import { runParallel } from '../subagents.js';
 import { runDeepResearch } from '../research/index.js';
 import { renderChart, scatterSpec } from './chart.js';
@@ -50,7 +50,7 @@ import { searchProject } from '../projects.js';
 import { normaliseQuestions, answerText } from './askOptions.js';
 import {
   MEMORY_KEY, MAX_NOTE_CHARS, memoryScope, readBothScopes, noteName, memoryRefusal, refusalMessage, rankNotes, stampNote,
-  withoutGoogleNotes, heldNotesLine,
+  withoutGoogleNotes, heldNotesLine, noteKind, noteDay, kindOf, isLive, isExpired, removedNote, provenanceFor, scopeCapRefusal,
 } from '../memory.js';
 import { carriesGoogleData, googleDataInScope } from '../googleData.js';
 // Only to tell a real tool name from one the model invented — see loadToolsTool.
@@ -1061,10 +1061,26 @@ function boundedNote(text) {
   );
 }
 
-async function memoryWrite({ key, content, scope }, { userId, chatId }) {
+/**
+ * The most one set of notes may hold, checked before a write lands (owner,
+ * 2026-11-12) — see `scopeCapRefusal`. Read from the set as stored, so it is the
+ * set the write actually goes into.
+ */
+function withinScopeCap(notes, key, next, where) {
+  const refusal = scopeCapRefusal(notes || {}, key, next, where);
+  if (refusal) throw refusal;
+}
+
+async function memoryWrite({ key, content, scope, kind, valid_from: validFromRaw, expires: expiresRaw }, { userId, chatId }) {
   const store = getStore();
   const allowed = await memoryAllowed(userId, chatId);
   const where = await memoryScope({ userId, chatId, scope });
+  // What it is, and when it holds from or until (owner, 2026-11-12). A rule asks
+  // the person before this runs at all — agent.js, `changesRule`.
+  const type = noteKind(kind);
+  const validFrom = noteDay(validFromRaw, 'valid_from');
+  const expires = noteDay(expiresRaw, 'expires');
+  if (expires && type !== 'event') throw new Error('Only an event has an end date: pass kind "event" with expires.');
 
   // A note outlives the conversation it came from and is read back into every
   // future one, so a credential that lands here keeps escaping. Strip them on
@@ -1090,11 +1106,14 @@ async function memoryWrite({ key, content, scope }, { userId, chatId }) {
    * note, which then vanishes on serialisation while the tool reports it saved.
    */
   const name = noteName(key);
-  // What it replaces, kept one step back so a bad write can be undone (HAR-002).
-  const before = ((await store.getUserSetting(userId, where.key).catch(() => null)) || {})[name] || null;
+  // What it replaces goes into the note's history, so a bad write can be undone (HAR-002).
+  const stored = (await store.getUserSetting(userId, where.key).catch(() => null)) || {};
+  const before = Object.hasOwn(stored, name) ? stored[name] : null;
+  withinScopeCap(stored, name, text, where.where);
+  const origin = await provenanceFor(userId, chatId);
   await store.mergeUserSetting(userId, where.key, {
     // Marked when written from a conversation holding Google data (googleData.js).
-    [name]: stampNote(text, { by: 'assistant', chatId, before, google: googleDataInScope() }),
+    [name]: stampNote(text, { by: 'assistant', chatId, before, google: googleDataInScope(), kind: type, expires: expires ?? undefined, validFrom, ...origin }),
   });
 
   if (!found.length) return `Saved note "${name}" for ${where.where}.`;
@@ -1135,7 +1154,9 @@ async function memoryRead({ key }, { userId, chatId }) {
     return typeof note?.content === 'string' ? note.content : `No note saved under "${key}".`;
   }
 
-  const line = (notes, k) => `- ${k}: ${notes[k].content.slice(0, 120)}`;
+  // A kind other than fact is named, so a rule is known to be one before it is changed.
+  const tag = (note) => (kindOf(note) === 'fact' ? '' : ` [${note.kind}${note.expires ? ` until ${note.expires}` : ''}]`);
+  const line = (notes, k) => `- ${k}${tag(notes[k])}: ${notes[k].content.slice(0, 120)}`;
   if (!here.projectId) {
     const all = Object.keys(account).map((k) => line(account, k));
     return withHeld(all.length ? all.join('\n') : 'No notes saved yet.');
@@ -1617,15 +1638,22 @@ async function memoryAppend({ key: rawKey, content, scope }, { userId, chatId })
   guardNote(text, allowed);
 
   const memory = (await store.getUserSetting(userId, where.key)) || {};
-  const existing = memory[key]?.content || '';
+  const held = Object.hasOwn(memory, key) ? memory[key] : null;
+  // A note the assistant removed, or an event past its date, is not added to: the
+  // append starts it again, with what it said before kept in its history.
+  const current = isLive(held) ? held : null;
+  const existing = current && !isExpired(current) ? current.content : '';
   // A blank line between entries, so an appended list stays readable rather than
   // running together into one paragraph.
-  memory[key] = stampNote(boundedNote(existing ? `${existing.replace(/\s+$/, '')}\n\n${text}` : text), {
+  const next = boundedNote(existing ? `${existing.replace(/\s+$/, '')}\n\n${text}` : text);
+  withinScopeCap(memory, key, next, where.where);
+  memory[key] = stampNote(next, {
     by: 'assistant',
     chatId,
-    before: memory[key] || null,
+    before: held,
     // What was there stays, so a mark stays with it.
-    google: googleDataInScope() || !!memory[key]?.google,
+    google: googleDataInScope() || (!!existing && !!current?.google),
+    ...(await provenanceFor(userId, chatId)),
   });
   // Merged, not overwritten: the agent runs up to four tool calls at once, so
   // two memory writes in one step both read the same object and a whole-value
@@ -1691,11 +1719,14 @@ async function memoryEdit({ key: rawKey, old_string: oldString, new_string: newS
   guardNote(text, allowed);
   // A function, not the string: `replace` reads `$&` and `` $` `` in a string
   // replacement as patterns, so a note edited to say "costs $&5" came out wrong.
-  memory[key] = stampNote(boundedNote(note.content.replace(find, () => text)), {
+  const next = boundedNote(note.content.replace(find, () => text));
+  withinScopeCap(memory, key, next, inProject ? here.where : 'this account');
+  memory[key] = stampNote(next, {
     by: 'assistant',
     chatId,
     before: note,
     google: googleDataInScope() || !!note.google,
+    ...(await provenanceFor(userId, chatId)),
   });
   // Only this note, so a concurrent write to a different one is not undone.
   await store.mergeUserSetting(userId, target, { [key]: memory[key] });
@@ -1723,11 +1754,17 @@ async function memoryDelete({ key: rawKey }, { userId, chatId }) {
     );
   }
 
-  // Removes the one entry in SQL rather than writing back a copy of the object
-  // that happens to be missing it — which would undo anything saved meanwhile.
-  await store.removeMemoryNote(userId, inProject ? here.key : MEMORY_KEY, key);
+  /*
+   * The assistant's delete leaves a marker holding what the note said (owner,
+   * 2026-11-12): it is read into nothing, and the person can see it and bring it
+   * back in Settings → Memory — a page that talked the assistant into removing a
+   * note the person relied on is undone in one press. Written as this one entry,
+   * never a copy of the whole set, so a save meanwhile is not undone.
+   */
+  const bucket = inProject ? here.key : MEMORY_KEY;
+  await store.removeMemoryNote(userId, bucket, key, removedNote((inProject ? project : account)[key], { chatId, ...(await provenanceFor(userId, chatId)) }));
   const scope = inProject ? ` from ${here.where}` : '';
-  return `Deleted the note "${key}"${scope}. It will not be read into future conversations any more.`;
+  return `Deleted the note "${key}"${scope}. It will not be read into future conversations any more; the user can still bring it back from Settings → Memory.`;
 }
 
 /**
@@ -1850,10 +1887,10 @@ async function searchChatsTool({ query, queries = null, limit }, { userId, chatI
     const recent = await store.recentChats(userId, { ...scope, limit: wanted });
     if (!recent.length) return `There are no earlier conversations ${where}.`;
     const body = recent
-      .map((c) => `- "${c.title}" (${new Date(c.updated_at).toISOString().slice(0, 10)})${c.opening ? `: ${excerpt(c.opening, [], 200)}` : ''}`)
+      .map((c) => `- "${c.title}" (${new Date(c.updated_at).toISOString().slice(0, 10)}) · id ${c.id}${c.opening ? `: ${excerpt(c.opening, [], 200)}` : ''}`)
       .join('\n');
     return {
-      content: `The ${recent.length} most recent conversation${recent.length === 1 ? '' : 's'} ${where}:\n${untrusted('earlier conversations', body)}`,
+      content: `The ${recent.length} most recent conversation${recent.length === 1 ? '' : 's'} ${where}:\n${untrusted('earlier conversations', body)}\n${READ_MORE}`,
       chats: recent.map((c) => foundChat(c.id, c.title, c.updated_at)),
     };
   }
@@ -1873,7 +1910,7 @@ async function searchChatsTool({ query, queries = null, limit }, { userId, chatI
       chats.set(row.id, { title: row.title, updated: row.updated_at, lines: [] });
     }
     const entry = chats.get(row.id);
-    if (entry.lines.length < 2) entry.lines.push(`  ${row.role === 'user' ? 'They said' : 'You said'}: ${excerpt(row.text, terms)}`);
+    if (entry.lines.length < 2) entry.lines.push(`  ${row.role === 'user' ? 'They said' : 'You said'} (#${row.seq}): ${excerpt(row.text, terms)}`);
   }
   /*
    * What a conversation holding Google data said is quoted only into one that
@@ -1897,24 +1934,115 @@ async function searchChatsTool({ query, queries = null, limit }, { userId, chatI
     ? `\n(${held} more conversation${held === 1 ? '' : 's'} matched but ${held === 1 ? 'holds' : 'hold'} data from the person's Google account, which is not quoted into a conversation that holds none.)`
     : '';
   if (!chats.size) return `No earlier conversation ${where} that can be quoted here mentions ${terms.map((t) => `"${t}"`).join(' and ')}.${heldLine}`;
-  const body = [...chats.values()]
-    .map((c) => `- "${c.title}" (${new Date(c.updated).toISOString().slice(0, 10)})\n${c.lines.join('\n')}`)
+  const body = [...chats]
+    .map(([id, c]) => `- "${c.title}" (${new Date(c.updated).toISOString().slice(0, 10)}) · id ${id}\n${c.lines.join('\n')}`)
     .join('\n');
   const note = loose ? ' (no conversation had every word, so these have some of them)' : '';
   return {
-    content: `${chats.size} earlier conversation${chats.size === 1 ? '' : 's'} ${where}${note}:\n${untrusted('earlier conversations', body)}${heldLine}`,
+    content: `${chats.size} earlier conversation${chats.size === 1 ? '' : 's'} ${where}${note}:\n${untrusted('earlier conversations', body)}${heldLine}\n${READ_MORE}`,
     // Only those quoted above — a held one is neither quoted nor listed.
     chats: [...chats].map(([id, c]) => foundChat(id, c.title, c.updated)),
   };
 }
 
+/** Said under what `search_chats` found: the next step when an excerpt is not enough. */
+const READ_MORE = 'To read more of one, call read_chat with its id, and around_seq with the # of a message to read around it.';
+
 /**
  * A conversation `search_chats` found, as the screen lists it: Claude's
  * "Relevant chats", each row opening its conversation (owner, 2026-10-25).
- * It travels beside the text the model reads, never in it — the model has no
- * use for the ids, and the person's own conversations are theirs to open.
+ * This list travels beside the text the model reads; the text carries each id
+ * too since `read_chat` (owner, 2026-11-12), which reads more of one by it.
  */
 const foundChat = (id, title, updated) => ({ id: String(id), title: String(title || ''), updated: new Date(updated).toISOString() });
+
+/** How many messages one `read_chat` returns unless asked, and the most it will. */
+const READ_CHAT_WINDOW = 12;
+const READ_CHAT_MOST = 30;
+/** Each message is cut to this, and the whole answer to the second: it is re-sent every step after. */
+const READ_CHAT_MESSAGE_CHARS = 4000;
+const READ_CHAT_CHARS = 24_000;
+
+/**
+ * Read more of one earlier conversation — the step after `search_chats` (owner,
+ * 2026-11-12). A window of what was said, around a message `search_chats` quoted
+ * (`around_seq`) or from the start.
+ *
+ * The same reach as `search_chats`, checked here on the conversation asked for
+ * rather than trusted from an id: the chat-search setting; never from an incognito
+ * conversation; only the person's own ordinary conversations in the same place —
+ * this project's from inside one, outside every project from outside — never an
+ * incognito one or a bot's or a group's; and one holding Google data only into a
+ * conversation that holds such data too. Every refusal of a conversation it may not
+ * read says the same thing, so the answer is no sign of what is there.
+ *
+ * Only what the person and the assistant said, as `recallChats` reads: tool output
+ * is other people's pages. In the envelope, like anything read from outside this turn.
+ */
+async function readChatTool({ chat_id: wanted, around_seq: around = null, window: size = null }, { userId, chatId }) {
+  const prefs = await getPrefs(userId).catch(() => ({}));
+  if (prefs.chatSearch === false) {
+    throw new Error('Searching earlier conversations is switched off for this account (Settings → Memory). Say so if it matters.');
+  }
+  const store = getStore();
+  const here = chatId ? await store.getChat(userId, chatId).catch(() => null) : null;
+  if (here?.incognito) {
+    throw new Error('This is an incognito conversation, so earlier conversations are not searched from it.');
+  }
+  const id = String(wanted ?? '').trim();
+  if (!id) throw new Error('Give the id of the conversation to read — search_chats shows it beside each one.');
+  if (chatId && id === chatId) throw new Error('That is this conversation, which is already in front of you.');
+
+  const chat = await store.getChat(userId, id).catch(() => null);
+  const readable =
+    chat && !chat.incognito && !chat.bot_id && !chat.bot_group_id && (chat.project_id || null) === (here?.project_id || null);
+  if (!readable) {
+    throw new Error(
+      'That conversation cannot be read from here. Only ones search_chats lists can be: in this project from inside one, outside projects from outside — never incognito or bot conversations.',
+    );
+  }
+
+  const messages = await store.listMessages(userId, chat.id);
+  // As search_chats holds them back: quoted only into a conversation that holds such data too.
+  if (!googleDataInScope() && carriesGoogleData(messages)) {
+    throw new Error(
+      "That conversation holds data from the person's Google account, which is not quoted into a conversation that holds none.",
+    );
+  }
+  const said = messages.filter((m) => (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string' && m.text.trim());
+  if (!said.length) return 'That conversation has nothing said in it yet.';
+
+  const count = Math.min(Math.max(Math.trunc(Number(size)) || READ_CHAT_WINDOW, 1), READ_CHAT_MOST);
+  let start = 0;
+  if (around != null && Number.isFinite(Number(around))) {
+    const at = said.findIndex((m) => m.seq >= Number(around));
+    const middle = at < 0 ? said.length - 1 : at;
+    start = Math.max(0, Math.min(middle - Math.floor(count / 2), said.length - count));
+  }
+  const lines = [];
+  let used = 0;
+  let shown = 0;
+  for (const m of said.slice(start, start + count)) {
+    const text = m.text.length > READ_CHAT_MESSAGE_CHARS ? `${m.text.slice(0, READ_CHAT_MESSAGE_CHARS)} […]` : m.text;
+    const line = `#${m.seq} ${m.role === 'user' ? 'They said' : 'You said'} (${new Date(m.createdAt).toISOString().slice(0, 10)}):\n${text}`;
+    if (shown && used + line.length > READ_CHAT_CHARS) break;
+    lines.push(line);
+    used += line.length;
+    shown += 1;
+  }
+  const first = said[start];
+  const last = said[start + shown - 1];
+  const earlier = start > 0 ? ` Earlier: around_seq ${said[Math.max(0, start - Math.ceil(count / 2))].seq}.` : '';
+  const later = start + shown < said.length ? ` Later: around_seq ${said[Math.min(said.length - 1, start + shown + Math.floor(count / 2))].seq}.` : '';
+  // The title is somebody's words too, so it is inside the envelope with the rest.
+  const heading = `"${chat.title}" (${new Date(chat.updated_at).toISOString().slice(0, 10)})`;
+  return {
+    content:
+      `Messages #${first.seq}–#${last.seq} (${shown} of ${said.length} said) of an earlier conversation:\n` +
+      `${untrusted('an earlier conversation', `${heading}\n\n${lines.join('\n\n')}`)}\n${(earlier + later).trim() || 'That is the whole conversation.'}`,
+    chats: [foundChat(chat.id, chat.title, chat.updated_at)],
+  };
+}
 
 /**
  * Fewer steps than this is not a plan, and drawing one anyway is the failure
@@ -1999,7 +2127,13 @@ async function skillRead({ name }, { userId }) {
   return readSkill(userId, name);
 }
 
-async function skillWrite({ name, description, instructions }, { userId }) {
+/**
+ * What `skill_write` and `skill_edit` both refuse before anything is saved: a turn holding
+ * Google data (PRV-023); and an incognito conversation, which promised to leave nothing behind —
+ * the catalogue withholds `skill_write` there (memory.js) and `skill_edit` follows it,
+ * but a model is not held to the tools it was offered.
+ */
+async function skillChangeRefused(userId, chatId) {
   // A skill is put in front of every later conversation, on any provider; one
   // written from a turn holding Gmail or Drive would carry it there (PRV-023).
   if (googleDataInScope()) {
@@ -2008,8 +2142,25 @@ async function skillWrite({ name, description, instructions }, { userId }) {
         'whichever model runs it — so it is not written from here. Tell the user; they can write the skill in a new conversation.',
     );
   }
-  const saved = await saveSkill(userId, { name, description, instructions });
-  return `Saved the skill "${saved.name}". It will be offered to you in future conversations.`;
+  const chat = chatId ? await getStore().getChat(userId, chatId).catch(() => null) : null;
+  if (chat?.incognito) throw new Error('This is an incognito conversation, so no skill is saved or changed from it.');
+}
+
+async function skillWrite({ name, description, instructions, replace = false }, { userId, chatId }) {
+  await skillChangeRefused(userId, chatId);
+  // A rewrite that drops a third of a saved procedure is refused unless meant (owner, 2026-11-12).
+  const before = await guardShrink(userId, { name, instructions, replace });
+  const { skill } = await writeSkill(userId, { name, description, instructions, by: 'assistant' });
+  return before
+    ? `Saved the skill "${skill.name}". The version before is kept: the person can restore it from Settings → Skills.`
+    : `Saved the skill "${skill.name}". It will be offered to you in future conversations.`;
+}
+
+/** Change part of a saved skill — see `editSkill`. */
+async function skillEditTool({ name, old_string: oldString, new_string: newString }, { userId, chatId }) {
+  await skillChangeRefused(userId, chatId);
+  const { skill } = await editSkill(userId, { name, oldString, newString });
+  return `Updated the skill "${skill.name}". The version before is kept: the person can restore it from Settings → Skills.`;
 }
 
 // Both take the turn's end (harness audit, 2026-11-12): started late in a turn, each ran on its
@@ -3365,6 +3516,8 @@ export const CLOUD_IMPLEMENTATIONS = {
   memory_delete: memoryDelete,
   memory_search: memorySearch,
   search_chats: searchChatsTool,
+  // More of one conversation search_chats found (owner, 2026-11-12).
+  read_chat: readChatTool,
   // Claude's get_code_context_exa: code and documentation for a programming question,
   // as far as the reasoning level goes.
   code_context: async (input, { userId, signal }) => codeContextTool(input, { userId, signal, plan: await planFor(userId) }),
@@ -3376,6 +3529,7 @@ export const CLOUD_IMPLEMENTATIONS = {
   update_plan: updatePlan,
   skill_read: skillRead,
   skill_write: skillWrite,
+  skill_edit: skillEditTool,
   run_parallel: runParallelTool,
   deep_research: deepResearchTool,
   schedule_task: scheduleTaskTool,

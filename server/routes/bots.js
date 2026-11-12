@@ -15,7 +15,7 @@ import { limit as rateLimit } from '../ratelimit.js';
 import { withMarkup } from '../pricing.js';
 import { needsApproval } from '../agent.js';
 import { taskState } from '../../public/js/automation-status.js';
-import { listMemory, pin, remember, undoForget } from '../bots/memory.js';
+import { listMemory, pin, remember, restoreVersion, undoForget } from '../bots/memory.js';
 import { runGroupRound, RESUMABLE } from '../bots/rounds.js';
 import { chainNext } from '../bots/continue.js';
 import { nextRunOf, parseSchedule } from '../scheduler.js';
@@ -504,12 +504,50 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
   /* ── memory: a bot's, and a group's ─────────────────────────────── */
 
   const memoryRoutes = (path, scopeOf, exists) => {
+    /**
+     * The entries that hold, each with the versions a bot or a review replaced, and the
+     * ones a bot or a review forgot — with where each was saved (owner, 2026-11-12,
+     * schema 50): the conversation by its title, and the host or the kind of tool it
+     * had last read from outside. One query for the titles, not one per entry.
+     */
     api.get(
       `${path}/memory`,
       wrap(async (req, res) => {
         if (!(await exists(req))) return res.status(404).json({ error: 'Not found.' });
-        const rows = await listMemory(req.user.id, scopeOf(req));
-        res.json({ entries: rows.map((r) => ({ id: r.id, text: r.text, source: r.source, createdAt: r.created_at, pinned: !!r.pinned, pinnedBy: r.pinned_by || null })) });
+        const store = getStore();
+        const [rows, closed] = await Promise.all([listMemory(req.user.id, scopeOf(req)), store.listBotMemoryHistory(req.user.id, scopeOf(req))]);
+        const titles = await store.chatTitles(req.user.id, [...rows, ...closed].map((r) => r.chat_id).filter(Boolean));
+        const chainOf = (r) => r.chain_id || r.id;
+        const view = (r) => ({
+          id: r.id,
+          text: r.text,
+          source: r.source,
+          createdAt: r.created_at,
+          pinned: !!r.pinned,
+          pinnedBy: r.pinned_by || null,
+          validFrom: r.valid_from || r.created_at,
+          invalidAt: r.invalid_at || null,
+          closedBy: r.closed_by || null,
+          saved: r.chat_id ? { chatId: r.chat_id, chatTitle: titles.get(r.chat_id) ?? null, seq: r.message_seq == null ? null : Number(r.message_seq), outside: r.outside_from || null } : null,
+        });
+        const open = new Set(rows.map(chainOf));
+        const earlier = new Map();
+        for (const c of closed) earlier.set(chainOf(c), [...(earlier.get(chainOf(c)) || []), view(c)]);
+        const forgotten = [...earlier.entries()].filter(([chain]) => !open.has(chain)).map(([, versions]) => ({ ...versions[0], history: versions.slice(1) }));
+        res.json({ entries: rows.map((r) => ({ ...view(r), history: earlier.get(chainOf(r)) || [] })), forgotten });
+      }),
+    );
+    /** Bring back a version a bot or a review replaced or forgot; what came after it goes. */
+    api.post(
+      `${path}/memory/:entry/restore`,
+      wrap(async (req, res) => {
+        if (!(await exists(req))) return res.status(404).json({ error: 'Not found.' });
+        try {
+          const row = await restoreVersion(req.user.id, scopeOf(req), req.params.entry);
+          res.json({ entry: { id: row.id, text: row.text, source: row.source, createdAt: row.created_at, pinned: !!row.pinned, pinnedBy: row.pinned_by || null } });
+        } catch (err) {
+          fail(res, err);
+        }
       }),
     );
     api.post(
@@ -543,7 +581,10 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
         }
       }),
     );
-    /** Forget: soft, so that Undo brings it back for thirty days (owner, 2026-11-10). */
+    /**
+     * The person's delete: soft, so that Undo brings it back for a few minutes, then gone
+     * for good (FORGOTTEN_KEEP_MS) — with every earlier version of it (PRV-006, schema 50).
+     */
     api.delete(
       `${path}/memory/:entry`,
       wrap(async (req, res) => {

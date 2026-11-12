@@ -96,7 +96,9 @@ export function readTeamFile(data) {
     }
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new BotError('That is not a team file.', 400, 'bad_file');
-  const file = /** @type {any} */ (value);
+  // The account's one export carries the team under `team` (owner, 2026-11-12), so it reads back here too.
+  const whole = /** @type {any} */ (value);
+  const file = whole.format === 'synapsez-export' && whole.team && typeof whole.team === 'object' ? whole.team : whole;
   if (file.format && file.format !== FORMAT) throw new BotError(`This app reads ${FORMAT} files; that one is ${String(file.format).slice(0, 40)}.`, 400, 'bad_format');
   const bots = Array.isArray(file.bots) ? file.bots.filter((b) => b && typeof b === 'object') : [];
   const groups = Array.isArray(file.groups) ? file.groups.filter((g) => g && typeof g === 'object') : [];

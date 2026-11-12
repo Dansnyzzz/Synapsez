@@ -3214,7 +3214,7 @@ section('Privacy → Your data: what is shared on top, the rest searched, a pill
     memory: !!document.querySelector('#panel-privacy [data-goto="memory"]'),
     underline: getComputedStyle(/** @type {HTMLElement} */ (document.getElementById('data-export'))).textDecorationLine,
   }));
-  check('Your data has shared chats, artifacts, uploads and feedback, each with Manage — and Memory preferences', rows.manage.join() === 'chats,artifacts,uploads,feedback' && rows.memory, rows.manage.join());
+  check('Your data has shared chats, artifacts, uploads, feedback and indexed documents (Decree 13, 2026-11-12), each with Manage — and Memory preferences', rows.manage.join() === 'chats,artifacts,uploads,feedback,docs' && rows.memory, rows.manage.join());
   check('  each says how many are shared now', /^1\D/.test(rows.count), rows.count);
   check('  and Export data is a button, not an underlined link', rows.underline === 'none', rows.underline);
 

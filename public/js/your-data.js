@@ -14,6 +14,11 @@
  * reachable while the conversation it was sent in is shared, and the row says
  * so rather than offering a switch that would really be the conversation's.
  *
+ * The indexed documents (owner, 2026-11-12, Decree 13) are one kind more: each folder
+ * `index_folder` read, its files and passages, and Forget — the person's own delete,
+ * asked twice. Nothing indexed can be reached by anyone else, so the page has no
+ * shared half for it.
+ *
  * Built from nodes and `textContent`: names are the person's, and the model's.
  */
 import { api } from './api.js';
@@ -24,12 +29,13 @@ import { humanSize } from './format.js';
 
 const PAGE = 20;
 
-/** Each kind: its two halves, the column that is not the name, and what can be done. */
+/** Each kind: its two halves (`private` has only the second), the column that is not the name, and what can be done. */
 const KINDS = {
   chats: { visibility: 'switch', open: 'chat' },
   artifacts: { visibility: 'switch', open: 'file' },
   uploads: { visibility: 'fixed', open: 'file' },
   feedback: { visibility: null, open: null },
+  docs: { visibility: null, open: null, private: true },
 };
 
 const glyph = (paths, size = 16) =>
@@ -93,10 +99,12 @@ export function createYourData(deps) {
     const { kind } = view;
     host.replaceChildren();
     const top = h('section', 'data__part');
-    top.append(h('h3', 'data__title', t(`data.${kind}.shared`)), h('p', 'data__hint', t(`data.${kind}.sharedHint`)));
-    const sharedList = h('div', 'data__list');
-    sharedList.dataset.list = 'shared';
-    top.append(sharedList);
+    if (!KINDS[kind].private) {
+      top.append(h('h3', 'data__title', t(`data.${kind}.shared`)), h('p', 'data__hint', t(`data.${kind}.sharedHint`)));
+      const sharedList = h('div', 'data__list');
+      sharedList.dataset.list = 'shared';
+      top.append(sharedList);
+    }
 
     const rest = h('section', 'data__part');
     rest.append(h('h3', 'data__title', t(`data.${kind}.rest`)), h('p', 'data__hint', t(`data.${kind}.restHint`)));
@@ -141,7 +149,8 @@ export function createYourData(deps) {
     });
     pager.append(prev, next);
     rest.append(bar, restList, pager);
-    host.append(top, rest);
+    if (KINDS[kind].private) host.append(rest);
+    else host.append(top, rest);
     loadShared();
     loadRest();
   }
@@ -150,6 +159,8 @@ export function createYourData(deps) {
 
   async function loadShared() {
     const kind = view.kind;
+    // A kind nobody else can reach has no shared half to fill.
+    if (KINDS[kind]?.private) return;
     try {
       // Everything shared, up to a hundred: it is the half that matters most.
       const page = await api.dataList(kind, { shared: true, limit: 100 });
@@ -205,7 +216,12 @@ export function createYourData(deps) {
     grid.setAttribute('aria-label', t(`data.${kind}.${shared ? 'shared' : 'rest'}`));
     const head = h('div', 'dtable__head');
     head.setAttribute('role', 'row');
-    const columns = [t(kind === 'feedback' ? 'data.col.feedback' : 'data.col.name'), spec.visibility ? t('data.col.visibility') : null, t(kind === 'feedback' ? 'data.col.sent' : 'data.col.updated'), ''];
+    const columns = [
+      t(kind === 'feedback' ? 'data.col.feedback' : kind === 'docs' ? 'data.col.folder' : 'data.col.name'),
+      spec.visibility ? t('data.col.visibility') : null,
+      t(kind === 'feedback' ? 'data.col.sent' : kind === 'docs' ? 'data.col.indexed' : 'data.col.updated'),
+      '',
+    ];
     for (const label of columns.filter((c) => c !== null)) {
       const cell = h('span', null, label);
       cell.setAttribute('role', 'columnheader');
@@ -289,6 +305,12 @@ export function createYourData(deps) {
   function subline(kind, item) {
     if (kind === 'feedback') return [item.body, item.chatTitle ? t('data.withChat', { chat: item.chatTitle }) : ''].filter(Boolean).join(' · ');
     if (kind === 'chats') return '';
+    if (kind === 'docs') {
+      return [
+        t(item.files === 1 ? 'data.docs.oneFile' : 'data.docs.files', { n: item.files }),
+        t(item.chunks === 1 ? 'data.docs.onePassage' : 'data.docs.passages', { n: item.chunks }),
+      ].join(' · ');
+    }
     return [humanSize(item.bytes), item.chatTitle ? t('data.inChat', { chat: item.chatTitle }) : ''].filter(Boolean).join(' · ');
   }
 
@@ -296,6 +318,21 @@ export function createYourData(deps) {
   function actions(kind, item) {
     const link = item.link ? new URL(item.link, location.origin).href : null;
     const copy = link ? [{ label: t('data.copyLink'), run: () => copyLink(link) }] : [];
+    if (kind === 'docs') {
+      // Every passage of the folder, gone; asked twice, as every delete here is.
+      return [
+        {
+          label: t('data.docs.forget'),
+          danger: true,
+          confirm: t('action.reallyDelete'),
+          run: async () => {
+            await api.forgetIndexedFolder(item.id);
+            toast(t('data.docs.forgotten', { name: item.name }), 'ok');
+            reload();
+          },
+        },
+      ];
+    }
     if (kind === 'chats') {
       return [
         ...copy,

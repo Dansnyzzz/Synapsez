@@ -378,7 +378,11 @@ export function createCustomize(deps) {
       if (view.sort === 'plugin') return pluginName(a.plugin).localeCompare(pluginName(b.plugin)) || a.name.localeCompare(b.name);
       return String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || ''));
     };
-    const ownTag = (s) => [s.enabled ? '' : t('settings.off'), s.hidden_at && s.shared_at ? t('skills.tagHidden') : s.shared_at ? t('skills.tagShared') : ''].filter(Boolean).join(' · ');
+    // "Changed by the assistant" while the words it replaced are kept to restore (schema 51).
+    const ownTag = (s) =>
+      [s.enabled ? '' : t('settings.off'), s.hidden_at && s.shared_at ? t('skills.tagHidden') : s.shared_at ? t('skills.tagShared') : '', s.previous?.instructions ? t('skills.tagChanged') : '']
+        .filter(Boolean)
+        .join(' · ');
     const row = (s) =>
       listRow({
         key: s.id,
@@ -412,6 +416,8 @@ export function createCustomize(deps) {
         if (own) {
           items.push({ label: t('settings.useInMessage'), run: () => useSkill(own.name) });
           items.push({ label: t('skills.edit'), run: () => deps.editSkill(own) });
+          // The words the assistant last replaced, put back — and then no longer kept (PRV-006).
+          if (own.previous?.instructions) items.push({ label: t('skills.restore'), confirm: t('skills.reallyRestore'), run: () => restoreOwn(own) });
           // Sharing says what it means before it happens; stopping says who loses it.
           items.push(
             own.shared_at
@@ -455,6 +461,18 @@ export function createCustomize(deps) {
       });
     }
     refilter('panel-skills');
+  }
+
+  /** Restore what a skill said before the assistant changed it — a refusal from the safety scan said with what it found. */
+  async function restoreOwn(own) {
+    try {
+      await api.restoreSkill(own.id);
+      toast(t('skills.restored', { name: own.name }), 'ok');
+    } catch (err) {
+      const found = Array.isArray(err.findings) ? err.findings.map((f) => f.text).join(' ') : '';
+      toast(found ? `${err.message} ${found}` : err.message, 'error', { ms: 12000 });
+    }
+    await loadSkills();
   }
 
   /** Share one of the account's own, or stop — a refusal from the safety scan said with what it found. */

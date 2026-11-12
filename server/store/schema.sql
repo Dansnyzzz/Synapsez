@@ -1413,6 +1413,37 @@ CREATE INDEX IF NOT EXISTS outbox_done_idx ON outbox (created_at) WHERE status <
 ALTER TABLE shared_models ADD COLUMN IF NOT EXISTS efforts TEXT;
 ALTER TABLE shared_models ADD COLUMN IF NOT EXISTS reasoning_mandatory BOOLEAN;
 
+-- ── Schema 50 ────────────────────────────────────────────────────────────────
+-- A bot's memory keeps time (owner, 2026-11-12). When a bot or its memory review
+-- replaces or forgets an entry, the old row is closed (`invalid_at`, who closed it and
+-- in which turn) rather than overwritten, and the new one joins its `chain_id` — so
+-- the panel can show what an entry said before and bring it back, and a stopped turn
+-- reopens what it closed. The prompt and the 200-entry count read open rows only.
+-- A person's own edit or delete keeps no earlier version (PRV-006): that deletes the
+-- chain's closed rows. Closed rows go for good 90 days on (MEMORY_HISTORY_DAYS).
+-- Where an entry was saved: the conversation, the assistant message's seq there, and
+-- the host or the kind of tool the conversation had last read from outside — never
+-- what it said. NULL on rows saved before 50: unknown, not "read nothing".
+ALTER TABLE bot_memory ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ;
+ALTER TABLE bot_memory ADD COLUMN IF NOT EXISTS invalid_at TIMESTAMPTZ;
+ALTER TABLE bot_memory ADD COLUMN IF NOT EXISTS chain_id TEXT;
+ALTER TABLE bot_memory ADD COLUMN IF NOT EXISTS closed_by TEXT;
+ALTER TABLE bot_memory ADD COLUMN IF NOT EXISTS closed_turn TEXT;
+ALTER TABLE bot_memory ADD COLUMN IF NOT EXISTS chat_id TEXT;
+ALTER TABLE bot_memory ADD COLUMN IF NOT EXISTS message_seq BIGINT;
+ALTER TABLE bot_memory ADD COLUMN IF NOT EXISTS outside_from TEXT;
+CREATE INDEX IF NOT EXISTS bot_memory_chain_idx ON bot_memory (user_id, (COALESCE(chain_id, id)));
+CREATE INDEX IF NOT EXISTS bot_memory_closed_idx ON bot_memory (invalid_at) WHERE invalid_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS bot_memory_closed_turn_idx ON bot_memory (closed_turn) WHERE closed_turn IS NOT NULL;
+
+-- ── Schema 51 ────────────────────────────────────────────────────────────────
+-- A skill's words before the assistant last changed them (owner, 2026-11-12):
+-- `{ description, instructions, updatedAt }`, one version, for the person to restore
+-- from Settings → Skills. Written only by `skill_write` / `skill_edit`; the person's own
+-- save, a restore and deleting the skill take it with them (PRV-006). Never read by
+-- anyone else: the shared-skill queries name their columns.
+ALTER TABLE skills ADD COLUMN IF NOT EXISTS previous JSONB;
+
 -- ── Schema 49 ────────────────────────────────────────────────────────────────
 -- Row-level security on every table here (harness audit, 2026-11-12). On Supabase the
 -- tables in `public` are what its Data API (PostgREST) serves, and anyone holding the

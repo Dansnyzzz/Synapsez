@@ -1244,6 +1244,23 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Đây là cuộc trò chuyện ẩn danh: không ghi nhớ gì từ nó, và các ghi chú đã lưu không được dùng ở đây.",
   "That note would be {0} characters; the limit is {1}, because every note is read into every conversation. Keep the facts that will matter later and drop the rest, or split it by subject.":
     "Ghi chú đó sẽ dài {0} ký tự; giới hạn là {1}, vì mọi ghi chú đều được đọc vào mọi cuộc trò chuyện. Hãy giữ những điều sẽ cần sau này và bỏ phần còn lại, hoặc tách theo chủ đề.",
+  // Dọn ghi chú hằng tháng — chỉ đề xuất (2026-11-12).
+  'That suggestion is no longer there.': 'Đề xuất đó không còn nữa.',
+  'Those notes have changed since this was suggested, so it was dropped.':
+    'Các ghi chú đó đã thay đổi kể từ khi có đề xuất này, nên đề xuất đã bị bỏ.',
+  // Loại ghi chú, thời hạn, và giới hạn cho mỗi nơi (2026-11-12).
+  "A note's kind is one of: {0}.":
+    "Loại của ghi chú phải là một trong: {0}.",
+  'Give {0} as a date, YYYY-MM-DD.':
+    'Hãy nhập {0} dạng ngày, YYYY-MM-DD.',
+  'Only an event has an end date: pass kind "event" with expires.':
+    'Chỉ sự kiện mới có ngày kết thúc: hãy truyền kind "event" cùng expires.',
+  'Not saved: {0} already has {1} notes, and {2} is the most one place keeps, because every note is read into every conversation. Merge notes about the same subject into one (memory_write the merged note, then memory_delete the others) or remove ones that are no longer true, then save this.':
+    'Chưa lưu: {0} đã có {1} ghi chú, và {2} là mức tối đa một nơi giữ, vì mọi ghi chú đều được đọc vào mọi cuộc trò chuyện. Hãy gộp các ghi chú cùng chủ đề thành một (memory_write ghi chú đã gộp, rồi memory_delete các ghi chú kia) hoặc xoá những ghi chú không còn đúng, rồi lưu ghi chú này.',
+  'Not saved: the notes in {0} would come to {1} characters, past the {2} one place keeps, because every note is read into every conversation. Shorten or merge notes that overlap, or remove ones that are no longer true (memory_read lists them), then save this.':
+    'Chưa lưu: các ghi chú trong {0} sẽ lên tới {1} ký tự, vượt mức {2} một nơi giữ, vì mọi ghi chú đều được đọc vào mọi cuộc trò chuyện. Hãy rút gọn hoặc gộp các ghi chú trùng nhau, hoặc xoá những ghi chú không còn đúng (memory_read liệt kê chúng), rồi lưu ghi chú này.',
+  'This writes or changes a rule — a standing instruction read at the start of every conversation. The assistant never sets or changes one without your yes, whatever the approval setting.':
+    'Thao tác này viết hoặc đổi một quy tắc — chỉ dẫn cố định được đọc ở đầu mọi cuộc trò chuyện. Trợ lý không bao giờ đặt hay đổi quy tắc khi chưa được bạn đồng ý, dù chế độ phê duyệt là gì.',
   "Say what to look for.":
     "Hãy nói cần tìm gì.",
   'Connector search is switched off for this account (Settings → Capabilities). Say which service would help instead.':
@@ -1442,6 +1459,7 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'No such bot or group.': 'Không có bot hoặc nhóm này.',
   'Say which entry.': 'Hãy nói mục nào.',
   'No entry holds those words.': 'Không mục nào có những chữ đó.',
+  'No such earlier version.': 'Không có phiên bản trước này.',
   '{0} entries hold those words; quote more of the one you mean.': 'Có {0} mục chứa những chữ đó; hãy trích nhiều hơn của mục bạn muốn nói.',
   'A replacement is one fact, at most {0} characters. Save the rest as new entries.': 'Mục thay thế chỉ ghi một điều, tối đa {0} ký tự. Hãy lưu phần còn lại thành mục mới.',
   'The person pinned that entry; only they can unpin it.': 'Người dùng đã ghim mục này; chỉ họ mới bỏ ghim được.',
@@ -1541,4 +1559,24 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'No model can answer right now. Pick another in the top bar.': 'Hiện không mô hình nào trả lời được. Hãy chọn mô hình khác ở thanh trên cùng.',
   'The model did not answer: {0}': 'Mô hình không trả lời: {0}',
   'The model gave no answer. Try again, or another model.': 'Mô hình không đưa ra câu trả lời. Hãy thử lại, hoặc dùng mô hình khác.',
+  // Data rights and recall (owner, 2026-11-12): tidying the index, skill_edit and its guard, read_chat.
+  'Say which indexed folder to tidy.': 'Hãy nói thư mục đã lập chỉ mục nào cần dọn.',
+  'The list of files still in the folder is missing, so nothing was removed from the index.': 'Thiếu danh sách các tệp còn trong thư mục, nên chưa có gì bị gỡ khỏi chỉ mục.',
+  'A folder is tidied from at most {0} files, so nothing was removed from the index.': 'Mỗi lần dọn một thư mục chỉ tính tối đa {0} tệp, nên chưa có gì bị gỡ khỏi chỉ mục.',
+  'The skill "{0}" has {1} characters of instructions, and this would replace them with {2} — {3}% shorter. Change part of it with skill_edit, or send the whole procedure again; only if the person wants the shorter version, write it with replace: true.':
+    'Kỹ năng "{0}" có {1} ký tự hướng dẫn, và lần ghi này sẽ thay bằng {2} — ngắn hơn {3}%. Hãy sửa một phần bằng skill_edit, hoặc gửi lại toàn bộ quy trình; chỉ khi người dùng muốn bản ngắn hơn, hãy ghi với replace: true.',
+  '"{0}" is one of Synapsez\'s own skills, which cannot be changed. Save one of the person\'s own under a new name with skill_write.':
+    '"{0}" là một kỹ năng có sẵn của Synapsez, không sửa được. Hãy lưu một kỹ năng riêng của người dùng dưới tên mới bằng skill_write.',
+  'No skill of this account is called "{0}". Its skills: {1}.': 'Tài khoản này không có kỹ năng nào tên "{0}". Các kỹ năng của nó: {1}.',
+  'This account has no skills of its own to change.': 'Tài khoản này chưa có kỹ năng riêng nào để sửa.',
+  'That text is not in the instructions of "{0}". Read it with skill_read first — it must match exactly.': 'Đoạn này không có trong hướng dẫn của "{0}". Hãy đọc bằng skill_read trước — phải khớp chính xác.',
+  'That text appears {0} times in "{1}". Include more of the words around it so it matches once only.': 'Đoạn này xuất hiện {0} lần trong "{1}". Hãy lấy thêm chữ xung quanh để chỉ khớp một lần.',
+  'This skill has no earlier version to restore.': 'Kỹ năng này không có bản trước để khôi phục.',
+  'Give the id of the conversation to read — search_chats shows it beside each one.': 'Hãy cho mã của cuộc trò chuyện cần đọc — search_chats ghi mã bên cạnh từng cuộc.',
+  'That is this conversation, which is already in front of you.': 'Đó chính là cuộc trò chuyện này, vốn đã ở trước mặt bạn.',
+  'That conversation cannot be read from here. Only ones search_chats lists can be: in this project from inside one, outside projects from outside — never incognito or bot conversations.':
+    'Không đọc được cuộc trò chuyện đó từ đây. Chỉ đọc được những cuộc search_chats liệt kê: trong dự án này khi đang ở trong dự án, ngoài các dự án khi đang ở ngoài — không bao giờ là cuộc ẩn danh hay của bot.',
+  "That conversation holds data from the person's Google account, which is not quoted into a conversation that holds none.":
+    'Cuộc trò chuyện đó chứa dữ liệu từ tài khoản Google của người dùng, nên không được trích vào một cuộc trò chuyện không chứa dữ liệu như vậy.',
+  'This is an incognito conversation, so no skill is saved or changed from it.': 'Đây là cuộc trò chuyện ẩn danh, nên không lưu hay sửa kỹ năng nào từ đây.',
 };

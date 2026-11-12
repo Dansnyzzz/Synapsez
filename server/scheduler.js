@@ -15,6 +15,8 @@ import { readCron, writeCron, readWhen, normTime, LIMITS, WEEK } from '../public
 import { TASK_QUIET, TASK_SKIPPED, TASK_STOPPED } from '../public/js/automation-status.js';
 import { untrusted } from './tools/untrusted.js';
 import { keepNewest, sweepChatLimit } from './chatLimit.js';
+import { waitUntil } from '@vercel/functions';
+import { tidyDueAccounts } from './memoryTidy.js';
 
 /**
  * Work that happens without anyone watching.
@@ -942,6 +944,11 @@ export async function sweep() {
     store.pruneAudit(AUDIT_KEEP_DAYS),
     // A bot's forgotten entries, once Undo can no longer bring them back (owner, 2026-11-10).
     store.pruneForgottenMemory(),
+    // Versions a bot replaced, 90 days on; a note's event a month past its date; a removed
+    // note's marker 90 days on (owner, 2026-11-12, schema 50).
+    store.pruneMemoryHistory(),
+    // The monthly tidy some accounts asked for: proposals only, never a change (memoryTidy.js).
+    tidyNotes(),
     // Sign-ins a week after they could last be used — expired or signed out.
     store.pruneSessions(),
     // After retention has run, so a conversation it deletes takes its copy in
@@ -953,6 +960,21 @@ export async function sweep() {
     // Jobs and research a conversation left behind from before every delete took them.
     store.pruneOrphanChatRows(),
   ]);
+}
+
+/**
+ * The accounts due their monthly tidy of notes, looked for at most hourly per instance
+ * (owner, 2026-11-12). Each is a model call of up to 40 seconds, so the work is handed
+ * to `waitUntil` rather than awaited: the sweep, and the tasks the heartbeat runs after
+ * it, do not wait on a model. The month itself is kept per account in the database
+ * (`memoryTidy.at`), not here — this only keeps one instance from asking every minute.
+ */
+let tidiedAt = 0;
+function tidyNotes(now = Date.now()) {
+  if (now - tidiedAt < 3600_000) return Promise.resolve();
+  tidiedAt = now;
+  waitUntil(tidyDueAccounts().catch((err) => log.error('the memory tidy sweep failed', err)));
+  return Promise.resolve();
 }
 
 /** How long an untouched incognito conversation survives. */

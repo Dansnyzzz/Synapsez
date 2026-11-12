@@ -62,6 +62,7 @@ import {
   discoverSkills,
   sharedSkill,
   addSharedSkill,
+  restoreSkill,
   SHARE_BY_DEFAULT,
 } from './skills.js';
 import { readSkillUpload } from './skillUpload.js';
@@ -1173,6 +1174,8 @@ export function createApp() {
         'onboarded',
         'memory',
         'memorySensitive',
+        // Opt-in: the notes go to the free Auto model once a month, for proposals only (memoryTidy.js).
+        'memoryTidy',
         'chatSearch',
         'retentionDays',
         'providerPrivacy',
@@ -1217,7 +1220,7 @@ export function createApp() {
         // Privacy choices are part of the security record: switching memory
         // off, or retention down to thirty days, is something an owner may want
         // to see they did — or did not — do.
-        const privacy = ['memory', 'memorySensitive', 'chatSearch', 'retentionDays', 'providerPrivacy', 'maskPersonal'].filter((k) => k in patch);
+        const privacy = ['memory', 'memorySensitive', 'memoryTidy', 'chatSearch', 'retentionDays', 'providerPrivacy', 'maskPersonal'].filter((k) => k in patch);
         if (privacy.length) {
           await audit(req, req.user.id, 'settings_privacy', Object.fromEntries(privacy.map((k) => [k, saved[k]])));
         }
@@ -2184,6 +2187,26 @@ export function createApp() {
         if (!skill) return res.status(404).json({ error: 'Skill not found' });
       }
       res.json({ skill });
+    }),
+  );
+
+  /**
+   * Put back the words the assistant last replaced in one of the account's own skills
+   * (owner, 2026-11-12, schema 51). Session auth, own skills only. The person's own act,
+   * so no version of what it undid is kept (PRV-006); a shared skill's earlier words
+   * pass the same scan as any edit, and a refusal says what it found.
+   */
+  api.post(
+    '/skills/:id/restore',
+    wrap(async (req, res) => {
+      try {
+        const result = await restoreSkill(req.user.id, req.params.id);
+        if (!result) return res.status(404).json({ error: 'Skill not found' });
+        await noteSharing(req, result.change);
+        res.json({ skill: result.skill });
+      } catch (err) {
+        skillRefusal(req, res, err);
+      }
     }),
   );
 
