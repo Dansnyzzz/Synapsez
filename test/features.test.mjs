@@ -2444,12 +2444,13 @@ section('free tiers: one allowance per service for the whole deployment, a fair 
     process.env.BRAVE_FREE_REQUESTS = '3';
     const took = await Promise.all(Array.from({ length: 6 }, () => tiers.take('brave', 1)));
     check('six Brave searches at once against a ceiling of three: three go, three do not (HAR-009)', took.filter(Boolean).length === 3 && (await tiers.allowance('brave')).left === 0, JSON.stringify(took));
-    const readCounter = store.readCounter;
-    store.readCounter = async () => {
+    // Every way a count is read: one bucket, or every key's at once (keyPool.js).
+    const { readCounter, readCounters } = store;
+    store.readCounter = store.readCounters = async () => {
       throw new Error('database away');
     };
     const unread = { brave: (await tiers.allowance('brave')).left, tavily: (await tiers.allowance('tavily')).left };
-    store.readCounter = readCounter;
+    Object.assign(store, { readCounter, readCounters });
     delete process.env.BRAVE_FREE_REQUESTS;
     check('  a count that cannot be read is none left for Brave, as before for the services that stop themselves', unread.brave === 0 && unread.tavily === Infinity, JSON.stringify(unread));
 

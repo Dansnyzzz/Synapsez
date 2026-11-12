@@ -60,6 +60,11 @@ const addKey = async (service, key) => {
 };
 /** The one key a section set aside, back in use — as the owner's check, or a new month, would put it. */
 const heal = () => pool.markKey('firecrawl', 'env', 'ok');
+/** This instance's memory of Firecrawl gone — its waits, its last asks, and when the pool last asked (2 minutes, keyPool.js) — so the next call asks again. */
+const forget = () => {
+  fc.resetFirecrawlState();
+  pool.__testing.forgetAsks();
+};
 
 /* ── Firecrawl's API, answered here ─────────────────────────────────── */
 
@@ -164,7 +169,7 @@ try {
     await resetCounts();
     await heal();
 
-    fc.resetFirecrawlState();
+    forget();
     left = 3;
     clearSearchCache();
     const low = await search('low', { plan: SEARCH_LEVELS.medium });
@@ -173,21 +178,21 @@ try {
     const indexStill = await fc.researchPapers('attention').then((rows) => rows.length, (err) => err.message);
     check('  too little for any call: the key is spent until its period turns — not waiting — and the free index still answers', allButSpent?.state === 'exhausted' && indexStill === 1, `${allButSpent?.state} ${indexStill}`);
     left = 1000;
-    fc.resetFirecrawlState();
+    forget();
     await heal();
 
     // Short for one call but not for a smaller one (review, 2026-11-12): passed over for that call alone.
     left = 12;
-    fc.resetFirecrawlState();
+    forget();
     // Read now, so the pool chooses the key on twelve and it is `hold`'s own check that decides.
-    const twelve = await fc.remainingCredits({ fresh: true });
+    const twelve = (await fc.firecrawlAccount())?.remaining;
     const crawl = await fc.firecrawlCrawl('https://example.com', { limit: 10 }).then(() => 'crawled', (err) => (err.skip ? 'stood aside' : err.message));
     const afterCrawl = (await pool.keysFor('firecrawl')).find((k) => k.id === 'env');
     clearSearchCache();
     const small = await search('twelve left', { plan: SEARCH_LEVELS.medium });
     check('twelve credits left: a ten-page crawl stands aside, the key is not set aside, and a two-credit search still goes', twelve === 12 && crawl === 'stood aside' && afterCrawl?.state === 'ok' && small.engine === 'Firecrawl', `${twelve} ${crawl} ${afterCrawl?.state} ${small.engine}`);
     left = 1000;
-    fc.resetFirecrawlState();
+    forget();
     await heal();
     await resetCounts();
     delete process.env.SEARCH_ORDER;
@@ -329,7 +334,7 @@ try {
 
     // A timeout is the same for every key (owner, 2026-11-12): both in use, the first that times out is the only one asked.
     await heal();
-    fc.resetFirecrawlState();
+    forget();
     answer.set('POST /v2/search', () => {
       throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
     });
@@ -350,10 +355,35 @@ try {
     const account = await fc.firecrawlAccount();
     check("Firecrawl's own figures for the administrators, summed over both keys", account?.keys === 2 && account.plan === 2000 && account.remaining > 1900 && account.remaining <= 2000 && account.periodEnd === periodEnd, JSON.stringify(account));
 
+    // Every key's count in one read (final review, 2026-11-13): the share, the month and the key
+    // chosen used to read each key in turn, three times a search.
+    answer.delete('POST /v2/search');
+    const { readCounter, readCounters } = store;
+    let reads = 0;
+    store.readCounter = (...args) => ((reads += 1), readCounter.apply(store, args));
+    store.readCounters = (...args) => ((reads += 1), readCounters.apply(store, args));
+    const readsFor = async (query) => {
+      clearSearchCache();
+      reads = 0;
+      const out = await search(query, { plan: SEARCH_LEVELS.medium, userId: 'u-reads' });
+      return { reads, engine: out.engine };
+    };
+    const more = [];
+    try {
+      const two = await readsFor('the counts read with two Firecrawl keys');
+      for (const key of ['fc-third-key-8888', 'fc-fourth-key-9999', 'fc-fifth-key-0000']) more.push(await addKey('firecrawl', key));
+      const five = (await pool.keysFor('firecrawl', { fresh: true })).length;
+      const withFive = await readsFor('the counts read with five Firecrawl keys');
+      check('a search with five Firecrawl keys reads the counts no more often than one with two, and no more than six times', five === 5 && two.engine === 'Firecrawl' && withFive.engine === 'Firecrawl' && withFive.reads === two.reads && withFive.reads <= 6, `${two.reads} reads with 2 keys, ${withFive.reads} with ${five}`);
+    } finally {
+      Object.assign(store, { readCounter, readCounters });
+    }
+
+    for (const added of more) await store.deleteServiceKey(added);
     await store.deleteServiceKey(id);
     await pool.keysFor('firecrawl', { fresh: true });
     await heal();
-    fc.resetFirecrawlState();
+    forget();
     delete process.env.SEARCH_ORDER;
     clearSearchCache();
     await resetCounts();

@@ -8,7 +8,8 @@ import { log } from './util/trace.js';
  * Several keys per deployment service (spec A, owner 2026-11-12: "every service has a
  * fallback"; narrowed the same day to the services the owner has more keys for). The key in
  * the environment is key 1 (`id: 'env'`), never stored; the owner adds the rest in Settings
- * → Administration → Free allowances, as rows of `service_keys`, sealed to service and row.
+ * → People → Free allowances (in the Administration group), as rows of `service_keys`, sealed
+ * to service and row.
  *
  *   - **Counted per key** (freeTier.js asks here): a key's bucket is
  *     `free:<service>@<keyId>:<period>`, the environment key's the name it had before
@@ -95,8 +96,15 @@ const PAID = 'service_paid_keys';
 const ENV_STATE = 'service_env_state';
 const KEY_STATES = Object.freeze(['ok', 'invalid', 'exhausted', 'cooling']);
 
+/**
+ * Whether a name is a pooled service: its own entry, never a name every object inherits
+ * (`constructor`, `__proto__` — security review L3), so a route's input is checked by this.
+ */
+export const isPooled = (service) => Object.hasOwn(POOLED, String(service));
+/** A window by id, its own entry only; null for any other name. */
+const windowOf = (id) => (Object.hasOwn(WINDOWS, String(id)) ? WINDOWS[id] : null);
 /** The pooled service a service or window id belongs to, or null. */
-const serviceOf = (id) => (POOLED[id] ? id : WINDOWS[id]?.of ?? null);
+const serviceOf = (id) => (isPooled(id) ? id : windowOf(id)?.of ?? null);
 /** A service's windows that every one of its calls must fit. */
 const bindingOf = (service) => Object.keys(WINDOWS).filter((id) => WINDOWS[id].of === service && !WINDOWS[id].own);
 const hintOf = (key) => String(key || '').slice(-4);
@@ -107,7 +115,7 @@ const asState = (state) => (KEY_STATES.includes(state) ? state : 'ok');
  * `withKey`. Server-side only, like every key here.
  */
 export const envKeyOf = (service) => {
-  for (const name of POOLED[service]?.env || []) {
+  for (const name of isPooled(service) ? POOLED[service].env : []) {
     const value = String(process.env[name] || '').trim();
     if (value) return value;
   }
@@ -131,7 +139,7 @@ const envIdOf = (service, key = envKeyOf(service)) => {
 };
 
 /** A window's own description, for freeTier.js: its period, its default ceiling, whether it is billed. Null for a service not counted per key. */
-export const poolWindow = (id) => WINDOWS[id] ?? null;
+export const poolWindow = (id) => windowOf(id);
 
 /** The bucket E2B's whole credit is counted in, for one key: it outlives any month. */
 export const creditBucket = (keyId) => (keyId === 'env' ? 'free:e2b:total' : `free:e2b@${keyId}:total`);
@@ -159,7 +167,7 @@ const askedAt = new Map();
 function cleanPaid(value) {
   const out = {};
   for (const [service, choice] of Object.entries(value && typeof value === 'object' ? value : {})) {
-    if (!POOLED[service] || !choice?.keyId) continue;
+    if (!isPooled(service) || !choice?.keyId) continue;
     const cap = choice.capMonthly == null ? null : Number(choice.capMonthly);
     out[service] = { keyId: String(choice.keyId), capMonthly: Number.isFinite(cap) && cap >= 0 ? cap : null };
   }
@@ -172,7 +180,7 @@ async function load() {
   const [rows, paid, envSaved] = await Promise.all([store.listServiceKeys(), store.getSetting(PAID), store.getSetting(ENV_STATE)]);
   const stored = new Map();
   for (const row of rows || []) {
-    if (!POOLED[row.service]) continue;
+    if (!isPooled(row.service)) continue;
     // A key that will not open (ENCRYPTION_KEY changed) stays listed, refused, so the owner sees it.
     const opened = openSecret(row.sealed, serviceKeyContext(row.service, row.id));
     const ceiling = row.ceiling == null ? null : Number(row.ceiling);
@@ -195,7 +203,7 @@ async function load() {
   }
   for (const [service, saved] of Object.entries(envSaved && typeof envSaved === 'object' ? envSaved : {})) {
     const mine = envStates.get(service);
-    if (POOLED[service] && saved && (!mine || Number(saved.at) > mine.at)) {
+    if (isPooled(service) && saved && (!mine || Number(saved.at) > mine.at)) {
       envStates.set(service, { id: String(saved.id || ''), state: asState(saved.state), retryAt: Number(saved.retryAt) || null, error: String(saved.error || ''), at: Number(saved.at) || 0 });
     }
   }
@@ -259,7 +267,11 @@ function compose(service, snap) {
     const mine = saved && saved.id === id ? saved : null;
     out.push({ id: 'env', fromEnv: true, key: envKey, hint: hintOf(envKey), label: null, ceiling: null, state: mine?.state || 'ok', retryAt: mine?.retryAt ?? null, live: envLiveOf(service, id) });
   }
-  for (const key of snap.stored.get(service) || []) out.push({ ...key });
+  for (const key of snap.stored.get(service) || []) {
+    // A stored key that is the environment's own — put there since it was added — is key 1, not a second key (final review, 2026-11-13).
+    if (envKey && key.key === envKey) continue;
+    out.push({ ...key });
+  }
   const at = Date.now();
   return out.slice(0, POOLED[service].maxKeys).map((key) => ({ ...key, ...effective(key, at) }));
 }
@@ -324,7 +336,7 @@ const bump = () => getStore().setSetting(VERSION, Date.now() + Math.random());
  * @param {{ paid?: boolean }} [options]
  */
 export function keyBucket(service, keyId, now = new Date(), { paid = false } = {}) {
-  const window = WINDOWS[service];
+  const window = windowOf(service);
   if (!window) return null;
   if (paid) {
     const { key, ends } = periodOf('month', now);
@@ -351,42 +363,70 @@ function liveLeft(window, key, now) {
 }
 
 /**
- * One key's ceiling in one window: the owner's override (the service's own window only),
- * else 95% of the provider's limit, else the default — for E2B, its credit's share of the month.
+ * Every count some keys' windows are worked out from, read at once (store `readCounters`): each
+ * key's own bucket in each window, and for E2B its whole credit, which its ceiling comes from.
+ * One round trip however many keys a service has — the database connection is one
+ * (store/driver.js), so a read per key, in turn, made every key added a little slower for
+ * every search (final review, 2026-11-13). Only how the counts are read changed: what is
+ * counted, where, and against what ceiling is as it was.
+ *
+ * @param {Array<[string, PoolKey[]]>} wanted each window id, with the keys to read it for
+ * @param {Date} now
+ * @param {string[]} [more] other buckets to read in the same query (the paid keys' months)
+ * @returns {Promise<Map<string, number>>}
+ */
+async function countsOf(wanted, now, more = []) {
+  const buckets = new Set(more);
+  for (const [service, keys] of wanted) {
+    for (const key of keys) {
+      const id = key?.id || 'env';
+      buckets.add(keyBucket(service, id, now).bucket);
+      if (WINDOWS[service].credit) buckets.add(creditBucket(id));
+    }
+  }
+  return buckets.size ? getStore().readCounters([...buckets]) : new Map();
+}
+
+/** A count `countsOf` read; a bucket it was not asked for is nothing counted. */
+const countIn = (counts, bucket) => Number(counts.get(bucket)) || 0;
+
+/**
+ * One key's ceiling in one window, from counts already read (`countsOf`): the owner's override
+ * (the service's own window only), else 95% of the provider's limit, else the default — for
+ * E2B, its credit's share of the month.
  *
  * @param {string} service a window id
  * @param {PoolKey} key
- * @param {Date} [now]
+ * @param {Date} now
+ * @param {Map<string, number>} counts
  */
-export async function ceilingOf(service, key, now = new Date()) {
+function ceilingFrom(service, key, now, counts) {
   const window = WINDOWS[service];
-  if (!window) return 0;
   if (service === window.of && key?.ceiling != null && Number.isFinite(Number(key.ceiling)) && Number(key.ceiling) >= 0) return Number(key.ceiling);
   const live = liveOf(window, key?.live);
   if (live && Number(live.limit) > 0) return Math.floor(Number(live.limit) * LIVE_SHARE);
   if (window.credit) {
-    const store = getStore();
     const id = key?.id || 'env';
-    const used = await store.readCounter(keyBucket(service, id, now).bucket);
-    const total = await store.readCounter(creditBucket(id));
+    const used = countIn(counts, keyBucket(service, id, now).bucket);
+    const total = countIn(counts, creditBucket(id));
     return e2bMonthCap({ usedBefore: Math.max(0, total - used), now });
   }
   return window.limit();
 }
 
 /**
- * One key in one window: what is counted, its ceiling, and what is left — none for a key
- * refused or spent, and lowered to the provider's own count when that is lower.
+ * One key in one window, from counts already read: what is counted, its ceiling, and what is
+ * left — none for a key refused or spent, and lowered to the provider's own count when that is lower.
  *
  * @param {string} service a window id
  * @param {PoolKey} key
- * @param {Date} [now]
+ * @param {Date} now
+ * @param {Map<string, number>} counts
  */
-export async function keyUsage(service, key, now = new Date()) {
+function usageFrom(service, key, now, counts) {
   const window = WINDOWS[service];
-  if (!window || !key) return { used: 0, ceiling: 0, left: 0 };
-  const used = await getStore().readCounter(keyBucket(service, key.id, now).bucket);
-  const ceiling = await ceilingOf(service, key, now);
+  const used = countIn(counts, keyBucket(service, key.id, now).bucket);
+  const ceiling = ceilingFrom(service, key, now, counts);
   const { state } = effective(key);
   // Spent is its service's credit: a window of its own (Firecrawl's free index) is not spent with it.
   let left = state === 'invalid' || (state === 'exhausted' && !window.own) ? 0 : Math.max(0, ceiling - used);
@@ -395,29 +435,60 @@ export async function keyUsage(service, key, now = new Date()) {
   return { used, ceiling, left };
 }
 
+/**
+ * One key's ceiling in one window (`ceilingFrom`): a count is read only for E2B's, which is
+ * worked out from its credit.
+ *
+ * @param {string} service a window id
+ * @param {PoolKey} key
+ * @param {Date} [now]
+ */
+export async function ceilingOf(service, key, now = new Date()) {
+  const window = windowOf(service);
+  if (!window) return 0;
+  return ceilingFrom(service, key, now, window.credit ? await countsOf([[service, [key]]], now) : new Map());
+}
+
+/**
+ * One key in one window (`usageFrom`), its counts read in one query.
+ *
+ * @param {string} service a window id
+ * @param {PoolKey} key
+ * @param {Date} [now]
+ */
+export async function keyUsage(service, key, now = new Date()) {
+  if (!windowOf(service) || !key) return { used: 0, ceiling: 0, left: 0 };
+  return usageFrom(service, key, now, await countsOf([[service, [key]]], now));
+}
+
 /** What is left of one key's ceiling in one window (`keyUsage`). */
 export async function leftOf(service, key, now = new Date()) {
   return (await keyUsage(service, key, now)).left;
 }
 
+/** The keys a window is summed over: every one not refused; a service with no key at all is counted as its environment key's, as before. */
+async function summedKeys(window) {
+  const all = await keysFor(window.of);
+  return all.length ? all.filter((key) => key.state !== 'invalid') : [standIn()];
+}
+
 /**
  * A window summed over its service's keys, for freeTier.js: what is used and left of the
- * sum of their ceilings. A refused key adds nothing; a service with no key at all is
- * counted as its environment key's, as before.
+ * sum of their ceilings, every key's count read in one query. A refused key adds nothing.
  *
  * @param {string} service a window id
  * @param {Date} [now]
  */
 export async function capacityOf(service, now = new Date()) {
-  const window = WINDOWS[service];
+  const window = windowOf(service);
   if (!window) return null;
-  const all = await keysFor(window.of);
-  const counted = all.length ? all.filter((key) => key.state !== 'invalid') : [standIn()];
+  const counted = await summedKeys(window);
+  const counts = await countsOf([[service, counted]], now);
   let used = 0;
   let left = 0;
   let limit = 0;
   for (const key of counted) {
-    const one = await keyUsage(service, key, now);
+    const one = usageFrom(service, key, now, counts);
     used += one.used;
     left += one.left;
     limit += one.ceiling;
@@ -426,12 +497,28 @@ export async function capacityOf(service, now = new Date()) {
 }
 
 /**
+ * `capacityOf`'s `limit` alone — the sum of a window's keys' ceilings, which Firecrawl's shares
+ * are shares of — reading a count only where a ceiling is worked out from one (E2B's credit).
+ * `take` asks it on every Firecrawl call, where the counts themselves are not needed.
+ *
+ * @param {string} service a window id
+ * @param {Date} [now]
+ */
+export async function poolLimit(service, now = new Date()) {
+  const window = windowOf(service);
+  if (!window) return 0;
+  const counted = await summedKeys(window);
+  const counts = window.credit ? await countsOf([[service, counted]], now) : new Map();
+  return counted.reduce((sum, key) => sum + ceilingFrom(service, key, now, counts), 0);
+}
+
+/**
  * A call counted here also comes off the provider's figure this instance holds, so a figure
  * read minutes ago keeps falling until it is read again (as firecrawl.js did with its own).
  * Memory only: the row keeps what the provider said.
  */
 export function noteUse(service, keyId, amount) {
-  const window = WINDOWS[service];
+  const window = windowOf(service);
   if (!window?.live || !Number(amount)) return;
   const live = keyId === 'env' ? envLiveOf(window.of) : snapshot?.stored.get(window.of)?.find((key) => key.id === keyId)?.live;
   if (live && Number.isFinite(Number(live.used))) live.used = Math.max(0, Number(live.used) + Number(amount));
@@ -439,7 +526,7 @@ export function noteUse(service, keyId, amount) {
 
 /** Count what the paid key spent this month, apart; the new total. */
 export async function countPaid(service, keyId, amount, now = new Date()) {
-  if (!WINDOWS[service] || !Number(amount)) return 0;
+  if (!windowOf(service) || !Number(amount)) return 0;
   const { bucket, ends } = keyBucket(service, keyId, now, { paid: true });
   return getStore().addToCounter(bucket, amount, ends);
 }
@@ -448,26 +535,36 @@ export async function countPaid(service, keyId, amount, now = new Date()) {
 
 /** The windows a call to `service` must fit, and the service whose keys answer it. */
 function callOf(service) {
-  if (POOLED[service]) return { service, windows: bindingOf(service) };
-  const window = WINDOWS[service];
+  if (isPooled(service)) return { service, windows: bindingOf(service) };
+  const window = windowOf(service);
   return window ? { service: window.of, windows: [service] } : null;
 }
 
-/** One key's room for a call — the least over its windows — and its share left, the least too. */
-async function roomOf(call, key, now) {
+/**
+ * Each key's room for a call — the least over its windows — and its share left, the least too;
+ * every key's counts read in one query (`countsOf`), in the keys' order.
+ *
+ * @returns {Promise<Array<{ room: number, share: number }>>}
+ */
+async function roomsOf(call, keys, now) {
+  if (!keys.length) return [];
   try {
-    let room = Infinity;
-    let share = Infinity;
-    for (const id of call.windows) {
-      const { ceiling, left } = await keyUsage(id, key, now);
-      room = Math.min(room, left);
-      share = Math.min(share, ceiling > 0 ? left / ceiling : 0);
-    }
-    return { room, share };
+    const counts = await countsOf(call.windows.map((id) => [id, keys]), now);
+    return keys.map((key) => {
+      let room = Infinity;
+      let share = Infinity;
+      for (const id of call.windows) {
+        const { ceiling, left } = usageFrom(id, key, now, counts);
+        room = Math.min(room, left);
+        share = Math.min(share, ceiling > 0 ? left / ceiling : 0);
+      }
+      return { room, share };
+    });
   } catch (err) {
     // A count that cannot be read: none left where going over is a bill (Brave), as before (HAR-009).
     const billed = call.windows.some((id) => WINDOWS[id].billed);
-    return billed && !noDatabase(err) ? { room: 0, share: 0 } : { room: Infinity, share: Infinity };
+    const none = billed && !noDatabase(err) ? { room: 0, share: 0 } : { room: Infinity, share: Infinity };
+    return keys.map(() => ({ ...none }));
   }
 }
 
@@ -496,10 +593,11 @@ async function choose(service, need, { paid = false, exclude = new Set() } = {})
   const spentServes = call.windows.every((id) => WINDOWS[id].own);
   const usable = (state) => state === 'ok' || (spentServes && state === 'exhausted');
   const keys = (await keysFor(call.service)).filter((key) => usable(key.state) && key.key && !exclude.has(key.id));
+  const rooms = await roomsOf(call, keys, now);
   let best = null;
   let fullest = null;
-  for (const key of keys) {
-    const { room, share } = await roomOf(call, key, now);
+  for (const [at, key] of keys.entries()) {
+    const { room, share } = rooms[at];
     if (room > 0 && room >= want) {
       if (!best || share > best.share) best = { key, share };
     } else if (!fullest || share > fullest.share) fullest = { key, share };
@@ -549,9 +647,10 @@ export function classify(service, err = {}) {
   if (id === 'exa' && /NO_MORE_CREDITS|_BUDGET_EXCEEDED/.test(said)) return 'exhausted';
   if (id === 'tavily' && (status === 432 || status === 433)) return 'exhausted';
   if (status === 402) return 'exhausted';
-  // Firecrawl turns some sites away with a 403 ("This website is no longer supported"): about the
-  // page, not the key, which it refuses with a 401 — else one such page would refuse every key in turn.
-  if (id === 'firecrawl' && status === 403 && !/token|api.?key|unauthori[sz]ed/i.test(said)) return null;
+  // A 403 that does not name the key or token is the request's, not the key's (owner, 2026-11-13, for
+  // every service): Firecrawl's "This website is no longer supported", a blocked site, a forbidden
+  // call — else one such page would refuse every key in turn. A 401 is always the key's.
+  if (status === 403 && !/token|api.?key|unauthori[sz]ed/i.test(said)) return null;
   if (status === 401 || status === 403) return 'invalid';
   if (id === 'exa' && /INVALID_API_KEY/.test(said)) return 'invalid';
   if (id === 'brave' && /SUBSCRIPTION_TOKEN_INVALID/.test(said)) return 'invalid';
@@ -729,7 +828,7 @@ const refuse = (message) => Object.assign(new Error(message), { code: 'invalid' 
  * @param {number|null} [capMonthly]
  */
 export async function setPaidKey(service, keyId, capMonthly = null) {
-  if (!POOLED[service]) throw refuse('That service does not take several keys.');
+  if (!isPooled(service)) throw refuse('That service does not take several keys.');
   const cap = capMonthly == null ? null : Number(capMonthly);
   if (cap !== null && !(Number.isFinite(cap) && cap >= 0)) throw refuse('A monthly cap is a number of zero or more.');
   if (keyId != null && !(await keysFor(service, { fresh: true })).some((key) => key.id === String(keyId))) throw refuse("That is not one of this service's keys.");
@@ -824,6 +923,22 @@ export async function liveUsage(service, key, { fresh = false } = {}) {
   return live;
 }
 
+/**
+ * Every Tavily and Firecrawl key's figure brought up to date for the administrators' page,
+ * before it builds its report — it was built first, so the page showed the figure before
+ * (final review, 2026-11-13). Each key is asked as `liveUsage` allows: at most every five
+ * minutes for Tavily, two for Firecrawl, all at once; a key refused is not asked. The keys are
+ * read afresh, so one just added on another instance is asked too. Never on a person's call.
+ */
+export async function refreshLive() {
+  const snap = await current({ fresh: true });
+  const asks = [];
+  for (const service of Object.keys(READERS)) {
+    for (const key of compose(service, snap)) if (key.key && key.state !== 'invalid') asks.push(liveUsage(service, key));
+  }
+  await Promise.all(asks);
+}
+
 /** A key as anyone types one: printable, no spaces or line breaks, of a sensible length. */
 const PLAIN_KEY = /^[\x21-\x7e]{8,512}$/;
 
@@ -866,8 +981,9 @@ async function templateIn(key) {
  */
 export async function checkKey(service, key) {
   const text = String(key ?? '').trim();
-  if (!POOLED[service] || !PLAIN_KEY.test(text)) return { ok: false, reason: 'refused' };
-  if (service === 'brave') return { ok: true };
+  if (!isPooled(service) || !PLAIN_KEY.test(text)) return { ok: false, reason: 'refused' };
+  // Brave has no free check: its key is checked on first use.
+  if (!Object.hasOwn(CHECKS, service)) return { ok: true };
   const [url, headers] = CHECKS[service](text);
   let res;
   let body = null;
@@ -894,21 +1010,28 @@ export async function checkKey(service, key) {
 
 /**
  * Every service and its keys, by hint — the provider's figure where it says one, else what
- * is counted here — its state, and the paid key with what it spent this month. Read fresh.
+ * is counted here — its state, and the paid key with what it spent this month. Read fresh;
+ * every count in one query, and a count that cannot be read is said as not known.
  *
  * @param {Date} [now]
  */
 export async function poolReport(now = new Date()) {
   const snap = await current({ fresh: true });
+  const services = Object.keys(POOLED).map((service) => ({ service, all: compose(service, snap), choice: snap.paid[service] || null }));
+  const paidIn = (service, choice) => keyBucket(service, choice.keyId, now, { paid: true }).bucket;
+  const counts = await countsOf(
+    services.map(({ service, all }) => [service, all]),
+    now,
+    services.filter(({ choice }) => choice).map(({ service, choice }) => paidIn(service, choice)),
+  ).catch(() => null);
   const rows = [];
-  for (const service of Object.keys(POOLED)) {
+  for (const { service, all, choice } of services) {
     const window = WINDOWS[service];
-    const choice = snap.paid[service] || null;
     const keys = [];
-    for (const key of compose(service, snap)) {
+    for (const key of all) {
       const live = liveOf(window, key.live);
       const theirs = liveLeft(window, key, now) !== null;
-      const counted = await keyUsage(service, key, now).catch(() => null);
+      const counted = counts ? usageFrom(service, key, now, counts) : null;
       keys.push({
         id: key.id,
         fromEnv: key.fromEnv,
@@ -924,16 +1047,19 @@ export async function poolReport(now = new Date()) {
         paid: choice?.keyId === key.id,
       });
     }
-    const spent = choice ? await getStore().readCounter(keyBucket(service, choice.keyId, now, { paid: true }).bucket).catch(() => null) : null;
+    const spent = choice && counts ? countIn(counts, paidIn(service, choice)) : null;
     rows.push({ service, pooled: true, keys, paid: choice ? { keyId: choice.keyId, capMonthly: choice.capMonthly, spent } : null });
   }
   for (const [service, note] of Object.entries(NOT_POOLED)) rows.push({ service, pooled: false, note, keys: [], paid: null });
   return rows;
 }
 
-/** Testing seam: make this instance's copy of the keys `ms` older, as if 30 s had passed. */
+/** Testing seams: this instance's copy of the keys made `ms` older, as if 30 s had passed; and every provider's last ask forgotten, so `liveUsage` asks again. */
 export const __testing = {
   age(ms) {
     if (snapshot) snapshot.checkedAt -= ms;
+  },
+  forgetAsks() {
+    askedAt.clear();
   },
 };

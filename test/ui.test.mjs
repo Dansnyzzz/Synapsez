@@ -808,6 +808,14 @@ section('Usage, devices, feedback and what is new — from the account menu');
     check('  chosen as the paid key, the radio stays after Refresh', keyId && stillPaid === true, String(keyId));
     check('  and says the provider must allow going past the free amount', /past the free/i.test(await page.$eval(row, (el) => el.textContent || '').catch(() => '')));
     check('  Stack Exchange is one row, with its reason', (await page.$$eval('#admin-free-tier .ctable__row strong', (els) => els.filter((el) => el.textContent === 'Stack Exchange').length)) === 1);
+    // E2B's one key is the server's setting (e2b.js): the page offers no box for another.
+    check('  E2B offers no + Add key, even with no key set', !!(await page.$('#admin-free-tier [data-pool="e2b"]')) && !(await page.$('#admin-free-tier [data-pool="e2b"] [data-pool-add]')));
+    // The ceiling box (a number) is drawn like the key box beside it, in either theme.
+    const boxes = await page.evaluate(() => {
+      const look = (el) => (el ? (({ backgroundColor, color, paddingLeft, borderTopColor }) => ({ backgroundColor, color, paddingLeft, borderTopColor }))(getComputedStyle(el)) : null);
+      return { ceiling: look(document.querySelector('#admin-free-tier [data-pool="exa"] [data-add-ceiling]')), key: look(document.querySelector('#admin-free-tier [data-pool="exa"] [data-add-key]')) };
+    });
+    check("  Exa's ceiling box is styled as its key box is", !!boxes.ceiling && JSON.stringify(boxes.ceiling) === JSON.stringify(boxes.key), JSON.stringify(boxes));
     // A save the server refuses puts the radio back where the server has it.
     await page.route('**/api/admin/service-keys/paid', (route) => route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'A monthly cap is a number of zero or more.' }) }));
     await page.click(`${row} input[data-paid-radio][value=""]`).catch(() => {});

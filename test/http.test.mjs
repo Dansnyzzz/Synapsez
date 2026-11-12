@@ -728,6 +728,10 @@ section('the owner adds, checks and removes service keys');
   // The providers' check calls answer from here; the test's own calls to this server pass through.
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
+    // Tavily's own figure for a key (keyPool.js `liveUsage`): its plan, and what it has used of it.
+    if (String(url).startsWith('https://api.tavily.com/usage')) return new Response(JSON.stringify({ key: { usage: 120, limit: 2000 }, account: { current_plan: 'Researcher', plan_usage: 300, plan_limit: 1000 } }), { status: 200 });
+    // E2B answers here too, so a key that should never be checked is never sent anywhere.
+    if (String(url).startsWith('https://api.e2b.app/')) return new Response('{}', { status: 200 });
     if (!String(url).includes('api.exa.ai')) return realFetch(url, init);
     const key = String(init?.headers?.['x-api-key'] || '');
     if (key.startsWith('slow-')) throw Object.assign(new Error('timeout'), { name: 'TimeoutError' });
@@ -752,6 +756,9 @@ section('the owner adds, checks and removes service keys');
     check('an unknown service is a 400', (await add('google', 'some-long-key-value')).status === 400);
     check('  so is a service not pooled', (await add('stackexchange', 'some-long-key-value')).status === 400);
     check('  so is an empty key', (await add('exa', '   ')).status === 400);
+    // E2B's machines are made with the key in the server's settings (e2b.js `connection`): a stored one would do nothing.
+    const e2bAdded = await add('e2b', 'e2b-key-aaaa-0001');
+    check("  so is an E2B key: its one key is the server's setting", e2bAdded.status === 400 && e2bAdded.json?.error === "This service takes one key, from the server's settings." && (await store.listServiceKeys('e2b')).length === 0, JSON.stringify(e2bAdded.json));
 
     const first = await add('exa', 'exa-key-aaaa-0001', { label: 'First' });
     check('a good key is a 201 with an id and its last four', first.status === 201 && !!first.json?.id && first.json?.hint === '0001', JSON.stringify(first.json));
@@ -763,20 +770,33 @@ section('the owner adds, checks and removes service keys');
     check('  and the report carries neither key, seal nor fingerprint', !/exa-key-aaaa-0001|sealed|fingerprint/.test(JSON.stringify(listed.json)));
 
     check('the same key again is a 409', (await add('exa', 'exa-key-aaaa-0001')).status === 409);
+    // The environment's key is key 1 of its service (final review, 2026-11-13): not a second key as well.
+    process.env.EXA_API_KEY = 'exa-env-key-aaaa-0000';
+    const envAgain = await add('exa', ' exa-env-key-aaaa-0000 ');
+    delete process.env.EXA_API_KEY;
+    check("  so is the environment's own key, added again as a stored one", envAgain.status === 409 && envAgain.json?.error === 'That key is already in this service.' && (await store.listServiceKeys('exa')).length === 1, JSON.stringify(envAgain.json));
     const refused = await add('exa', 'bad-key-value-0002');
     check('a key its service refuses is a 422 naming the service', refused.status === 422 && refused.json?.error === 'Exa refused this key.', JSON.stringify(refused.json));
     const slow = await add('exa', 'slow-key-value-0003');
     check('  one that could not be asked says to try again', slow.status === 422 && /could not be reached/.test(slow.json?.error || ''), JSON.stringify(slow.json));
     check('  neither was kept', (await store.listServiceKeys('exa')).length === 1);
 
-    for (let i = 2; i <= 10; i += 1) await add('exa', `exa-key-aaaa-${String(i).padStart(4, '0')}`);
+    for (let i = 2; i <= 9; i += 1) await add('exa', `exa-key-aaaa-${String(i).padStart(4, '0')}`);
+    process.env.EXA_API_KEY = 'exa-env-key-aaaa-0000';
+    const tenth = await add('exa', 'exa-key-aaaa-0010');
+    delete process.env.EXA_API_KEY;
+    check("with the environment's key set it is one of the ten: the tenth stored Exa key is refused", tenth.status === 400 && /already has 10 keys/.test(tenth.json?.error || '') && (await store.listServiceKeys('exa')).length === 9, JSON.stringify(tenth.json));
+    await add('exa', 'exa-key-aaaa-0010');
     const over = await add('exa', 'exa-key-aaaa-0011');
     check('one past the most a service takes is a 400', over.status === 400 && /already has 10 keys/.test(over.json?.error || ''), JSON.stringify(over.json));
     const braveOne = await add('brave', 'brave-key-aaaa-0001');
     const braveTwo = await add('brave', 'brave-key-aaaa-0002');
     check('a one-key service takes one', braveOne.status === 201 && braveTwo.status === 400 && braveTwo.json?.error === 'This service takes one key.', JSON.stringify(braveTwo.json));
-    check('  and the environment key is one of them', (process.env.TAVILY_API_KEY = 'tavily-env-key-0000', (await add('brave', 'x-key-value-aaaa')).status === 400));
-    delete process.env.TAVILY_API_KEY;
+
+    // Tavily's own figure, asked when the page is, before the report is built (final review, 2026-11-13).
+    const tavilyAdded = await add('tavily', 'tvly-key-aaaa-0001');
+    const tavilyKey = (await alice.call('GET', '/api/admin/free-tier')).json?.pool?.find((p) => p.service === 'tavily')?.keys?.find((k) => k.id === tavilyAdded.json?.id);
+    check("a stored Tavily key shows Tavily's own figure in the next report: its plan, its limit and use, said to be the provider's", tavilyAdded.status === 201 && tavilyKey?.source === 'provider' && tavilyKey.limit === 2000 && tavilyKey.used === 120 && tavilyKey.plan === 'Researcher', JSON.stringify(tavilyKey));
 
     // The paid key.
     const paidSet = note(await alice.call('PUT', '/api/admin/service-keys/paid', { service: 'exa', keyId: first.json.id, capMonthly: 3000 }));
@@ -810,8 +830,8 @@ section('the owner adds, checks and removes service keys');
     const events = ((await alice.call('GET', '/api/admin/activity')).json?.events || []).filter((e) => /^service_/.test(e.kind));
     const trail = JSON.stringify(events);
     check('the record has the three kinds', ['service_key_added', 'service_key_removed', 'service_paid_key_set'].every((k) => events.some((e) => e.kind === k)), events.map((e) => e.kind).join());
-    check('  with hints and no key', /"hint":"0001"/.test(trail) && !/exa-key-aaaa|brave-key-aaaa/.test(trail), trail.slice(0, 200));
-    check('  and no response carried a key, a seal or a fingerprint', !bodies.some((b) => /exa-key-aaaa|brave-key-aaaa|bad-env-key|sealed|fingerprint/.test(b)));
+    check('  with hints and no key', /"hint":"0001"/.test(trail) && !/exa-key-aaaa|exa-env-key|brave-key-aaaa|tvly-key-aaaa/.test(trail), trail.slice(0, 200));
+    check('  and no response carried a key, a seal or a fingerprint', !bodies.some((b) => /exa-key-aaaa|exa-env-key|brave-key-aaaa|tvly-key-aaaa|e2b-key-aaaa|bad-env-key|sealed|fingerprint/.test(b)));
 
     // Tavily's Project plan: asked after two busy months in a row (owner, 2026-11-12).
     const busy = { services: [{ service: 'tavily', used: 900, limit: 1000 }] };

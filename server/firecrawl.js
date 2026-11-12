@@ -1,7 +1,9 @@
 /**
  * Firecrawl (owner, 2026-11-11: "switch Bright Data to Firecrawl, and use it to the full"),
- * on its Free plan: 1,000 credits a month for the whole deployment, no card, and a 402 at
- * zero — never a bill (docs.firecrawl.dev/billing, read 2026-11-11). What it is used for:
+ * on the plan each of its keys is on — the owner's is Hobby, 5,000 credits a month, since
+ * 2026-11-12 — with several keys (keyPool.js), each answering 402 once its credits are spent.
+ * Nothing past a key's plan is billed but through the owner's paid key, for a charged call,
+ * on Firecrawl's pay-as-you-go (docs.firecrawl.dev/billing, read 2026-11-11). What it is used for:
  *
  *   - **search** — one more engine in web_search's chain, after Exa (search.js): 2 credits
  *     for up to ten results.
@@ -125,18 +127,18 @@ async function call(path, { key, keyId, method = 'POST', body, query, timeoutMs 
 
 /**
  * What Firecrawl says is left of one key's month — asked again when ten minutes have passed
- * since (`fresh`: now), and lowered meanwhile by what is counted here (keyPool.js). `left`
- * null when it cannot say, or said it of a period that has ended: then the count in
- * freeTier.js alone decides.
+ * since, and lowered meanwhile by what is counted here (keyPool.js). Due, the pool's own two
+ * minutes still hold (`liveUsage`): a figure the administrators' page read a minute ago is not
+ * asked for again. `left` null when it cannot say, or said it of a period that has ended: then
+ * the count in freeTier.js alone decides.
  *
  * @param {import('./keyPool.js').PoolKey} key
- * @param {{ fresh?: boolean }} [options]
  */
-async function figureOf(key, { fresh = false } = {}) {
-  const due = fresh || Date.now() - (remaining.get(key.id) || 0) >= REMAINING_MS;
+async function figureOf(key) {
+  const due = Date.now() - (remaining.get(key.id) || 0) >= REMAINING_MS;
   if (due) remaining.set(key.id, Date.now());
   // Never throws: a failure is said in the log there, and what was known is kept.
-  const live = due ? await liveUsage('firecrawl', key, { fresh: true }) : key.live;
+  const live = due ? await liveUsage('firecrawl', key) : key.live;
   const current = live && live.used != null && live.limit != null && !(live.resets && Date.parse(live.resets) <= Date.now());
   return {
     left: current ? Math.max(0, Number(live.limit) - Number(live.used)) : null,
@@ -147,17 +149,6 @@ async function figureOf(key, { fresh = false } = {}) {
 
 /** The keys Firecrawl's figures are read for: every one not refused. */
 const figuredKeys = async () => (await keysFor('firecrawl')).filter((key) => key.key && key.state !== 'invalid');
-
-/**
- * What Firecrawl says is left, over every key, each asked at most every ten minutes per
- * instance. Null when it cannot say for any — then the count in freeTier.js alone decides.
- */
-export async function remainingCredits({ fresh = false } = {}) {
-  await warmPools();
-  if (!firecrawlReady()) return null;
-  const said = (await Promise.all((await figuredKeys()).map((key) => figureOf(key, { fresh })))).filter((f) => f.left !== null);
-  return said.length ? said.reduce((sum, f) => sum + Number(f.left), 0) : null;
-}
 
 /**
  * Firecrawl's own figures, for the administrators' view (freeTier.js): summed over the keys

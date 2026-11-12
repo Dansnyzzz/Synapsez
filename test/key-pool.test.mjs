@@ -233,7 +233,14 @@ try {
   {
     const cases = [
       ['tavily', { status: 401 }, 'invalid'],
-      ['e2b', { status: 403, body: { code: 403, message: 'team is blocked' } }, 'invalid'],
+      // A 403 is the key's only when it names the key or token, for every service (owner, 2026-11-13).
+      ['e2b', { status: 403, body: { code: 403, message: 'team is blocked' } }, null],
+      ['e2b', { status: 403, body: { code: 403, message: 'Invalid API key' } }, 'invalid'],
+      ['exa', { status: 403, body: { requestId: 'r', error: 'This API key does not have access to this endpoint', tag: 'ACCESS_DENIED' } }, 'invalid'],
+      ['exa', { status: 403, body: { requestId: 'r', error: 'Request blocked', tag: 'FORBIDDEN' } }, null],
+      ['tavily', { status: 403, body: { detail: { error: 'Unauthorized: missing or invalid API key.' } } }, 'invalid'],
+      ['tavily', { status: 403, body: { detail: { error: 'Forbidden: this request is not allowed.' } } }, null],
+      ['exa', { status: 401, body: { error: 'Request blocked' } }, 'invalid'],
       ['exa', { status: 401, body: { requestId: 'r', error: 'Invalid API key', tag: 'INVALID_API_KEY' } }, 'invalid'],
       ['exa', { status: 402, body: { error: 'No more credits', tag: 'NO_MORE_CREDITS' } }, 'exhausted'],
       ['exa', { status: 402, code: 'TEAM_BUDGET_EXCEEDED' }, 'exhausted'],

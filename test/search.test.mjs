@@ -541,6 +541,33 @@ section('several keys: a spent or refused key hands over to the next (spec A)');
   const exaAsked = calls.filter((c) => c.url.includes('api.exa.ai')).length;
   check('Exa timing out: no second key asked, the next engine answers, and no key is set aside', exaAsked === 1 && slow.engine === 'DuckDuckGo' && /timeout/.test(slow.attempts[0]?.error || '') && (await pool.keysFor('exa')).every((k) => k.state === 'ok'), `${exaAsked} Exa call(s) — ${slow.engine}`);
 
+  // Every key's count in one read (final review, 2026-11-13): the database has one connection,
+  // so a read per key, in turn, grew a search's wait with every key added.
+  await heal();
+  process.env.SEARCH_ORDER = 'exa';
+  const { readCounter, readCounters } = store;
+  let reads = 0;
+  store.readCounter = (...args) => ((reads += 1), readCounter.apply(store, args));
+  store.readCounters = (...args) => ((reads += 1), readCounters.apply(store, args));
+  const readsFor = async (query) => {
+    stubFetch({ 'api.exa.ai/search': () => json({ results: [{ title: 'R', url: 'https://example.com/r', highlights: ['h'] }], costDollars: { total: 0.009 } }) });
+    reads = 0;
+    const found = await search(query, { plan: searchPlan('medium'), userId: 'u-reads' });
+    return { reads, engine: found.engine };
+  };
+  try {
+    const two = await readsFor('the counts read with two Exa keys');
+    for (const key of ['exa-third-key-4444', 'exa-fourth-key-5555', 'exa-fifth-key-6666']) {
+      every.push(key);
+      await addKey('exa', key);
+    }
+    const five = (await pool.keysFor('exa', { fresh: true })).length;
+    const withFive = await readsFor('the counts read with five Exa keys');
+    check('a search with five Exa keys reads the counts no more often than one with two: three reads, whatever the number of keys', five === 5 && two.engine === 'Exa' && withFive.engine === 'Exa' && withFive.reads === two.reads && withFive.reads <= 3, `${two.reads} reads with 2 keys, ${withFive.reads} with ${five}`);
+  } finally {
+    Object.assign(store, { readCounter, readCounters });
+  }
+
   delete process.env.SEARCH_ORDER;
   await heal();
 }

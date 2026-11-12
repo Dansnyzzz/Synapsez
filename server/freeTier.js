@@ -1,7 +1,7 @@
 import { getStore } from './store/index.js';
 import { log } from './util/trace.js';
 import { periodOf, freeTierOnly, num, numIn, noDatabase } from './freeTierPeriod.js';
-import { poolWindow, capacityOf, keyBucket, keyEntry, keyUsage, ceilingOf, countPaid, noteUse, creditBucket, paidKeyOf, poolReport } from './keyPool.js';
+import { poolWindow, capacityOf, poolLimit, keyBucket, keyEntry, keyUsage, ceilingOf, countPaid, noteUse, creditBucket, paidKeyOf, poolReport } from './keyPool.js';
 
 // Moved to freeTierPeriod.js so keyPool.js can read them without importing this file; still exported here.
 export { periodOf, freeTierOnly, e2bMonthCap } from './freeTierPeriod.js';
@@ -10,7 +10,8 @@ export { periodOf, freeTierOnly, e2bMonthCap } from './freeTierPeriod.js';
  * Free tiers, kept to (owner, 2026-11-02): this deployment pays nothing.
  *
  * Every paid service here has a free allowance, and every allowance belongs to
- * the deployment — one key, every account's searches drawn from it. It is
+ * the deployment — its keys (several for some services, keyPool.js), every
+ * account's searches drawn from them. It is
  * never one allowance per person, nor per person's address: the server makes
  * the calls, from its own address. So it is counted here, once for everyone,
  * in the database every serverless instance shares, and a service that has
@@ -128,12 +129,12 @@ const countedIn = (service, keyId, now) => (TIERS[service].pooled ? keyBucket(se
 /** A paid call is counted apart against the service's own window only, so one call is never counted there twice. */
 const paidHere = (service, paid) => paid && TIERS[service].pooled && poolWindow(service).of === service;
 
-/** A share of all Firecrawl's keys' credits this month, or the owner's own figure for it. */
+/** A share of all Firecrawl's keys' credits this month, or the owner's own figure for it — the sum of their ceilings, no count read. */
 async function shareLimit(tier, now) {
   const set = numIn(process.env, tier.env, null);
   if (set !== null) return set;
   // Not floored by the float's own dust: 5,700 × 0.35 is 1994.9999999999998.
-  return Math.floor((await capacityOf('firecrawl', now)).limit * tier.share + 1e-6);
+  return Math.floor((await poolLimit('firecrawl', now)) * tier.share + 1e-6);
 }
 
 /** A ceiling to say when the count cannot be read: one key's default, as before several keys. */

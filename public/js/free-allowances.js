@@ -2,8 +2,8 @@ import { t, currentLanguage } from './i18n.js';
 import { escapeHtml } from './markdown.js';
 
 /*
- * Settings → Administration → Free allowances (server/freeTier.js, server/keyPool.js; owner
- * 2026-11-12): one row per service — the allowance the whole deployment shares — and, for the
+ * Settings → People → Free allowances, in the Administration group (server/freeTier.js,
+ * server/keyPool.js; owner 2026-11-12): one row per service — the allowance the whole deployment shares — and, for the
  * services that take several keys, a button opening every key: its last four characters (never
  * the key), what it has used, whose figure that is, its state. The owner alone adds, checks and
  * removes keys and chooses the paid one; an administrator with `free_tier` reads the same rows.
@@ -24,6 +24,8 @@ const UNITS = { exa: 'usd', e2b: 'usd', tavily: 'credits', firecrawl: 'credits',
 const PLAN_READ = new Set(['tavily', 'firecrawl']);
 /** How many keys each service takes at most (keyPool.js POOLED, repeated for the "+ Add key" button). */
 const MAX_KEYS = { exa: 10, tavily: 10, firecrawl: 10, brave: 1, e2b: 1 };
+/** Services whose one key is the server's setting and no other: E2B's machines are made with it (server/e2b.js), so the server refuses another. */
+const ENV_ONLY = new Set(['e2b']);
 const PER_LABEL = { month: 'freetier.perMonth', day: 'freetier.perDay', hour: 'freetier.perHour', minute: 'freetier.perMinute' };
 /** The word for each key state; `spent` and `waiting` take a figure. */
 const STATE_WORD = { ok: 'freetier.state.ok', invalid: 'freetier.state.invalid', exhausted: 'freetier.state.exhausted', cooling: 'freetier.state.cooling' };
@@ -171,7 +173,7 @@ export function createFreeAllowances(host, deps) {
     if (service === 'firecrawl' && sameTeam(entry.keys)) warn.push(t('freetier.sameTeam'));
     if (service === 'tavily' && tavilyOn) warn.push(t('freetier.tavilyHint'));
     const keys = entry.keys.map((k) => keyRow(service, k, owner, now)).join('');
-    const canAdd = owner && count < (MAX_KEYS[service] ?? 1);
+    const canAdd = owner && !ENV_ONLY.has(service) && count < (MAX_KEYS[service] ?? 1);
     return `<div class="freepool" data-pool="${escapeHtml(service)}" role="rowgroup">
         <div class="ctable__row" role="row">
           <span role="cell"><strong>${escapeHtml(label)}</strong>

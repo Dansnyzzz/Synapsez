@@ -5358,7 +5358,7 @@ export function createPgStore(connectionString) {
       return q('SELECT delivery_id, status, reason, at FROM hook_receipts WHERE user_id = $1 AND route_id = $2 ORDER BY at DESC LIMIT $3', [userId, String(routeId ?? ''), limit]);
     },
 
-    /** The keys the owner added to deployment services (schema 52), oldest first; one service's, or all. Bounded: at most four per service. */
+    /** The keys the owner added to deployment services (schema 52), oldest first; one service's, or all. Bounded: a service holds at most its `maxKeys` (keyPool.js POOLED: 10 for Exa, Tavily and Firecrawl, 1 for Brave and E2B), the environment's among them. */
     async listServiceKeys(service = null) {
       if (service) return q('SELECT * FROM service_keys WHERE service = $1 ORDER BY added_at, id LIMIT 50', [String(service)]);
       return q('SELECT * FROM service_keys ORDER BY service, added_at, id LIMIT 500');
@@ -6117,6 +6117,23 @@ export function createPgStore(connectionString) {
     async readCounter(bucket) {
       const rows = await q('SELECT count FROM rate_limits WHERE bucket = $1 AND expires_at > NOW()', [bucket]);
       return Number(rows[0]?.count || 0);
+    },
+    /**
+     * Several running totals in one query, by bucket — every key of a service at once
+     * (keyPool.js), so a search reads its counts in one round trip however many keys
+     * there are: the connection is one (driver.js). A bucket with no row, or whose
+     * period has ended, is 0, as `readCounter` says it.
+     *
+     * @param {string[]} buckets
+     * @returns {Promise<Map<string, number>>}
+     */
+    async readCounters(buckets) {
+      const names = [...new Set((Array.isArray(buckets) ? buckets : []).map(String))];
+      const counts = new Map(names.map((name) => [name, 0]));
+      if (!names.length) return counts;
+      const rows = await q('SELECT bucket, count FROM rate_limits WHERE bucket = ANY($1::text[]) AND expires_at > NOW()', [names]);
+      for (const row of rows) counts.set(String(row.bucket), Number(row.count || 0));
+      return counts;
     },
     /**
      * Add to a running total in one upsert — a period that has ended starts again

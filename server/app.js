@@ -94,7 +94,7 @@ import { mountSceneAssets } from './sceneAssets.js';
 import { checkDomain } from './domainCheck.js';
 import { afterTurn, titleShown } from './themes.js';
 import { freeTierReport, tavilyHint } from './freeTier.js';
-import { POOLED, envKeyOf, keysFor, checkKey, markKey, paidKeyOf, setPaidKey, bumpKeysVersion } from './keyPool.js';
+import { POOLED, isPooled, envKeyOf, keysFor, checkKey, markKey, paidKeyOf, setPaidKey, bumpKeysVersion, refreshLive } from './keyPool.js';
 import { currentKeyId, encryptSecret, sha256 } from './crypto.js';
 import { serviceKeyContext } from './secretContexts.js';
 import { chainTurn, continueTurn } from './turnContinue.js';
@@ -2802,6 +2802,9 @@ export function createApp() {
       }
       // And where the move off the v1 envelope is (secretsCutover.js) — counts only.
       const secrets = await cutoverStatus().catch(() => null);
+      // Tavily's and Firecrawl's own figures for each key, asked before the report is built from them
+      // (each at most every 5 and 2 minutes) — this page is where they are asked, never a person's call.
+      await refreshLive();
       const report = await freeTierReport();
       res.json({ ...report, tavilyHint: await tavilyHint(report), firecrawl: await firecrawlAccount().catch(() => null), encryptionKeyId, secrets, owner: isOwner(req.user) });
     }),
@@ -2820,10 +2823,14 @@ export function createApp() {
     wrap(async (req, res) => {
       const store = getStore();
       const service = String(body(req).service ?? '');
-      const spec = POOLED[service];
+      const spec = isPooled(service) ? POOLED[service] : null;
       const key = typeof body(req).key === 'string' ? body(req).key.trim() : '';
       if (!spec) return res.status(400).json({ error: 'That service does not take keys here.' });
+      // E2B's machines are made with the key in the environment (e2b.js `connection`): a stored one would never be used.
+      if (service === 'e2b') return res.status(400).json({ error: "This service takes one key, from the server's settings." });
       if (!key) return res.status(400).json({ error: 'Paste the key to add.' });
+      // The environment's key is key 1 of its service already, not a second key (final review, 2026-11-13).
+      if (key === envKeyOf(service)) return res.status(409).json({ error: 'That key is already in this service.' });
       const label = typeof body(req).label === 'string' && body(req).label.trim() ? body(req).label.trim().slice(0, 60) : null;
       const ceiling = body(req).ceiling == null || body(req).ceiling === '' ? null : Number(body(req).ceiling);
       if (ceiling !== null && !(Number.isFinite(ceiling) && ceiling > 0)) return res.status(400).json({ error: 'A ceiling is a number above zero.' });
@@ -2868,7 +2875,7 @@ export function createApp() {
     wrap(async (req, res) => {
       const service = String(body(req).service ?? '');
       const keyId = body(req).keyId == null ? null : String(body(req).keyId);
-      if (!POOLED[service]) return res.status(400).json({ error: 'That service does not take keys here.' });
+      if (!isPooled(service)) return res.status(400).json({ error: 'That service does not take keys here.' });
       const capMonthly = body(req).capMonthly == null ? null : body(req).capMonthly;
       try {
         await setPaidKey(service, keyId, capMonthly);
@@ -2908,7 +2915,7 @@ export function createApp() {
       const service = asked.startsWith('env:') ? asked.slice(4) : (await store.listServiceKeys()).find((one) => String(one.id) === asked)?.service;
       const keyId = asked.startsWith('env:') ? 'env' : asked;
       // The key object, not its id, goes to markKey: it can scrub and hint without a snapshot.
-      const key = service && POOLED[service] ? (await keysFor(service, { fresh: true })).find((one) => one.id === keyId) : null;
+      const key = service && isPooled(service) ? (await keysFor(service, { fresh: true })).find((one) => one.id === keyId) : null;
       if (!key?.key) return res.status(404).json({ error: 'No such key.' });
       const counted = await store.hitRateLimit(`service-key:${req.user.id}`, KEY_TRIES_PER_HOUR, 60 * 60_000);
       if (!counted.allowed) {
