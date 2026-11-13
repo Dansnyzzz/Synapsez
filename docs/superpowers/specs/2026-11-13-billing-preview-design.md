@@ -406,8 +406,9 @@ Not billing, but decided with it, so the limits never need retuning as the app g
   (÷ at least 3 people, between about an hour and 34% of the month). Held for the month, raised if
   a key is added, never lowered mid-month; no daily limit. Settings → Usage shows each person
   their figures and how they were worked out.
-- **A reserve for people who come later:** only 80% of the capacity is shared out on the 1st; an
-  account starting mid-month gets the share for the days left, from the 20% kept back. If the
+- **A reserve for people who come later:** only 80% of the capacity is shared out on the 1st; a
+  newcomer (no use last month) starting mid-month gets the share for the days left, from the 20%
+  kept back. Somebody who used it last month gets the full share whenever they start. If the
   free keys still run dry, nothing is billed — free shares never reach a paid key — and the free
   engines answer until the 1st.
 - **The Vercel stand-in never bills** (plan Task 1d): counted by the app and stopped at 4.5 of
