@@ -185,9 +185,10 @@ async function underCap(service, keyId, total) {
  *
  * Counted against the key that will make the call (`keyId`; the environment's by
  * default) and its own ceiling. A call on the paid key past its free ceiling
- * (`paid`) is held to that key's monthly cap instead.
+ * (`paid`) is held to that key's monthly cap instead; `strict` (an uncharged call on the paid key)
+ * fails closed when the count cannot be written, as a charged one does.
  */
-export async function take(service, amount, now = new Date(), { keyId = 'env', paid = false } = {}) {
+export async function take(service, amount, now = new Date(), { keyId = 'env', paid = false, strict = false } = {}) {
   const tier = TIERS[service];
   if (!tier || !(Number(amount) > 0)) return true;
   /** What has been added so far, to take back if the call does not go. */
@@ -227,7 +228,9 @@ export async function take(service, amount, now = new Date(), { keyId = 'env', p
   } catch (err) {
     // A charged call is a bill by definition, and its cap the owner's limit whatever FREE_TIER_ONLY
     // says: a count that cannot be written or read stops it (review, 2026-11-12). The rest as before.
-    const goes = paid && !noDatabase(err) ? false : !freeTierOnly() || !tier.billed || noDatabase(err);
+    // `strict`: an unpaid call that lands on the paid key. Counting is all that keeps it inside the free
+    // amount, so a count that cannot be written stops it too — it would be billed otherwise (review, 2026-11-13).
+    const goes = (paid || strict) && !noDatabase(err) ? false : !freeTierOnly() || !tier.billed || noDatabase(err);
     if (!goes) for (const [name, until] of counted) await getStore().addToCounter(name, -amount, until).catch(() => {});
     return goes;
   }

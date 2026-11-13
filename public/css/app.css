@@ -4472,6 +4472,22 @@ details.block > summary > .mark--pending { margin: 0 3.5px; }
 .toasts--alert {
   top: 58px;
 }
+/* Inside an open modal dialog the regions are manual popovers (render.js seatToasts): the browser's own
+   popover look is taken off, and they stay where they were — at the top of the viewport. */
+.toasts[popover] {
+  inset: auto;
+  left: 50%;
+  top: 14px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  background: none;
+  color: inherit;
+}
+.toasts--alert[popover] {
+  top: 58px;
+}
 .toast {
   max-width: 100%;
   padding: 10px 16px;

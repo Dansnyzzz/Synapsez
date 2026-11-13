@@ -811,20 +811,40 @@ section('Usage, devices, feedback and what is new — from the account menu');
     // An empty or unreadable cap box is never saved as "no cap" (security review L1): the cap is written, or No cap pressed.
     let saves = 0;
     await page.route('**/api/admin/service-keys/paid', (route) => { saves += 1; return route.continue(); });
+    const toastWith = (pattern) => page.waitForFunction((source) => [...document.querySelectorAll('#toasts .toast, #toasts-alert .toast')].some((el) => new RegExp(source, 'i').test(el.textContent || '')), pattern, { timeout: 5000 }).then(() => true, () => false);
     await page.click(`${row} input[data-paid-radio][value="${keyId}"]`).catch(() => {});
-    await page.waitForTimeout(500);
-    check('  choosing the paid key with the cap box empty saves nothing', saves === 0, String(saves));
-    await page.click(`${row} input[data-paid-radio][value="${keyId}"]`).catch(() => {});
-    await page.type(`${row} [data-paid-cap]`, 'e').catch(() => {});
-    const unreadable = await page.$eval(`${row} [data-paid-cap]`, (el) => /** @type {HTMLInputElement} */ (el).validity.badInput).catch(() => null);
-    await page.keyboard.press('Tab');
-    await page.waitForTimeout(500);
-    check('  a cap that cannot be read ("e") is not saved either', unreadable === true && saves === 0, `${unreadable} ${saves}`);
+    const askedForCap = await toastWith('monthly cap first');
+    check('  choosing the paid key with the cap box empty saves nothing, and says why where it can be seen', saves === 0 && askedForCap, `${saves} ${askedForCap}`);
+    await page.waitForSelector(`${row} [data-paid-cap]`, { timeout: 3000 }).catch(() => {});
     await page.fill(`${row} [data-paid-cap]`, '5').catch(() => {});
     await page.click(`${row} input[data-paid-radio][value="${keyId}"]`).catch(() => {});
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(800);
+    check('  a written cap saves', saves === 1, String(saves));
+    // A key saved with "no cap" on purpose: the box is empty and that is meant — until what is typed in it cannot be read.
+    await page.click(`${row} [data-paid-nocap]`).catch(() => {});
+    await page.waitForSelector(`${row} [data-paid-cap][data-nocap="1"]`, { timeout: 5000 }).catch(() => {});
+    check('  No cap, pressed, saves it', saves === 2 && !!(await page.$(`${row} [data-paid-cap][data-nocap="1"]`)), String(saves));
+    // The browser fires "change" only when the box's value moved, and an unreadable entry leaves it '' — so with no cap saved the
+    // event is sent by hand here, as another control saving the choice (a radio) would reach the same code.
+    await page.type(`${row} [data-paid-cap]`, 'e').catch(() => {});
+    const unreadable = await page.$eval(`${row} [data-paid-cap]`, (el) => /** @type {HTMLInputElement} */ (el).validity.badInput).catch(() => null);
+    await page.$eval(`${row} [data-paid-cap]`, (el) => el.dispatchEvent(new Event('change', { bubbles: true }))).catch(() => {});
+    const refusedCap = await toastWith('not a number the page can read');
+    await page.waitForTimeout(800);
+    check('  with "no cap" saved, a cap that cannot be read ("e") is not saved as no cap: the error is shown, nothing is sent', unreadable === true && refusedCap && saves === 2, `${unreadable} ${refusedCap} ${saves}`);
+    // With a cap saved, an entry that cannot be read ("2,000" typed on a keyboard that allows it) empties the box and the browser does send "change".
+    await page.waitForFunction(() => !document.querySelector('#toasts-alert .toast'), null, { timeout: 8000 }).catch(() => {});
+    await page.fill(`${row} [data-paid-cap]`, '7').catch(() => {});
+    await page.keyboard.press('Tab');
+    await page.waitForTimeout(800);
+    await page.click(`${row} [data-paid-cap]`).catch(() => {});
+    await page.keyboard.press('Control+A');
+    await page.keyboard.type('e');
+    await page.keyboard.press('Tab');
+    const refusedEdit = await toastWith('not a number the page can read');
+    await page.waitForTimeout(800);
+    check('  with a cap saved, it edited into something unreadable is not saved as "no cap" either, and says so in words', refusedEdit && saves === 3, `${refusedEdit} ${saves}`);
     await page.unroute('**/api/admin/service-keys/paid');
-    check('  a written cap saves', saves >= 1, String(saves));
     await page.waitForTimeout(500);
     await page.click('#admin-free-tier [data-free-refresh]').catch(() => {});
     await page.waitForTimeout(900);
@@ -863,7 +883,38 @@ section('Usage, devices, feedback and what is new — from the account menu');
     const controls = await page.$$eval('#admin-free-tier [data-pool-add], #admin-free-tier [data-key-remove], #admin-free-tier input[data-paid-radio], #admin-free-tier [data-key-check]', (els) => els.length);
     check('  a non-owner administrator sees no Add, Remove, Check or paid radio', controls === 0, String(controls));
     await page.unroute('**/api/admin/free-tier');
+    // A toast has to be seen and heard above a modal dialog: the top layer paints over the page body, and the body is inert
+    // while it is open (review, 2026-11-13). The regions move into the open dialog.
+    const probe = async (message, kind) => page.evaluate(async ({ message, kind }) => {
+      const { toast } = await import('/js/render.js');
+      toast(message, kind);
+      // The entrance animation, then a hit test: the regions let clicks through, which a hit test would also skip.
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const node = [...document.querySelectorAll('.toast')].find((el) => el.textContent === message);
+      if (!node) return null;
+      const region = node.parentElement;
+      const was = [region.style.pointerEvents, node.style.pointerEvents];
+      region.style.pointerEvents = 'auto';
+      node.style.pointerEvents = 'auto';
+      const box = node.getBoundingClientRect();
+      const at = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      [region.style.pointerEvents, node.style.pointerEvents] = was;
+      return {
+        onTop: at === node || node.contains(at),
+        inDialog: node.closest('dialog')?.id ?? null,
+        // The region's own top: earlier toasts still showing stack above this one inside it.
+        top: Math.round(region.getBoundingClientRect().top),
+        centred: Math.abs(box.left + box.width / 2 - innerWidth / 2) < 12,
+        live: region?.getAttribute('aria-live'),
+        parent: region?.parentElement?.tagName,
+      };
+    }, { message, kind });
+    const inSettings = await probe('Probe above the dialog', 'error');
+    check('a toast with Settings open is on top of it, inside it, at the top centre, and still an assertive region', inSettings?.onTop === true && inSettings.inDialog === 'settings' && inSettings.top < 120 && inSettings.centred && inSettings.live === 'assertive', JSON.stringify(inSettings));
     await page.evaluate(() => document.getElementById('settings').close());
+    await page.waitForTimeout(200);
+    const noDialog = await probe('Probe with no dialog', 'info');
+    check('  with no dialog open a toast appears as before, in the page', noDialog?.onTop === true && noDialog.parent === 'BODY' && noDialog.top < 120 && noDialog.centred && noDialog.live === 'polite', JSON.stringify(noDialog));
   } finally {
     globalThis.fetch = realFetch;
   }

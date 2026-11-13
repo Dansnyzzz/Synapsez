@@ -83,7 +83,8 @@ export async function chargeTo(service, need, { id, paid }) {
   const counted = { keyId: id, paid };
   const onPaidKey = paid || (await paidKeyOf(service))?.keyId === id;
   const held = onPaidKey ? Math.max(0, Math.ceil(Number(need) || 0)) : 0;
-  if (held && !(await take(service, held, undefined, counted))) {
+  // `strict`: an uncharged call on the paid key fails closed when the count cannot be written — it would be billed uncounted.
+  if (held && !(await take(service, held, undefined, { ...counted, strict: onPaidKey }))) {
     throw Object.assign(new Error(`${service}: ${paid ? "the paid key's cap for this month is reached" : "the free allowance for this period is used"}`), { skip: true });
   }
   let settled = false;

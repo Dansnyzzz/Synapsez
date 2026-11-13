@@ -578,10 +578,12 @@ async function roomsOf(call, keys, now) {
       return { room, share };
     });
   } catch (err) {
-    // A count that cannot be read: none left where going over is a bill (Brave), as before (HAR-009).
+    // A count that cannot be read: none left where going over is a bill (Brave), as before (HAR-009) — and
+    // none on the paid key whatever the service, where an uncounted call is billed past the free amount.
     const billed = call.windows.some((id) => WINDOWS[id].billed);
     const none = billed && !noDatabase(err) ? { room: 0, share: 0 } : { room: Infinity, share: Infinity };
-    return keys.map(() => ({ ...none }));
+    const paidId = noDatabase(err) ? null : paidOf(call.service, await current())?.keyId;
+    return keys.map((key) => ({ ...(key.id === paidId ? { room: 0, share: 0 } : none) }));
   }
 }
 

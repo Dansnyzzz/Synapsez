@@ -3984,6 +3984,42 @@ export function statusLine(text, { bar = false } = {}) {
 }
 
 /**
+ * Keep the two toast regions where they can be seen and heard. A modal <dialog> sits in the
+ * browser's top layer, above anything in the page whatever its z-index, and makes everything
+ * outside it inert — so a toast left in <body> is painted under Settings and not announced
+ * either (review of the paid-key page, 2026-11-13: "Paid key saved." and every failure there
+ * were invisible). While a modal is open the regions live inside it, so they are not inert, and
+ * are shown as manual popovers, which puts them in the top layer above it: a sheet is a
+ * containing block for `position: fixed` (its backdrop-filter) and clips (`overflow: hidden`), so
+ * a plain fixed region inside it would sit at the sheet's top and be cut by its edge. They go
+ * back to <body> as they were when it closes. Their role and aria-live stay as they are.
+ */
+function seatToasts() {
+  const open = [...document.querySelectorAll('dialog:modal')];
+  const home = open.length ? open[open.length - 1] : document.body;
+  for (const id of ['toasts', 'toasts-alert']) {
+    const region = document.getElementById(id);
+    if (!region) continue;
+    const moved = region.parentElement !== home;
+    if (!moved && (home === document.body || region.matches(':popover-open'))) continue;
+    if (region.hasAttribute('popover')) {
+      if (region.matches(':popover-open')) region.hidePopover();
+      region.removeAttribute('popover');
+    }
+    if (moved) home.append(region);
+    if (home !== document.body && typeof region.showPopover === 'function') {
+      region.setAttribute('popover', 'manual');
+      region.showPopover();
+    }
+  }
+}
+
+// A dialog closing does not bubble, but it can be heard on the way down. One listener for the page.
+if (typeof document !== 'undefined') document.addEventListener('close', (event) => {
+  if (event.target instanceof HTMLDialogElement) setTimeout(seatToasts, 0);
+}, true);
+
+/**
  * @param {string} message
  * @param {string} [kind]  'info', 'ok' or 'error'
  * @param {{ ms?: number }} [options]  how long it stays; longer for a notice that has to be read
@@ -3992,6 +4028,7 @@ export function toast(message, kind = 'info', { ms } = {}) {
   // An error goes to the assertive region: it is why the thing the user just
   // asked for did not happen, and a polite announcement queues behind whatever
   // is being read — which for a streaming reply is a long time.
+  seatToasts();
   const host = document.getElementById(kind === 'error' ? 'toasts-alert' : 'toasts');
 
   // Repeating the same message stacks noise without adding information — the

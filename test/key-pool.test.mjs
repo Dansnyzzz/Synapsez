@@ -68,6 +68,7 @@ const { encryptSecret, sha256 } = await import('../server/crypto.js');
 const { serviceKeyContext } = await import('../server/secretContexts.js');
 const pool = await import('../server/keyPool.js');
 const tiers = await import('../server/freeTier.js');
+const fcModule = await import('../server/firecrawl.js');
 const { periodOf } = tiers;
 
 let added = 0;
@@ -521,7 +522,7 @@ try {
   section('before spec B charges anything: the paid key is safe to reach (spec B plan, task 1)');
   {
     // 1. A Firecrawl key whose own count is low is passed over for a free call, never for a charged one.
-    const { firecrawlSearch } = await import('../server/firecrawl.js');
+    const { firecrawlSearch } = fcModule;
     answers.set('api.firecrawl.dev/v2/search', () => json({ success: true, creditsUsed: 2, data: { web: [{ url: 'https://example.test/a', title: 'A' }] } }));
     const [fcOne, fcTwo] = (await fresh('firecrawl')).filter((k) => !k.fromEnv);
     for (const k of [fcOne, fcTwo]) await pool.markKey('firecrawl', k.id, 'ok');
@@ -534,7 +535,15 @@ try {
     await pool.liveUsage('firecrawl', await entry('firecrawl', fcTwo.id), { fresh: true });
     const found = await firecrawlSearch('q', { paid: true }).catch((err) => err);
     const sentTo = asked.filter((q) => q.host === 'api.firecrawl.dev' && q.path === '/v2/search').map((q) => bearer(q.headers));
-    check('a Firecrawl paid key with a low live count answers a charged call', Array.isArray(found) && found.length === 1 && sentTo.at(-1) === KEYS.fc2, String(found?.message ?? sentTo.length));
+    check('a Firecrawl paid key with a low live count (3, under the smallest call and the margin) answers a charged call', Array.isArray(found) && found.length === 1 && sentTo.at(-1) === KEYS.fc2, String(found?.message ?? sentTo.length));
+    // Six left: room for a one-credit call but not the search's two with the margin — the passOver rule, not the 402 one.
+    plansOf[KEYS.fc2] = { plan: 1000, left: 6 };
+    pool.__testing.forgetAsks();
+    fcModule.resetFirecrawlState();
+    await pool.liveUsage('firecrawl', await entry('firecrawl', fcTwo.id), { fresh: true });
+    const sentBefore = asked.filter((q) => q.path === '/v2/search').length;
+    const passed = await firecrawlSearch('q', { paid: true }).catch((err) => err);
+    check('  and so does one with six left, where a free call would only be passed over for a larger one', Array.isArray(passed) && passed.length === 1 && asked.filter((q) => q.path === '/v2/search').length === sentBefore + 1, String(passed?.message ?? ''));
     await pool.setPaidKey('firecrawl', null);
     await resetCounts();
 
@@ -584,6 +593,90 @@ try {
     await store.deleteServiceKey(x);
     await pool.bumpKeysVersion();
     delete process.env.EXA_API_KEY;
+    await resetCounts();
+  }
+
+  section('a counter outage never lets an unpaid call reach the paid key uncounted (review, round 1)');
+  {
+    const write = store.addToCounter;
+    const read = store.readCounters;
+    const readOne = store.readCounter;
+    const down = () => {
+      store.addToCounter = async () => {
+        throw new Error('database away');
+      };
+    };
+    const up = () => {
+      store.addToCounter = write;
+      store.readCounters = read;
+      store.readCounter = readOne;
+    };
+    const { chargeTo } = await import('../server/keyCall.js');
+    process.env.EXA_API_KEY = KEYS.exa;
+    await fresh('exa');
+    await resetCounts();
+    await pool.setPaidKey('exa', 'env', null);
+    // 1. The write fails: an unpaid hold on the paid key is refused; on any other key nothing is held, as before.
+    down();
+    const onPaid = await caught(chargeTo('exa', 100, { id: 'env', paid: false }));
+    up();
+    check('the count cannot be written: an unpaid Exa call on the paid key is refused before it is made', onPaid?.skip === true, String(onPaid?.message));
+    const paidTrue = await caught((down(), chargeTo('exa', 100, { id: 'env', paid: true })));
+    up();
+    check('  as a charged one already was', paidTrue?.skip === true);
+    // 2. The reads fail too: the paid key has no room, so an unpaid pick stands aside instead of choosing it.
+    store.readCounters = async () => {
+      throw new Error('database away');
+    };
+    const picked = await pool.pickKey('exa', 100);
+    up();
+    check('  and when the counts cannot be read either, the paid key has no room for an unpaid call', picked === null, JSON.stringify({ id: picked?.key.id }));
+    // A second key that is not the paid one keeps today's behaviour: room is assumed, nothing is held.
+    const other = await addKey('exa', KEYS.exa2);
+    await fresh('exa');
+    store.readCounters = async () => {
+      throw new Error('database away');
+    };
+    const elsewhere = await pool.pickKey('exa', 100);
+    up();
+    check('  while a key that is not the paid one is still chosen, as before', elsewhere?.key.id === other && elsewhere.paid === false, JSON.stringify({ id: elsewhere?.key.id }));
+    down();
+    const free = await chargeTo('exa', 100, { id: other, paid: false }).then((bill) => bill.settle(100)).then(() => 'went', (err) => err.message);
+    up();
+    check('  and an unpaid call on it is not held, so a failed write does not stop it', free === 'went', String(free));
+    await pool.setPaidKey('exa', null);
+    await store.deleteServiceKey(other);
+    await pool.bumpKeysVersion();
+    delete process.env.EXA_API_KEY;
+
+    // Firecrawl: its own hold, before the call, on the key chosen as paid.
+    plansOf[KEYS.fc1] = { plan: 5000, left: 4800 };
+    plansOf[KEYS.fc2] = { plan: 1000, left: 1000 };
+    const [fcOne, fcTwo] = (await fresh('firecrawl')).filter((k) => !k.fromEnv);
+    for (const k of [fcOne, fcTwo]) await pool.markKey('firecrawl', k.id, 'ok');
+    await resetCounts();
+    pool.__testing.forgetAsks();
+    fcModule.resetFirecrawlState();
+    for (const k of await fresh('firecrawl')) await pool.liveUsage('firecrawl', k, { fresh: true });
+    const sentWith = () => asked.filter((q) => q.host === 'api.firecrawl.dev' && q.path === '/v2/search').map((q) => bearer(q.headers));
+    // The paid key alone usable: set the other aside, so the call can only land on it.
+    await pool.markKey('firecrawl', fcOne.id, 'invalid', { error: 'set aside for this check' });
+    await pool.setPaidKey('firecrawl', fcTwo.id, null);
+    const sentBefore = sentWith().length;
+    down();
+    const standAside = await fcModule.firecrawlSearch('q').catch((err) => err);
+    up();
+    check('Firecrawl: the count cannot be written, an unpaid search that would land on the paid key stands aside and is never sent', standAside instanceof Error && sentWith().length === sentBefore, String(standAside?.message));
+    // The other key, not the paid one, still goes through on a failed write, as today.
+    await pool.markKey('firecrawl', fcOne.id, 'ok');
+    await pool.setPaidKey('firecrawl', fcTwo.id, null);
+    await pool.markKey('firecrawl', fcTwo.id, 'invalid', { error: 'set aside for this check' });
+    down();
+    const through = await fcModule.firecrawlSearch('q').catch((err) => err);
+    up();
+    check('  while one on a key that is not the paid one goes on, as before', Array.isArray(through) && sentWith().length === sentBefore + 1 && sentWith().at(-1) === KEYS.fc1, String(through?.message));
+    await pool.markKey('firecrawl', fcTwo.id, 'ok');
+    await pool.setPaidKey('firecrawl', null);
     await resetCounts();
   }
 

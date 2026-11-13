@@ -37,7 +37,7 @@
  * count of what is left and its own wait; the shares are of every key's credits together.
  */
 import { take, refund, spend } from './freeTier.js';
-import { classify, keysFor, liveUsage, poolHas, warmPools } from './keyPool.js';
+import { classify, keysFor, liveUsage, paidKeyOf, poolHas, warmPools } from './keyPool.js';
 import { throughPool } from './keyCall.js';
 import { log } from './util/trace.js';
 
@@ -199,7 +199,8 @@ async function hold(share, n, meta) {
     // Room for a smaller call, not this one: the next key for this call alone, this one left as it is.
     throw Object.assign(new FirecrawlError(`Firecrawl says this key has ${left} credits left`, { local: true }), { passOver: true });
   }
-  const counted = { keyId: meta.id, paid: meta.paid };
+  // An uncharged call on the paid key is held strictly: a count that cannot be written stops it, or it would be billed uncounted.
+  const counted = { keyId: meta.id, paid: meta.paid, strict: !meta.paid && (await paidKeyOf('firecrawl'))?.keyId === meta.id };
   if (!(await take(share, n, undefined, counted))) return null;
   if (!(await take('firecrawl', n, undefined, counted))) {
     await refund(share, n, undefined, counted);
