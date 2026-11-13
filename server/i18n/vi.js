@@ -525,6 +525,9 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   /* ── nhiều key cho một dịch vụ của bản triển khai (server/keyPool.js) ── */
   '{0}: no key with room': '{0}: không còn key nào còn hạn mức',
   'That key is already in this service.': 'Key đó đã có trong dịch vụ này.',
+  /* ── thanh toán (schema 53, server/store/pg.js) ── */
+  'Money is a whole number of đồng, never negative.': 'Số tiền phải là số đồng nguyên, không âm.',
+  'That code already exists.': 'Mã này đã tồn tại.',
   "{0}: the paid key's cap for this month is reached": '{0}: key trả phí đã chạm mức trần của tháng này',
   'Firecrawl asked this key to wait a while': 'Firecrawl đã yêu cầu key này chờ một lúc',
   'Firecrawl says this key has {0} credits left': 'Firecrawl cho biết key này chỉ còn {0} credit',
