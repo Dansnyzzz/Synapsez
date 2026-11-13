@@ -159,6 +159,20 @@ section('carrying on a shared conversation copies its files');
   check('goes ahead when they fit', !!taken.chatId && taken.files === 1, JSON.stringify(taken).slice(0, 120));
 }
 
+section('a text source for a project, which keeps its original');
+{
+  const { addSource } = await import('../server/projects.js');
+  const tight = await store.createUser({ id: 'u-tight', email: 'tight@example.com', passwordHash: 'x', name: 'Tight', role: 'user' });
+  await store.createProject(tight.id, { id: 'p-tight', name: 'Shelf' });
+  await weigh(tight.id, 499 * MB);
+  const words = Buffer.from('a few plain words for the shelf '.repeat(40)).toString('base64');
+  const full = await caught(addSource(tight.id, 'p-tight', { name: 'notes.txt', mime: 'text/plain', data: Buffer.alloc(2 * MB, 97).toString('base64') }));
+  check('is refused as a whole when the account is full', full instanceof quota.StorageFull && full.status === 422 && full.code === 'storage_full', String(full?.message));
+  check('  with no source row and no original left behind', (await store.listProjectFiles(tight.id, 'p-tight')).length === 0 && (await count(tight.id)) === 1);
+  const fits = await caught(addSource(tight.id, 'p-tight', { name: 'notes.txt', mime: 'text/plain', data: words }));
+  check('  while one that fits is added with its original', fits === null && (await store.listProjectFiles(tight.id, 'p-tight')).length === 1 && (await count(tight.id)) === 2);
+}
+
 if (failures) {
   console.log(`\n${failures} check(s) failed`);
   process.exit(1);

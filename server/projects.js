@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
 import { classify, saveUpload, cleanThumb } from './attachments.js';
+import { StorageFull } from './storageQuota.js';
 import { extractPdfText } from './pdf.js';
 import { isLegacyOffice, officeFormat, readOfficeAsync } from './office/index.js';
 import { STOPWORDS, markedPassage, visibleText } from './rag.js';
@@ -212,7 +213,12 @@ export async function addSource(userId, projectId, { name, mime, data, thumb }) 
    * downloaded — and refusing the whole upload over it would be trading the
    * thing that matters for the thing that is nice to have.
    */
-  const stored = await saveUpload(userId, { name: filename, mime, data: base64 }).catch(() => null);
+  // Except a full account (owner, 2026-11-13): the original is a file it would keep, and the text beside it is not counted
+  // anywhere, so refusing only the original would be a way around the limit. Nothing is stored then.
+  const stored = await saveUpload(userId, { name: filename, mime, data: base64 }).catch((err) => {
+    if (err instanceof StorageFull) throw err;
+    return null;
+  });
 
   return store.addProjectFile(userId, projectId, {
     id: crypto.randomUUID(),
