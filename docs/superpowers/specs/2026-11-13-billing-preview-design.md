@@ -55,10 +55,12 @@ Every plan is one person.
 | Monthly | 0 | **5 USD** | **8 USD** | **15 USD** |
 | Yearly (≈5% off) | — | **57 USD** | **91 USD** | **171 USD** |
 | Searches included a month | 0 | **150** | **250** | **450** |
-| …of which at most a day | — | 30 | 50 | 100 |
 | Cloud computer a month | 0 | **4 h** | **6 h** | **12 h** |
-| …of which at most a day | — | 1 h | 1 h 30 | 3 h |
-| Storage included | — | **3 GB** | **5 GB** | **10 GB** |
+| Storage included | 0.5 GB | **3 GB** | **5 GB** | **10 GB** |
+
+**A month's allowance, with no daily limit** (owner, 2026-11-13): it can be used on any day of the
+month. A daily cap would have charged people from their balance while their plan still had searches
+left, and it changes nothing about the worst case, which is a whole month used.
 
 At 25,655.85 đ/USD (open.er-api, 2026-11-12) the sheet would read Plus 129,000đ / 1,463,000đ,
 Pro 206,000đ / 2,335,000đ, Max 385,000đ / 4,388,000đ.
@@ -67,14 +69,23 @@ A yearly plan gives its monthly allowance twelve times, each month starting on t
 What a month leaves unused is lost. The plans live in code (`server/billing/plans.js`); changing a
 price is a deploy, and `test/features` holds the sheet's numbers to that file.
 
-**Pay as you go**, from the balance, once a month's allowance (or the day's share of it) is used,
-and for an account with no plan:
+**Pay as you go**, from the balance, once a month's allowance is used, and for an account with no
+plan. The prices **follow the USD rate** like the plans' (owner, 2026-11-13), so a weaker đồng
+never turns a unit into a loss; at the anchor rate of 25,656 đ/USD they are:
 
-| Unit | Price |
-|---|---|
-| One search-tool call | **400đ** |
-| Cloud computer | **5,000đ an hour, charged by the minute: 84đ** |
-| Storage past the plan's | **1,000đ per GB a month**, charged by the day |
+| Unit | Price at 25,656 | At rate r |
+|---|---|---|
+| One search-tool call | **400đ** | `ceil10(400 × r / 25656)` |
+| Cloud computer | **5,000đ an hour, by the minute: 84đ** | `ceil(5000 × r / 25656 / 60)` a minute |
+| Storage past the plan's | **1,000đ per GB a month**, charged by the day | `ceil10(1000 × r / 25656)` |
+
+Metering uses the last rate known, of any age, so a call never waits on a rate source.
+
+**Storage is priced for object storage.** Today files live inside Postgres as base64, where a GB
+costs about 4,265đ a month of database disk ($0.125/GB past Supabase Pro's 8 GB, × 4/3); in object
+storage (Supabase Storage: 100 GB included, then $0.021/GB) it is nearly nothing. The owner chose
+(2026-11-13) to move files out of the database **before B2 goes live**, so the 3/5/10 GB and
+1,000đ/GB stand; until then an account with no plan keeps at most 0.5 GB (plan Task 1c).
 
 ## Money
 
@@ -85,8 +96,8 @@ and for an account with no plan:
   Frankfurter — the sources `server/finance/sources/fx.js` already reads. Kept for an hour in the
   instance and in the `billing_fx` setting so instances agree; a rate older than 48 hours is not
   used, and the plans sheet then says prices cannot be shown right now.
-- **Rounding.** A plan's đồng price is rounded **up to the next 1,000đ**. Pay-as-you-go prices are
-  set in đồng and are not converted.
+- **Rounding.** A plan's đồng price is rounded **up to the next 1,000đ**; pay-as-you-go prices as
+  in their table (up to 10đ, a machine minute up to the đồng).
 - **Locked per order.** An order keeps the rate, its source and the price; a QR is good for **30
   minutes**. Money that comes later is still taken (see Transfers).
 - **Shown.** In Vietnamese, đồng. In English, the USD price large and "billed as 129,000đ" under
@@ -194,8 +205,8 @@ whatever engines answered and however many. A call that reads several pages thro
 from a free engine (DuckDuckGo, Stack Exchange, the free Firecrawl indexes) or from the ten-minute
 cache.
 
-1. Before the call, the unit is **held**: from the month's allowance if the day's share and the
-   month's are not used, else 400đ from the balance.
+1. Before the call, the unit is **held**: from the month's allowance while any is left, else 400đ
+   from the balance.
 2. The held call may use the owner's paid keys once the free keys are spent (`paid: true`, spec
    A) — the one place B1 turns that on.
 3. After, the hold is **kept** if a metered engine answered, **given back** otherwise.
@@ -212,7 +223,7 @@ measured by the daily job. Past the plan's GB (rounded up to a tenth): 1,000đ a
 each day as `ceil(tenths × 100 / days in the month)` đồng. Nothing new is refused in B1.
 
 **Spend by kind of tool** on the Billing tab, the way Settings → Usage shows providers: searches,
-cloud computer, storage — included used and left, today's share, and what was paid from the
+cloud computer, storage — included used and left this month, and what was paid from the
 balance — and finance tools, listed as free.
 
 ## Promo codes
@@ -385,7 +396,31 @@ From spec A's final review, all needed before a held call reaches the owner's pa
 - Give the `billing` permission to any administrator who should see the money.
 - Test: a simulated transfer, then one small real transfer (50,000đ top-up) on your own account.
 
+## Also in this round: the free shares and files, for everyone (owner, 2026-11-13)
+
+Not billing, but decided with it, so the limits never need retuning as the app grows:
+
+- **Each account's free share is a month's, worked out from the real capacity** (plan Task 1b): on
+  the 1st, the deployment's free keys' capacity in searches ÷ the people who used metered searches
+  in the last 30 days (at least 10), between 30 and 900 a month; the cloud computer likewise
+  (÷ at least 3 people, between about an hour and 34% of the month). Held for the month, raised if
+  a key is added, never lowered mid-month; no daily limit. Settings → Usage shows each person
+  their figures and how they were worked out.
+- **A reserve for people who come later:** only 80% of the capacity is shared out on the 1st; an
+  account starting mid-month gets the share for the days left, from the 20% kept back. If the
+  free keys still run dry, nothing is billed — free shares never reach a paid key — and the free
+  engines answer until the 1st.
+- **The Vercel stand-in never bills** (plan Task 1d): counted by the app and stopped at 4.5 of
+  Hobby's 5 free CPU-hours a month, so moving to Vercel Pro cannot turn it into a bill.
+- **0.5 GB of files for an account with no plan** (plan Task 1c), administrators excepted, until
+  files leave the database.
+- **Capacity on the admin card:** cloud computers running of E2B Hobby's 20, and database size of
+  Supabase Pro's 8 GB, amber at 75% and red at 90%, saying what to buy.
+
 ## Not in B1 (B2, going live)
+
+**Required before B2:** files out of Postgres into object storage — its own project (owner,
+2026-11-13).
 
 The Free plan for everyone (does it keep today's 30 searches a day?); refusing anybody; the limits
 on conversations, projects, file exports, own-key requests and history from the owner's table;
@@ -413,7 +448,7 @@ gateway (needs a registered business); switching `BILLING_MODE` to `live`.
   (month-end, Vietnamese midnight, a year's twelve months); proration; codes; the webhook check
   (missing headers, wrong length, wrong signature, stale time, a repeat); matching (exact, short,
   over, late, unknown, money out, another account); the ledger (never below zero, two holds at
-  once, usage rows per day); metering (allowance → day's share → balance → nothing; preview never
+  once, usage rows per day); metering (month's allowance → balance → nothing; preview never
   refuses; cache and free engines free; pages to units); renewal, reminder and grace; promo codes;
   the receipt PDF (`%PDF-`, its number and Vietnamese read back through pdfjs); the e-invoice
   client against recorded answers, never resending what is unconfirmed.

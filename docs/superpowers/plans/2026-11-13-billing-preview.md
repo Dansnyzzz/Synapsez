@@ -15,11 +15,12 @@
 - `BILLING_MODE`: `off` | `preview` | `live`; unset or unknown means `preview`. In `off` every billing route and the webhook answer `404`. In `preview` a non-administrator gets `404` (not `403`) from every `/api/billing*` route. `live` is accepted but B1 wires nothing that needs it beyond `hold.refused`.
 - Billable account = an administrator (`role === 'admin'`) in `preview` who holds a subscription (`active` or `grace`) or a balance > 0. Nobody else is metered by billing; their behaviour is unchanged byte for byte.
 - In `preview`, billing **never refuses**: when nothing can be held, the call goes ahead exactly as today (`paid: false`, today's fair-share rules) and `bill:would:<user>:<kind>:<VN day>` is incremented.
-- Plans (USD cents): plus 500/5700, pro 800/9100, max 1500/17100. Included a month: searches 150/250/450 (per day 30/50/100); cloud computer minutes 240/360/720 (per day 60/90/180); storage GB 3/5/10. Free: 0 of each, storage 0.5 GB (owner's table, 500 MB).
-- Pay as you go: search **400đ** a unit; cloud computer **84đ** a started minute (5,000đ/h); storage **1,000đ** per GB-month, charged daily as `ceil(overTenths × 100 / daysInVnMonth)` đ.
+- Plans (USD cents): plus 500/5700, pro 800/9100, max 1500/17100. Included a month: searches 150/250/450; cloud computer minutes 240/360/720; storage GB 3/5/10. Free: 0 of each, storage 0.5 GB (owner's table, 500 MB).
+- **No daily limits** (owner, 2026-11-13): an allowance is a month's, usable on any day. No per-day counter, field or display anywhere in billing.
+- Pay as you go **follows the USD rate** (owner, 2026-11-13): base prices at the anchor rate **25,656 đ/USD** are search **400đ** a unit, cloud computer **5,000đ** an hour, storage **1,000đ** per GB-month; at rate `r` they are `search = ceil10(400 × r / 25656)`, `minute = ceil(5000 × r / 25656 / 60)` (84đ at the anchor), `storageGbMonth = ceil10(1000 × r / 25656)`. Metering uses the last known rate of any age (a call is never blocked for want of a rate), the anchor when none was ever read. Storage is charged daily as `ceil(overTenths × storageGbMonth / 10 / daysInVnMonth)` đ.
 - A Firecrawl call that reads several pages: `max(1, ceil(pages / 3))` units.
 - Free engines (DuckDuckGo, Google, Stack Exchange, free Firecrawl indexes) and the ten-minute search cache cost **0** units. Metered engines: exa, tavily, brave, firecrawl (`ENGINES[x].metered` in `server/search.js`).
-- Plan đồng price = `Math.ceil(usdCents × rateCenti / 10_000_000) × 1000` where `rateCenti = Math.round(rate × 100)`. PAYG prices are fixed đồng, never converted.
+- Plan đồng price = `Math.ceil(usdCents × rateCenti / 10_000_000) × 1000` where `rateCenti = Math.round(rate × 100)`. PAYG prices: see above (anchored to 25,656 and scaled by the rate).
 - Rate chain: open.er-api (`erapi`) → Vietcombank transfer rate (`vietcombank`, the `bank-transfer` row) → `frankfurter`, via `fromSource` in `server/finance/sources/fx.js`. Cached 1 h in memory and in setting `billing_fx`; older than 48 h is unusable (`BillingUnavailable`).
 - Orders lock rate and price; QR good **30 min** (`ORDER_TTL_MS = 1_800_000`). Renewal orders stay good until grace ends.
 - Payment code: `SZ` + exactly 10 digits from `crypto.randomInt`; matched from SePay's `code` field (`/^SZ\d{10}$/i`) else `/SZ(\d{10})(?!\d)/i` on `content`; stored uppercase.
@@ -42,6 +43,8 @@
 | File | Task | Responsibility |
 |---|---|---|
 | `server/keyPool.js`, `server/app.js` (service-key routes), `public/js/free-allowances.js`, `README.md`, `server/freeTier.js` | 1 | spec A leftovers |
+| `server/freeShares.js`, `server/freeTier.js`, `server/usageReport.js`, `public/js/usage-panel.js` | 1b | each account's free share, worked out monthly from capacity, shown |
+| `server/storageQuota.js`, `server/attachments.js` | 1c | 0.5 GB for an account with no plan |
 | `server/billing/plans.js` | 2 | plans, PAYG prices, bounds, rounding |
 | `server/billing/period.js` | 2 | Vietnamese-time periods, proration |
 | `server/billing/codes.js` | 2 | payment codes |
@@ -61,7 +64,7 @@
 | `public/js/billing-panel.js`, `public/js/billing-admin.js`, `public/js/app.js`, `public/js/privacy.js` | 10 | Billing tab, admin card |
 | `package.json`, `public/changelog.json`, `CHANGELOG.md`, `README.md`, `test/features.test.mjs` | 11 | release 1.30.0 |
 
-New test files, each added to the `npm test` chain in `package.json` right after `node test/key-pool.test.mjs`: `test/billing-core.test.mjs` (Task 2), `test/billing-store.test.mjs` (3), `test/billing-flow.test.mjs` (4–5), `test/billing-meter.test.mjs` (6), `test/billing-routes.test.mjs` (7), `test/billing-docs.test.mjs` (8). Browser: `test/ui-billing.test.mjs` appended to `test:ui` (9–10).
+New test files, each added to the `npm test` chain in `package.json` right after `node test/key-pool.test.mjs`: `test/free-shares.test.mjs` (1b), `test/storage-quota.test.mjs` (1c), `test/billing-core.test.mjs` (Task 2), `test/billing-store.test.mjs` (3), `test/billing-flow.test.mjs` (4–5), `test/billing-meter.test.mjs` (6), `test/billing-routes.test.mjs` (7), `test/billing-docs.test.mjs` (8). Browser: `test/ui-billing.test.mjs` appended to `test:ui` (9–10).
 
 ---
 
@@ -93,6 +96,104 @@ The seven findings (from spec A's final review and Opus security review):
 
 ---
 
+### Task 1b: Today's free shares — a month's, worked out from the real capacity (owner, 2026-11-13)
+
+The owner: "limit users by the month, not the day", and "the numbers must not need changing when there are many more users". A fixed 900 a month runs the deployment's free keys dry after about 17 heavy accounts; so each account's monthly share is **worked out on the 1st** from what the keys can really do and how many people use them, held for the month, and **shown to the person with how it was worked out**.
+
+**Files:**
+- Create: `server/freeShares.js` (the share rules and the stored month figure)
+- Modify: `server/freeTier.js` (`mayMeter`, `countMetered`, `userBucket`, `freeTierReport`, `e2bAccountAllowance`, `e2bAccountSpend`; remove `e2bDayShare`, the `free:e2b:day:*` buckets and `E2B_ACCOUNT_DAY_FLOOR`; the module comment), `server/store/pg.js` (one method, below), `server/search.js:128` and `server/tools/cloud.js:3458` ("share of today's …" → "share of this month's …"), `server/usageReport.js` (the account's shares in the Usage payload), `public/js/usage-panel.js` (a "This month's free share" card in the overview), `public/js/free-allowances.js:233` (the line under the table), both locales, `server/i18n/vi.js`, `README.md` (:1302 and the env table near :2080)
+- Test: `test/free-shares.test.mjs` (new, PGlite; add to the `npm test` chain after `key-pool`), `test/features.test.mjs` (the fair-share section near :2490), `test/e2b.test.mjs` (the `e2bDayShare` section near :798 is replaced), `test/ui-usage-guide.test.mjs` or `test/ui.test.mjs` (the card)
+
+**Interfaces — Produces:**
+```js
+// server/freeShares.js
+/** What one metered search costs each pooled engine at the medium search level, to turn allowances into searches. */
+export const SEARCH_COST = Object.freeze({ exa: 15 /* mills: auto 7 + 8 pages of text */, tavily: 1 /* credit */, brave: 1 /* request */, firecrawl: 2 /* credits a search, of its search share */ });
+export const SHARE_BOUNDS = (env = process.env) => ({
+  searchMin: num(env.FREE_TIER_USER_MONTHLY_MIN, 30), searchMax: num(env.FREE_TIER_USER_MONTHLY_MAX, 900), searchPeopleFloor: 10,
+  machineMinMills: num(env.E2B_ACCOUNT_MIN_MILLS, 133) /* about an hour of the 2-vCPU machine */, machineMaxShare: e2bAccountShare(env) /* 0.34 */, machinePeopleFloor: 3,
+});
+/** This month's shares: { month, searches, machineMills, capacity: { searches, machineMills }, people: { searches, machines }, at } */
+export async function monthShares({ now = new Date() } = {})
+```
+- `server/store/pg.js`: `countAccountsByBucket(patterns)` → number of distinct account ids among live `rate_limits` buckets matching any of the `LIKE` patterns (the id is the segment after `free:user:` / before `:` in `free:e2b:<month>:user:<id>`).
+
+**Rules:**
+- **Capacity of searches this month** = Σ over exa, tavily, brave, firecrawl of `floor(allowance(service).limit / SEARCH_COST[service])` (Firecrawl: its *search* share's limit). Google's daily quota and the free engines are not counted.
+- **People** = distinct accounts with a metered-search count this month or last month (`free:user:<id>:<month>`, the bucket now kept until the end of the **next** month so last month's can be read).
+- **A reserve for people who arrive later** (owner, 2026-11-13: "what if more users come after the 1st?"): only `(1 − FREE_SHARE_RESERVE)` of the capacity is shared out on the 1st — default reserve **0.2** — so 20% stays for accounts that start mid-month.
+- **An account's monthly searches** = `clamp(floor(capacity × (1 − reserve) / max(10, people)), 30, 900)`.
+- **Arriving mid-month:** an account whose first metered search of the month comes on day `d` of a month of `D` days gets `max(30, floor(N × (D − d + 1) / D))` — the share for the days that are left — drawn from the reserve. Its card says why ("you started on the 20th, so this month's share covers 11 of 30 days").
+- **When the pool still runs dry** (more people than any forecast): nothing is billed — these calls are unpaid by construction and can never reach the paid key (spec A, Task 1) — the metered engines stand aside and the free ones answer, for everyone, until the 1st. The card says so in that case ("the free keys are used up for this month").
+- **Cloud computer:** capacity = this month's E2B ceiling (`allowance('e2b').limit`, mills); people = distinct accounts with a machine count this month or last (`free:e2b:<month>:user:<id>`, kept likewise); share = `clamp(floor(capacity × (1 − reserve) / max(3, people)), 133, floor(capacity × E2B_ACCOUNT_SHARE))` mills, prorated the same way for an account starting mid-month (at least 133). No daily split.
+- **Held for the month:** the first call of a UTC month works the figures out and stores them in setting `free_shares:<month>`; later calls read it. If the capacity rises during the month (a key added), the shares are worked out again and the higher of old and new kept — **never lowered mid-month**. Any failure to work them out falls back to the last stored month's figures, else to the maxima (900, 34%) — a share that cannot be computed never blocks anybody.
+- `mayMeter(userId)` → this month's count `< monthShares().searches`; `countMetered` adds to `free:user:<id>:<month>`. `FREE_TIER_USER_DAILY` is no longer read (README says it was replaced in 1.30.0 by the worked-out share and its two bounds).
+- `freeTierReport()` gains `shares` (the stored month figure); the Free allowances page's line: "This month each account may make N metered searches and use H of the cloud computer — the keys' capacity (C searches) shared by P people, between 30 and 900."
+- **Shown to everyone:** Settings → Usage overview gets a card "This month's free share": searches used X of N, cloud computer used of H, when it starts again (the 1st), and one sentence on how N is worked out (capacity ÷ people, the bounds). The share applies to every account today, administrators included; from Task 6 on, a billable account's searches skip it, and its card says its plan applies instead.
+
+- [ ] **Step 0 (tests for the reserve):** with capacity 10,000 and 20 people the 1st's share is `floor(8000/20) = 400`; an account starting on day 21 of a 30-day month gets `floor(400 × 10/30) = 133`; one starting on day 30 gets 30 (the floor); with the pool spent, `mayMeter` is false for everyone and no call is made with `paid: true`.
+- [ ] **Step 1: Write failing tests** (`test/free-shares.test.mjs`): capacity with Exa 2 keys (19,000 mills) + Tavily 1 (950) + Brave 1 (950) + Firecrawl Hobby search share → the expected sum; 5 people → `min(900, floor(cap/10))` (people floor 10); 400 people → `floor(cap/400)` not below 30; 900 searches in one day by one account allowed when the share is 900, the next refused; the 1st of the next month starts again; a key added mid-month raises N, removing one does not lower it; a store failure → 900 and nobody blocked; E2B: one account may use its whole monthly share on day one, the share is between 133 mills and 34% of the month; `FREE_TIER_USER_DAILY=1` alone changes nothing; `freeTierReport().shares` present; the Usage card shows "X of N".
+- [ ] **Step 2: Run** `node test/free-shares.test.mjs` — fails.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** `node test/free-shares.test.mjs`, `node test/features.test.mjs`, `node test/e2b.test.mjs`, `node test/search.test.mjs`, `node test/firecrawl.test.mjs`, `node test/key-pool.test.mjs`, `node test/i18n.test.mjs`, `node test/server-i18n.test.mjs`, and the UI suite holding the card — pass.
+- [ ] **Step 5: Commit** `feat(free tier): each account's free share is a month's, worked out from the keys' real capacity and shown`.
+
+---
+
+### Task 1c: 0.5 GB of files for an account with no plan, until files leave the database (owner, 2026-11-13)
+
+Files are stored in Postgres as base64 (`attachments.data`, `attachment_versions`), so a GB of files costs about 4,265đ a month of database disk ($0.125/GB past the 8 GB included, × 4/3 for base64) — and nothing limits an account today. Until files move to object storage (its own project, required before B2), an account with no paid plan may keep **0.5 GB**.
+
+**Files:**
+- Create: `server/storageQuota.js`
+- Modify: `server/attachments.js` (each `createAttachment` path), `server/routes/chatShare.js:573` (copying a shared chat's files), the version-writing path in `server/store/pg.js` (~:2699) through its caller, `server/usageReport.js` + `public/js/usage-panel.js` (a storage line on Task 1b's card), locales, `server/i18n/vi.js`, `README.md`
+- Test: `test/storage-quota.test.mjs` (new, PGlite; add to the chain), `test/attachments.test.mjs`
+
+**Interfaces — Produces:**
+```js
+// server/storageQuota.js
+export const freeStorageBytes = (env = process.env) => num(env.FREE_STORAGE_BYTES, 500_000_000);
+export class StorageFull extends Error { /* status 422, code 'storage_full', usedBytes, limitBytes */ }
+/** Throws StorageFull when adding `bytes` would take a limited account past its room. */
+export async function assertRoom(user, bytes)
+export async function storageOf(user) // → { usedBytes, limitBytes | null }  (null = no limit)
+```
+- Store: `bytesOfUser(userId)` → `SUM(attachments.bytes) + SUM(attachment_versions.bytes)` for that account (raw bytes, one query).
+
+**Rules:**
+- Limited: an account that is not an administrator (B1 adds: and holds no paid plan — Task 6 must call `storageOf` with that in mind; until then every non-administrator is limited). Administrators: no limit, as with the chat limit.
+- Refused: a new upload, a new file the assistant writes, a new version of a file, a shared chat's files copied in — when it would pass the limit. Office renders and thumbnails derived from a file already kept are **not** refused (they are pictures of something the person already has), but they are counted.
+- Message (both languages): "Your files are full: {used} of {limit} used. Delete files you no longer need in Settings → Privacy → Your data, then try again." — point at the place this app really lists and deletes files (find it; say it exactly).
+- Nothing already stored is deleted; an account already over keeps its files and cannot add more until under.
+- Task 1b's card shows "Files: X of 0.5 GB".
+
+- [ ] **Step 1: Write failing tests**: a member at 499 MB adding 2 MB → refused (422, `storage_full`, the message with both figures); an administrator not refused; 499 MB + 1 MB → allowed; versions counted; a derived render not refused; a shared-chat copy refused when over; nothing is deleted.
+- [ ] **Step 2: Run** — fails.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** `node test/storage-quota.test.mjs`, `node test/attachments.test.mjs`, `node test/http.test.mjs`, `node test/office.test.mjs`, `node test/i18n.test.mjs`, `node test/server-i18n.test.mjs` — pass.
+- [ ] **Step 5: Commit** `feat(files): half a gigabyte of files for an account with no plan, while files live in the database`.
+
+---
+
+### Task 1d: The Vercel stand-in machine can never bill (owner, 2026-11-13: "make sure nothing loses money")
+
+When an account's E2B share is spent, its work goes to a Vercel Sandbox "stand-in" (`server/sandbox.js`). On Vercel **Hobby** that is free — past the 5 included Active-CPU hours creation pauses. On Vercel **Pro** (which the owner plans before the first customer) it is billed ($0.128 per Active-CPU hour, plus memory), and today only per-day action caps bound it. So the app counts it and stops at Hobby's free amount whatever the plan.
+
+**Files:** Modify `server/sandbox.js` (where a Vercel Sandbox is created and kept awake), `server/freeTier.js` (a `vercel` row in `TIERS` and the report), `public/js/free-allowances.js` (its row), locales, `README.md`. Test: `test/cloudBrowser.test.mjs` or the sandbox suite that drives the stand-in (find it), `test/key-pool.test.mjs` only if the report shape there changes.
+
+**Rules:**
+- Counted per UTC month as CPU-seconds = wall seconds the stand-in is kept awake × its vCPUs (an upper bound of Active CPU, so the count is never under the bill). Bucket `free:vercel:<month>`.
+- Ceiling `VERCEL_SANDBOX_MONTHLY_CPU_HOURS`, default **4.5** (90% of Hobby's 5). Past it the stand-in is not started: the person is told the cloud computer is unavailable until the 1st (both languages), exactly as when E2B is unavailable and there is no stand-in.
+- A paying account's machine time (B1 Task 6) is charged to it on E2B; it never uses the stand-in past the ceiling either.
+- The Free allowances page shows the row: used of 4.5 CPU-hours, "counted here".
+
+- [ ] **Step 1: Write failing tests:** a stand-in kept awake 10 minutes on 2 vCPUs counts 1,200 CPU-seconds; at the ceiling a new stand-in is refused with the message and no Vercel call is made; the count starts again on the 1st; the report has the `vercel` row.
+- [ ] **Step 2: Run** — fails. **Step 3: Implement.** **Step 4: Run** the stand-in suite, `node test/features.test.mjs`, `node test/i18n.test.mjs`, `node test/server-i18n.test.mjs` — pass.
+- [ ] **Step 5: Commit** `fix(sandbox): the Vercel stand-in stops at Hobby's free hours, so it can never bill`.
+
+---
+
 ### Task 2: The rules — plans, periods, codes, mode
 
 **Files:**
@@ -108,12 +209,24 @@ export const PAID_PLANS = ['plus', 'pro', 'max'];
 export const PERIODS = ['month', 'year'];
 export const RANK = Object.freeze({ free: 0, plus: 1, pro: 2, max: 3 });
 export const PLANS = Object.freeze({
-  free: Object.freeze({ id: 'free', usdCents: { month: 0, year: 0 }, searches: 0, searchesPerDay: 0, sandboxMinutes: 0, sandboxMinutesPerDay: 0, storageGb: 0.5 }),
-  plus: Object.freeze({ id: 'plus', usdCents: { month: 500, year: 5700 }, searches: 150, searchesPerDay: 30, sandboxMinutes: 240, sandboxMinutesPerDay: 60, storageGb: 3 }),
-  pro: Object.freeze({ id: 'pro', usdCents: { month: 800, year: 9100 }, searches: 250, searchesPerDay: 50, sandboxMinutes: 360, sandboxMinutesPerDay: 90, storageGb: 5 }),
-  max: Object.freeze({ id: 'max', usdCents: { month: 1500, year: 17100 }, searches: 450, searchesPerDay: 100, sandboxMinutes: 720, sandboxMinutesPerDay: 180, storageGb: 10 }),
+  free: Object.freeze({ id: 'free', usdCents: { month: 0, year: 0 }, searches: 0, sandboxMinutes: 0, storageGb: 0.5 }),
+  plus: Object.freeze({ id: 'plus', usdCents: { month: 500, year: 5700 }, searches: 150, sandboxMinutes: 240, storageGb: 3 }),
+  pro: Object.freeze({ id: 'pro', usdCents: { month: 800, year: 9100 }, searches: 250, sandboxMinutes: 360, storageGb: 5 }),
+  max: Object.freeze({ id: 'max', usdCents: { month: 1500, year: 17100 }, searches: 450, sandboxMinutes: 720, storageGb: 10 }),
 });
-export const PAYG = Object.freeze({ searchVnd: 400, sandboxVndPerMinute: 84, sandboxVndPerHour: 5000, storageVndPerGbMonth: 1000 });
+/** Pay-as-you-go prices at the anchor rate (owner, 2026-11-13: they follow the USD rate, as plan prices do). */
+export const PAYG_ANCHOR_RATE = 25_656;
+export const PAYG_BASE = Object.freeze({ searchVnd: 400, sandboxVndPerHour: 5000, storageVndPerGbMonth: 1000 });
+const ceil10 = (n) => Math.ceil(n / 10) * 10;
+/** The pay-as-you-go prices at a rate, in whole đồng. */
+export function paygPrices(rate = PAYG_ANCHOR_RATE) {
+  const k = Number(rate) > 0 ? Number(rate) / PAYG_ANCHOR_RATE : 1;
+  return {
+    searchVnd: ceil10(PAYG_BASE.searchVnd * k),
+    sandboxVndPerMinute: Math.ceil((PAYG_BASE.sandboxVndPerHour * k) / 60),
+    storageVndPerGbMonth: ceil10(PAYG_BASE.storageVndPerGbMonth * k),
+  };
+}
 export const TOPUP = Object.freeze({ minNoPlan: 50_000, minWithPlan: 100_000, maxBalanceNoPlan: 200_000, maxBalanceWithPlan: 1_000_000, presets: Object.freeze([100_000, 200_000, 500_000]) });
 export const BALANCE_EXPIRY_MONTHS = 12;
 export const EXPIRY_WARNING_DAYS = 30;
@@ -204,6 +317,7 @@ export function billingVisible(user, env = process.env) {
 - [ ] **Step 1: Write the failing tests** in `test/billing-core.test.mjs` (same harness style as `test/key-pool.test.mjs`: `section`, `check`, exit code = failures):
   - `planVnd('plus','month',25655.85) === 129000`; pro month 206000; max month 385000; plus year 1463000; pro year 2335000; max year 4388000; `planVnd('plus','month',25000) === 125000` (exact thousands stay).
   - `unitsForPages(1) === 1`, `(3) === 1`, `(4) === 2`, `(10) === 4`, `(0) === 1`.
+  - `paygPrices()` and `paygPrices(25656)` → `{ searchVnd: 400, sandboxVndPerMinute: 84, storageVndPerGbMonth: 1000 }`; `paygPrices(27000)` → search 430, minute 88, storage 1060; `paygPrices(24000)` → search 380, minute 78, storage 940; `paygPrices(0)` and `paygPrices(NaN)` → the anchor prices.
   - `vnDay(new Date('2026-11-12T17:30:00Z')) === '2026-11-13'`; `vnDayEnd` of that = `2026-11-13T17:00:00.000Z`.
   - `addMonths(VN 2026-01-31 10:00, 1)` = VN 2026-02-28 10:00; `(…, 2)` = VN 2026-03-31 10:00; `addMonths(VN 2028-02-29, 12)` = VN 2029-02-28.
   - `monthWindow(VN Jan 31, VN Mar 5)` → start VN Feb 28, end VN Mar 31.
@@ -242,7 +356,7 @@ export function billingVisible(user, env = process.env) {
   - `createReceipt({ userId, transferId, orderId, amountVnd, lines, buyerSealed })` → `{ number }` formatted `SZR-<VN year>-<6-digit seq>`; `getReceipt(number)`; `listReceipts(userId)`.
   - `saveEinvoice(row)`, `getEinvoice(orderId)`, `listEinvoicesPending()`.
   - `storageBytesByUser(userIds)` → `Map<userId, bytes>` (attachments + attachment_versions).
-  - `billingAdminFigures(since)` → money in by kind, balances held, counts (Task 7 renders it).
+  - `billingAdminFigures(since)` → money in by kind, balances held, counts, and `databaseBytes` (`pg_database_size`) (Task 7 renders it).
   - `serviceKeyContext` sibling: `billingProfileContext(userId)` → `['billing-profile', userId]` in `server/secretContexts.js`, `'billing-profile'` in `SECRET_KINDS`; a reseal source for `billing_profiles.sealed` in `server/secretsReseal.js`.
 
 Schema (copy verbatim; comment each table in the file's style):
@@ -441,7 +555,7 @@ SELECT * FROM p;
 **Interfaces:**
 - Consumes: Task 2 rules; Task 3 store methods; `fromSource(source, 'USD', ['VND'])` from `server/finance/sources/fx.js` (Vietcombank returns rows with `kind` `bank-cash` / `bank-transfer` / `bank-sell`: take `bank-transfer`).
 - Produces:
-  - `fx.js`: `export class BillingUnavailable extends Error {}`; `export async function usdVnd({ now = new Date() } = {})` → `{ rate: number, source: 'erapi'|'vietcombank'|'frankfurter', at: string /* ISO */ }`; `export const RATE_ATTRIBUTION = 'Rates By Exchange Rate API: https://www.exchangerate-api.com'`; `export function _resetFxForTests()`.
+  - `fx.js`: `export class BillingUnavailable extends Error {}`; `export async function usdVnd({ now = new Date() } = {})` → `{ rate: number, source: 'erapi'|'vietcombank'|'frankfurter', at: string /* ISO */ }`; `export async function meteringRate()` → the last known rate of any age (memory, then the `billing_fx` setting), else `PAYG_ANCHOR_RATE` — never throws, never fetches (metering must not wait on a rate source); `export const RATE_ATTRIBUTION = 'Rates By Exchange Rate API: https://www.exchangerate-api.com'`; `export function _resetFxForTests()`.
   - `orders.js`:
     - `quote(userId, { plan, period }, { now })` → `{ kind: 'new'|'upgrade'|'later', plan, period, priceVnd, creditVnd, totalVnd, rate, rateSource, rateAt, balanceVnd, startsAt /* ISO */ }` — `later` for a downgrade or year→month (nothing charged now; the change is scheduled by `PUT /api/billing/subscription` in Task 7 via `scheduleChange`).
     - `createOrder(userId, { kind, plan, period, amountVnd, useBalance = true }, { now, simulated = false })` → `{ order, paidNow: boolean, due: { vnd, qr } | null }`; `kind` `plan` | `topup` | `renewal`. Validates plan/period with `isPlan`/`isPeriod`, a top-up amount against `TOPUP` and the account's plan (Global Constraints), an integer amount; errors carry `{ status: 422 }`.
@@ -513,11 +627,12 @@ SELECT * FROM p;
   export async function periodUsage(userId, { now = new Date() } = {}) // the Billing tab's "This period"
   export const NOT_BILLED // { billed:false, source:null, paid:false, refused:false, units:0, settle: async()=>{}, release: async()=>{} }
   ```
-  Counter buckets (expire at the window's end + 1 day): `bill:search:<user>:<month.key>`, `bill:search-day:<user>:<vnDay>`, `bill:sandbox:<user>:<month.key>` (seconds), `bill:sandbox-day:<user>:<vnDay>` (seconds), `bill:sandbox-paid:<user>:<month.key>` (seconds paid from the balance), `bill:would:<user>:<search|sandbox|storage>:<vnDay>`.
+  Counter buckets (expire at the window's end + 1 day): `bill:search:<user>:<month.key>`, `bill:sandbox:<user>:<month.key>` (seconds), `bill:sandbox-paid:<user>:<month.key>` (seconds paid from the balance), `bill:would:<user>:<search|sandbox|storage>:<vnDay>`. No per-day allowance counters (Global Constraints: no daily limits).
 
 Rules:
-- **holdSearch:** not billable → `NOT_BILLED`. Else, all `units` from one source: included when the month counter + units ≤ `searches` and the day counter + units ≤ `searchesPerDay` (add both, roll both back if either is over); else balance `chargeUsage(user,'search',units,units*400,vnDay)`; else `none`: preview → `paid:false, refused:false`, `bill:would:…:search` += units; live → `refused:true`. `paid = source in (included, balance)`. `settle(actual)`: `0` → release all; less → give back the difference on the same source; more → hold the extra with the same rules (preview never refuses; a failed extra in live is not charged and logged). `release()` = `settle(0)`; both idempotent.
-- **holdSandbox(seconds):** included when month and day second-counters fit `sandboxMinutes*60` / `sandboxMinutesPerDay*60`; else balance: add seconds to `bill:sandbox-paid`, charge `(ceil(after/60) − ceil(before/60)) × 84` đ with units = that minute delta (roll back the counter if `chargeUsage` returns null); else `none` as for search. Release reverses exactly what was taken.
+- **Prices** come from `paygPrices(await meteringRate())` (Task 2, Task 4) at the moment of each hold — never a hard-coded 400/84/1000.
+- **holdSearch:** not billable → `NOT_BILLED`. Else, all `units` from one source: included when the month counter + units ≤ `searches` (add, roll back if over); else balance `chargeUsage(user,'search',units,units*searchVnd,vnDay)`; else `none`: preview → `paid:false, refused:false`, `bill:would:…:search` += units; live → `refused:true`. `paid = source in (included, balance)`. `settle(actual)`: `0` → release all; less → give back the difference on the same source; more → hold the extra with the same rules (preview never refuses; a failed extra in live is not charged and logged). `release()` = `settle(0)`; both idempotent.
+- **holdSandbox(seconds):** included when the month's second-counter fits `sandboxMinutes*60`; else balance: add seconds to `bill:sandbox-paid`, charge `(ceil(after/60) − ceil(before/60)) × sandboxVndPerMinute` đ with units = that minute delta (roll back the counter if `chargeUsage` returns null); else `none` as for search. Release reverses exactly what was taken.
 - **Callers** (keep today's code path untouched when `!hold.billed`):
   - `server/search.js` `search(query, { …, billed = false })`: when `billed`, `ask.mayMeter = true` and `countMetered` is skipped; the result gains `metered: answered.some(a => ENGINES[chain[a.at]].metered)`; a cache hit returns `metered: false`.
   - `webSearch`: `const hold = await holdSearch(userId)`; `hold.refused` → behave as `mayMeter === false` today; `search(…, { paid: hold.paid, billed: hold.billed && !hold.refused && hold.source !== 'none' })`; `finally hold.settle(found?.metered ? 1 : 0)`.
@@ -527,10 +642,11 @@ Rules:
   - `code_context`: hold 1; `codeContextTool(input, { …, paid: hold.paid, billed, onCharge: (n) => { charged = Math.max(charged, n); } })`; inside, `onCharge(1)` once when Exa or Firecrawl's developer index returned rows or the web-search fallback came back `metered`; settle `charged`.
   - `server/research/gather.js`: each query's `search(query, { userId })` becomes hold → `search(query, { userId, paid, billed })` → settle(`out?.metered ? 1 : 0`) when `search` is the default one (a test-injected `search` is left alone).
   - `server/e2b.js` `payUntil(record, until, userId, { paid })`: when `userId`, `hold = await holdSandbox(userId, Math.ceil((until - from) / 1000))`; `hold.refused` → `throw new E2BOutOfCredit()`; a billed hold with a source sets `paid = paid || hold.paid` and skips the per-account free share (`shared`); the returned receipt carries `hold`; `giveBack` calls `receipt.hold?.release()`.
-- **Storage:** `chargeStorageDay` — for billable accounts only: `overTenths = max(0, ceil(bytes / 1e8) − storageGb × 10)`; `vnd = ceil(overTenths × 100 / daysInVnMonth(now))`; `chargeUsage(user,'storage',overTenths,vnd,vnDay)`; null → `bill:would:…:storage` += overTenths. Run once per VN day (Task 7 claims it).
-- **periodUsage:** `{ plan, month: {start,end}, search: { included, used, perDay, today, paidUnits, paidVnd }, sandbox: { includedSeconds, usedSeconds, perDaySeconds, todaySeconds, paidMinutes, paidVnd }, storage: { bytes, includedGb, paidVnd }, would: { search, sandbox, storage }, finance: { free: true } }` — paid figures from this month's `usage` entries.
+- **Storage room (Task 1c):** a billable account holding a paid plan is not limited by `assertRoom`'s 0.5 GB — its plan's GB apply, and past them it is charged below (preview never refuses). Extend `storageOf`/`assertRoom` accordingly.
+- **Storage:** `chargeStorageDay` — for billable accounts only: `overTenths = max(0, ceil(bytes / 1e8) − storageGb × 10)`; `vnd = ceil(overTenths × storageVndPerGbMonth / 10 / daysInVnMonth(now))`; `chargeUsage(user,'storage',overTenths,vnd,vnDay)`; null → `bill:would:…:storage` += overTenths. Run once per VN day (Task 7 claims it).
+- **periodUsage:** `{ plan, month: {start,end}, search: { included, used, paidUnits, paidVnd }, sandbox: { includedSeconds, usedSeconds, paidMinutes, paidVnd }, storage: { bytes, includedGb, paidVnd }, would: { search, sandbox, storage }, finance: { free: true } }` — paid figures from this month's `usage` entries.
 
-- [ ] **Step 1: Write failing tests** (`test/billing-meter.test.mjs`, PGlite, a fake clock): a non-admin → `NOT_BILLED`, nothing written; an admin with nothing → `NOT_BILLED`; an admin with Plus → included until 30 in a day, then balance 400đ each, then (balance 0) `none` with `paid:false` and a would-count, never refused in preview; `settle(0)` gives the included unit back (counter down) and a balance unit back (balance up, usage row down); a crawl hold of 1 settled with 10 pages → 4 units; month rollover on the plan's own day resets included; 20 concurrent holds with 4,000đ and no plan → exactly 10 balance holds; sandbox: 59 s then 2 s from the balance → 84đ then 84đ (two started minutes), 30 s + 30 s → 84đ total; release reverses; storage: 3.25 GB on Plus in a 30-day month → 3 tenths over → `ceil(300/30)` = 10đ; `periodUsage` shape. Search integration with a fake engine: a metered answer settles 1; a DuckDuckGo-only answer settles 0; the same query again (cache) settles 0; `billed` skips `countMetered`. E2B: a billable admin's window is held and `giveBack` releases it.
+- [ ] **Step 1: Write failing tests** (`test/billing-meter.test.mjs`, PGlite, a fake clock): a non-admin → `NOT_BILLED`, nothing written; an admin with nothing → `NOT_BILLED`; an admin with Plus → included for all 150 of the month even when used in one day (no daily limit), then balance 400đ each, then (balance 0) `none` with `paid:false` and a would-count, never refused in preview; `settle(0)` gives the included unit back (counter down) and a balance unit back (balance up, usage row down); a crawl hold of 1 settled with 10 pages → 4 units; month rollover on the plan's own day resets included; 20 concurrent holds with 4,000đ and no plan → exactly 10 balance holds; sandbox: 59 s then 2 s from the balance → 84đ then 84đ (two started minutes), 30 s + 30 s → 84đ total; release reverses; storage: 3.25 GB on Plus in a 30-day month → 3 tenths over → `ceil(300/30)` = 10đ; `periodUsage` shape. Search integration with a fake engine: a metered answer settles 1; a DuckDuckGo-only answer settles 0; the same query again (cache) settles 0; `billed` skips `countMetered`. E2B: a billable admin's window is held and `giveBack` releases it.
 - [ ] **Step 2: Run** — fails.
 - [ ] **Step 3: Implement** `meter.js`, then the callers one by one, running that caller's existing suite after each.
 - [ ] **Step 4: Run** `node test/billing-meter.test.mjs` and `node test/search.test.mjs`, `node test/webfetch.test.mjs`, `node test/firecrawl.test.mjs`, `node test/research.test.mjs`, `node test/e2b.test.mjs`, `node test/agent.test.mjs`, `node test/key-pool.test.mjs` — all pass. Add `billing-meter` to the chain.
@@ -550,7 +666,7 @@ Rules:
 - Produces:
   - `mountBillingRoutes(api, admin, { wrap })` — every route in the spec's Routes table. A `gate` middleware first: mode `off` → 404; `!billingVisible(req.user)` → 404. Each user route calls `catchUp(req.user.id)` first. Admin routes use `requirePermission('billing')` (and `requireOwner` for `/simulate`). Response shapes:
     - `GET /api/billing` → `{ mode, plan: planInForce + { autoRenew, cancelAtEnd, nextPlan, nextPeriod, priceVnd }, balance: { vnd, expiresAt }, usage: periodUsage, profile: { name, email, country, address, taxCode } | null, alerts: { lowBalanceVnd }, bounds: TOPUP }`
-    - `GET /api/billing/plans` → `{ plans: [{ id, usdCents, vnd: { month, year }, searches, searchesPerDay, sandboxMinutes, sandboxMinutesPerDay, storageGb }], payg: PAYG, rate: { rate, source, at, attribution }, current: { plan, period } }`; `rate: null` and `vnd: null` when `BillingUnavailable`.
+    - `GET /api/billing/plans` → `{ plans: [{ id, usdCents, vnd: { month, year }, searches, sandboxMinutes, storageGb }], payg: PAYG, rate: { rate, source, at, attribution }, current: { plan, period } }`; `rate: null` and `vnd: null` when `BillingUnavailable`.
     - `POST /api/billing/orders` → `{ order: { id, kind, plan, period, code, totalVnd, status, expiresAt }, paidNow, due: { vnd, qr: { image, bank, account, holder, amount, content } } | null }`.
     - `GET /api/billing/orders/:id` → `{ status, receivedVnd, dueVnd, plan }` (404 when not the caller's).
     - `PUT /api/billing/subscription` body any of `{ autoRenew: boolean, cancelAtEnd: boolean, nextPlan, nextPeriod }` — `nextPlan`/`nextPeriod` only for a change that `quote` calls `later` (a downgrade or year→month), else `422`; `nextPlan: null` withdraws a scheduled change.
@@ -561,6 +677,7 @@ Rules:
   - `daily.js`: `billingTick({ now })` — every heartbeat: `expireOrders`, `remindersDue` → `renewal-soon` mails, `catchUp` for `listSubscriptionsToWork`; once per VN day (claim with `addToCounter('bill:daily:<vnDay>', 1, vnDayEnd(now)) === 1`): `chargeStorageDay`, `expireBalances` (+ `expiring` mails 30 days ahead), `reconcile({ since: now − 3 days })`, e-invoice status (Task 8 fills the hook), low-balance alerts. Returns counts; failures logged, never thrown into the heartbeat.
   - Audit kinds appended: `'billing_order_paid', 'billing_transfer_assigned', 'billing_transfer_dismissed', 'billing_promo_created', 'billing_promo_disabled', 'billing_simulated', 'billing_profile_updated'`.
   - Export: `billing: { profile, orders, entries, receipts }` (receipts as numbers, dates, amounts).
+  - `GET /api/admin/billing` includes `capacity: { machines: { running | null, limit }, database: { bytes, includedBytes } }` — `running` from `GET https://api.e2b.app/v2/sandboxes` (state running, paged) with `E2B_API_KEY`, cached 60 s, `null` on any failure; `limit` = `E2B_CONCURRENT_LIMIT` (20); `includedBytes` = `DATABASE_INCLUDED_GB` (8) × 1e9. The key never leaves the server.
 
 - [ ] **Step 1: Write failing tests** (`test/billing-routes.test.mjs`, the app booted as `test/http.test.mjs` boots it): every route → 404 for a member in preview and for everyone in off; an admin gets 200; `GET /api/billing/plans` with the rate unavailable → plans with `vnd: null`; orders rate-limited at 11; another admin's order → 404; profile validation (bad email, 121-char name, `country:'Vietnam'`) → 400, good → 200 and the stored value is sealed (not plain text in `billing_profiles.sealed`); promo: wrong code and used code and expired code give the same 400 body; admin routes need `billing` (an admin without it → 403), simulate needs the owner and preview; `publicUser().billing.visible` true for an admin in preview, false for a member; `billingTick` twice in one VN day runs the daily part once; export contains `billing`. Mails render in vi and en with no `undefined`/`NaN` and no gradient behind white text.
 - [ ] **Step 2: Run** — fails.
@@ -610,7 +727,7 @@ Rules:
 
 Behaviour (spec "Screens"):
 - **Menu:** `{ id: 'upgrade', label: t('account.upgrade'), icon: ICON.upgrade, run: () => deps.openPlans() }` placed immediately before the `changelog` row, only when `deps.billingVisible()`. The account button shows `.account__plan` (`t('billing.plan.free')` "Free plan" / plan name) under the name, only when visible; hidden in the collapsed rail.
-- **Plans sheet:** a modal `<dialog>` (focus trapped, Esc closes, `aria-labelledby`), title `t('billing.plans.title')` "Plans that grow with you", a two-option segmented control Monthly | Yearly (`role="radiogroup"`; Yearly says "save 5%"), four cards Free/Plus/Pro/Max. Price: vi → `vnd` large; en → `usd` large and `t('billing.billedAs', { vnd })` under it. Button per card: current → disabled "Current plan"; higher → "Get Plus"/"Switch to Pro"; lower → "Changes at renewal" (calls `PUT /api/billing/subscription` with `{ nextPlan, nextPeriod }` after a confirm). Included lines from the plan (searches a month and a day, computer hours a month and a day, storage), then the PAYG prices, "1 person". Under the cards: the rate, its source and time, and the ExchangeRate-API attribution link when the source is `erapi`. `rate: null` → prices replaced by `t('billing.ratesDown')` and the buttons disabled.
+- **Plans sheet:** a modal `<dialog>` (focus trapped, Esc closes, `aria-labelledby`), title `t('billing.plans.title')` "Plans that grow with you", a two-option segmented control Monthly | Yearly (`role="radiogroup"`; Yearly says "save 5%"), four cards Free/Plus/Pro/Max. Price: vi → `vnd` large; en → `usd` large and `t('billing.billedAs', { vnd })` under it. Button per card: current → disabled "Current plan"; higher → "Get Plus"/"Switch to Pro"; lower → "Changes at renewal" (calls `PUT /api/billing/subscription` with `{ nextPlan, nextPeriod }` after a confirm). Included lines from the plan (searches a month, computer hours a month, storage — no daily figures), then the PAYG prices, "1 person". Under the cards: the rate, its source and time, and the ExchangeRate-API attribution link when the source is `erapi`. `rate: null` → prices replaced by `t('billing.ratesDown')` and the buttons disabled.
 - **Checkout:** a second view in the same dialog: left — plan, period radios with both prices, lines (price, prorated credit, balance used, **Total due today**), the "Use my balance (X)" checkbox; right — the billing-information form when `profile` is null (first time), else the saved summary with **Update**. **Continue** → `POST /api/billing/orders`: `paidNow` → success view "You're on Plus" + receipt link when there is one; else the QR view: `<img alt>` of `due.qr.image`, bank, account, holder, amount and content each with a copy button (`navigator.clipboard`, a toast), a `mm:ss` countdown to `expiresAt`, a `role="status"` line polling `GET /api/billing/orders/:id` every 5 s while visible (stop on close/hidden/paid/expired), "Received X of Y — Z to go" for a short payment with a fresh QR for Z, "Expired — any money that arrives goes to your balance" at 0. Cancel → `POST …/cancel`.
 - **Preview note** at the top of the sheet and checkout: `t('billing.previewNote')` "Preview — only administrators see this."
 - Keyboard and screen reader per the `accessibility-checklist` skill; 360px wide works (cards stack); dark and light.
@@ -638,10 +755,10 @@ Behaviour (spec "Screens", Settings → Billing and Administration → Billing):
 - **Plan** card: name, price, "Renews 13 Dec from your balance" / "Ends 13 Dec" / "In grace until 16 Dec — add credit to keep Plus"; **Adjust plan** → `plans.open()`; Cancel plan / Keep plan; Auto-renew switch.
 - **Credits** card (OpenRouter's): "Total available" large; **Add credits** → a small form with the three presets and an amount box (validated against `bounds`; `badInput` shows an error) → `plans.openTopUp(amount)` (the QR view); **View usage** scrolls to *This period*; **Redeem promo code** box + button; the expiry date line.
 - **Low-balance email:** switch + threshold box; the sentence that transfers cannot be charged automatically.
-- **This period:** one row per kind — bar of included used/left, today's share, paid units and đồng; finance tools "free"; in preview, "N calls would have been refused" when non-zero.
+- **This period:** one row per kind — bar of the month's included used/left, paid units and đồng; finance tools "free"; in preview, "N calls would have been refused" when non-zero.
 - **Billing information**, **Payment method**, **Recent transactions** (All · Top-ups · Plans · Usage chips; 20 a page; "Load more"), **Receipts** (Download PDF links; invoices when present).
 - Preview note at the top. Polls nothing; reloads on `load()` and after each action.
-- **Admin card** (`billing` permission): mode line; rate; 30-day money in by kind, real cost, margin; balances held; recent orders table; unmatched transfers with Assign (email box) / Mark returned (two-press confirm like free-allowances' remove); promo codes list + create form + disable; in preview and for the owner, a "Simulate a transfer" picker of pending orders.
+- **Admin card** (`billing` permission): mode line; rate; 30-day money in by kind, real cost, margin; balances held; **capacity** — cloud computers running now of `E2B_CONCURRENT_LIMIT` (default 20, E2B Hobby; read from E2B's running-sandbox list with the env key, kept a minute, "unknown" when it cannot be read) and database size of `DATABASE_INCLUDED_GB` (default 8, Supabase Pro), each turning amber at 75% and red at 90% with the sentence saying what to buy (E2B Pro, more disk); recent orders table; unmatched transfers with Assign (email box) / Mark returned (two-press confirm like free-allowances' remove); promo codes list + create form + disable; in preview and for the owner, a "Simulate a transfer" picker of pending orders.
 
 - [ ] **Step 1: Write failing tests** in `test/ui-billing.test.mjs`: a member has no Billing tab (and opening `#settings/billing` lands on another tab); an admin sees it after Usage; after a simulated top-up the Total available shows it and Recent transactions lists it; promo redeem adds credit; Adjust plan opens the sheet; Download PDF answers `application/pdf`; the admin card shows the unmatched transfer and Assign credits the named account; an admin without `billing` sees no card; keyboard and 360px checks.
 - [ ] **Step 2: Run** — fails.
