@@ -1,6 +1,6 @@
 import { getStore } from '../store/index.js';
 import { executeTool } from '../tools/execute.js';
-import { previewOf, mediaOf, liveRevision } from '../attachments.js';
+import { previewOf, mediaOf, liveRevision, replaceWithRoom } from '../attachments.js';
 import { clientError } from '../util/clientError.js';
 import { officeView } from '../office/look.js';
 import { canRenderOffice, renderWithOffice } from '../officeRender.js';
@@ -408,7 +408,8 @@ export function mountWorkspaceRoutes(api, { wrap, body }) {
       const past = await store.getAttachmentVersion(req.user.id, req.params.id, req.params.revision);
       if (!past) return res.status(404).json({ error: 'There is no such version of this file.' });
 
-      const file = await store.replaceAttachment(req.user.id, req.params.id, {
+      // A restore files the current copy as a version too, so a full account is refused (422, storage_full).
+      const file = await replaceWithRoom(req.user.id, req.params.id, {
         data: past.data,
         bytes: past.bytes,
         source: past.source,

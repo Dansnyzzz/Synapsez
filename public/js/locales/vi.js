@@ -2336,6 +2336,7 @@ export const vi = {
   'usage.share.title': 'Phần miễn phí của bạn trong tháng này',
   'usage.share.searches': 'Tìm kiếm: {used} trên {share}',
   'usage.share.machine': 'Máy tính đám mây: {used} trên {share}',
+  'usage.share.files': 'Tệp: {used} trên {limit}',
   'usage.share.starts': 'Bắt đầu lại vào {date}.',
   'usage.share.hm': '{h} giờ {m} phút',
   'usage.share.min': '{m} phút',

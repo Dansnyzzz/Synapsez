@@ -835,6 +835,18 @@ is never actually looked at. The table below is what a model reads directly; any
 a database, an unusual format) reaches it as a note saying the file is there and how to open it on
 the cloud computer, with a zip's contents listed.
 
+**How much an account may keep.** Files are stored in the database (as base64, so a gigabyte of them is
+about a third more on disk), and until they move to object storage an account that is not an
+administrator keeps at most **0.5 GB** of them: uploads, files the assistant writes, and every earlier
+copy kept for the version switcher all count, by their own size. A new upload, a new file, a new version
+and a shared conversation's files copied in are refused with a 422 (`storage_full`) when they would pass
+it, and the message names where to delete files: **Settings → Privacy → Your data** (Uploaded files and
+Your artifacts). Pictures drawn from a file already kept (an Office file's rendering, a step's thumbnail)
+are counted and never refused, a file that stays on the cloud computer does not count, and nothing already
+stored is ever deleted: an account over the limit keeps what it has and cannot add until it is under.
+**Settings → Usage** shows "Files: X of 0.5 GB"; administrators have no limit. `FREE_STORAGE_BYTES`
+changes the figure.
+
 **Sound and video** go directly to a model whose provider lists them as input, which the picker marks
 ("hears audio", "watches video"), if the format is one the wire carries: wav, mp3, aiff, aac, ogg, opus,
 flac, m4a for sound, mp4, mov, mpeg, webm for video. Otherwise the composer says so before the send, and
@@ -2088,6 +2100,7 @@ step, with the optional certificate and how to bring data over from another data
 | `FREE_TIER_ONLY` | optional | On by default: every metered search service stops at its free allowance (see "Free tiers"). `false` counts them but stops none, for a deployment that pays. |
 | `FREE_TIER_USER_MONTHLY_MIN` / `FREE_TIER_USER_MONTHLY_MAX` | optional | The bounds of an account's worked-out monthly share of metered searches (defaults `30` and `900`). Replaces `FREE_TIER_USER_DAILY` (1.30.0), which is no longer read. |
 | `FREE_SHARE_RESERVE` | optional | The part of the free keys' capacity kept back on the 1st for people who start later in the month (default `0.2`). |
+| `FREE_STORAGE_BYTES` | optional | What an account that is not an administrator may keep in files while they live in the database (default `500000000`, 0.5 GB); see "Photos and files". |
 | `E2B_ACCOUNT_MIN_MILLS` | optional | The least cloud-computer time an account's share can be worked down to, in thousandths of a dollar (default `133`, about an hour). Replaces `E2B_ACCOUNT_DAY_FLOOR` (1.30.0). |
 | `QUALITY_GATE_ROUNDS` | optional | How many times a finished answer citing an address no source holds is sent back to correct that sentence, before the link is dropped (1–3, default `2`). Each round is one short call, made only while something is still flagged. See "The quality gate". |
 | `PROVIDER_REQUEST_BUDGET_MS` | optional | How long one call to a model may take, every key and retry together (default `240000`, under the 300 s a Vercel function lives). Waits and first-word timeouts are cut to what is left, and a stumble's Retry-After is waited a minute at most, so a provider that will not answer ends the turn with a reason rather than a cut-off stream. This budget starts again with each call, so a turn also has a deadline, 270 s after it began on this function, that bounds what a call waits for — a stumble's retry, a rate-limited key's rest, the wait for a first word — on the turn's steps and when it folds the conversation. It does not cut a reply that is already streaming, and a call still gets 20 s to start (the least worth trying), so a long turn can outlive the function; a turn cut off that way is picked up again (`server/resume.js`) rather than ended early.

@@ -5,6 +5,8 @@ import { faviconFor, cleanHost, siteOf } from '../favicon.js';
 import { proxiedImage, mapTile } from '../imageProxy.js';
 import { audit } from '../audit.js';
 import { keepNewest } from '../chatLimit.js';
+import { assertRoomFor, StorageFull } from '../storageQuota.js';
+import { clientError } from '../util/clientError.js';
 
 /**
  * A conversation shared by link.
@@ -535,7 +537,7 @@ export function mountChatShareRoutes(api, { wrap }) {
     '/shared-chat/:token/fork',
     wrap(async (req, res) => {
       const result = await forkSharedChat(req.user.id, String(req.params.token || ''));
-      if (result.error) return res.status(result.status).json({ error: result.error });
+      if (result.error) return res.status(result.status).json({ error: result.error, ...(result.code ? { code: result.code } : {}) });
       res.json(result);
     }),
   );
@@ -560,15 +562,27 @@ export async function forkSharedChat(userId, token) {
   // transcript: carrying a conversation on must not hand a stranger the steps
   // the shared page leaves out, or the reasoning it does not show.
   const messages = await publishedTranscript(store, chat, { placeholder: LEFT_OUT });
+  // The files first, and their room asked for as a whole before anything is made, so a full
+  // account gets no half a conversation (owner, 2026-11-13: half a gigabyte with no plan).
+  const found = [];
+  for (const oldId of referencedFiles(messages)) {
+    // The file as it was when the link was made, not as it is now (PRV-011).
+    const file = await store.getAttachmentAt(chat.user_id, oldId, chat.shared_at);
+    if (file) found.push([oldId, file]);
+  }
+  try {
+    await assertRoomFor(userId, found.reduce((sum, [, file]) => sum + (file.origin === 'machine' ? 0 : Number(file.bytes) || 0), 0));
+  } catch (err) {
+    if (err instanceof StorageFull) return { status: err.status, error: clientError(err), code: err.code };
+    throw err;
+  }
+
   const newChatId = crypto.randomUUID();
   await store.createChat(userId, { id: newChatId, title: chat.title, model: null });
   await keepNewest(userId, store);
 
   const moved = new Map();
-  for (const oldId of referencedFiles(messages)) {
-    // The file as it was when the link was made, not as it is now (PRV-011).
-    const file = await store.getAttachmentAt(chat.user_id, oldId, chat.shared_at);
-    if (!file) continue;
+  for (const [oldId, file] of found) {
     const id = crypto.randomUUID();
     await store.createAttachment(userId, {
       id,

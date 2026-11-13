@@ -1606,5 +1606,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Không đọc được cuộc trò chuyện đó từ đây. Chỉ đọc được những cuộc search_chats liệt kê: trong dự án này khi đang ở trong dự án, ngoài các dự án khi đang ở ngoài — không bao giờ là cuộc ẩn danh hay của bot.',
   "That conversation holds data from the person's Google account, which is not quoted into a conversation that holds none.":
     'Cuộc trò chuyện đó chứa dữ liệu từ tài khoản Google của người dùng, nên không được trích vào một cuộc trò chuyện không chứa dữ liệu như vậy.',
+  // Half a gigabyte of files for an account with no plan (owner, 2026-11-13); the place named is Settings → Privacy → Your data.
+  'Your files are full: {0} of {1} used. Delete files you no longer need in Settings → Privacy → Your data, then try again.':
+    'Kho tệp của bạn đã đầy: đã dùng {0} trên {1}. Hãy xoá những tệp không cần nữa trong Cài đặt → Quyền riêng tư → Dữ liệu của bạn, rồi thử lại.',
   'This is an incognito conversation, so no skill is saved or changed from it.': 'Đây là cuộc trò chuyện ẩn danh, nên không lưu hay sửa kỹ năng nào từ đây.',
 };

@@ -3,7 +3,7 @@ import { escapeHtml } from './markdown.js';
 import { rovingKeys } from './roving.js';
 import { weekDays, rowsFor, callsByDay, heatmap, heatmapBy, shareBy, pace, busiest, usualDay, standing, knownLimits, overviewLimits, decisiveLimits, tightest, project } from './usage-math.js';
 import { geminiDetail, orcaDetail } from './usage-detail.js';
-import { machineTime, countOf } from './free-share.js';
+import { machineTime, countOf, filesSize } from './free-share.js';
 
 /**
  * Settings → Usage, after Claude's (owner, 2026-10-31): a page per provider the
@@ -471,11 +471,15 @@ export function createUsagePanel(host, deps) {
    */
   function freeShareCard() {
     const share = view.scope === 'all' ? view.report.freeShare : null;
-    if (!share || !share.enforced) return '';
+    // The files line stands apart from the ceilings: files are limited whether or not they are on.
+    const storage = view.scope === 'all' ? view.report.storage : null;
+    const filesLine = storage && storage.limitBytes != null ? `<p class="usage__strong" data-storage>${escapeHtml(t('usage.share.files', { used: filesSize(storage.usedBytes), limit: filesSize(storage.limitBytes) }))}</p>` : '';
+    if (!share || !share.enforced) return filesLine ? `<section class="usage__credit" data-free-share><h4>${escapeHtml(t('usage.share.title'))}</h4>${filesLine}</section>` : '';
     const date = when(new Date(share.endsAt), { day: 'numeric', month: 'long', timeZone: 'UTC' });
     const lines = [
       `<p class="usage__strong">${escapeHtml(t('usage.share.searches', { used: countOf(share.searches.used), share: countOf(share.searches.share) }))}</p>`,
     ];
+    if (filesLine) lines.push(filesLine);
     if (share.machine.shareMills != null) lines.push(`<p class="usage__strong">${escapeHtml(t('usage.share.machine', { used: machineTime(share.machine.usedMills), share: machineTime(share.machine.shareMills) }))}</p>`);
     lines.push(`<p class="usage__muted">${escapeHtml(t('usage.share.starts', { date }))}</p>`);
     if (share.dry) lines.push(`<p class="usage__note">${escapeHtml(t('usage.share.dry', { date }))}</p>`);

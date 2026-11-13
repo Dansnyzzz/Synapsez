@@ -8,6 +8,7 @@ import { getPrefs } from '../settings.js';
 import { needsApproval } from '../agent.js';
 import { listDriveFiles, driveFileForAttachment } from '../tools/google.js';
 import { saveUpload, LIMITS } from '../attachments.js';
+import { StorageFull } from '../storageQuota.js';
 import { publicUrlFor } from '../util/net.js';
 import { TOOLS } from '../tools/definitions.js';
 import { DRIVE_ORIGIN } from '../googleData.js';
@@ -242,7 +243,8 @@ export function mountConnectorRoutes(api, { wrap }) {
           // to models that do not train on it (googleData.js).
           res.status(201).json({ attachment: await saveUpload(req.user.id, { ...file, origin: DRIVE_ORIGIN }) });
         } catch (err) {
-          res.status(400).json({ error: translateMessage(clientError(err), languageOf(req)) });
+          const full = err instanceof StorageFull;
+          res.status(full ? 422 : 400).json({ error: translateMessage(clientError(err), languageOf(req)), ...(full ? { code: err.code } : {}) });
         }
       }),
     );

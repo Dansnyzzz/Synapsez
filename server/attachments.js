@@ -8,6 +8,7 @@ import { log } from './util/trace.js';
 import { groundedImage } from './imageGround.js';
 import { DRIVE_ORIGIN } from './googleData.js';
 import { viewCopy } from './util/picture.js';
+import { assertRoomFor } from './storageQuota.js';
 
 /**
  * Photos and files — the ones sent with a message, and the ones the assistant
@@ -171,6 +172,9 @@ export async function saveUpload(userId, { name, mime, data, thumb = null, origi
 
   const kind = classify(filename, mime);
 
+  // Half a gigabyte for an account with no plan (owner, 2026-11-13): asked before the row, never after.
+  await assertRoomFor(userId, bytes);
+
   return getStore().createAttachment(userId, {
     id: crypto.randomUUID(),
     name: filename,
@@ -204,6 +208,10 @@ export async function saveGenerated(userId, { name, mime, kind = null, data, sou
     throw new Error(`That document came to ${humanSize(bytes)}, over the ${humanSize(MAX_BYTES)} limit.`);
   }
 
+  // What the assistant writes counts like an upload. A picture a step drew (`origin: 'step'`) is a
+  // view of something already there: counted, never refused (owner, 2026-11-13).
+  if (origin !== 'step') await assertRoomFor(userId, bytes);
+
   return getStore().createAttachment(userId, {
     id: crypto.randomUUID(),
     name: String(name).slice(0, 200),
@@ -216,6 +224,20 @@ export async function saveGenerated(userId, { name, mime, kind = null, data, sou
     chatId: chatId || null,
     thumb: cleanThumb(thumb),
   });
+}
+
+/**
+ * Rewrite a made file in place, which files the old copy as a version: so it adds the new size
+ * (the old bytes only change names), and a limited account is asked first (owner, 2026-11-13).
+ * The door every rewrite goes through, so the room is asked in one place.
+ *
+ * @param {string} userId
+ * @param {string} id
+ * @param {{ data: string, bytes: number, source?: string|null, name?: string|null, mime?: string|null }} change
+ */
+export async function replaceWithRoom(userId, id, change) {
+  await assertRoomFor(userId, Number(change.bytes) || 0);
+  return getStore().replaceAttachment(userId, id, change);
 }
 
 /**
@@ -240,9 +262,13 @@ export async function saveChangedFile(userId, file, buffer, { chatId = null, nam
   // A copy of a Drive file is what it was copied from, as far as anything holding Google's
   // rules is concerned: it may not go where the original may not (googleData.js).
   const isCopy = file.origin === 'generated' || (file.origin === DRIVE_ORIGIN && file.derived_from);
+  const found = isCopy ? null : await store.findDerivedFile(userId, file.id);
+  // The new bytes are what a change adds (the old ones become a version of their own size); the
+  // first change to a file somebody sent also makes the copy, which is the old size again.
+  await assertRoomFor(userId, buffer.length + (isCopy || found ? 0 : Number(file.bytes) || 0));
   if (!isCopy) {
     target =
-      (await store.findDerivedFile(userId, file.id)) ||
+      found ||
       (await store.createAttachment(userId, {
         id: crypto.randomUUID(),
         name: file.name,

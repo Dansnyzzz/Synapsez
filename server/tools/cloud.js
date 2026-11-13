@@ -37,7 +37,7 @@ import { safeFetch, readCapped, assertPublic } from '../util/safeFetch.js';
 import { searchDocs, listSources, forgetSource } from '../rag.js';
 import { SPREADSHEET_FORMATS, createDocument, extensionOf, readOfficeAsync } from '../office/index.js';
 import { extractPdfText } from '../pdf.js';
-import { saveGenerated, saveChangedFile, liveRevision } from '../attachments.js';
+import { saveGenerated, saveChangedFile, liveRevision, replaceWithRoom } from '../attachments.js';
 import { officeJob } from '../office/job.js';
 import { airQuality, countryFacts, earthquakes, elevation, moonPhase, publicHolidays, sunTimes, timeBetween } from './facts.js';
 import { record as recordUsage } from '../usage.js';
@@ -928,7 +928,7 @@ async function updateFileTool({ file_id: fileId, content, name, append = false, 
   // it is named again (update_file's `theme` says so to the model).
   const built = createDocument({ format, name: name || existing.name, content: whole, theme: theme || null });
 
-  const saved = await store.replaceAttachment(userId, fileId, {
+  const saved = await replaceWithRoom(userId, fileId, {
     data: built.buffer.toString('base64'),
     bytes: built.buffer.length,
     source: built.source,
@@ -1038,7 +1038,7 @@ async function fileVersionsTool({ file_id: fileId, revision, restore }, { userId
 
   // Restoring is itself a rewrite, so what it replaces is kept in turn — going
   // backwards is never destructive, which is what makes it safe to offer.
-  await store.replaceAttachment(userId, fileId, {
+  await replaceWithRoom(userId, fileId, {
     data: copy.data,
     bytes: copy.bytes,
     source: copy.source,

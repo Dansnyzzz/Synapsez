@@ -136,6 +136,8 @@ section('Usage: the Overview adds up, and warns only about what is being spent')
       bounds: { searchMin: 30, searchMax: 900 }, capacity: { searches: 10000, machineMills: 7000 }, people: { searches: 20, machines: 3 },
       searches: { used: 120, share: 400 }, machine: { usedMills: 78, shareMills: 288 },
     },
+    // Half a gigabyte of files for an account with no plan (server/storageQuota.js).
+    storage: { usedBytes: 120_000_000, limitBytes: 500_000_000 },
     sharedKey: {},
   });
   let answer = report();
@@ -169,6 +171,7 @@ section('Usage: the Overview adds up, and warns only about what is being spent')
   check("the Overview shows this month's free share: X of N, the machine, when it starts again, and how it was worked out",
     /This month's free share/.test(overview.money) && /Searches: 120 of 400/.test(overview.money) && /Cloud computer: 35 min of 2 h 10 min/.test(overview.money) && /(December 1|1 December)/.test(overview.money) && /capacity this month \(10,000 searches\), less 20% kept for people who join later, shared by 20 people/.test(overview.money) && /never fewer than 30 or more than 900/.test(overview.money) && /You joined on day 20 of 30, so this month's share covers 11 of 30 days/.test(overview.money),
     overview.money.slice(0, 400));
+  check('  and what the account\'s files weigh against its 0.5 GB', /Files: 120 MB of 0\.5 GB/.test(overview.money), overview.money.slice(0, 400));
   check('the money is one line for the provider too', /OrcaRouter.*Balance OrcaRouter reports: \$6\.00/.test(overview.money) && !/Key 1.*Spent/.test(overview.money));
 
   await page.click('#usage-panel [data-scope="openrouter"]');

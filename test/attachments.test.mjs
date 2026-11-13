@@ -49,6 +49,7 @@ const check = (label, pass, detail = '') => {
 function jar() {
   let cookie = '';
   return {
+    cookie: () => cookie,
     async call(method, url, body) {
       const res = await fetch(`${base}${url}`, {
         method,
@@ -164,6 +165,26 @@ let textId;
   check('an empty file is refused', empty.status === 400, `got ${empty.status}`);
 
   check('uploading needs a session', (await anon.call('POST', '/api/attachments', { name: 'x.png', mime: 'image/png', data: PNG })).status === 401);
+}
+
+// Half a gigabyte for an account with no plan (owner, 2026-11-13). Alice registered first and is the
+// administrator; Bob is a member, and holds 499 MB on paper.
+section('a full account is told so, with a code');
+{
+  const bobRow = await store.getUserByEmail('bob@example.com');
+  await store.createAttachment(bobRow.id, { id: 'bob-heavy', name: 'big.bin', mime: 'application/octet-stream', kind: 'binary', bytes: 499_000_000, data: 'AA==' });
+  const mb2 = Buffer.alloc(2_000_000).toString('base64');
+  const refused = await bob.call('POST', '/api/attachments', { name: 'two.bin', mime: 'application/octet-stream', data: mb2 });
+  check('a member 2 MB short of room is refused with a 422 and storage_full', refused.status === 422 && refused.json?.code === 'storage_full', `${refused.status} ${JSON.stringify(refused.json)}`);
+  check('  in words that name the place to delete files', /499 MB of 0\.5 GB.*Settings → Privacy → Your data/.test(refused.json?.error || ''), refused.json?.error);
+  check('  and in Vietnamese when asked', /Cài đặt → Quyền riêng tư → Dữ liệu của bạn/.test(((await fetch(`${base}/api/attachments`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Language': 'vi', Cookie: bob.cookie() }, body: JSON.stringify({ name: 'two.bin', mime: 'application/octet-stream', data: mb2 }) }).then((r) => r.json())).error) || ''));
+  const small = await bob.call('POST', '/api/attachments', { name: 'one.bin', mime: 'application/octet-stream', data: Buffer.alloc(1_000_000).toString('base64') });
+  check('  while 1 MB, which just fits, goes through', small.status === 201, `${small.status}`);
+  const boss = await alice.call('POST', '/api/attachments', { name: 'two.bin', mime: 'application/octet-stream', data: mb2 });
+  check('an administrator is not held to it', boss.status === 201, `${boss.status}`);
+  const usage = await bob.call('GET', '/api/usage/report');
+  check('Settings → Usage reports what is used against the room', usage.json?.storage?.limitBytes === 500_000_000 && usage.json?.storage?.usedBytes === 500_000_000 + 0, JSON.stringify(usage.json?.storage));
+  check('  and an administrator has no limit to report', (await alice.call('GET', '/api/usage/report')).json?.storage?.limitBytes === null);
 }
 
 // ── an artifact's own storage, and the picture proxies (CODE-041) ────

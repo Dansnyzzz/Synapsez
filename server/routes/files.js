@@ -4,7 +4,8 @@ import { googleGrants } from '../google.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
 import crypto from 'node:crypto';
 import { limit as rateLimit } from '../ratelimit.js';
-import { saveUpload, saveMachineFile, machineFileName, MAX_DIRECT_BYTES } from '../attachments.js';
+import { saveUpload, saveMachineFile, machineFileName, replaceWithRoom, MAX_DIRECT_BYTES } from '../attachments.js';
+import { StorageFull } from '../storageQuota.js';
 import { faviconFor, cleanHost } from '../favicon.js';
 import { proxiedImage, mapTile } from '../imageProxy.js';
 import { createDocument, extensionOf, RUNNABLE } from '../office/index.js';
@@ -43,6 +44,8 @@ export function mountFileRoutes(api, { wrap, body }) {
         // just picked, and a round trip of the same megabytes helps nobody.
         res.status(201).json({ attachment: saved });
       } catch (err) {
+        // A full account is told so with its own status and code, so the page can say what to do (owner, 2026-11-13).
+        if (err instanceof StorageFull) return res.status(422).json({ error: clientError(err), code: err.code });
         res.status(400).json({ error: clientError(err) });
       }
     }),
@@ -436,7 +439,7 @@ export function mountFileRoutes(api, { wrap, body }) {
           name: String(req.body?.name || file.name),
           content: String(req.body?.content ?? ''),
         });
-        const saved = await store.replaceAttachment(req.user.id, req.params.id, {
+        const saved = await replaceWithRoom(req.user.id, req.params.id, {
           data: built.buffer.toString('base64'),
           bytes: built.buffer.length,
           source: built.source,
@@ -445,6 +448,7 @@ export function mountFileRoutes(api, { wrap, body }) {
         });
         res.json({ file: saved });
       } catch (err) {
+        if (err instanceof StorageFull) return res.status(422).json({ error: clientError(err), code: err.code });
         res.status(400).json({ error: clientError(err) });
       }
     }),

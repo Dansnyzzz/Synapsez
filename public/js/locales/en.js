@@ -2350,6 +2350,7 @@ export const en = {
   'usage.share.title': 'This month\'s free share',
   'usage.share.searches': 'Searches: {used} of {share}',
   'usage.share.machine': 'Cloud computer: {used} of {share}',
+  'usage.share.files': 'Files: {used} of {limit}',
   'usage.share.starts': 'Starts again on {date}.',
   'usage.share.hm': '{h} h {m} min',
   'usage.share.min': '{m} min',

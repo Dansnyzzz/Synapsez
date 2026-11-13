@@ -145,6 +145,7 @@ import { approximateLocation } from './whereabouts.js';
 import { e2bConfigured } from './e2b.js';
 import { forgetMachine } from './sandbox.js';
 import { diskSummary } from './machineCare.js';
+import { StorageFull } from './storageQuota.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -2013,7 +2014,7 @@ export function createApp() {
         const file = await addSource(req.user.id, req.params.id, req.body || {});
         res.status(201).json({ file });
       } catch (err) {
-        res.status(err.status || 400).json({ error: clientError(err) });
+        res.status(err.status || 400).json({ error: clientError(err), ...(err instanceof StorageFull ? { code: err.code } : {}) });
       }
     }),
   );
@@ -3153,6 +3154,8 @@ export function createApp() {
      */
     log.error('unhandled error', err, { method: req.method, path: req.path });
     if (res.headersSent) return res.end();
+    // A full account (owner, 2026-11-13): its own status and code, and words written for the person.
+    if (err instanceof StorageFull) return res.status(422).json({ error: clientError(err), code: err.code });
     // The request's own fault, which the body parser marks `expose` with a 4xx —
     // too large, not JSON — is said as that (CODE-078): "try again" cannot help.
     const status = Number(err?.status);

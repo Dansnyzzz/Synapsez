@@ -2279,6 +2279,20 @@ export function createPgStore(connectionString) {
       return rows[0];
     },
     /**
+     * What an account's files weigh in the database: every file and every kept earlier copy,
+     * by their own bytes (owner, 2026-11-13). A file that stays on the cloud computer
+     * (`origin = 'machine'`) is a row with no bytes here, so it is not counted against disk
+     * that it does not use.
+     */
+    async bytesOfUser(userId) {
+      const rows = await q(
+        `SELECT (SELECT COALESCE(SUM(bytes), 0) FROM attachments WHERE user_id = $1 AND origin <> 'machine')
+              + (SELECT COALESCE(SUM(bytes), 0) FROM attachment_versions WHERE user_id = $1) AS n`,
+        [userId],
+      );
+      return Number(rows[0]?.n) || 0;
+    },
+    /**
      * The files the assistant made or rewrote in one conversation since `since` —
      * what a bot's turn in a group produced, so its post there can carry them.
      * Names and sizes only, never the bytes.

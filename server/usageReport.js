@@ -4,6 +4,7 @@ import { getApiKeys, providerStatus, keyEntries, setKeyMeta } from './settings.j
 import { limitFor } from './usage.js';
 import { withMarkup } from './pricing.js';
 import { accountShares } from './freeShares.js';
+import { storageOf } from './storageQuota.js';
 import { orcaBalance, orcaStanding, orcaWallet } from './keyIntake.js';
 import { ORCA_FREE_SETTING } from './models.js';
 import { pacificDay } from './providerOutcomes.js';
@@ -374,6 +375,8 @@ export async function usageReport(user, { fetchImpl = fetch, part = 'all' } = {}
     // stops a turn only on a shared key).
     // This month's free share, worked out from the keys' capacity (server/freeShares.js, owner 2026-11-13); null when it cannot be read.
     freeShare: part === 'limits' ? null : await accountShares(user.id).catch(() => null),
+    // What the account's files weigh against its room (server/storageQuota.js, owner 2026-11-13); limitBytes is null with no limit.
+    storage: part === 'limits' ? null : await storageOf(user).catch(() => null),
     sharedKey: Object.fromEntries(Object.entries(status).map(([provider, s]) => [provider, !!s.shared])),
   };
 }
