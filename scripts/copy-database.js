@@ -277,7 +277,43 @@ export async function copyDatabase(from, to, { say = console.log, merge = [] } =
   if (rebinding.v1Left) say(`  ${rebinding.v1Left} stored credential(s) from before 1.26.0 were copied as they were (no ENCRYPTION_KEY here to seal them again): run npm run secrets:reseal on the new database before setting ENCRYPTION_REFUSE_V1`);
   // The check above stops the copy before this can happen; a value that changed since it ran is still said.
   if (rebinding.unopenable) say(`  ${rebinding.unopenable} stored credential(s) of merged accounts could not be opened here and were copied as they were — they will not open, and the person enters them again`);
+  await restartSequences(to, say);
   return copied;
+}
+
+/**
+ * Rows copied with their ids do not move a sequence: left alone, the next insert on the new
+ * database would start at 1 and meet a key that is already there (balance entries, SePay
+ * transfers) or repeat a receipt number. Every column that draws from a sequence takes it to
+ * its table's largest value, and `receipt_seq` (not owned by a column) to the largest number
+ * on a receipt. A sequence already past that is left where it is.
+ */
+async function restartSequences(db, say) {
+  const wanted = [];
+  const serial = await db.query(
+    `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public' AND column_default LIKE 'nextval(%'`,
+  );
+  for (const { table_name: table, column_name: column } of serial) {
+    const seq = (await db.query('SELECT pg_get_serial_sequence($1, $2) AS seq', [ident(table), column]))[0]?.seq;
+    if (!seq) continue;
+    const top = (await db.query(`SELECT MAX(${ident(column)}) AS top FROM ${ident(table)}`))[0]?.top;
+    wanted.push({ seq, top: Number(top) || 0 });
+  }
+  const hasReceipts = (await db.query(`SELECT to_regclass('public.receipts') AS t, to_regclass('public.receipt_seq') AS s`))[0];
+  if (hasReceipts?.t && hasReceipts?.s) {
+    const top = (await db.query(`SELECT MAX(substring(number from '([0-9]+)$')::bigint) AS top FROM receipts`))[0]?.top;
+    wanted.push({ seq: 'public.receipt_seq', top: Number(top) || 0 });
+  }
+  let moved = 0;
+  for (const { seq, top } of wanted) {
+    if (!top) continue;
+    const now = (await db.query(`SELECT last_value, is_called FROM ${seq}`))[0];
+    const at = now?.is_called ? Number(now.last_value) : 0;
+    if (top <= at) continue;
+    await db.query('SELECT setval($1::regclass, $2::bigint, true)', [seq, top]);
+    moved += 1;
+  }
+  if (moved) say(`  ${moved} sequence(s) moved past the rows that were copied`);
 }
 
 /**

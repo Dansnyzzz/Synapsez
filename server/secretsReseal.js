@@ -21,6 +21,7 @@
  *   mcp_servers.config headersCipher/envCipher mcpConfigContext
  *   service_keys.sealed                     ['service-key', service, id]
  *   billing_profiles.sealed                 ['billing-profile', userId]
+ *   receipts.buyer_sealed                   ['billing-profile', userId]
  */
 import { openSecret, encryptSecret, needsReseal, secretVersion } from './crypto.js';
 import { cloudBrowserContext, mcpBridgeContext, mcpConfigContext, totpContext, connectorContext, hookContext, providerKeyContext, serviceKeyContext, billingProfileContext } from './secretContexts.js';
@@ -106,6 +107,13 @@ const SEALED = {
     owner: (row) => row.user_id,
     fields: (row) => (row.sealed ? [{ kind: 'billing-profile', value: row.sealed, context: (user) => billingProfileContext(user), put: (sealed) => { row.sealed = sealed; } }] : []),
     update: (row, was) => ['UPDATE billing_profiles SET sealed = $2 WHERE user_id = $1 AND sealed = $3 RETURNING user_id', [row.user_id, row.sealed, was.sealed]],
+  },
+  // A receipt's buyer details are sealed as the profile's are; cleared when the account is deleted, so a row here always has an owner.
+  receipts: {
+    select: 'SELECT number, user_id, buyer_sealed FROM receipts WHERE buyer_sealed IS NOT NULL AND user_id IS NOT NULL',
+    owner: (row) => row.user_id,
+    fields: (row) => (row.buyer_sealed ? [{ kind: 'billing-profile', value: row.buyer_sealed, context: (user) => billingProfileContext(user), put: (sealed) => { row.buyer_sealed = sealed; } }] : []),
+    update: (row, was) => ['UPDATE receipts SET buyer_sealed = $2 WHERE number = $1 AND buyer_sealed = $3 RETURNING number', [row.number, row.buyer_sealed, was.buyer_sealed]],
   },
 };
 

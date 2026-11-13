@@ -154,14 +154,17 @@ section('a billing profile is sealed to its account, and reseals with the rest (
   process.env.ENCRYPTION_KEY = 'reseal-test-encryption-key-four-for-billing-profiles';
   await store.createUser({ id: 'bp-user', email: 'bp@example.test', passwordHash: 'x', role: 'user' });
   await store.setBillingProfile('bp-user', encryptSecret('{"name":"A"}', billingProfileContext('bp-user')));
+  const receipt = await store.createReceipt({ userId: 'bp-user', amountVnd: 1, lines: [], buyerSealed: encryptSecret('{"name":"Buyer"}', billingProfileContext('bp-user')) });
   process.env.ENCRYPTION_KEY_PREVIOUS = process.env.ENCRYPTION_KEY;
   process.env.ENCRYPTION_KEY = was;
   const due = await resealSecrets(query);
-  check('a profile sealed under the previous key is due a reseal', due['billing-profile']?.resealed === 1 && due['billing-profile'].unopenable === 0, JSON.stringify(due['billing-profile']));
+  check('a profile and a receipt sealed under the previous key are due a reseal', due['billing-profile']?.resealed === 2 && due['billing-profile'].unopenable === 0, JSON.stringify(due['billing-profile']));
   const applied = await resealSecrets(query, { apply: true });
   delete process.env.ENCRYPTION_KEY_PREVIOUS;
   const stored = (await query("SELECT sealed FROM billing_profiles WHERE user_id = 'bp-user'"))[0].sealed;
-  check('  written under the current key', applied['billing-profile']?.written === 1 && secretVersion(stored).keyId === currentKeyId(), JSON.stringify(applied['billing-profile']));
+  const buyer = (await query('SELECT buyer_sealed FROM receipts WHERE number = $1', [receipt.number]))[0].buyer_sealed;
+  check('  a receipt reads after the reseal, for its account only', secretVersion(buyer).keyId === currentKeyId() && decryptSecret(buyer, billingProfileContext('bp-user')) === '{"name":"Buyer"}' && decryptSecret(buyer, billingProfileContext('someone-else')) === '');
+  check('  written under the current key', applied['billing-profile']?.written === 2 && secretVersion(stored).keyId === currentKeyId(), JSON.stringify(applied['billing-profile']));
   check('  and it opens for its account only', decryptSecret(stored, billingProfileContext('bp-user')) === '{"name":"A"}' && decryptSecret(stored, billingProfileContext('someone-else')) === '');
 }
 

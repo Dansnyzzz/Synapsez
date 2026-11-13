@@ -1604,7 +1604,7 @@ CREATE TABLE IF NOT EXISTS receipts (
   order_id     TEXT,
   amount_vnd   BIGINT NOT NULL,
   lines        JSONB NOT NULL,
-  buyer_sealed TEXT,
+  buyer_sealed TEXT,               -- crypto v2, bound to ['billing-profile', userId] (the profile's context)
   issued_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS receipts_user_idx ON receipts (user_id, issued_at DESC);

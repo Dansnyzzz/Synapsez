@@ -718,15 +718,19 @@ export function createPgStore(connectionString) {
       await q(`UPDATE users SET is_owner = TRUE, role = 'admin', admin_permissions = NULL WHERE id = $1`, [toId]);
     },
     async deleteUser(id) {
-      // Money records outlive the account (owner, 2026-11-12): a balance still held is written off as an entry
-      // first (the entry keeps its row, the balance row goes with the account), and a receipt loses the buyer's details.
-      await q(
-        `INSERT INTO balance_entries (user_id, kind, delta_vnd, note)
-         SELECT user_id, 'forfeit', -vnd, 'account deleted' FROM balances WHERE user_id = $1 AND vnd > 0`,
+      // Money records outlive the account (owner, 2026-11-12). One statement, so no credit can land between the
+      // balance leaving and the account going, and the books balance whenever it is stopped: the balance row is
+      // removed and a forfeit entry written from what was actually in it (the account is gone, so its user_id is
+      // NULL from the start, as every other entry of it becomes), a receipt loses the buyer's details, the user goes.
+      const gone = await q(
+        `WITH gone AS (DELETE FROM balances WHERE user_id = $1 RETURNING vnd),
+              f AS (INSERT INTO balance_entries (user_id, kind, delta_vnd, note)
+                    SELECT NULL, 'forfeit', -vnd, 'account deleted' FROM gone WHERE vnd > 0),
+              r AS (UPDATE receipts SET buyer_sealed = NULL WHERE user_id = $1),
+              u AS (DELETE FROM users WHERE id = $1 RETURNING is_owner)
+         SELECT is_owner FROM u`,
         [id],
       );
-      await q('UPDATE receipts SET buyer_sealed = NULL WHERE user_id = $1', [id]);
-      const gone = await q('DELETE FROM users WHERE id = $1 RETURNING is_owner', [id]);
       // A deployment always has an owner while it has an administrator: the longest-serving one.
       if (gone[0]?.is_owner) {
         await q(
@@ -5479,7 +5483,7 @@ export function createPgStore(connectionString) {
            INSERT INTO balances (user_id, vnd, last_topup_at) VALUES ($1::text, $2::bigint, CASE WHEN $5::boolean THEN NOW() END)
            ON CONFLICT (user_id) DO UPDATE
              SET vnd = balances.vnd + EXCLUDED.vnd,
-                 last_topup_at = CASE WHEN $5::boolean THEN NOW() ELSE balances.last_topup_at END,
+                 last_topup_at = CASE WHEN $5::boolean THEN NOW() WHEN balances.vnd = 0 THEN NULL ELSE balances.last_topup_at END,
                  updated_at = NOW()
            RETURNING vnd
          ), e AS (
@@ -5530,7 +5534,10 @@ export function createPgStore(connectionString) {
       const rows = await q(
         `WITH b AS (
            INSERT INTO balances (user_id, vnd) VALUES ($1::text, $4::bigint)
-           ON CONFLICT (user_id) DO UPDATE SET vnd = balances.vnd + EXCLUDED.vnd, updated_at = NOW()
+           ON CONFLICT (user_id) DO UPDATE
+             SET vnd = balances.vnd + EXCLUDED.vnd,
+                 last_topup_at = CASE WHEN balances.vnd = 0 THEN NULL ELSE balances.last_topup_at END,
+                 updated_at = NOW()
            RETURNING vnd
          ), e AS (
            INSERT INTO balance_entries (user_id, kind, category, day, units, delta_vnd)
@@ -5556,8 +5563,13 @@ export function createPgStore(connectionString) {
     /**
      * Balances whose last top-up is 12 months old or more, zeroed with an `expire` entry
      * each, in one statement (rows locked first, so a top-up arriving meanwhile waits and
-     * is not wiped). Returns what was taken: [{ userId, vnd }]. A balance that never had a
-     * top-up (a promo or an assignment) has no clock and does not expire.
+     * is not wiped). Returns what was taken: [{ userId, vnd }].
+     *
+     * Only a top-up starts the clock (last_topup_at). A credit of any other kind (a promo, a
+     * refund, an assignment) that lands on an empty balance clears it, so a balance that
+     * began that way does not expire until a real top-up; one that lands on money already
+     * held leaves the clock as it was. Otherwise an old top-up's date would expire credit
+     * given long after it.
      */
     async expireBalances(now) {
       const rows = await q(
@@ -5617,6 +5629,10 @@ export function createPgStore(connectionString) {
      * The balance pays an order, or neither happens: the order turns paid, the balance goes
      * down by total_vnd and a `plan` entry is written, in one statement. The order row is
      * locked, so two callers cannot both pay it. A total of 0 (covered by credit) pays.
+     * An order with use_balance = false still takes total_vnd out of the balance, and only
+     * once received_vnd covers it: every bank transfer is credited to the balance first, so
+     * paying the order takes that money back out. Any other way to mark such an order paid
+     * would give the plan and keep the money.
      * The balance row is made first (harmless, no money moves) so that case has one to join.
      */
     async payOrderFromBalance(orderId, now) {
@@ -5754,7 +5770,10 @@ export function createPgStore(connectionString) {
              INSERT INTO promo_redemptions (code, user_id) SELECT p.code, $2::text FROM p RETURNING code
            ), b AS (
              INSERT INTO balances (user_id, vnd) SELECT $2::text, p.credit_vnd FROM p JOIN r ON r.code = p.code
-             ON CONFLICT (user_id) DO UPDATE SET vnd = balances.vnd + EXCLUDED.vnd, updated_at = NOW()
+             ON CONFLICT (user_id) DO UPDATE
+               SET vnd = balances.vnd + EXCLUDED.vnd,
+                   last_topup_at = CASE WHEN balances.vnd = 0 THEN NULL ELSE balances.last_topup_at END,
+                   updated_at = NOW()
              RETURNING user_id
            ), e AS (
              INSERT INTO balance_entries (user_id, kind, delta_vnd, ref) SELECT b.user_id, 'promo', p.credit_vnd, p.code FROM p, b
@@ -5773,7 +5792,8 @@ export function createPgStore(connectionString) {
     async createReceipt({ userId = null, transferId = null, orderId = null, amountVnd, lines, buyerSealed = null }) {
       const rows = await q(
         `INSERT INTO receipts (number, user_id, transfer_id, order_id, amount_vnd, lines, buyer_sealed)
-         VALUES ('SZR-' || $1::text || '-' || lpad(nextval('receipt_seq')::text, 6, '0'), $2, $3, $4, $5::bigint, $6::jsonb, $7)
+         SELECT 'SZR-' || $1::text || '-' || lpad(n.v::text, GREATEST(6, length(n.v::text)), '0'), $2::text, $3::bigint, $4::text, $5::bigint, $6::jsonb, $7::text
+           FROM (SELECT nextval('receipt_seq') AS v) n
          RETURNING number`,
         [vnDay(new Date()).slice(0, 4), userId, transferId, orderId, wholeVnd(amountVnd), toJson(lines ?? []), buyerSealed],
       );

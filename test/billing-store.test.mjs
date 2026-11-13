@@ -223,6 +223,10 @@ section('receipts and e-invoices');
   check('an e-invoice is saved and read', (await store.getEinvoice('o12'))?.referenceCode === 'ref-1');
   await store.saveEinvoice({ orderId: 'o12', referenceCode: 'ref-1', trackingCode: 'T9', status: 'pending', error: 'busy' });
   check('saving again updates by order', (await store.getEinvoice('o12')).trackingCode === 'T9');
+  await query("SELECT setval('receipt_seq', 999999)");
+  const big1 = await store.createReceipt({ userId: ivy.id, amountVnd: 1, lines: [] });
+  const big2 = await store.createReceipt({ userId: ivy.id, amountVnd: 1, lines: [] });
+  check('past 999,999 the number grows, it is not cut', big1.number === `SZR-${year}-1000000` && big2.number === `SZR-${year}-1000001`, `${big1.number} ${big2.number}`);
   check('only the unfinished are pending', (await store.listEinvoicesPending()).map((e) => e.orderId).join() === 'o12');
 }
 
@@ -242,6 +246,28 @@ section('balances expire 12 months after the last top-up');
   check('  zeroed, with an expire entry', (await balanceOf(old.id)) === 0 && (await entries(old.id)).some((e) => e.kind === 'expire' && Number(e.delta_vnd) === -7000));
   check('  the others untouched', (await balanceOf(fresh.id)) === 8000 && (await balanceOf(never.id)) === 9000);
   check('  and a second run finds nothing', (await store.expireBalances(NOW)).filter((g) => g.userId === old.id).length === 0);
+}
+
+section('credit that is not a top-up does not expire with an old top-up');
+{
+  const pat = await makeUser();
+  await store.creditBalance(pat.id, 7000, { kind: 'topup', topup: true });
+  await query('UPDATE balances SET last_topup_at = $2 WHERE user_id = $1', [pat.id, new Date('2025-01-01T00:00:00Z')]);
+  check('the old top-up expires', (await store.expireBalances(NOW)).some((g) => g.userId === pat.id && g.vnd === 7000));
+  await store.createPromo({ code: 'LATER', creditVnd: 3000, maxUses: 1, expiresAt: null, createdBy: null });
+  check('a promo lands on the emptied balance', (await store.redeemPromo('LATER', pat.id, NOW)) === 3000);
+  check('  with no expiry clock', (await query('SELECT last_topup_at FROM balances WHERE user_id = $1', [pat.id]))[0].last_topup_at === null);
+  await store.expireBalances(NOW);
+  check('  so the next run leaves it', (await balanceOf(pat.id)) === 3000);
+  await store.creditBalance(pat.id, 100, { kind: 'adjust' });
+  await store.refundUsage(pat.id, 'search', 1, 50, '2026-11-13');
+  await store.expireBalances(NOW);
+  check('  nor does a non-top-up credit or a refund on top of it', (await balanceOf(pat.id)) === 3150);
+  await store.creditBalance(pat.id, 1000, { kind: 'topup', topup: true });
+  const clock = (await query('SELECT last_topup_at FROM balances WHERE user_id = $1', [pat.id]))[0].last_topup_at;
+  check('a real top-up after that starts the 12-month clock', clock instanceof Date && Date.now() - clock.getTime() < 60_000);
+  const gone = await store.expireBalances(new Date(Date.now() + 366 * 86400_000));
+  check('  and a year on it expires', gone.some((g) => g.userId === pat.id && g.vnd === 4150));
 }
 
 section('storage bytes per user');
@@ -285,6 +311,8 @@ section('deleting an account');
   const r = await store.getReceipt(rc.number);
   check('the order, transfer and receipt are kept, with no user', o && o.userId === null && t && t.userId === null && r && r.userId === null);
   check('  and the receipt no longer carries the buyer', r.buyerSealed === null);
+  const total = (await query('SELECT (SELECT COALESCE(SUM(vnd), 0) FROM balances) AS b, (SELECT COALESCE(SUM(delta_vnd), 0) FROM balance_entries) AS e'))[0];
+  check('all balances still equal all entries, the deleted account forfeit included', Number(total.b) === Number(total.e), JSON.stringify(total));
   await store.deleteUser((await makeUser()).id);
   check('an account with no balance deletes without a forfeit', (await query("SELECT 1 FROM balance_entries WHERE kind = 'forfeit'")).length === 1);
 }

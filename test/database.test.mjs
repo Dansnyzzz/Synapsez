@@ -154,6 +154,42 @@ section('db:copy carries every table across, in an order the foreign keys allow'
   await target.close();
 }
 
+section('db:copy moves the sequences past the rows it copied (schema 53)');
+{
+  const { copyDatabase } = await import('../scripts/copy-database.js');
+  const { PGlite } = await import('@electric-sql/pglite');
+  const { createPgStore } = await import('../server/store/pg.js');
+  const driverOf = (db) => ({ query: async (text, params = []) => (await db.query(text, params)).rows });
+  const source = new PGlite();
+  const target = new PGlite();
+  const old = createPgStore(driverOf(source));
+  await old.init();
+  await old.createUser({ id: 'u-seq', email: 'seq@example.com', passwordHash: 'x', role: 'user' });
+  for (let i = 0; i < 3; i += 1) await old.creditBalance('u-seq', 1000, { kind: 'topup' });
+  const t1 = await old.recordTransfer({ dedupe: 'ref:A', amountVnd: 1, outcome: 'topup', via: 'webhook' });
+  await old.recordTransfer({ dedupe: 'ref:B', amountVnd: 1, outcome: 'topup', via: 'webhook' });
+  await old.createReceipt({ userId: 'u-seq', transferId: t1.id, amountVnd: 1, lines: [] });
+  const last = await old.createReceipt({ userId: 'u-seq', amountVnd: 1, lines: [] });
+  await copyDatabase(driverOf(source), driverOf(target), { say: () => {} });
+  const moved = createPgStore(driverOf(target));
+  let clash = '';
+  try {
+    await moved.creditBalance('u-seq', 5, { kind: 'adjust' });
+    const t = await moved.recordTransfer({ dedupe: 'ref:C', amountVnd: 1, outcome: 'topup', via: 'webhook' });
+    clash = String(t.id);
+  } catch (err) {
+    clash = `clash: ${err.message}`;
+  }
+  const next = await moved.createReceipt({ userId: 'u-seq', amountVnd: 1, lines: [] });
+  const lastNo = Number(last.number.split('-').pop());
+  check('a new entry and transfer on the copy do not collide with the copied ones', clash === '3', clash);
+  check('  and the next receipt number follows the last copied', Number(next.number.split('-').pop()) === lastNo + 1 && next.number !== last.number, `${last.number} then ${next.number}`);
+  const ids = (await target.query('SELECT id FROM balance_entries ORDER BY id')).rows.map((r) => Number(r.id));
+  check('  entries are 1,2,3 then the new 4', ids.join() === '1,2,3,4', ids.join());
+  await source.close();
+  await target.close();
+}
+
 /**
  * Somebody signed up on the new database before the old one could be copied —
  * the same email, a new account (owner, 2026-10-20). The old account's rows go
