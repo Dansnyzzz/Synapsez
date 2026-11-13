@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { neon } from '@neondatabase/serverless';
+import { vnDay } from '../billing/period.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -268,8 +269,9 @@ export function splitStatements(sql) {
  *      or a review replaced, and where each was saved (server/bots/memory.js)
  *  51  skills.previous — the words before the assistant last changed a skill, to restore
  *  52  service_keys — several keys per deployment service (keyPool.js)
+ *  53  billing — balances, orders, transfers, subscriptions, promo codes, receipts, e-invoices (spec B1)
  */
-export const SCHEMA_VERSION = 52;
+export const SCHEMA_VERSION = 53;
 
 /** How long a forgotten bot memory entry waits for Undo before it is deleted for good. */
 export const FORGOTTEN_KEEP_MS = 10 * 60_000;
@@ -333,6 +335,50 @@ const withoutNul = (value) => (typeof value === 'string' && value.includes('\u00
  * backslash-u-0000 is encoded with an escaped backslash and must survive intact.
  */
 const toJson = (value) => JSON.stringify(value, (key, item) => withoutNul(item));
+
+// ── billing rows (schema 53) ─────────────────────────────────────────
+// BIGINT comes back as a string from some drivers; money is whole đồng well inside 2^53,
+// so every amount is read as a Number, and a fraction is refused before it reaches SQL.
+const num = (v) => (v == null ? null : Number(v));
+const asDate = (v) => (v == null ? null : v instanceof Date ? v : new Date(v));
+function wholeVnd(v) {
+  const n = Number(v);
+  if (!Number.isSafeInteger(n) || n < 0) throw new RangeError('Money is a whole number of đồng, never negative.');
+  return n;
+}
+/** A date column as YYYY-MM-DD whatever the driver hands back. */
+const asDay = (v) => (v == null ? null : v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10));
+const entryRow = (r) => r && ({
+  id: num(r.id), userId: r.user_id, kind: r.kind, category: r.category, day: asDay(r.day), units: num(r.units),
+  deltaVnd: num(r.delta_vnd), ref: r.ref, note: r.note, createdAt: asDate(r.created_at),
+});
+const orderRow = (r) => r && ({
+  id: r.id, userId: r.user_id, kind: r.kind, plan: r.plan, period: r.period, code: r.code, usdCents: num(r.usd_cents),
+  rate: num(r.rate), rateSource: r.rate_source, priceVnd: num(r.price_vnd), creditVnd: num(r.credit_vnd), totalVnd: num(r.total_vnd),
+  useBalance: r.use_balance, receivedVnd: num(r.received_vnd), status: r.status, expiresAt: asDate(r.expires_at),
+  paidAt: asDate(r.paid_at), simulated: r.simulated, createdAt: asDate(r.created_at),
+}) || null;
+const transferRow = (r) => r && ({
+  id: num(r.id), dedupe: r.dedupe, sepayId: r.sepay_id, referenceCode: r.reference_code, gateway: r.gateway, accountNumber: r.account_number,
+  amountVnd: num(r.amount_vnd), code: r.code, content: r.content, transactionAt: asDate(r.transaction_at), orderId: r.order_id,
+  userId: r.user_id, outcome: r.outcome, via: r.via, receivedAt: asDate(r.received_at),
+}) || null;
+const subscriptionRow = (r) => r && ({
+  userId: r.user_id, plan: r.plan, period: r.period, status: r.status, periodStart: asDate(r.period_start), periodEnd: asDate(r.period_end),
+  paidVnd: num(r.paid_vnd), autoRenew: r.auto_renew, cancelAtEnd: r.cancel_at_end, nextPlan: r.next_plan, nextPeriod: r.next_period,
+  remindedAt: asDate(r.reminded_at), renewalOrder: r.renewal_order, startedAt: asDate(r.started_at), updatedAt: asDate(r.updated_at),
+}) || null;
+const promoRow = (r) => r && ({
+  code: r.code, creditVnd: num(r.credit_vnd), maxUses: num(r.max_uses), used: num(r.used), expiresAt: asDate(r.expires_at),
+  active: r.active, createdBy: r.created_by, createdAt: asDate(r.created_at),
+}) || null;
+const receiptRow = (r) => r && ({
+  number: r.number, userId: r.user_id, transferId: num(r.transfer_id), orderId: r.order_id, amountVnd: num(r.amount_vnd),
+  lines: typeof r.lines === 'string' ? JSON.parse(r.lines) : r.lines, buyerSealed: r.buyer_sealed, issuedAt: asDate(r.issued_at),
+}) || null;
+const einvoiceRow = (r) => r && ({
+  orderId: r.order_id, referenceCode: r.reference_code, trackingCode: r.tracking_code, status: r.status, error: r.error, updatedAt: asDate(r.updated_at),
+}) || null;
 
 /**
  * A phrase as an ILIKE pattern, or null for none. Its own `%`, `_` and `\` are
@@ -672,6 +718,14 @@ export function createPgStore(connectionString) {
       await q(`UPDATE users SET is_owner = TRUE, role = 'admin', admin_permissions = NULL WHERE id = $1`, [toId]);
     },
     async deleteUser(id) {
+      // Money records outlive the account (owner, 2026-11-12): a balance still held is written off as an entry
+      // first (the entry keeps its row, the balance row goes with the account), and a receipt loses the buyer's details.
+      await q(
+        `INSERT INTO balance_entries (user_id, kind, delta_vnd, note)
+         SELECT user_id, 'forfeit', -vnd, 'account deleted' FROM balances WHERE user_id = $1 AND vnd > 0`,
+        [id],
+      );
+      await q('UPDATE receipts SET buyer_sealed = NULL WHERE user_id = $1', [id]);
       const gone = await q('DELETE FROM users WHERE id = $1 RETURNING is_owner', [id]);
       // A deployment always has an owner while it has an administrator: the longest-serving one.
       if (gone[0]?.is_owner) {
@@ -5398,6 +5452,411 @@ export function createPgStore(connectionString) {
     /** The provider's own count of what is left, as last read for the admin page. */
     async setServiceKeyLive(id, live) {
       await q('UPDATE service_keys SET live = $2::jsonb WHERE id = $1', [String(id), live == null ? null : toJson(live)]);
+    },
+
+    // ── billing (schema 53, spec B1) ──────────────────────────────────
+    // Every change to a balance is ONE statement that moves the money and writes its entry
+    // together, so balances.vnd = SUM(balance_entries.delta_vnd) and a charge that does not
+    // fit changes nothing. Amounts are whole đồng; a fraction is a bug and is refused here
+    // rather than rounded into somebody's balance.
+
+    /** An account's balance, last top-up and subscription in one query. */
+    async billingState(userId) {
+      const rows = await q(
+        `SELECT COALESCE(b.vnd, 0) AS vnd, b.last_topup_at, to_jsonb(s) AS sub
+           FROM (SELECT $1::text AS uid) x
+           LEFT JOIN balances b ON b.user_id = x.uid
+           LEFT JOIN subscriptions s ON s.user_id = x.uid`,
+        [String(userId)],
+      );
+      const r = rows[0];
+      return { balanceVnd: Number(r?.vnd) || 0, lastTopupAt: asDate(r?.last_topup_at), subscription: r?.sub ? subscriptionRow(r.sub) : null };
+    },
+    /** Add đồng (a top-up, a promo, an assignment, a refund). `topup: true` also starts the 12-month expiry clock. Returns the new balance. */
+    async creditBalance(userId, vnd, { kind, ref = null, note = null, topup = false }) {
+      const rows = await q(
+        `WITH b AS (
+           INSERT INTO balances (user_id, vnd, last_topup_at) VALUES ($1::text, $2::bigint, CASE WHEN $5::boolean THEN NOW() END)
+           ON CONFLICT (user_id) DO UPDATE
+             SET vnd = balances.vnd + EXCLUDED.vnd,
+                 last_topup_at = CASE WHEN $5::boolean THEN NOW() ELSE balances.last_topup_at END,
+                 updated_at = NOW()
+           RETURNING vnd
+         ), e AS (
+           INSERT INTO balance_entries (user_id, kind, delta_vnd, ref, note)
+           SELECT $1::text, $3::text, $2::bigint, $4::text, $6::text FROM b
+         )
+         SELECT vnd FROM b`,
+        [String(userId), wholeVnd(vnd), kind, ref, !!topup, note],
+      );
+      return Number(rows[0].vnd);
+    },
+    /** Take đồng off a balance, or change nothing and return null when it does not fit. */
+    async debitBalance(userId, vnd, { kind, ref = null, note = null }) {
+      const rows = await q(
+        `WITH d AS (
+           UPDATE balances SET vnd = vnd - $2::bigint, updated_at = NOW()
+            WHERE user_id = $1::text AND vnd >= $2::bigint
+           RETURNING vnd
+         ), e AS (
+           INSERT INTO balance_entries (user_id, kind, delta_vnd, ref, note)
+           SELECT $1::text, $3::text, -$2::bigint, $4::text, $5::text FROM d
+         )
+         SELECT vnd FROM d`,
+        [String(userId), wholeVnd(vnd), kind, ref, note],
+      );
+      return rows[0] ? Number(rows[0].vnd) : null;
+    },
+    /** A metered use, charged to the balance and added to the day's usage row; null (nothing changed) when it does not fit. */
+    async chargeUsage(userId, category, units, vnd, day) {
+      const rows = await q(
+        `WITH d AS (
+           UPDATE balances SET vnd = vnd - $4::bigint, updated_at = NOW()
+            WHERE user_id = $1::text AND vnd >= $4::bigint
+           RETURNING vnd
+         ), e AS (
+           INSERT INTO balance_entries (user_id, kind, category, day, units, delta_vnd)
+           SELECT $1::text, 'usage', $2::text, $5::date, $3::bigint, -$4::bigint FROM d
+           ON CONFLICT (user_id, category, day) WHERE kind = 'usage'
+           DO UPDATE SET units = balance_entries.units + EXCLUDED.units, delta_vnd = balance_entries.delta_vnd + EXCLUDED.delta_vnd
+         )
+         SELECT vnd FROM d`,
+        [String(userId), category, wholeVnd(units), wholeVnd(vnd), day],
+      );
+      return rows[0] ? Number(rows[0].vnd) : null;
+    },
+    /** Give back what chargeUsage took (a call that failed after it was charged): the same row, the other way. */
+    async refundUsage(userId, category, units, vnd, day) {
+      const rows = await q(
+        `WITH b AS (
+           INSERT INTO balances (user_id, vnd) VALUES ($1::text, $4::bigint)
+           ON CONFLICT (user_id) DO UPDATE SET vnd = balances.vnd + EXCLUDED.vnd, updated_at = NOW()
+           RETURNING vnd
+         ), e AS (
+           INSERT INTO balance_entries (user_id, kind, category, day, units, delta_vnd)
+           VALUES ($1::text, 'usage', $2::text, $5::date, -$3::bigint, $4::bigint)
+           ON CONFLICT (user_id, category, day) WHERE kind = 'usage'
+           DO UPDATE SET units = balance_entries.units + EXCLUDED.units, delta_vnd = balance_entries.delta_vnd + EXCLUDED.delta_vnd
+         )
+         SELECT vnd FROM b`,
+        [String(userId), category, wholeVnd(units), wholeVnd(vnd), day],
+      );
+      return Number(rows[0].vnd);
+    },
+    /** The ledger, newest first. `before` is an entry id (the last one of the previous page). */
+    async listBalanceEntries(userId, { kind = null, before = null, limit = 50 } = {}) {
+      const rows = await q(
+        `SELECT * FROM balance_entries
+          WHERE user_id = $1 AND ($2::text IS NULL OR kind = $2) AND ($3::bigint IS NULL OR id < $3)
+          ORDER BY id DESC LIMIT $4`,
+        [String(userId), kind, before, Math.max(1, Math.min(200, Number(limit) || 50))],
+      );
+      return rows.map(entryRow);
+    },
+    /**
+     * Balances whose last top-up is 12 months old or more, zeroed with an `expire` entry
+     * each, in one statement (rows locked first, so a top-up arriving meanwhile waits and
+     * is not wiped). Returns what was taken: [{ userId, vnd }]. A balance that never had a
+     * top-up (a promo or an assignment) has no clock and does not expire.
+     */
+    async expireBalances(now) {
+      const rows = await q(
+        `WITH due AS (
+           SELECT user_id, vnd FROM balances
+            WHERE vnd > 0 AND last_topup_at IS NOT NULL AND last_topup_at + INTERVAL '12 months' <= $1::timestamptz
+            FOR UPDATE
+         ), z AS (
+           UPDATE balances b SET vnd = 0, updated_at = NOW() FROM due WHERE b.user_id = due.user_id RETURNING b.user_id
+         ), e AS (
+           INSERT INTO balance_entries (user_id, kind, delta_vnd, note)
+           SELECT due.user_id, 'expire', -due.vnd, '12 months after the last top-up' FROM due JOIN z ON z.user_id = due.user_id
+         )
+         SELECT due.user_id, due.vnd FROM due JOIN z ON z.user_id = due.user_id`,
+        [now],
+      );
+      return rows.map((r) => ({ userId: r.user_id, vnd: Number(r.vnd) }));
+    },
+
+    /** A payment asked for. Price, rate and the code are fixed here. */
+    async createOrder(o) {
+      const rows = await q(
+        `INSERT INTO billing_orders (id, user_id, kind, plan, period, code, usd_cents, rate, rate_source, price_vnd, credit_vnd, total_vnd, use_balance, expires_at, simulated)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
+        [o.id, o.userId, o.kind, o.plan ?? null, o.period ?? null, String(o.code).toUpperCase(), o.usdCents ?? null, o.rate ?? null, o.rateSource ?? null,
+          wholeVnd(o.priceVnd), wholeVnd(o.creditVnd ?? 0), wholeVnd(o.totalVnd), o.useBalance !== false, o.expiresAt, !!o.simulated],
+      );
+      return orderRow(rows[0]);
+    },
+    async getOrder(id) {
+      return orderRow((await q('SELECT * FROM billing_orders WHERE id = $1', [String(id)]))[0]);
+    },
+    async getOrderByCode(code) {
+      return orderRow((await q('SELECT * FROM billing_orders WHERE code = $1', [String(code).toUpperCase()]))[0]);
+    },
+    async listOrders({ userId = null, status = null, limit = 50 } = {}) {
+      const rows = await q(
+        `SELECT * FROM billing_orders WHERE ($1::text IS NULL OR user_id = $1) AND ($2::text IS NULL OR status = $2)
+          ORDER BY created_at DESC, id DESC LIMIT $3`,
+        [userId, status, Math.max(1, Math.min(500, Number(limit) || 50))],
+      );
+      return rows.map(orderRow);
+    },
+    /** Money that reached the bank for an order, added up (several part-payments are one order's). */
+    async addOrderReceived(id, vnd) {
+      return orderRow((await q('UPDATE billing_orders SET received_vnd = received_vnd + $2::bigint WHERE id = $1 RETURNING *', [String(id), wholeVnd(vnd)]))[0]);
+    },
+    /** A pending order cancelled by its owner; null when it is not theirs or no longer pending. */
+    async cancelOrder(id, userId) {
+      return orderRow((await q(`UPDATE billing_orders SET status = 'cancelled' WHERE id = $1 AND user_id = $2 AND status = 'pending' RETURNING *`, [String(id), String(userId)]))[0]);
+    },
+    /** Pending orders past their time are closed. Returns how many. */
+    async expireOrders(now) {
+      return (await q(`UPDATE billing_orders SET status = 'expired' WHERE status = 'pending' AND expires_at <= $1::timestamptz RETURNING id`, [now])).length;
+    },
+    /**
+     * The balance pays an order, or neither happens: the order turns paid, the balance goes
+     * down by total_vnd and a `plan` entry is written, in one statement. The order row is
+     * locked, so two callers cannot both pay it. A total of 0 (covered by credit) pays.
+     * The balance row is made first (harmless, no money moves) so that case has one to join.
+     */
+    async payOrderFromBalance(orderId, now) {
+      await q('INSERT INTO balances (user_id) SELECT user_id FROM billing_orders WHERE id = $1 AND user_id IS NOT NULL ON CONFLICT (user_id) DO NOTHING', [String(orderId)]);
+      const rows = await q(
+        `WITH o AS (
+           SELECT id, user_id, total_vnd FROM billing_orders
+            WHERE id = $1 AND status = 'pending' AND expires_at > $2::timestamptz
+              AND (use_balance OR received_vnd >= total_vnd)
+            FOR UPDATE
+         ), d AS (
+           UPDATE balances b SET vnd = b.vnd - o.total_vnd, updated_at = NOW()
+             FROM o WHERE b.user_id = o.user_id AND b.vnd >= o.total_vnd
+           RETURNING b.user_id
+         ), p AS (
+           UPDATE billing_orders SET status = 'paid', paid_at = $2::timestamptz
+            WHERE id IN (SELECT o.id FROM o JOIN d ON d.user_id = o.user_id)
+           RETURNING *
+         ), e AS (
+           INSERT INTO balance_entries (user_id, kind, delta_vnd, ref)
+           SELECT p.user_id, 'plan', -p.total_vnd, p.id FROM p
+         )
+         SELECT * FROM p`,
+        [String(orderId), now],
+      );
+      return orderRow(rows[0]);
+    },
+
+    /** A bank transfer SePay reported; null when this `dedupe` was already recorded (a retry, or the poll after the webhook). */
+    async recordTransfer(t) {
+      const rows = await q(
+        `INSERT INTO sepay_transfers (dedupe, sepay_id, reference_code, gateway, account_number, amount_vnd, code, content, transaction_at, order_id, user_id, outcome, via)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         ON CONFLICT (dedupe) DO NOTHING RETURNING *`,
+        [t.dedupe, t.sepayId ?? null, t.referenceCode ?? null, t.gateway ?? null, t.accountNumber ?? null, wholeVnd(t.amountVnd), t.code ?? null,
+          t.content ?? null, t.transactionAt ?? null, t.orderId ?? null, t.userId ?? null, t.outcome, t.via],
+      );
+      return transferRow(rows[0]);
+    },
+    async setTransferOutcome(id, { outcome, orderId = null, userId = null }) {
+      return transferRow((await q(
+        'UPDATE sepay_transfers SET outcome = $2, order_id = COALESCE($3, order_id), user_id = COALESCE($4, user_id) WHERE id = $1 RETURNING *',
+        [Number(id), outcome, orderId, userId],
+      ))[0]);
+    },
+    async getTransfer(id) {
+      return transferRow((await q('SELECT * FROM sepay_transfers WHERE id = $1', [Number(id)]))[0]);
+    },
+    async listTransfers({ outcome = null, limit = 50 } = {}) {
+      const rows = await q('SELECT * FROM sepay_transfers WHERE ($1::text IS NULL OR outcome = $1) ORDER BY received_at DESC, id DESC LIMIT $2', [outcome, Math.max(1, Math.min(500, Number(limit) || 50))]);
+      return rows.map(transferRow);
+    },
+
+    async getSubscription(userId) {
+      return subscriptionRow((await q('SELECT * FROM subscriptions WHERE user_id = $1', [String(userId)]))[0]);
+    },
+    /** Insert or replace an account's subscription (camelCase fields as subscriptionRow returns them). */
+    async saveSubscription(s) {
+      const rows = await q(
+        `INSERT INTO subscriptions (user_id, plan, period, status, period_start, period_end, paid_vnd, auto_renew, cancel_at_end, next_plan, next_period, reminded_at, renewal_order)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         ON CONFLICT (user_id) DO UPDATE SET plan = EXCLUDED.plan, period = EXCLUDED.period, status = EXCLUDED.status,
+           period_start = EXCLUDED.period_start, period_end = EXCLUDED.period_end, paid_vnd = EXCLUDED.paid_vnd,
+           auto_renew = EXCLUDED.auto_renew, cancel_at_end = EXCLUDED.cancel_at_end, next_plan = EXCLUDED.next_plan,
+           next_period = EXCLUDED.next_period, reminded_at = EXCLUDED.reminded_at, renewal_order = EXCLUDED.renewal_order, updated_at = NOW()
+         RETURNING *`,
+        [s.userId, s.plan, s.period, s.status, s.periodStart, s.periodEnd, wholeVnd(s.paidVnd ?? 0), s.autoRenew !== false, !!s.cancelAtEnd,
+          s.nextPlan ?? null, s.nextPeriod ?? null, s.remindedAt ?? null, s.renewalOrder ?? null],
+      );
+      return subscriptionRow(rows[0]);
+    },
+    /** Active or grace subscriptions whose period ends within 3 days of `now` (or has ended): the ones the daily work looks at. */
+    async listSubscriptionsToWork(now) {
+      const rows = await q(`SELECT * FROM subscriptions WHERE status IN ('active', 'grace') AND period_end <= $1::timestamptz + INTERVAL '3 days' ORDER BY period_end`, [now]);
+      return rows.map(subscriptionRow);
+    },
+
+    async getBillingProfile(userId) {
+      const r = (await q('SELECT sealed, low_balance_vnd, low_alert_sent_at FROM billing_profiles WHERE user_id = $1', [String(userId)]))[0];
+      return r ? { sealed: r.sealed ?? null, lowBalanceVnd: r.low_balance_vnd == null ? null : Number(r.low_balance_vnd), lowAlertSentAt: asDate(r.low_alert_sent_at) } : null;
+    },
+    async setBillingProfile(userId, sealed) {
+      await q(
+        `INSERT INTO billing_profiles (user_id, sealed) VALUES ($1, $2)
+         ON CONFLICT (user_id) DO UPDATE SET sealed = EXCLUDED.sealed, updated_at = NOW()`,
+        [String(userId), sealed],
+      );
+    },
+    async setLowBalance(userId, vnd) {
+      await q(
+        `INSERT INTO billing_profiles (user_id, low_balance_vnd) VALUES ($1, $2::bigint)
+         ON CONFLICT (user_id) DO UPDATE SET low_balance_vnd = EXCLUDED.low_balance_vnd, updated_at = NOW()`,
+        [String(userId), vnd == null ? null : wholeVnd(vnd)],
+      );
+    },
+    async markLowAlert(userId, at) {
+      await q(
+        `INSERT INTO billing_profiles (user_id, low_alert_sent_at) VALUES ($1, $2::timestamptz)
+         ON CONFLICT (user_id) DO UPDATE SET low_alert_sent_at = EXCLUDED.low_alert_sent_at, updated_at = NOW()`,
+        [String(userId), at ?? null],
+      );
+    },
+
+    /** A promo code (stored upper case). A code that exists already is `{ code: 'duplicate' }`. */
+    async createPromo({ code, creditVnd, maxUses, expiresAt = null, createdBy = null }) {
+      const rows = await q(
+        `INSERT INTO promo_codes (code, credit_vnd, max_uses, expires_at, created_by) VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (code) DO NOTHING RETURNING *`,
+        [String(code).trim().toUpperCase(), wholeVnd(creditVnd), Math.round(maxUses), expiresAt, createdBy],
+      );
+      if (!rows[0]) throw Object.assign(new Error('That code already exists.'), { code: 'duplicate' });
+      return promoRow(rows[0]);
+    },
+    async listPromos() {
+      return (await q('SELECT * FROM promo_codes ORDER BY created_at DESC, code')).map(promoRow);
+    },
+    async disablePromo(code) {
+      return (await q('UPDATE promo_codes SET active = FALSE WHERE code = $1 RETURNING code', [String(code).trim().toUpperCase()])).length > 0;
+    },
+    /**
+     * One statement: the use is counted only while the code is active, unexpired and below
+     * max_uses (the row is locked, so eleven at once on a ten-use code credit ten), the
+     * redemption is recorded and the balance credited with a `promo` entry. The redemption's
+     * primary key (code, user) is what refuses a second use by one account: it fails the
+     * whole statement, so nothing is counted or credited. Returns the đồng credited, or null.
+     */
+    async redeemPromo(code, userId, now) {
+      try {
+        const rows = await q(
+          `WITH p AS (
+             UPDATE promo_codes SET used = used + 1
+              WHERE code = $1 AND active AND (expires_at IS NULL OR expires_at > $3::timestamptz) AND used < max_uses
+             RETURNING code, credit_vnd
+           ), r AS (
+             INSERT INTO promo_redemptions (code, user_id) SELECT p.code, $2::text FROM p RETURNING code
+           ), b AS (
+             INSERT INTO balances (user_id, vnd) SELECT $2::text, p.credit_vnd FROM p JOIN r ON r.code = p.code
+             ON CONFLICT (user_id) DO UPDATE SET vnd = balances.vnd + EXCLUDED.vnd, updated_at = NOW()
+             RETURNING user_id
+           ), e AS (
+             INSERT INTO balance_entries (user_id, kind, delta_vnd, ref) SELECT b.user_id, 'promo', p.credit_vnd, p.code FROM p, b
+           )
+           SELECT p.credit_vnd FROM p JOIN r ON r.code = p.code`,
+          [String(code).trim().toUpperCase(), String(userId), now],
+        );
+        return rows[0] ? Number(rows[0].credit_vnd) : null;
+      } catch (err) {
+        if (err?.code === '23505') return null;
+        throw err;
+      }
+    },
+
+    /** A receipt, numbered SZR-<Vietnamese year>-<6 digits> from a sequence (gaps are possible, repeats are not). */
+    async createReceipt({ userId = null, transferId = null, orderId = null, amountVnd, lines, buyerSealed = null }) {
+      const rows = await q(
+        `INSERT INTO receipts (number, user_id, transfer_id, order_id, amount_vnd, lines, buyer_sealed)
+         VALUES ('SZR-' || $1::text || '-' || lpad(nextval('receipt_seq')::text, 6, '0'), $2, $3, $4, $5::bigint, $6::jsonb, $7)
+         RETURNING number`,
+        [vnDay(new Date()).slice(0, 4), userId, transferId, orderId, wholeVnd(amountVnd), toJson(lines ?? []), buyerSealed],
+      );
+      return { number: rows[0].number };
+    },
+    async getReceipt(number) {
+      return receiptRow((await q('SELECT * FROM receipts WHERE number = $1', [String(number)]))[0]);
+    },
+    async listReceipts(userId) {
+      return (await q('SELECT * FROM receipts WHERE user_id = $1 ORDER BY issued_at DESC, number DESC', [String(userId)])).map(receiptRow);
+    },
+
+    async saveEinvoice({ orderId, referenceCode, trackingCode = null, status, error = null }) {
+      const rows = await q(
+        `INSERT INTO einvoices (order_id, reference_code, tracking_code, status, error) VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (order_id) DO UPDATE SET tracking_code = EXCLUDED.tracking_code, status = EXCLUDED.status, error = EXCLUDED.error, updated_at = NOW()
+         RETURNING *`,
+        [orderId, referenceCode, trackingCode, status, error ? String(error).slice(0, 300) : null],
+      );
+      return einvoiceRow(rows[0]);
+    },
+    async getEinvoice(orderId) {
+      return einvoiceRow((await q('SELECT * FROM einvoices WHERE order_id = $1', [String(orderId)]))[0]);
+    },
+    /** E-invoices not yet finished: any status other than `issued` or `failed`. */
+    async listEinvoicesPending() {
+      return (await q(`SELECT * FROM einvoices WHERE status NOT IN ('issued', 'failed') ORDER BY updated_at`)).map(einvoiceRow);
+    },
+
+    /**
+     * What each account's files weigh, for many accounts in one query: the same rule as
+     * bytesOfUser (a file that stays on the cloud computer, origin 'machine', has no bytes
+     * here), plus the kept earlier copies. A Map of user id to bytes; an account with no
+     * files is 0.
+     */
+    async storageBytesByUser(userIds) {
+      const ids = [...new Set((userIds || []).map(String))];
+      const sizes = new Map(ids.map((id) => [id, 0]));
+      if (!ids.length) return sizes;
+      const rows = await q(
+        `SELECT u.id,
+                (SELECT COALESCE(SUM(a.bytes), 0) FROM attachments a WHERE a.user_id = u.id AND a.origin <> 'machine')
+              + (SELECT COALESCE(SUM(v.bytes), 0) FROM attachment_versions v WHERE v.user_id = u.id) AS n
+           FROM unnest($1::text[]) AS u(id)`,
+        [ids],
+      );
+      for (const r of rows) sizes.set(r.id, Number(r.n) || 0);
+      return sizes;
+    },
+
+    /**
+     * The owner's money figures since `since` (Task 7 renders them):
+     *   entries          { [kind]: { inVnd, outVnd } } — sums of positive and of negative ledger entries per kind
+     *   paidOrdersVnd    total_vnd of real (not simulated) orders paid since then
+     *   orders           { pending, paid, expired, cancelled } counts (all time)
+     *   balancesHeldVnd  SUM of every balance now — what the deployment owes in service
+     *   accounts         how many accounts hold a balance above 0
+     *   databaseBytes    pg_database_size, or null where the role may not ask
+     */
+    async billingAdminFigures(since) {
+      const [kinds, paid, counts, held, size] = await Promise.all([
+        q(
+          `SELECT kind, COALESCE(SUM(delta_vnd) FILTER (WHERE delta_vnd > 0), 0) AS in_vnd, COALESCE(-SUM(delta_vnd) FILTER (WHERE delta_vnd < 0), 0) AS out_vnd
+             FROM balance_entries WHERE created_at >= $1::timestamptz GROUP BY kind`,
+          [since],
+        ),
+        q(`SELECT COALESCE(SUM(total_vnd), 0) AS n FROM billing_orders WHERE status = 'paid' AND NOT simulated AND paid_at >= $1::timestamptz`, [since]),
+        q('SELECT status, COUNT(*) AS n FROM billing_orders GROUP BY status'),
+        q('SELECT COALESCE(SUM(vnd), 0) AS total, COUNT(*) FILTER (WHERE vnd > 0) AS accounts FROM balances'),
+        q('SELECT pg_database_size(current_database()) AS n').catch(() => []),
+      ]);
+      const entries = {};
+      for (const r of kinds) entries[r.kind] = { inVnd: Number(r.in_vnd), outVnd: Number(r.out_vnd) };
+      for (const kind of ['topup', 'plan', 'usage', 'promo', 'assign', 'expire', 'forfeit', 'adjust']) entries[kind] ??= { inVnd: 0, outVnd: 0 };
+      const orders = { pending: 0, paid: 0, expired: 0, cancelled: 0 };
+      for (const r of counts) orders[r.status] = Number(r.n);
+      return {
+        since, entries, orders,
+        paidOrdersVnd: Number(paid[0].n),
+        balancesHeldVnd: Number(held[0].total),
+        accounts: Number(held[0].accounts),
+        databaseBytes: size[0] ? Number(size[0].n) : null,
+      };
     },
 
     /** A wait a bot parks until its next run (spec C.2): refused (null) past `max` open ones, or for a bot not this account's. */

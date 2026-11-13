@@ -146,5 +146,24 @@ section('a deployment service key is sealed per service and row, and reseals wit
   check('  and it opens with its service and row, and with no other', decryptSecret(stored, serviceKeyContext('tavily', 'sk-r')) === 'tvly-service-key' && decryptSecret(stored, serviceKeyContext('brave', 'sk-r')) === '' && decryptSecret(stored, serviceKeyContext('tavily', 'sk-other')) === '');
 }
 
+section('a billing profile is sealed to its account, and reseals with the rest (schema 53)');
+{
+  const { billingProfileContext } = await import('../server/secretContexts.js');
+  const { encryptSecret } = await import('../server/crypto.js');
+  const was = process.env.ENCRYPTION_KEY;
+  process.env.ENCRYPTION_KEY = 'reseal-test-encryption-key-four-for-billing-profiles';
+  await store.createUser({ id: 'bp-user', email: 'bp@example.test', passwordHash: 'x', role: 'user' });
+  await store.setBillingProfile('bp-user', encryptSecret('{"name":"A"}', billingProfileContext('bp-user')));
+  process.env.ENCRYPTION_KEY_PREVIOUS = process.env.ENCRYPTION_KEY;
+  process.env.ENCRYPTION_KEY = was;
+  const due = await resealSecrets(query);
+  check('a profile sealed under the previous key is due a reseal', due['billing-profile']?.resealed === 1 && due['billing-profile'].unopenable === 0, JSON.stringify(due['billing-profile']));
+  const applied = await resealSecrets(query, { apply: true });
+  delete process.env.ENCRYPTION_KEY_PREVIOUS;
+  const stored = (await query("SELECT sealed FROM billing_profiles WHERE user_id = 'bp-user'"))[0].sealed;
+  check('  written under the current key', applied['billing-profile']?.written === 1 && secretVersion(stored).keyId === currentKeyId(), JSON.stringify(applied['billing-profile']));
+  check('  and it opens for its account only', decryptSecret(stored, billingProfileContext('bp-user')) === '{"name":"A"}' && decryptSecret(stored, billingProfileContext('someone-else')) === '');
+}
+
 console.log(failures ? `\n\x1b[31m${failures} failed\x1b[0m` : '\n\x1b[32mall passed\x1b[0m');
 process.exit(failures ? 1 : 0);

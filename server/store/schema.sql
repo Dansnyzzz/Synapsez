@@ -1471,6 +1471,154 @@ CREATE TABLE IF NOT EXISTS service_keys (
 );
 CREATE INDEX IF NOT EXISTS service_keys_service_idx ON service_keys (service, added_at);
 
+-- ── Schema 53: billing (spec B1) ───────────────────────────────────────────
+-- Money is whole đồng in BIGINT and never a float (owner, 2026-11-13). Every change to a
+-- balance is one statement that also writes its entry (server/store/pg.js), and
+-- balances.vnd can never go below 0, so a charge that does not fit changes nothing.
+-- Money records outlive the account (owner, 2026-11-12): orders, transfers, receipts and
+-- entries keep their rows with user_id NULL when the account is deleted.
+
+-- The billing details a person gives for receipts and e-invoices, sealed (crypto v2,
+-- bound to ['billing-profile', userId]); and the balance below which they want an email.
+CREATE TABLE IF NOT EXISTS billing_profiles (
+  user_id          TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  sealed           TEXT,
+  low_balance_vnd  BIGINT CHECK (low_balance_vnd IS NULL OR low_balance_vnd >= 0),
+  low_alert_sent_at TIMESTAMPTZ,
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- What an account holds in prepaid đồng. Goes with the account (a positive balance is
+-- written off as a `forfeit` entry first). last_topup_at starts the 12-month expiry.
+CREATE TABLE IF NOT EXISTS balances (
+  user_id       TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  vnd           BIGINT NOT NULL DEFAULT 0 CHECK (vnd >= 0),
+  last_topup_at TIMESTAMPTZ,
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- The ledger: every change to a balance, so balances.vnd = SUM(delta_vnd) always. Kept
+-- after the account is gone (user_id NULL) because it is the record of money. Usage is
+-- one row per account, category and Vietnamese day (units and đồng add up on it).
+CREATE TABLE IF NOT EXISTS balance_entries (
+  id         BIGSERIAL PRIMARY KEY,
+  user_id    TEXT REFERENCES users(id) ON DELETE SET NULL,
+  kind       TEXT NOT NULL CHECK (kind IN ('topup','plan','usage','promo','assign','expire','forfeit','adjust')),
+  category   TEXT,
+  day        DATE,
+  units      BIGINT NOT NULL DEFAULT 0,
+  delta_vnd  BIGINT NOT NULL,
+  ref        TEXT,
+  note       TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS balance_entries_usage_day ON balance_entries (user_id, category, day) WHERE kind = 'usage';
+CREATE INDEX IF NOT EXISTS balance_entries_user_idx ON balance_entries (user_id, created_at DESC);
+-- A payment asked for: the price and the rate it was priced at are locked when it is made,
+-- and `code` is what the person writes in the transfer. Kept after the account is gone.
+CREATE TABLE IF NOT EXISTS billing_orders (
+  id           TEXT PRIMARY KEY,
+  user_id      TEXT REFERENCES users(id) ON DELETE SET NULL,
+  kind         TEXT NOT NULL CHECK (kind IN ('plan','renewal','topup')),
+  plan         TEXT,
+  period       TEXT CHECK (period IS NULL OR period IN ('month','year')),
+  code         TEXT NOT NULL UNIQUE,
+  usd_cents    INTEGER,
+  rate         NUMERIC(12,4),
+  rate_source  TEXT,
+  price_vnd    BIGINT NOT NULL CHECK (price_vnd >= 0),
+  credit_vnd   BIGINT NOT NULL DEFAULT 0 CHECK (credit_vnd >= 0),
+  total_vnd    BIGINT NOT NULL CHECK (total_vnd >= 0),
+  use_balance  BOOLEAN NOT NULL DEFAULT TRUE,
+  received_vnd BIGINT NOT NULL DEFAULT 0,
+  status       TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','paid','expired','cancelled')),
+  expires_at   TIMESTAMPTZ NOT NULL,
+  paid_at      TIMESTAMPTZ,
+  simulated    BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS billing_orders_user_idx ON billing_orders (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS billing_orders_pending_idx ON billing_orders (expires_at) WHERE status = 'pending';
+-- Every bank transfer SePay told us of, matched or not. `dedupe` is UNIQUE so a webhook
+-- retry and the poll can never count one transfer twice. Kept after the account is gone.
+CREATE TABLE IF NOT EXISTS sepay_transfers (
+  id             BIGSERIAL PRIMARY KEY,
+  dedupe         TEXT NOT NULL UNIQUE,
+  sepay_id       TEXT,
+  reference_code TEXT,
+  gateway        TEXT,
+  account_number TEXT,
+  amount_vnd     BIGINT NOT NULL,
+  code           TEXT,
+  content        TEXT,
+  transaction_at TIMESTAMPTZ,
+  order_id       TEXT REFERENCES billing_orders(id) ON DELETE SET NULL,
+  user_id        TEXT REFERENCES users(id) ON DELETE SET NULL,
+  outcome        TEXT NOT NULL CHECK (outcome IN ('applied','short','over','late','topup','unmatched','assigned','dismissed','ignored')),
+  via            TEXT NOT NULL CHECK (via IN ('webhook','poll','simulated')),
+  received_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS sepay_transfers_outcome_idx ON sepay_transfers (outcome, received_at DESC);
+-- The plan an account is on, one row each; it goes with the account.
+CREATE TABLE IF NOT EXISTS subscriptions (
+  user_id       TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  plan          TEXT NOT NULL,
+  period        TEXT NOT NULL CHECK (period IN ('month','year')),
+  status        TEXT NOT NULL CHECK (status IN ('active','grace','ended')),
+  period_start  TIMESTAMPTZ NOT NULL,
+  period_end    TIMESTAMPTZ NOT NULL,
+  paid_vnd      BIGINT NOT NULL DEFAULT 0,
+  auto_renew    BOOLEAN NOT NULL DEFAULT TRUE,
+  cancel_at_end BOOLEAN NOT NULL DEFAULT FALSE,
+  next_plan     TEXT,
+  next_period   TEXT,
+  reminded_at   TIMESTAMPTZ,
+  renewal_order TEXT,
+  started_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- Credit codes the owner hands out. `used` only rises inside the redeeming statement.
+CREATE TABLE IF NOT EXISTS promo_codes (
+  code        TEXT PRIMARY KEY,
+  credit_vnd  BIGINT NOT NULL CHECK (credit_vnd > 0),
+  max_uses    INTEGER NOT NULL CHECK (max_uses > 0),
+  used        INTEGER NOT NULL DEFAULT 0,
+  expires_at  TIMESTAMPTZ,
+  active      BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by  TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- Who used which code. The primary key is what stops a second use by one account; user_id
+-- has no foreign key, so a deleted account leaves its use on record.
+CREATE TABLE IF NOT EXISTS promo_redemptions (
+  code       TEXT NOT NULL REFERENCES promo_codes(code) ON DELETE CASCADE,
+  user_id    TEXT NOT NULL,
+  redeemed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (code, user_id)
+);
+CREATE SEQUENCE IF NOT EXISTS receipt_seq;
+-- Receipts for money received, numbered SZR-<year>-<seq>. Kept after the account is gone
+-- (a record of money) but without the buyer's details: buyer_sealed is cleared on delete.
+CREATE TABLE IF NOT EXISTS receipts (
+  number       TEXT PRIMARY KEY,
+  user_id      TEXT REFERENCES users(id) ON DELETE SET NULL,
+  transfer_id  BIGINT REFERENCES sepay_transfers(id) ON DELETE SET NULL,
+  order_id     TEXT,
+  amount_vnd   BIGINT NOT NULL,
+  lines        JSONB NOT NULL,
+  buyer_sealed TEXT,
+  issued_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS receipts_user_idx ON receipts (user_id, issued_at DESC);
+-- The electronic invoice asked of SePay for an order, and where it has got to. No foreign
+-- key: it is a tax record and outlives the account.
+CREATE TABLE IF NOT EXISTS einvoices (
+  order_id       TEXT PRIMARY KEY,
+  reference_code TEXT NOT NULL UNIQUE,
+  tracking_code  TEXT,
+  status         TEXT NOT NULL,
+  error          TEXT,
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- ── Schema 49 ────────────────────────────────────────────────────────────────
 -- Row-level security on every table here (harness audit, 2026-11-12). On Supabase the
 -- tables in `public` are what its Data API (PostgREST) serves, and anyone holding the

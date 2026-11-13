@@ -20,9 +20,10 @@
  *   user_settings mcpBridge.key             mcpBridgeContext
  *   mcp_servers.config headersCipher/envCipher mcpConfigContext
  *   service_keys.sealed                     ['service-key', service, id]
+ *   billing_profiles.sealed                 ['billing-profile', userId]
  */
 import { openSecret, encryptSecret, needsReseal, secretVersion } from './crypto.js';
-import { cloudBrowserContext, mcpBridgeContext, mcpConfigContext, totpContext, connectorContext, hookContext, providerKeyContext, serviceKeyContext } from './secretContexts.js';
+import { cloudBrowserContext, mcpBridgeContext, mcpConfigContext, totpContext, connectorContext, hookContext, providerKeyContext, serviceKeyContext, billingProfileContext } from './secretContexts.js';
 
 /**
  * Each table that holds credentials: its rows that may, whose they are, the sealed values in
@@ -98,6 +99,13 @@ const SEALED = {
     owner: () => '',
     fields: (row) => (row.sealed ? [{ kind: 'service-key', value: row.sealed, context: () => serviceKeyContext(row.service, row.id), put: (sealed) => { row.sealed = sealed; } }] : []),
     update: (row, was) => ['UPDATE service_keys SET sealed = $2 WHERE id = $1 AND sealed = $3 RETURNING id', [row.id, row.sealed, was.sealed]],
+  },
+  // Money records outlive the account but this does not: the profile cascades with it.
+  billing_profiles: {
+    select: 'SELECT user_id, sealed FROM billing_profiles WHERE sealed IS NOT NULL',
+    owner: (row) => row.user_id,
+    fields: (row) => (row.sealed ? [{ kind: 'billing-profile', value: row.sealed, context: (user) => billingProfileContext(user), put: (sealed) => { row.sealed = sealed; } }] : []),
+    update: (row, was) => ['UPDATE billing_profiles SET sealed = $2 WHERE user_id = $1 AND sealed = $3 RETURNING user_id', [row.user_id, row.sealed, was.sealed]],
   },
 };
 
