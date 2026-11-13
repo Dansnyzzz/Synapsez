@@ -462,9 +462,12 @@ section('the rotation reacts to what actually came out');
       check("  and the turn's own deadline holds too, however much a single request's budget has left (HAR-015)", late.seen.length === 1 && late.waits.length === 0 && late.error?.upstream === true, `${late.seen.length} tries · ${late.waits.join(',')} · ${late.error?.message}`);
     }
     // UX-023: as an instant the browser shows in the person's own time, not the server's clock face (UTC on Vercel).
+    // The instant is rebuilt from a wait (reset − now, then now + wait), so it may drift by a millisecond; compare within a second.
+    const isoInMessage = run.error?.message?.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/)?.[0];
+    const instantMs = isoInMessage ? Date.parse(isoInMessage) : NaN;
     check(
       '  as an ISO instant, with a code the browser acts on (UX-023, UX-024)',
-      run.error?.message?.includes(new Date(reset).toISOString()) && run.error?.code === 'rate_limited',
+      Number.isFinite(instantMs) && Math.abs(instantMs - reset) <= 1_000 && run.error?.code === 'rate_limited',
       `${run.error?.message} ${run.error?.code}`,
     );
   }

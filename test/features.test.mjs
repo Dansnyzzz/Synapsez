@@ -1350,12 +1350,17 @@ section('OCR reads Vietnamese with no key and no network');
       body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
       return Buffer.from(body, 'latin1');
     };
-    const tall = await renderPdfPages(pdfOf('100 1000000'));
+    // A busy machine can push a draw past the 45 s default. These two checks are
+    // about the picture, not the deadline (that is tested below), so they get a
+    // generous one, and a rejection becomes a failed check rather than a crash.
+    let tallErr = null;
+    const tall = await renderPdfPages(pdfOf('100 1000000'), { timeoutMs: 180_000 }).catch((err) => { tallErr = err; return null; });
     const drawn = tall?.pages?.[0] ? imageSize(Buffer.from(tall.pages[0].data, 'base64')) : null;
-    check('a page a million points tall is drawn within the pixel ceiling', !!drawn && drawn.width * drawn.height <= 12_000_000 * 1.01, JSON.stringify(drawn));
-    const a4 = await renderPdfPages(pdfOf('595 842'));
+    check('a page a million points tall is drawn within the pixel ceiling', !!drawn && drawn.width * drawn.height <= 12_000_000 * 1.01, tallErr ? tallErr.message : JSON.stringify(drawn));
+    let a4Err = null;
+    const a4 = await renderPdfPages(pdfOf('595 842'), { timeoutMs: 180_000 }).catch((err) => { a4Err = err; return null; });
     const a4Size = a4?.pages?.[0] ? imageSize(Buffer.from(a4.pages[0].data, 'base64')) : null;
-    check('  while an A4 page is still drawn 1400 wide', a4Size?.width === 1400, JSON.stringify(a4Size));
+    check('  while an A4 page is still drawn 1400 wide', a4Size?.width === 1400, a4Err ? a4Err.message : JSON.stringify(a4Size));
 
     // PERF-023: drawn on a worker with a deadline, and on this thread where the
     // worker's code is missing.
