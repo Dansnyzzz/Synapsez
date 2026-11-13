@@ -2499,6 +2499,8 @@ export const vi = {
   'freetier.google': 'Google search (khoá Gemini của bản triển khai)',
   'freetier.stackexchange': 'Stack Exchange',
   'freetier.e2b': 'E2B (máy tính đám mây)',
+  'freetier.vercel': 'Vercel (máy dự phòng)',
+  'freetier.cpuHours': '{n} giờ CPU',
   'freetier.coingecko': 'CoinGecko (giá tiền mã hoá)',
   'freetier.coingecko_minute': 'CoinGecko, theo phút',
   'freetier.yahoo': 'Yahoo Finance (giá)',

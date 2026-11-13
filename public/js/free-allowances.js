@@ -19,8 +19,8 @@ const LIVE_EVERY_MS = 60_000;
 /** Time a "Really remove?" waits for the second press. */
 const ARMED_MS = 4000;
 
-/** What a ceiling is entered in, per service. Exa and E2B count in thousandths of a dollar. */
-const UNITS = { exa: 'usd', e2b: 'usd', tavily: 'credits', firecrawl: 'credits', brave: 'requests' };
+/** What a ceiling is entered in, per service. Exa and E2B count in thousandths of a dollar; the Vercel stand-in in CPU-seconds, shown as CPU-hours. */
+const UNITS = { exa: 'usd', e2b: 'usd', tavily: 'credits', firecrawl: 'credits', brave: 'requests', vercel: 'hours' };
 /** Services whose plan the provider reports: no ceiling is asked for. */
 const PLAN_READ = new Set(['tavily', 'firecrawl']);
 /** How many keys each service takes at most (keyPool.js POOLED, repeated for the "+ Add key" button). */
@@ -40,7 +40,7 @@ const locale = () => (currentLanguage() === 'vi' ? 'vi-VN' : 'en-US');
 const day = (iso) => new Intl.DateTimeFormat(locale(), { day: 'numeric', month: 'short' }).format(new Date(iso));
 const clock = (iso) => new Intl.DateTimeFormat(locale(), { hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
 /** Exa and E2B in dollars; the rest in requests or credits. */
-const amount = (service, n) => (UNITS[service] === 'usd' ? `$${(Number(n) / 1000).toFixed(2)}` : Number(n).toLocaleString(locale()));
+const amount = (service, n) => (UNITS[service] === 'usd' ? `$${(Number(n) / 1000).toFixed(2)}` : UNITS[service] === 'hours' ? t('freetier.cpuHours', { n: (Number(n) / 3600).toFixed(2) }) : Number(n).toLocaleString(locale()));
 const hintOf = (hint) => `…${String(hint || '').replace(/^…/, '')}`;
 
 /**
@@ -213,7 +213,7 @@ export function createFreeAllowances(host, deps) {
       // Drawn here with its note: the loop below is only for services with no allowance row.
       pool.delete(s.service);
       const used = s.used == null ? '—' : `${amount(s.service, s.used)} / ${amount(s.service, s.limit)}`;
-      const note = entry?.note ? t(entry.note) : s.service === 'google' ? t('freetier.googleNote') : '';
+      const note = entry?.note ? t(entry.note) : s.service === 'google' ? t('freetier.googleNote') : s.service === 'vercel' ? t('freetier.src.counted') : '';
       rows.push(`<div class="ctable__row" role="row">
           <span role="cell"><strong>${escapeHtml(label)}</strong>${note ? `<span class="hint freepool__note">${escapeHtml(note)}</span>` : ''}</span>
           <span role="cell" class="freetier__used">${bar(s.used, s.limit)}${escapeHtml(used)} ${escapeHtml(t(PER_LABEL[s.per] || 'freetier.perDay'))}</span>

@@ -430,6 +430,82 @@ section('E2B first, Vercel standing in when it cannot');
   e2b.__testing.useSdk(null);
 }
 
+section('the Vercel stand-in stops at the free Hobby hours, so it can never bill (owner, 2026-11-13)');
+{
+  const sandbox = await import('../server/sandbox.js');
+  const at = (iso) => new Date(iso);
+  const left = async (now) => (await tiers.allowance('vercel', now)).left;
+  check('10 minutes on 2 vCPUs is 1,200 CPU-seconds', sandbox.standInCpuSeconds(10 * 60_000) === 1200);
+  const limit = (await tiers.allowance('vercel', at('2026-11-15T00:00:00Z'))).limit;
+  check('the ceiling is 4.5 CPU-hours by default', limit === 16_200, String(limit));
+  process.env.VERCEL_SANDBOX_MONTHLY_CPU_HOURS = '1';
+  check('  and can be set', (await tiers.allowance('vercel')).limit === 3600);
+  delete process.env.VERCEL_SANDBOX_MONTHLY_CPU_HOURS;
+
+  let starts = 0;
+  let creates = 0;
+  let failNext = false;
+  sandbox.__testing.useSdk({
+    Sandbox: {
+      getOrCreate: async () => {
+        starts += 1;
+        if (failNext) throw new Error('boom');
+        return { domain: () => 'https://sb.vercel.run' };
+      },
+      create: async () => {
+        creates += 1;
+        return { domain: () => 'https://scratch.vercel.run', stop: async () => {}, delete: async () => {} };
+      },
+    },
+  });
+  for (const name of ['E2B_API_KEY']) delete process.env[name];
+  process.env.VERCEL_TOKEN = 't';
+  process.env.VERCEL_TEAM_ID = 'team';
+  process.env.VERCEL_PROJECT_ID = 'p';
+  const month = new Date().toISOString().slice(0, 7);
+  const bucket = `free:vercel:${month}`;
+  const reset = () => memory.query("DELETE FROM rate_limits WHERE bucket LIKE 'free:vercel:%' OR bucket LIKE 'vercelwin:%'");
+  await reset();
+
+  await sandbox.machineForUser('u-e2b');
+  check('the account machine counts its 20 minutes on 2 vCPUs: 2,400 CPU-seconds', (await store.readCounter(bucket)) === 2400 && starts === 1);
+  await sandbox.machineForUser('u-e2b');
+  await sandbox.machineForUser('u-e2b');
+  check('  once for the window, not once per tool call', (await store.readCounter(bucket)) === 2400 && starts === 3);
+  await sandbox.discardMachine(await sandbox.scratchMachine());
+  check('a scratch machine counts its 6 minutes: 720 more', (await store.readCounter(bucket)) === 3120 && creates === 1);
+
+  await reset();
+  failNext = true;
+  const failed = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
+  check('a start that fails gives its time back', /boom/.test(failed) && (await store.readCounter(bucket)) === 0, failed);
+  failNext = false;
+  check('  and the window is free to be counted by the next try', (await sandbox.machineForUser('u-e2b'), (await store.readCounter(bucket)) === 2400));
+
+  await reset();
+  await store.addToCounter(bucket, 16_200 - 100, new Date(Date.UTC(2100, 0, 1)));
+  starts = 0;
+  const refused = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
+  check('at the ceiling a new stand-in is refused, saying so', refused === "The cloud computer is unavailable until the 1st: this month's free stand-in time is used.", refused);
+  check('  and Vercel is not called', starts === 0);
+  check('  nor a scratch machine', creates === 1 && (await sandbox.scratchMachine().then(() => 'made', (e) => e.message)) !== 'made' && creates === 1);
+  check('  and what was refused is not counted', (await store.readCounter(bucket)) === 16_100);
+
+  process.env.FREE_TIER_ONLY = 'off';
+  check('  not even with the free-tier ceilings switched off', (await sandbox.machineForUser('u-e2b').then(() => 'made', () => 'refused')) === 'refused' && starts === 0);
+  delete process.env.FREE_TIER_ONLY;
+
+  check('the count starts again on the 1st', (await left(at('2026-12-01T00:00:00Z'))) === 16_200 && (await left(at(`${month}-15T00:00:00Z`))) === 100);
+  const report = await tiers.freeTierReport();
+  const row = report.services.find((s) => s.service === 'vercel');
+  check('the report has a vercel row, counted per month', row?.per === 'month' && row.limit === 16_200 && row.used === 16_100, JSON.stringify(row));
+
+  for (const name of ['VERCEL_TOKEN', 'VERCEL_TEAM_ID', 'VERCEL_PROJECT_ID']) delete process.env[name];
+  process.env.E2B_API_KEY = 'e2b_test_key';
+  sandbox.__testing.useSdk(null);
+  await reset();
+}
+
 section('the SDK loads on a runtime that cannot require() an ES module (SBX-001)');
 {
   /*

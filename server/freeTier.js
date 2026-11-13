@@ -91,7 +91,7 @@ const share = (fraction, name) => ({ per: 'month', share: fraction, env: name })
 /**
  * Each service's ceiling and the period it resets on.
  *
- * @type {Record<string, { per: string, limit?: () => number, pooled?: boolean, billed?: boolean, share?: number, env?: string }>}
+ * @type {Record<string, { per: string, limit?: () => number, pooled?: boolean, billed?: boolean, always?: boolean, share?: number, env?: string }>}
  */
 const TIERS = {
   exa: pooled('exa'),
@@ -102,6 +102,9 @@ const TIERS = {
   stackexchange: { per: 'day', limit: () => num('STACKEXCHANGE_FREE_DAILY', process.env.STACKEXCHANGE_KEY ? 9_500 : 280) },
   // The cloud computer's machine time, in thousandths of a dollar (server/e2b.js), its ceiling worked out per key.
   e2b: pooled('e2b'),
+  // The Vercel stand-in machine, in CPU-seconds (wall seconds kept awake x vCPUs), 4.5 of Hobby's 5 free hours.
+  // `always`: counted whatever FREE_TIER_ONLY says, because on a Pro plan going over is a bill (owner, 2026-11-13).
+  vercel: { per: 'month', always: true, billed: true, limit: () => Math.floor(num('VERCEL_SANDBOX_MONTHLY_CPU_HOURS', 4.5) * 3600) },
   // Firecrawl: the month's credits, and each share of them (server/firecrawl.js).
   firecrawl: pooled('firecrawl'),
   firecrawl_search: share(0.6, 'FIRECRAWL_SEARCH_FREE'),
@@ -159,7 +162,7 @@ function defaultLimit(service) {
  */
 export async function allowance(service, now = new Date()) {
   const tier = TIERS[service];
-  if (!tier || !freeTierOnly()) return { left: Infinity, limit: Infinity };
+  if (!tier || (!freeTierOnly() && !tier.always)) return { left: Infinity, limit: Infinity };
   try {
     if (tier.pooled) {
       const { left, limit } = await capacityOf(service, now);
@@ -213,7 +216,7 @@ export async function take(service, amount, now = new Date(), { keyId = 'env', p
       // Listed once it is written, so a failure taking it back never takes back what was not added.
       counted.push([apart.bucket, apart.ends]);
       fits = await underCap(service, keyId, paidTotal);
-    } else if (!freeTierOnly() || (paid && (tier.pooled || tier.share))) {
+    } else if ((!freeTierOnly() && !tier.always) || (paid && (tier.pooled || tier.share))) {
       // The ceilings off; or a paid call in Firecrawl's index or one of its shares — free splits, not a paid call's.
       fits = true;
     } else if (tier.pooled) {
@@ -232,7 +235,7 @@ export async function take(service, amount, now = new Date(), { keyId = 'env', p
     // says: a count that cannot be written or read stops it (review, 2026-11-12). The rest as before.
     // `strict`: an unpaid call that lands on the paid key. Counting is all that keeps it inside the free
     // amount, so a count that cannot be written stops it too — it would be billed otherwise (review, 2026-11-13).
-    const goes = (paid || strict) && !noDatabase(err) ? false : !freeTierOnly() || !tier.billed || noDatabase(err);
+    const goes = (paid || strict) && !noDatabase(err) ? false : (!freeTierOnly() && !tier.always) || !tier.billed || noDatabase(err);
     if (!goes) for (const [name, until] of counted) await getStore().addToCounter(name, -amount, until).catch(() => {});
     return goes;
   }

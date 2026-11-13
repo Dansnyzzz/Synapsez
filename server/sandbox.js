@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { LIMITS as FILE_LIMITS, classify, mimeFor, oneLine, saveChangedFile, saveGenerated, saveMachineFile } from './attachments.js';
 import { getStore } from './store/index.js';
-import { exhaust } from './freeTier.js';
+import { exhaust, take, refund } from './freeTier.js';
 import { e2bConfigured, e2bExistingMachine, e2bForgetAccount, e2bMachineFor, e2bScratch, e2bUnavailable } from './e2b.js';
 import { rememberPackages, restorePackages, terminalScript, tidyIfDue } from './machineCare.js';
 import { log } from './util/trace.js';
@@ -257,6 +257,62 @@ const clipOutput = (text) => {
   return `${s.slice(0, half)}\n… [${s.length - MAX_OUTPUT_CHARS} characters cut] …\n${s.slice(-half)}`;
 };
 
+/**
+ * The Vercel stand-in's own count (owner, 2026-11-13: "make sure nothing loses money").
+ *
+ * On Hobby the stand-in is free up to 5 Active-CPU hours a month; on Pro it is billed
+ * ($0.128 an hour), and the per-day action caps above do not bound it. So the app counts
+ * it itself: CPU-seconds = wall seconds the machine is kept awake x its vCPUs, an upper
+ * bound of Active CPU so the count is never under the bill, in `free:vercel:<month>`, and
+ * refuses to start one past VERCEL_SANDBOX_MONTHLY_CPU_HOURS (default 4.5, 90% of Hobby's
+ * 5) whatever the plan. Counted before the start, like `take` does for every free service.
+ *
+ * An account's machine is kept awake SESSION_MS from each start and the code never stops
+ * it early, so what is counted is the whole window: once per account per SESSION_MS slot
+ * (a marker row, so a burst of tool calls in one slot is not counted twenty times; it
+ * can over-count a session that straddles two slots, which is the safe direction).
+ */
+const STAND_IN_VCPUS = 2;
+const SCRATCH_MS = 6 * 60 * 1000;
+const STAND_IN_SPENT = "The cloud computer is unavailable until the 1st: this month's free stand-in time is used.";
+export const standInCpuSeconds = (ms, vcpus = STAND_IN_VCPUS) => Math.ceil(ms / 1000) * vcpus;
+
+/**
+ * Count a stand-in's awake time before it starts. Returns what to hand back if the start
+ * fails (`undo`), or throws the message for the model when the month's time is used.
+ *
+ * @param {number} ms  how long it will be kept awake
+ * @param {{ userId?: string, now?: Date }} [options]  `userId`: an account's machine, counted once per slot
+ * @returns {Promise<() => Promise<void>>}
+ */
+async function takeStandIn(ms, { userId = '', now = new Date() } = {}) {
+  const slot = Math.floor(now.getTime() / SESSION_MS);
+  const marker = userId ? `vercelwin:${sandboxName(userId)}:${slot}` : '';
+  const until = new Date((slot + 2) * SESSION_MS);
+  if (marker) {
+    let first = true;
+    try {
+      first = (await getStore().addToCounter(marker, 1, until)) === 1;
+    } catch {
+      /* no count to read: `take` below decides what that means */
+    }
+    // Already counted by the call that opened this slot.
+    if (!first) return async () => {};
+  }
+  const seconds = standInCpuSeconds(ms);
+  const forget = async () => {
+    if (marker) await Promise.resolve().then(() => getStore().addToCounter(marker, -1, until)).catch(() => {});
+  };
+  if (!(await take('vercel', seconds, now))) {
+    await forget();
+    throw new Error(STAND_IN_SPENT);
+  }
+  return async () => {
+    await refund('vercel', seconds, now);
+    await forget();
+  };
+}
+
 /** Loaded on first use: most requests never start a machine. */
 let sdk = null;
 async function loadSdk() {
@@ -271,7 +327,7 @@ async function machineFor(name, { signal } = {}) {
     ...credentials(),
     name,
     timeout: SESSION_MS,
-    resources: { vcpus: 2 },
+    resources: { vcpus: STAND_IN_VCPUS },
     networkPolicy: 'allow-all',
     // The disk survives a pause, so the account finds its files and installs
     // again next time — only the newest snapshot, kept a month after last use.
@@ -309,12 +365,13 @@ export async function scratchMachine({ signal } = {}) {
     }
     if (!vercelConfigured()) throw unavailableError(declined);
   }
+  const undo = await takeStandIn(SCRATCH_MS);
   const { Sandbox } = await loadSdk();
   try {
     return await Sandbox.create({
       ...credentials(),
-      timeout: 6 * 60 * 1000,
-      resources: { vcpus: 2 },
+      timeout: SCRATCH_MS,
+      resources: { vcpus: STAND_IN_VCPUS },
       networkPolicy: 'allow-all',
       persistent: false,
       tags: { app: 'synapsez', role: 'mcp-check' },
@@ -322,6 +379,7 @@ export async function scratchMachine({ signal } = {}) {
       signal,
     });
   } catch (err) {
+    await undo();
     throw machineStartError(err);
   }
 }
@@ -412,10 +470,12 @@ export async function machineForUser(userId, { signal } = {}) {
     }
     if (!vercelConfigured()) throw unavailableError(declined);
   }
+  const undo = await takeStandIn(SESSION_MS, { userId });
   let machine;
   try {
     machine = await machineFor(sandboxName(userId), { signal });
   } catch (err) {
+    await undo();
     throw machineStartError(err);
   }
   // Standing in for the E2B machine: a different computer, which the model is told.

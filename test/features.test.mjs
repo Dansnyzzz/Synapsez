@@ -2519,7 +2519,7 @@ section('free tiers: one allowance per service for the whole deployment, a fair 
     check('FREE_TIER_ONLY=false: counted, not stopped', (await tiers.allowance('exa')).left === Infinity);
     delete process.env.FREE_TIER_ONLY;
     const report = await tiers.freeTierReport();
-    check("the administrators' view: each service, its use and ceiling, and when it starts again", report.enforced && report.services.length === tiers.FREE_SERVICES.length && report.services.length === 19 && report.services.find((s) => s.service === 'exa').used > 0 && report.userDaily === undefined && report.shares?.searches > 0, JSON.stringify(report.services[0]));
+    check("the administrators' view: each service, its use and ceiling, and when it starts again", report.enforced && report.services.length === tiers.FREE_SERVICES.length && report.services.length === 20 && report.services.find((s) => s.service === 'exa').used > 0 && report.userDaily === undefined && report.shares?.searches > 0, JSON.stringify(report.services[0]));
 
     // Exa's categories, its sense of where someone is, and the same said to the others.
     web({ 'api.exa.ai': exaAnswer });

@@ -1151,6 +1151,9 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     '{0} lớn hơn 2MB; hãy ghi từng phần hoặc tạo nó ngay trong máy.',
   'The cloud computer could not be started: {0}. On Vercel this needs OIDC enabled for the project; elsewhere VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID.':
     'Không khởi động được máy tính đám mây: {0}. Trên Vercel cần bật OIDC cho dự án; nơi khác cần VERCEL_TOKEN, VERCEL_TEAM_ID và VERCEL_PROJECT_ID.',
+  // The Vercel stand-in's own monthly ceiling (server/sandbox.js `takeStandIn`).
+  "The cloud computer is unavailable until the 1st: this month's free stand-in time is used.":
+    'Máy tính đám mây không dùng được đến ngày 1: thời gian máy dự phòng miễn phí của tháng này đã hết.',
   // The cloud computer on E2B, with nothing to stand in (server/sandbox.js `unavailableError`).
   "The cloud computer could not be started: E2B did not accept this deployment's key (E2B_API_KEY). Tell the user plainly; the owner has to check the key.":
     'Không khởi động được máy tính đám mây: E2B không chấp nhận khoá của bản triển khai này (E2B_API_KEY). Hãy nói rõ với người dùng; chủ bản triển khai cần kiểm tra lại khoá.',

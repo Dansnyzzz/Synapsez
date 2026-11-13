@@ -2513,6 +2513,8 @@ export const en = {
   'freetier.google': 'Google search (deployment Gemini key)',
   'freetier.stackexchange': 'Stack Exchange',
   'freetier.e2b': 'E2B (cloud computer)',
+  'freetier.vercel': 'Vercel stand-in',
+  'freetier.cpuHours': '{n} CPU-hours',
   'freetier.coingecko': 'CoinGecko (crypto prices)',
   'freetier.coingecko_minute': 'CoinGecko, per minute',
   'freetier.yahoo': 'Yahoo Finance (prices)',
