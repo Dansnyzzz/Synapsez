@@ -915,6 +915,33 @@ section('Usage, devices, feedback and what is new — from the account menu');
     await page.waitForTimeout(200);
     const noDialog = await probe('Probe with no dialog', 'info');
     check('  with no dialog open a toast appears as before, in the page', noDialog?.onTop === true && noDialog.parent === 'BODY' && noDialog.top < 120 && noDialog.centred && noDialog.live === 'polite', JSON.stringify(noDialog));
+    // A dialog that removes itself when it closes (bots-porting.js) must not take the toast regions with it.
+    await page.evaluate(async () => {
+      const { toast } = await import('/js/render.js');
+      const box = document.createElement('dialog');
+      box.textContent = 'A dialog that removes itself';
+      box.addEventListener('close', () => box.remove(), { once: true });
+      document.body.append(box);
+      box.showModal();
+      toast('Said inside the self-removing dialog', 'error');
+      box.close();
+    });
+    await page.waitForTimeout(300);
+    const afterRemoval = await probe('Probe after the self-removing dialog', 'error');
+    const regions = await page.evaluate(() => ({ polite: document.querySelectorAll('#toasts').length, alert: document.querySelectorAll('#toasts-alert').length }));
+    check('  a dialog that removes itself on close leaves the toast regions behind: the next toast shows, in the page, and each region exists once', afterRemoval?.onTop === true && afterRemoval.parent === 'BODY' && afterRemoval.live === 'assertive' && regions.polite === 1 && regions.alert === 1, JSON.stringify({ afterRemoval, regions }));
+    // One taken out while still open, with no close event at all: the region is made again.
+    await page.evaluate(async () => {
+      const { toast } = await import('/js/render.js');
+      const box = document.createElement('dialog');
+      document.body.append(box);
+      box.showModal();
+      toast('Said inside a dialog about to be removed', 'error');
+      box.remove();
+    });
+    const afterBare = await probe('Probe after a dialog removed while open', 'error');
+    const bare = await page.evaluate(() => ({ polite: document.querySelectorAll('#toasts').length, alert: document.querySelectorAll('#toasts-alert').length, role: document.getElementById('toasts-alert')?.getAttribute('role') }));
+    check('  and one removed while open, with no close event, has its regions made again, with their roles', afterBare?.onTop === true && afterBare.parent === 'BODY' && bare.polite === 1 && bare.alert === 1 && bare.role === 'alert', JSON.stringify({ afterBare, bare }));
   } finally {
     globalThis.fetch = realFetch;
   }

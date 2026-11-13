@@ -3998,8 +3998,7 @@ function seatToasts() {
   const open = [...document.querySelectorAll('dialog:modal')];
   const home = open.length ? open[open.length - 1] : document.body;
   for (const id of ['toasts', 'toasts-alert']) {
-    const region = document.getElementById(id);
-    if (!region) continue;
+    const region = regionOf(id);
     const moved = region.parentElement !== home;
     if (!moved && (home === document.body || region.matches(':popover-open'))) continue;
     if (region.hasAttribute('popover')) {
@@ -4014,9 +4013,37 @@ function seatToasts() {
   }
 }
 
-// A dialog closing does not bubble, but it can be heard on the way down. One listener for the page.
+/**
+ * A toast region by id, made again when the page does not have it: a dialog that removes itself
+ * (bots-porting.js) takes anything seated inside it along, and a toast must never be lost or throw
+ * for want of its region. Same id, class, role and aria-live as index.html.
+ */
+function regionOf(id) {
+  const found = document.getElementById(id);
+  if (found) return found;
+  const alert = id === 'toasts-alert';
+  const made = el('div', alert ? 'toasts toasts--alert' : 'toasts');
+  made.id = id;
+  made.setAttribute('aria-live', alert ? 'assertive' : 'polite');
+  if (alert) made.setAttribute('role', 'alert');
+  document.body.append(made);
+  return made;
+}
+
+// A dialog closing does not bubble, but it can be heard on the way down — before the dialog's own
+// listener, which may remove it (bots-porting.js). So the regions are taken out of it here, at once,
+// not on a timer, or they go with it. One listener for the page.
 if (typeof document !== 'undefined') document.addEventListener('close', (event) => {
-  if (event.target instanceof HTMLDialogElement) setTimeout(seatToasts, 0);
+  const dialog = /** @type {any} */ (event.target);
+  if (dialog?.localName !== 'dialog') return;
+  for (const id of ['toasts', 'toasts-alert']) {
+    const region = document.getElementById(id);
+    if (!region || !dialog.contains(region)) continue;
+    if (region.matches(':popover-open')) region.hidePopover();
+    region.removeAttribute('popover');
+    document.body.append(region);
+  }
+  seatToasts();
 }, true);
 
 /**
@@ -4029,7 +4056,7 @@ export function toast(message, kind = 'info', { ms } = {}) {
   // asked for did not happen, and a polite announcement queues behind whatever
   // is being read — which for a streaming reply is a long time.
   seatToasts();
-  const host = document.getElementById(kind === 'error' ? 'toasts-alert' : 'toasts');
+  const host = regionOf(kind === 'error' ? 'toasts-alert' : 'toasts');
 
   // Repeating the same message stacks noise without adding information — the
   // second click of a failing button should not double the wall of red.
