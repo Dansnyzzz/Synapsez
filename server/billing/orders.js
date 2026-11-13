@@ -8,11 +8,11 @@
  */
 import crypto from 'node:crypto';
 import { getStore } from '../store/index.js';
-import { PLANS, RANK, TOPUP, ORDER_TTL_MS, GRACE_DAYS, isPaidPlan, isPeriod, planVnd } from './plans.js';
+import { PLANS, TOPUP, ORDER_TTL_MS, GRACE_DAYS, isPaidPlan, isPeriod, planVnd } from './plans.js';
 import { newPaymentCode } from './codes.js';
 import { addDays, prorate } from './period.js';
 import { usdVnd, BillingUnavailable } from './fx.js';
-import { activate, isLive, planInForce } from './subscriptions.js';
+import { activate, basisOf, isLive, moveKind, planInForce } from './subscriptions.js';
 
 const dong = (n) => Number(n).toLocaleString('en-US');
 
@@ -29,15 +29,14 @@ export async function quote(userId, { plan, period }, { now = new Date() } = {})
   let kind = 'new';
   let creditVnd = 0;
   if (isLive(sub, now)) {
-    const later = RANK[plan] < RANK[sub.plan] || (plan === sub.plan && (period === sub.period || (period === 'month' && sub.period === 'year')));
-    kind = later ? 'later' : 'upgrade';
+    kind = moveKind(sub, plan, period);
     // Never more credit than the price: the unused part of a dearer plan is not paid out.
-    if (!later) creditVnd = Math.min(priceVnd, prorate(sub.paidVnd, sub.periodStart, sub.periodEnd, now));
+    if (kind === 'upgrade') creditVnd = Math.min(priceVnd, prorate(sub.paidVnd, sub.periodStart, sub.periodEnd, now));
   }
   return {
     kind, plan, period, priceVnd, creditVnd, totalVnd: kind === 'later' ? 0 : priceVnd - creditVnd,
     rate: rate.rate, rateSource: rate.source, rateAt: rate.at, balanceVnd: state.balanceVnd,
-    startsAt: (kind === 'later' ? sub.periodEnd : now).toISOString(),
+    startsAt: (kind === 'later' ? sub.periodEnd : now).toISOString(), basis: basisOf(sub, now),
   };
 }
 
@@ -56,10 +55,7 @@ export function qrFor(order, dueVnd, env = process.env) {
   };
 }
 
-/**
- * Insert an order under a fresh payment code (a clash on the code is retried). Null when the draft's own
- * fixed id is taken, which is how two callers asking for the same renewal become one order.
- */
+/** Insert an order under a fresh payment code (a clash on the code is retried). */
 async function insert(draft) {
   const store = getStore();
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -67,7 +63,6 @@ async function insert(draft) {
       return await store.createOrder({ id: crypto.randomUUID(), ...draft, code: newPaymentCode() });
     } catch (err) {
       if (err?.code !== '23505') throw err;
-      if (draft.id && (await store.getOrder(draft.id))) return null;
     }
   }
   throw Object.assign(new Error('The order could not be created. Please try again.'), { status: 503 });
@@ -82,24 +77,21 @@ export async function renewalTerms(sub, { now = new Date() } = {}) {
 }
 
 /**
- * One renewal order per period and per terms, with an id fixed by them: two requests (or a reminder and a
- * catch-up) that both want the renewal reach the same row, so it can be paid once. An order that was
- * cancelled or expired is not reused; the next id in the family is.
+ * The renewal order for this period: a paid one (whatever it was paid for), else the pending one, else null. There is
+ * at most one live renewal per account and period (a unique index on user and grace end), which is what makes two
+ * callers that both want the renewal reach the same row, so it is paid once. A pending one made for terms that have
+ * since changed (a scheduled downgrade) is closed, and the next ask makes a fresh one.
  */
-const renewalIds = (sub) => {
-  const plan = sub.nextPlan ?? sub.plan;
-  const period = sub.nextPeriod ?? sub.period;
-  const base = `rn-${sub.userId}-${sub.periodEnd.getTime()}-${plan}-${period}`;
-  return { plan, period, ids: [base, `${base}-1`, `${base}-2`] };
-};
-
-/** The renewal order that is waiting (pending) or has been paid for this period, or null. */
 export async function findRenewalOrder(sub) {
   const store = getStore();
-  for (const id of renewalIds(sub).ids) {
-    const found = await store.getOrder(id);
-    if (!found) return null;
-    if (found.status === 'pending' || found.status === 'paid') return found;
+  const rows = await store.renewalOrdersFor(sub.userId, addDays(sub.periodEnd, GRACE_DAYS));
+  const paid = rows.find((o) => o.status === 'paid');
+  if (paid) return paid;
+  const plan = sub.nextPlan ?? sub.plan;
+  const period = sub.nextPeriod ?? sub.period;
+  for (const o of rows) {
+    if (o.plan === plan && o.period === period) return o;
+    await store.cancelOrder(o.id, o.userId);
   }
   return null;
 }
@@ -107,21 +99,20 @@ export async function findRenewalOrder(sub) {
 /** Make (or find) the renewal order. It lasts until grace ends. `created` says whether this call made it. */
 export async function renewalOrderFor(sub, { now = new Date(), useBalance = true } = {}) {
   const store = getStore();
-  const { plan, period, ids } = renewalIds(sub);
-  for (const id of ids) {
-    const found = await store.getOrder(id);
-    if (found) {
-      if (found.status === 'pending' || found.status === 'paid') return { order: found, created: false };
-      continue;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const found = await findRenewalOrder(sub);
+    if (found) return { order: found, created: false };
+    const { plan, period, rate, priceVnd } = await renewalTerms(sub, { now });
+    try {
+      const order = await store.createOrder({
+        id: crypto.randomUUID(), code: newPaymentCode(), userId: sub.userId, kind: 'renewal', plan, period, usdCents: PLANS[plan].usdCents[period],
+        rate: rate.rate, rateSource: rate.source, priceVnd, creditVnd: 0, totalVnd: priceVnd, useBalance, expiresAt: addDays(sub.periodEnd, GRACE_DAYS),
+      });
+      return { order, created: true };
+    } catch (err) {
+      // Either somebody made the renewal first (found on the next turn) or the code clashed (a new one is drawn).
+      if (err?.code !== '23505') throw err;
     }
-    const { rate, priceVnd } = await renewalTerms(sub, { now });
-    const made = await insert({
-      id, userId: sub.userId, kind: 'renewal', plan, period, usdCents: PLANS[plan].usdCents[period], rate: rate.rate, rateSource: rate.source,
-      priceVnd, creditVnd: 0, totalVnd: priceVnd, useBalance, expiresAt: addDays(sub.periodEnd, GRACE_DAYS),
-    });
-    if (made) return { order: made, created: true };
-    const winner = await store.getOrder(id);
-    if (winner && (winner.status === 'pending' || winner.status === 'paid')) return { order: winner, created: false };
   }
   throw Object.assign(new Error('This renewal could not be prepared. Please try again.'), { status: 503 });
 }
@@ -132,28 +123,48 @@ function renewalStillWanted(order, sub) {
     && order.period === (sub.nextPeriod ?? sub.period) && +order.expiresAt === +addDays(sub.periodEnd, GRACE_DAYS);
 }
 
+/** Close a plan order whose quote no longer holds. The money stays in the balance. */
+const refuseStale = (order) => getStore().cancelOrder(order.id, order.userId).then(() => null);
+
+/**
+ * A plan order that was paid but whose plan never started (the process died between the two) is started now, once:
+ * only while the plan is still the one it was quoted on and it is the account's latest paid order.
+ */
+async function mend(order, sub, now) {
+  if (sub?.lastOrder === order.id) return sub;
+  if (order.kind === 'renewal') return sub ? activate(order, { now }) : null;
+  if (order.basis && order.basis === basisOf(sub, now)) {
+    const latest = (await getStore().listOrders({ userId: order.userId, status: 'paid', limit: 10 })).find((o) => o.kind === 'plan' || o.kind === 'renewal');
+    if (latest?.id === order.id) return activate(order, { now });
+  }
+  return sub;
+}
+
 /**
  * The one door that pays an order and starts what it bought: the balance pays it (or nothing happens),
  * then the plan is activated. Safe to call again and again, and after every credit: a paid order changes
- * nothing, an order the balance cannot yet cover stays pending. Returns the subscription it started or
- * changed, or null.
+ * nothing (or mends an activation that never finished), an order the balance cannot yet cover stays pending.
+ * A plan order is paid only while the plan it was quoted on is still the plan in force. Returns the
+ * subscription it started or changed, or null.
  */
 export async function tryApply(orderId, { now = new Date() } = {}) {
   const store = getStore();
   const order = await store.getOrder(orderId);
   if (!order || order.kind === 'topup') return null;
-  if (order.status === 'paid') {
-    const sub = await store.getSubscription(order.userId);
-    // A renewal activates idempotently, which also mends a payment that landed before the process died.
-    return order.kind === 'renewal' && sub ? activate(order, { now }) : sub;
-  }
+  const sub = await store.getSubscription(order.userId);
+  if (order.status === 'paid') return mend(order, sub, now);
   if (order.status !== 'pending') return null;
-  if (order.kind === 'renewal' && !renewalStillWanted(order, await store.getSubscription(order.userId))) {
-    await store.cancelOrder(order.id, order.userId);
+  if (order.kind === 'renewal' ? !renewalStillWanted(order, sub) : order.basis && order.basis !== basisOf(sub, now)) return refuseStale(order);
+  const paid = await store.payOrderFromBalance(order.id, now);
+  if (!paid) {
+    // Short balance or a lapsed order leaves it pending; a plan that moved between the check above and the debit
+    // is refused by the payment itself, and the order is closed here.
+    const again = await store.getOrder(order.id);
+    if (again?.status === 'pending' && again.kind === 'plan' && again.basis && again.basis !== basisOf(await store.getSubscription(order.userId), now)) return refuseStale(again);
     return null;
   }
-  const paid = await store.payOrderFromBalance(order.id, now);
-  return paid ? activate(paid, { now }) : null;
+  if (paid.kind === 'plan') await store.cancelPendingPlanOrders(paid.userId, paid.id);
+  return activate(paid, { now });
 }
 
 async function draftOf(userId, kind, input, now) {
@@ -163,7 +174,7 @@ async function draftOf(userId, kind, input, now) {
     if (q.kind === 'later') throw Object.assign(new Error('That change takes effect when the current period ends, so it is scheduled instead of paid for now.'), { status: 422 });
     return {
       kind, plan, period, usdCents: PLANS[plan].usdCents[period], rate: q.rate, rateSource: q.rateSource, priceVnd: q.priceVnd,
-      creditVnd: q.creditVnd, totalVnd: q.totalVnd, useBalance, expiresAt: new Date(now.getTime() + ORDER_TTL_MS),
+      creditVnd: q.creditVnd, totalVnd: q.totalVnd, useBalance, basis: q.basis, expiresAt: new Date(now.getTime() + ORDER_TTL_MS),
     };
   }
   if (!Number.isSafeInteger(amountVnd)) throw Object.assign(new Error('Enter the amount in whole đồng.'), { status: 422 });
@@ -171,8 +182,11 @@ async function draftOf(userId, kind, input, now) {
   const min = withPlan ? TOPUP.minWithPlan : TOPUP.minNoPlan;
   const max = withPlan ? TOPUP.maxBalanceWithPlan : TOPUP.maxBalanceNoPlan;
   if (amountVnd < min) throw Object.assign(new Error(`The smallest top-up is ${dong(min)}đ.`), { status: 422 });
-  const { balanceVnd } = await getStore().billingState(userId);
-  if (balanceVnd + amountVnd > max) throw Object.assign(new Error(`A top-up cannot take your balance past ${dong(max)}đ.`), { status: 422 });
+  const store = getStore();
+  const { balanceVnd } = await store.billingState(userId);
+  // QRs already open count: four of them paid at once must not carry the balance past the cap.
+  const open = (await store.listOrders({ userId, status: 'pending', limit: 200 })).filter((o) => o.kind === 'topup' && o.expiresAt > now).reduce((sum, o) => sum + o.totalVnd, 0);
+  if (balanceVnd + open + amountVnd > max) throw Object.assign(new Error(`A top-up cannot take your balance past ${dong(max)}đ.`), { status: 422 });
   // The transfer is what credits a top-up, so the balance never pays for it.
   return { kind, priceVnd: amountVnd, creditVnd: 0, totalVnd: amountVnd, useBalance: false, expiresAt: new Date(now.getTime() + ORDER_TTL_MS) };
 }
@@ -196,6 +210,8 @@ export async function createOrder(userId, input, { now = new Date(), simulated =
     ({ order, created } = await renewalOrderFor(sub, { now, useBalance: input.useBalance !== false }));
   } else {
     const draft = await draftOf(userId, kind, { ...input, useBalance: input.useBalance !== false }, now);
+    // One open plan QR at a time: the older one would be quoted on a plan that this one is about to change.
+    if (kind === 'plan') await store.cancelPendingPlanOrders(userId);
     order = await insert({ userId, ...draft, simulated: !!simulated });
   }
   let balance = (await store.billingState(userId)).balanceVnd;
@@ -203,6 +219,7 @@ export async function createOrder(userId, input, { now = new Date(), simulated =
     await tryApply(order.id, { now });
     order = await store.getOrder(order.id);
     if (order.status === 'paid') return { order, paidNow: true, due: null };
+    if (order.status === 'cancelled') throw Object.assign(new Error('Prices changed since this order was made — get a new price.'), { status: 422 });
     balance = (await store.billingState(userId)).balanceVnd;
   }
   const vnd = dueOf(order, balance);
@@ -210,8 +227,9 @@ export async function createOrder(userId, input, { now = new Date(), simulated =
   try {
     return { order, paidNow: false, due: { vnd, qr: qrFor(order, vnd, env) } };
   } catch (err) {
-    // An order nobody can pay by transfer is not left lying about.
-    if (created) await store.cancelOrder(order.id, userId);
+    // An order of ours that nobody can pay by transfer is not left lying about. A renewal is shared (a reminder
+    // may have sent its price already) and lives until its grace ends, so it stays.
+    if (created && kind !== 'renewal') await store.cancelOrder(order.id, userId);
     throw err;
   }
 }

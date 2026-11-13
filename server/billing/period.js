@@ -39,3 +39,13 @@ export function prorate(paidVnd, start, end, now) {
   return Math.floor((paidVnd * (end.getTime() - now.getTime())) / span);
 }
 export const addDays = (date, days) => new Date(date.getTime() + days * DAY_MS);
+/**
+ * The end of the period that follows one ending at `oldEnd`: the first month boundary counted from the
+ * original start (`anchor`) after it, and eleven months more for a year. Counting from the anchor, not from
+ * the old end, is what lets a plan that began on the 31st go back to the 31st after February.
+ */
+export function renewalEnd(anchor, oldEnd, period) {
+  let k = 0;
+  while (addMonths(anchor, k) <= oldEnd) k += 1;
+  return addMonths(anchor, k + (period === 'year' ? 11 : 0));
+}

@@ -1533,10 +1533,14 @@ CREATE TABLE IF NOT EXISTS billing_orders (
   expires_at   TIMESTAMPTZ NOT NULL,
   paid_at      TIMESTAMPTZ,
   simulated    BOOLEAN NOT NULL DEFAULT FALSE,
+  -- The subscription a plan order was quoted on ('none', or plan|period|period_end in ms): it is paid only while that is still true.
+  basis        TEXT,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS billing_orders_user_idx ON billing_orders (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS billing_orders_pending_idx ON billing_orders (expires_at) WHERE status = 'pending';
+-- One live renewal per account and period (a renewal expires when its grace ends): two callers that want it reach the same row.
+CREATE UNIQUE INDEX IF NOT EXISTS billing_orders_renewal_once ON billing_orders (user_id, expires_at) WHERE kind = 'renewal' AND status IN ('pending','paid');
 -- Every bank transfer SePay told us of, matched or not. `dedupe` is UNIQUE so a webhook
 -- retry and the poll can never count one transfer twice. Kept after the account is gone.
 CREATE TABLE IF NOT EXISTS sepay_transfers (
@@ -1572,6 +1576,10 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   next_period   TEXT,
   reminded_at   TIMESTAMPTZ,
   renewal_order TEXT,
+  -- The day the billing cycle is counted from (set when a plan starts, kept by renewals), so a short month does not move the billing day.
+  anchor_at     TIMESTAMPTZ,
+  -- The order that last started or renewed this period: an activation is applied once.
+  last_order    TEXT,
   started_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

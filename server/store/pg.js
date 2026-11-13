@@ -356,7 +356,7 @@ const orderRow = (r) => r && ({
   id: r.id, userId: r.user_id, kind: r.kind, plan: r.plan, period: r.period, code: r.code, usdCents: num(r.usd_cents),
   rate: num(r.rate), rateSource: r.rate_source, priceVnd: num(r.price_vnd), creditVnd: num(r.credit_vnd), totalVnd: num(r.total_vnd),
   useBalance: r.use_balance, receivedVnd: num(r.received_vnd), status: r.status, expiresAt: asDate(r.expires_at),
-  paidAt: asDate(r.paid_at), simulated: r.simulated, createdAt: asDate(r.created_at),
+  paidAt: asDate(r.paid_at), simulated: r.simulated, basis: r.basis ?? null, createdAt: asDate(r.created_at),
 }) || null;
 const transferRow = (r) => r && ({
   id: num(r.id), dedupe: r.dedupe, sepayId: r.sepay_id, referenceCode: r.reference_code, gateway: r.gateway, accountNumber: r.account_number,
@@ -366,7 +366,7 @@ const transferRow = (r) => r && ({
 const subscriptionRow = (r) => r && ({
   userId: r.user_id, plan: r.plan, period: r.period, status: r.status, periodStart: asDate(r.period_start), periodEnd: asDate(r.period_end),
   paidVnd: num(r.paid_vnd), autoRenew: r.auto_renew, cancelAtEnd: r.cancel_at_end, nextPlan: r.next_plan, nextPeriod: r.next_period,
-  remindedAt: asDate(r.reminded_at), renewalOrder: r.renewal_order, startedAt: asDate(r.started_at), updatedAt: asDate(r.updated_at),
+  remindedAt: asDate(r.reminded_at), renewalOrder: r.renewal_order, anchorAt: asDate(r.anchor_at), lastOrder: r.last_order ?? null, startedAt: asDate(r.started_at), updatedAt: asDate(r.updated_at),
 }) || null;
 const promoRow = (r) => r && ({
   code: r.code, creditVnd: num(r.credit_vnd), maxUses: num(r.max_uses), used: num(r.used), expiresAt: asDate(r.expires_at),
@@ -5592,10 +5592,10 @@ export function createPgStore(connectionString) {
     /** A payment asked for. Price, rate and the code are fixed here. */
     async createOrder(o) {
       const rows = await q(
-        `INSERT INTO billing_orders (id, user_id, kind, plan, period, code, usd_cents, rate, rate_source, price_vnd, credit_vnd, total_vnd, use_balance, expires_at, simulated)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
+        `INSERT INTO billing_orders (id, user_id, kind, plan, period, code, usd_cents, rate, rate_source, price_vnd, credit_vnd, total_vnd, use_balance, expires_at, simulated, basis)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING *`,
         [o.id, o.userId, o.kind, o.plan ?? null, o.period ?? null, String(o.code).toUpperCase(), o.usdCents ?? null, o.rate ?? null, o.rateSource ?? null,
-          wholeVnd(o.priceVnd), wholeVnd(o.creditVnd ?? 0), wholeVnd(o.totalVnd), o.useBalance !== false, o.expiresAt, !!o.simulated],
+          wholeVnd(o.priceVnd), wholeVnd(o.creditVnd ?? 0), wholeVnd(o.totalVnd), o.useBalance !== false, o.expiresAt, !!o.simulated, o.basis ?? null],
       );
       return orderRow(rows[0]);
     },
@@ -5634,6 +5634,8 @@ export function createPgStore(connectionString) {
      * paying the order takes that money back out. Any other way to mark such an order paid
      * would give the plan and keep the money.
      * The balance row is made first (harmless, no money moves) so that case has one to join.
+     * A plan order carries the subscription it was quoted on (`basis`); it is paid only while that is still the plan in force,
+     * checked in this same statement, so an order made before a renewal or another upgrade can never be paid after it.
      */
     async payOrderFromBalance(orderId, now) {
       await q('INSERT INTO balances (user_id) SELECT user_id FROM billing_orders WHERE id = $1 AND user_id IS NOT NULL ON CONFLICT (user_id) DO NOTHING', [String(orderId)]);
@@ -5642,6 +5644,10 @@ export function createPgStore(connectionString) {
            SELECT id, user_id, total_vnd FROM billing_orders
             WHERE id = $1 AND status = 'pending' AND expires_at > $2::timestamptz
               AND (use_balance OR received_vnd >= total_vnd)
+              AND (basis IS NULL
+                OR (basis = 'none' AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.user_id = billing_orders.user_id AND s.status <> 'ended' AND s.period_end + INTERVAL '3 days' > $2::timestamptz))
+                OR EXISTS (SELECT 1 FROM subscriptions s WHERE s.user_id = billing_orders.user_id AND s.status <> 'ended' AND s.period_end + INTERVAL '3 days' > $2::timestamptz
+                             AND s.plan || '|' || s.period || '|' || (EXTRACT(EPOCH FROM s.period_end) * 1000)::bigint = basis))
             FOR UPDATE
          ), d AS (
            UPDATE balances b SET vnd = b.vnd - o.total_vnd, updated_at = NOW()
@@ -5692,17 +5698,56 @@ export function createPgStore(connectionString) {
     /** Insert or replace an account's subscription (camelCase fields as subscriptionRow returns them). */
     async saveSubscription(s) {
       const rows = await q(
-        `INSERT INTO subscriptions (user_id, plan, period, status, period_start, period_end, paid_vnd, auto_renew, cancel_at_end, next_plan, next_period, reminded_at, renewal_order)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        `INSERT INTO subscriptions (user_id, plan, period, status, period_start, period_end, paid_vnd, auto_renew, cancel_at_end, next_plan, next_period, reminded_at, renewal_order, anchor_at, last_order)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
          ON CONFLICT (user_id) DO UPDATE SET plan = EXCLUDED.plan, period = EXCLUDED.period, status = EXCLUDED.status,
            period_start = EXCLUDED.period_start, period_end = EXCLUDED.period_end, paid_vnd = EXCLUDED.paid_vnd,
            auto_renew = EXCLUDED.auto_renew, cancel_at_end = EXCLUDED.cancel_at_end, next_plan = EXCLUDED.next_plan,
-           next_period = EXCLUDED.next_period, reminded_at = EXCLUDED.reminded_at, renewal_order = EXCLUDED.renewal_order, updated_at = NOW()
+           next_period = EXCLUDED.next_period, reminded_at = EXCLUDED.reminded_at, renewal_order = EXCLUDED.renewal_order, anchor_at = EXCLUDED.anchor_at, last_order = EXCLUDED.last_order, updated_at = NOW()
          RETURNING *`,
         [s.userId, s.plan, s.period, s.status, s.periodStart, s.periodEnd, wholeVnd(s.paidVnd ?? 0), s.autoRenew !== false, !!s.cancelAtEnd,
-          s.nextPlan ?? null, s.nextPeriod ?? null, s.remindedAt ?? null, s.renewalOrder ?? null],
+          s.nextPlan ?? null, s.nextPeriod ?? null, s.remindedAt ?? null, s.renewalOrder ?? null, s.anchorAt ?? null, s.lastOrder ?? null],
       );
       return subscriptionRow(rows[0]);
+    },
+    /**
+     * Change only the named fields of a subscription, in one statement. `seenEnd` / `seenStatus` make it a compare-and-set:
+     * nothing changes (null comes back) when the row is no longer the one the caller read. Without them it is a plain
+     * field-level write that cannot undo anybody else's change to other fields.
+     */
+    async patchSubscription(userId, { seenEnd = null, seenStatus = null } = {}, set = {}) {
+      const COLS = {
+        plan: 'plan', period: 'period', status: 'status', periodStart: 'period_start', periodEnd: 'period_end', paidVnd: 'paid_vnd', anchorAt: 'anchor_at',
+        autoRenew: 'auto_renew', cancelAtEnd: 'cancel_at_end', nextPlan: 'next_plan', nextPeriod: 'next_period', remindedAt: 'reminded_at',
+        renewalOrder: 'renewal_order', lastOrder: 'last_order',
+      };
+      const keys = Object.keys(set).filter((k) => k in COLS);
+      if (!keys.length) return subscriptionRow((await q('SELECT * FROM subscriptions WHERE user_id = $1', [String(userId)]))[0]);
+      const values = keys.map((k) => (k === 'paidVnd' ? wholeVnd(set[k]) : set[k] ?? null));
+      const rows = await q(
+        `UPDATE subscriptions SET ${keys.map((k, i) => `${COLS[k]} = $${i + 4}`).join(', ')}, updated_at = NOW()
+          WHERE user_id = $1 AND ($2::timestamptz IS NULL OR period_end = $2::timestamptz) AND ($3::text IS NULL OR status = $3) RETURNING *`,
+        [String(userId), seenEnd, seenStatus, ...values],
+      );
+      return subscriptionRow(rows[0]);
+    },
+    /** The first subscription of an account; null when one exists already (somebody else made it first). */
+    async createSubscription(s) {
+      const rows = await q(
+        `INSERT INTO subscriptions (user_id, plan, period, status, period_start, period_end, paid_vnd, auto_renew, cancel_at_end, anchor_at, last_order)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT (user_id) DO NOTHING RETURNING *`,
+        [s.userId, s.plan, s.period, s.status, s.periodStart, s.periodEnd, wholeVnd(s.paidVnd ?? 0), s.autoRenew !== false, !!s.cancelAtEnd, s.anchorAt ?? null, s.lastOrder ?? null],
+      );
+      return subscriptionRow(rows[0]);
+    },
+    /** The pending or paid renewal orders of an account for the period whose grace ends at `expiresAt`. */
+    async renewalOrdersFor(userId, expiresAt) {
+      const rows = await q(`SELECT * FROM billing_orders WHERE user_id = $1 AND kind = 'renewal' AND expires_at = $2::timestamptz AND status IN ('pending', 'paid') ORDER BY created_at, id`, [String(userId), expiresAt]);
+      return rows.map(orderRow);
+    },
+    /** Close an account's other pending plan orders: one open plan QR at a time. */
+    async cancelPendingPlanOrders(userId, exceptId = null) {
+      return (await q(`UPDATE billing_orders SET status = 'cancelled' WHERE user_id = $1 AND kind = 'plan' AND status = 'pending' AND ($2::text IS NULL OR id <> $2) RETURNING id`, [String(userId), exceptId])).length;
     },
     /** Active or grace subscriptions whose period ends within 3 days of `now` (or has ended): the ones the daily work looks at. */
     async listSubscriptionsToWork(now) {

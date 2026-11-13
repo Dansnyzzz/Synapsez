@@ -20,8 +20,10 @@ export const RATE_ATTRIBUTION = 'Rates By Exchange Rate API: https://www.exchang
 const SETTING = 'billing_fx';
 const FRESH_MS = 3_600_000;
 const USABLE_MS = 48 * 3_600_000;
-// A source that answers nonsense (a rate in thousands of dong, or in dollars) is skipped, not charged with.
-const PLAUSIBLE = { min: 1_000, max: 1_000_000 };
+// A source that slips a decimal point (2,565.585 would price Plus at 13,000đ) is skipped, not charged with: a rate must
+// be within half to double the anchor and, when one is known, within 20% of the last one. Dong moves slowly.
+const WITHIN_LAST = 0.2;
+const plausible = (rate, last) => rate >= PAYG_ANCHOR_RATE * 0.5 && rate <= PAYG_ANCHOR_RATE * 2 && (!last || Math.abs(rate - last) <= last * WITHIN_LAST);
 
 /** The day's rate cannot be had, so nothing is priced or charged today. */
 export class BillingUnavailable extends Error {
@@ -53,7 +55,7 @@ async function stored() {
 
 /** One source after another; the first plausible rate wins. */
 /** @returns {Promise<Rate | null>} */
-async function ask(now) {
+async function ask(now, last) {
   /** @type {Array<{ source: 'erapi' | 'vietcombank' | 'frankfurter', pick: (rows: any[]) => any }>} */
   const chain = [
     { source: 'erapi', pick: (rows) => rows[0] },
@@ -64,7 +66,7 @@ async function ask(now) {
     try {
       const got = await fromSource(source, 'USD', ['VND']);
       const rate = Number(pick(got.rates.filter((r) => r.quote === 'VND'))?.rate);
-      if (Number.isFinite(rate) && rate >= PLAUSIBLE.min && rate <= PLAUSIBLE.max) return { rate, source, at: now.toISOString() };
+      if (Number.isFinite(rate) && plausible(rate, last)) return { rate, source, at: now.toISOString() };
     } catch {
       // The next source is asked; why this one failed is the finance layer's to say.
     }
@@ -86,7 +88,8 @@ export async function usdVnd({ now = new Date() } = {}) {
     memory = kept;
     return kept;
   }
-  const got = await ask(now);
+  const last = [memory, kept].filter(Boolean).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
+  const got = await ask(now, last?.rate ?? null);
   if (got) {
     memory = got;
     try {
@@ -96,7 +99,6 @@ export async function usdVnd({ now = new Date() } = {}) {
     }
     return got;
   }
-  const last = [memory, kept].filter(Boolean).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
   if (last && ageOf(last, now) <= USABLE_MS) return last;
   throw new BillingUnavailable();
 }
