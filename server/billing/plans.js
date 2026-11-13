@@ -18,14 +18,16 @@ export const PLANS = Object.freeze({
 /** Pay-as-you-go prices at the anchor rate (owner, 2026-11-13: they follow the USD rate, as plan prices do). */
 export const PAYG_ANCHOR_RATE = 25_656;
 export const PAYG_BASE = Object.freeze({ searchVnd: 400, sandboxVndPerHour: 5000, storageVndPerGbMonth: 1000 });
-const ceil10 = (n) => Math.ceil(n / 10) * 10;
-/** The pay-as-you-go prices at a rate, in whole đồng. */
+/** Integer ceiling division: floats are never used for a step, so a rate cannot round one step too high. */
+const ceilDiv = (n, d) => Math.floor((n + d - 1) / d);
+/** The pay-as-you-go prices at a rate, in whole đồng, by integer maths on the rate in hundredths. */
 export function paygPrices(rate = PAYG_ANCHOR_RATE) {
-  const k = Number(rate) > 0 ? Number(rate) / PAYG_ANCHOR_RATE : 1;
+  const rc = Number(rate) > 0 ? Math.round(Number(rate) * 100) : PAYG_ANCHOR_RATE * 100;
+  const anchorC = PAYG_ANCHOR_RATE * 100;
   return {
-    searchVnd: ceil10(PAYG_BASE.searchVnd * k),
-    sandboxVndPerMinute: Math.ceil((PAYG_BASE.sandboxVndPerHour * k) / 60),
-    storageVndPerGbMonth: ceil10(PAYG_BASE.storageVndPerGbMonth * k),
+    searchVnd: ceilDiv(PAYG_BASE.searchVnd * rc, anchorC * 10) * 10,
+    sandboxVndPerMinute: ceilDiv(PAYG_BASE.sandboxVndPerHour * rc, anchorC * 60),
+    storageVndPerGbMonth: ceilDiv(PAYG_BASE.storageVndPerGbMonth * rc, anchorC * 10) * 10,
   };
 }
 export const TOPUP = Object.freeze({ minNoPlan: 50_000, minWithPlan: 100_000, maxBalanceNoPlan: 200_000, maxBalanceWithPlan: 1_000_000, presets: Object.freeze([100_000, 200_000, 500_000]) });

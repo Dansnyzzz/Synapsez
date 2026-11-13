@@ -57,6 +57,30 @@ check('paygPrices(27000) is 430 / 88 / 1,060', same(paygPrices(27000), { searchV
 check('paygPrices(24000) is 380 / 78 / 940', same(paygPrices(24000), { searchVnd: 380, sandboxVndPerMinute: 78, storageVndPerGbMonth: 940 }), JSON.stringify(paygPrices(24000)));
 check('paygPrices(0) is the anchor prices', same(paygPrices(0), paygPrices(25656)));
 check('paygPrices(NaN) is the anchor prices', same(paygPrices(NaN), paygPrices(25656)));
+check('regression: 26,297.40 search is 410, not 420', paygPrices(26297.4).searchVnd === 410, String(paygPrices(26297.4).searchVnd));
+check('regression: 24,373.20 storage is 950, not 960', paygPrices(24373.2).storageVndPerGbMonth === 950, String(paygPrices(24373.2).storageVndPerGbMonth));
+check('regression: 25,142.88 storage is 980, not 990', paygPrices(25142.88).storageVndPerGbMonth === 980, String(paygPrices(25142.88).storageVndPerGbMonth));
+{
+  // Every two-decimal rate from 23,000.00 to 29,000.00 against exact integer maths (BigInt).
+  const ceilBig = (n, d) => (n + d - 1n) / d;
+  const ANCHOR_C = 2_565_600n;
+  let mismatches = 0;
+  let first = '';
+  for (let c = 2_300_000; c <= 2_900_000; c += 1) {
+    const rc = BigInt(c);
+    const exact = {
+      searchVnd: Number(ceilBig(400n * rc, ANCHOR_C * 10n) * 10n),
+      sandboxVndPerMinute: Number(ceilBig(5000n * rc, ANCHOR_C * 60n)),
+      storageVndPerGbMonth: Number(ceilBig(1000n * rc, ANCHOR_C * 10n) * 10n),
+    };
+    const got = paygPrices(c / 100);
+    if (!same(got, exact)) {
+      mismatches += 1;
+      if (!first) first = `${c / 100}: got ${JSON.stringify(got)} exact ${JSON.stringify(exact)}`;
+    }
+  }
+  check('every rate 23,000.00 to 29,000.00 in cents matches exact integer maths', mismatches === 0, mismatches ? `${mismatches} differ, first ${first}` : '600,001 rates');
+}
 
 section('Vietnamese time for periods');
 const start = vn(2026, 11, 13, 10);
