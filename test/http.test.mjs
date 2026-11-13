@@ -736,6 +736,8 @@ section('the owner adds, checks and removes service keys');
     const key = String(init?.headers?.['x-api-key'] || '');
     if (key.startsWith('slow-')) throw Object.assign(new Error('timeout'), { name: 'TimeoutError' });
     if (key.startsWith('bad-')) return new Response('{}', { status: 401 });
+    // A real key on an account without Websets: Exa knows the key and answers 403 (owner's live report, 2026-11-13).
+    if (key.startsWith('nowebsets-')) return new Response('{}', { status: 403 });
     return new Response('{}', { status: 200 });
   };
   try {
@@ -780,6 +782,19 @@ section('the owner adds, checks and removes service keys');
     const slow = await add('exa', 'slow-key-value-0003');
     check('  one that could not be asked says to try again', slow.status === 422 && /could not be reached/.test(slow.json?.error || ''), JSON.stringify(slow.json));
     check('  neither was kept', (await store.listServiceKeys('exa')).length === 1);
+    const noWebsets = await add('exa', 'nowebsets-key-0007');
+    check('an Exa key whose check answers 403 (no Websets on that account) is let in: 201', noWebsets.status === 201 && (await store.listServiceKeys('exa')).length === 2, JSON.stringify(noWebsets.json));
+    await alice.call('DELETE', `/api/admin/service-keys/${noWebsets.json.id}`);
+
+    // A free ceiling may not pass the free amount (security review M1): past it is the paid key's, under its cap.
+    const tooWide = await add('exa', 'exa-key-wide-0004', { ceiling: 100_000 });
+    check('a free ceiling past the free amount (100,000 mills against 9,500) is a 422 that says what the paid key is for', tooWide.status === 422 && tooWide.json?.error === 'Billing past the free amount is what the paid key and its monthly cap are for.' && (await store.listServiceKeys('exa')).length === 1, JSON.stringify(tooWide.json));
+    const atFree = await add('exa', 'exa-key-wide-0005', { ceiling: 9_500 });
+    const vi = await alice.call('POST', '/api/admin/service-keys', { service: 'exa', key: 'exa-key-wide-0006', ceiling: 100_000 }, { headers: { 'x-language': 'vi' } });
+    check('  one at the free amount is a 201, and kept as the ceiling', atFree.status === 201 && (await store.listServiceKeys('exa')).find((r) => r.id === atFree.json?.id)?.ceiling === 9500, JSON.stringify(atFree.json));
+    check('  and the refusal is said in Vietnamese too', vi.status === 422 && /key trả phí/.test(vi.json?.error || ''), JSON.stringify(vi.json));
+    await alice.call('DELETE', `/api/admin/service-keys/${atFree.json.id}`);
+    check('  (removed again, so the counts below are the ones they were)', (await store.listServiceKeys('exa')).length === 1);
 
     for (let i = 2; i <= 9; i += 1) await add('exa', `exa-key-aaaa-${String(i).padStart(4, '0')}`);
     process.env.EXA_API_KEY = 'exa-env-key-aaaa-0000';

@@ -139,7 +139,8 @@ export function createFreeAllowances(host, deps) {
       : '';
     const capField = owner
       ? `<label class="freepool__cap">${escapeHtml(t('freetier.paid.cap', { unit: t(`freetier.unit.${unit}`) }))}
-          <input type="number" min="0" step="any" inputmode="decimal" data-paid-cap value="${escapeHtml(shown)}"></label>`
+          <input type="number" min="0" step="any" inputmode="decimal" data-paid-cap${entry.paid && cap == null ? ' data-nocap="1"' : ''} value="${escapeHtml(shown)}"></label>
+          <button type="button" class="btn btn--ghost btn--small" data-paid-nocap>${escapeHtml(t('freetier.paid.noCap'))}</button>`
       : cap != null ? `<p class="hint">${escapeHtml(t('freetier.paid.capIs', { amount: amount(service, cap) }))}</p>` : '';
     const brave = service === 'brave' && owner && cap == null ? `<p class="hint">${escapeHtml(t('freetier.paid.braveCap'))}</p>` : '';
     return `<div class="freepool__paidbox">${none}${capField}<p class="hint">${escapeHtml(t('freetier.paid.note'))}</p>${brave}${spent}</div>`;
@@ -158,6 +159,7 @@ export function createFreeAllowances(host, deps) {
         <label for="fa-label-${service}">${escapeHtml(t('freetier.add.label'))}</label>
         <input id="fa-label-${service}" type="text" maxlength="60" autocomplete="off" data-add-label>
         ${ceiling}
+        <p class="freepool__error" role="alert" data-add-error hidden></p>
         <span class="freepool__acts"><button type="submit" class="btn btn--small" data-add-save>${escapeHtml(t('freetier.add.save'))}</button>
         <button type="button" class="btn btn--ghost btn--small" data-add-cancel>${escapeHtml(t('action.cancel'))}</button></span>
       </form>`;
@@ -288,20 +290,34 @@ export function createFreeAllowances(host, deps) {
     }
   }
 
-  /** The cap as the server counts it: dollars are thousandths. */
-  const capOf = (service, group) => {
-    const raw = /** @type {HTMLInputElement | null} */ (group.querySelector('[data-paid-cap]'))?.value.trim() ?? '';
-    if (raw === '') return null;
+  /**
+   * The cap as the server counts it (dollars are thousandths), or `{ error }` when it must not be
+   * saved. A box that cannot be read ("2,000") reads as empty, and an empty box saved "no cap" — an
+   * uncapped paid key (security review L1, 2026-11-13): "no cap" is now said, by the No cap button
+   * or by a choice already saved without one, never by a box left empty or mistyped.
+   */
+  const capOf = (service, group, { noCap = false } = {}) => {
+    const box = /** @type {HTMLInputElement | null} */ (group.querySelector('[data-paid-cap]'));
+    const raw = box?.value.trim() ?? '';
+    if (box?.validity.badInput) return { error: 'freetier.paid.capUnreadable' };
+    if (raw === '') return noCap || box?.dataset.nocap === '1' ? { cap: null } : { error: 'freetier.paid.capNeeded' };
     const n = Number(raw);
-    return Number.isFinite(n) ? (UNITS[service] === 'usd' ? Math.round(n * 1000) : n) : null;
+    if (!Number.isFinite(n) || n < 0) return { error: 'freetier.paid.capUnreadable' };
+    return { cap: UNITS[service] === 'usd' ? Math.round(n * 1000) : n };
   };
 
-  /** Choose the paid key, or none; the cap field rides along. @param {HTMLElement} group */
-  function savePaid(group) {
+  /** Choose the paid key, or none; the cap field rides along. @param {HTMLElement} group @param {{ noCap?: boolean }} [options] */
+  function savePaid(group, options = {}) {
     const service = /** @type {string} */ (group.dataset.pool);
     const picked = /** @type {HTMLInputElement | null} */ (group.querySelector('input[data-paid-radio]:checked'));
     const keyId = picked && picked.value ? picked.value : null;
-    return act(() => api.setPaidKey(service, keyId, keyId ? capOf(service, group) : null), null, { redraw: true }).then((out) => {
+    const cap = keyId ? capOf(service, group, options) : { cap: null };
+    if ('error' in cap) {
+      toast(t(cap.error), 'error');
+      // The radio already moved under the person's hand: draw what the server holds.
+      return load({ force: true });
+    }
+    return act(() => api.setPaidKey(service, keyId, cap.cap), null, { redraw: true }).then((out) => {
       if (out) toast(t('freetier.paid.saved'), 'ok');
     });
   }
@@ -330,6 +346,12 @@ export function createFreeAllowances(host, deps) {
       return;
     }
     if (!group) return;
+    if (target.closest('[data-paid-nocap]')) {
+      const box = /** @type {HTMLInputElement | null} */ (group.querySelector('[data-paid-cap]'));
+      if (box) box.value = '';
+      if (group.querySelector('input[data-paid-radio]:checked')?.getAttribute('value')) await savePaid(group, { noCap: true });
+      return;
+    }
     if (target.closest('[data-pool-add]')) {
       const form = /** @type {HTMLFormElement} */ (group.querySelector('[data-add-form]'));
       form.hidden = false;
@@ -339,6 +361,7 @@ export function createFreeAllowances(host, deps) {
     if (target.closest('[data-add-cancel]')) {
       const form = /** @type {HTMLFormElement} */ (group.querySelector('[data-add-form]'));
       form.reset();
+      clearAddError(form);
       form.hidden = true;
       /** @type {HTMLElement | null} */ (group.querySelector('[data-pool-add]'))?.focus();
       return;
@@ -377,6 +400,14 @@ export function createFreeAllowances(host, deps) {
     else if (target.matches('[data-paid-cap]') && group.querySelector('input[data-paid-radio]:checked')?.getAttribute('value')) void savePaid(group);
   });
 
+  /** @param {HTMLFormElement} form */
+  function clearAddError(form) {
+    const failure = /** @type {HTMLElement | null} */ (form.querySelector('[data-add-error]'));
+    if (!failure) return;
+    failure.textContent = '';
+    failure.hidden = true;
+  }
+
   host.addEventListener('submit', async (event) => {
     event.preventDefault();
     const form = /** @type {HTMLFormElement} */ (event.target);
@@ -387,10 +418,14 @@ export function createFreeAllowances(host, deps) {
     const raw = ceilingBox?.value.trim() ?? '';
     const ceiling = raw === '' ? null : UNITS[service] === 'usd' ? Math.round(Number(raw) * 1000) : Number(raw);
     const submit = /** @type {HTMLButtonElement} */ (form.querySelector('[data-add-save]'));
+    const failure = /** @type {HTMLElement} */ (form.querySelector('[data-add-error]'));
+    clearAddError(form);
     const body = { service, key: keyBox.value, label: /** @type {HTMLInputElement} */ (form.querySelector('[data-add-label]')).value.trim() || undefined, ceiling };
     // The key leaves the box the moment it is sent, whatever the answer: it is never kept on the page.
     keyBox.value = '';
     submit.disabled = true;
+    // The provider's check can take eight seconds: the button says so, or it looks like nothing happened.
+    submit.textContent = t('freetier.add.checking');
     try {
       await api.addServiceKey(body);
       form.reset();
@@ -398,8 +433,12 @@ export function createFreeAllowances(host, deps) {
       toast(t('freetier.add.done'), 'ok');
       await load({ force: true });
     } catch (err) {
-      toast(err.message, 'error');
+      // In the form, not a toast: Settings is a modal dialog in the top layer, and a toast in the page body is under it (owner, 2026-11-13).
+      failure.textContent = err.message;
+      failure.hidden = false;
       submit.disabled = false;
+      submit.textContent = t('freetier.add.save');
+      keyBox.focus();
     }
   });
 

@@ -33,6 +33,9 @@ const KEYS = {
   exa: 'exa-good-1212-jjjj',
   bad: 'not-a-real-key-1616-nnnn',
   noTemplate: 'e2b_no_template_1717_oooo',
+  exa2: 'exa-second-1313-kkkk',
+  exaSwapped: 'exa-swapped-1414-llll',
+  fcPaid: 'fc-paid-1515-mmmm',
 };
 const leaks = (text) => Object.entries(KEYS).filter(([, key]) => String(text).includes(key)).map(([name]) => name);
 
@@ -105,6 +108,8 @@ globalThis.fetch = async (url, init = {}) => {
   if (answer) return answer(u, headers);
   throw new TypeError('fetch failed');
 };
+/** What Firecrawl says per key, set by the section that reads it and changed by a later one. */
+let plansOf = {};
 const bearer = (headers) => String(headers.get('authorization') || '').replace(/^Bearer /, '');
 
 try {
@@ -330,7 +335,7 @@ try {
 
   section("Firecrawl: each key's plan read from Firecrawl, and the shares of their sum");
   {
-    const plans = { [KEYS.fc1]: { plan: 5000, left: 4800 }, [KEYS.fc2]: { plan: 1000, left: 1000 } };
+    const plans = (plansOf = { [KEYS.fc1]: { plan: 5000, left: 4800 }, [KEYS.fc2]: { plan: 1000, left: 1000 } });
     answers.set('api.firecrawl.dev/v2/team/credit-usage', (u, headers) => {
       const p = plans[bearer(headers)];
       return p
@@ -416,6 +421,17 @@ try {
     // Since `before`: two calls for E2B's, one for the unreachable Exa.
     check('  nor is a key with a line break in it sent at all', (await pool.checkKey('tavily', `${KEYS.a}\r\nX: y`)).reason === 'refused' && asked.length === before + 3, String(asked.length - before));
     check('a service outside the pool has no check', (await pool.checkKey('stackexchange', KEYS.bad)).ok === false && (await pool.checkKey('google', KEYS.bad)).ok === false && asked.length === before + 3);
+    // The owner's live report, 2026-11-13: Exa's check path answers a real key other than 200 (a free account has no Websets).
+    const exaSaid = {};
+    for (const status of [200, 402, 403, 404, 429, 401, 500]) {
+      answers.set('api.exa.ai/websets/v0/teams/me', () => json(status === 401 ? { tag: 'INVALID_API_KEY' } : {}, status));
+      exaSaid[status] = await pool.checkKey('exa', KEYS.exa);
+    }
+    check('Exa knowing the key by any answer but 401 and a 5xx — 200, 402, 403, 404, 429 — lets it in', [200, 402, 403, 404, 429].every((st) => exaSaid[st].ok === true), JSON.stringify(exaSaid));
+    check('  a 401 is refused, a 500 is unreachable, and so is a fetch that throws', exaSaid[401].reason === 'refused' && exaSaid[500].reason === 'unreachable' && (answers.delete('api.exa.ai/websets/v0/teams/me'), (await pool.checkKey('exa', KEYS.exa)).reason === 'unreachable'), JSON.stringify([exaSaid[401], exaSaid[500]]));
+    answers.set('api.exa.ai/websets/v0/teams/me', () => json({ tag: 'INVALID_API_KEY' }, 403));
+    check('  and a body that says INVALID_API_KEY is refused whatever the status', (await pool.checkKey('exa', KEYS.exa)).reason === 'refused');
+    answers.delete('api.exa.ai/websets/v0/teams/me');
   }
 
   section("the administrators' view: every key by its hint, whose figure it is, the paid key");
@@ -499,6 +515,75 @@ try {
     const counts = { free: await store.readCounter(`free:tavily:${month}`), paid: await store.readCounter(`paid:tavily@env:${month}`) };
     check('  one whose paid count fails half way: refused, its free count given back, the paid count untouched', half === false && counts.free === 1 && counts.paid === 1, JSON.stringify({ half, ...counts }));
     await pool.setPaidKey('tavily', null);
+    await resetCounts();
+  }
+
+  section('before spec B charges anything: the paid key is safe to reach (spec B plan, task 1)');
+  {
+    // 1. A Firecrawl key whose own count is low is passed over for a free call, never for a charged one.
+    const { firecrawlSearch } = await import('../server/firecrawl.js');
+    answers.set('api.firecrawl.dev/v2/search', () => json({ success: true, creditsUsed: 2, data: { web: [{ url: 'https://example.test/a', title: 'A' }] } }));
+    const [fcOne, fcTwo] = (await fresh('firecrawl')).filter((k) => !k.fromEnv);
+    for (const k of [fcOne, fcTwo]) await pool.markKey('firecrawl', k.id, 'ok');
+    await resetCounts();
+    await tiers.spend('firecrawl', 4750, undefined, { keyId: fcOne.id });
+    await tiers.spend('firecrawl', 950, undefined, { keyId: fcTwo.id });
+    await pool.setPaidKey('firecrawl', fcTwo.id, null);
+    // Firecrawl says this key has 3 credits left: fewer than a search and the margin.
+    plansOf[KEYS.fc2] = { plan: 1000, left: 3 };
+    await pool.liveUsage('firecrawl', await entry('firecrawl', fcTwo.id), { fresh: true });
+    const found = await firecrawlSearch('q', { paid: true }).catch((err) => err);
+    const sentTo = asked.filter((q) => q.host === 'api.firecrawl.dev' && q.path === '/v2/search').map((q) => bearer(q.headers));
+    check('a Firecrawl paid key with a low live count answers a charged call', Array.isArray(found) && found.length === 1 && sentTo.at(-1) === KEYS.fc2, String(found?.message ?? sentTo.length));
+    await pool.setPaidKey('firecrawl', null);
+    await resetCounts();
+
+    // Exa: the environment's key and one stored, both at their ceilings.
+    process.env.EXA_API_KEY = KEYS.exa;
+    const x = await addKey('exa', KEYS.exa2);
+    await fresh('exa');
+
+    // 3. An unpaid call on the key chosen as paid is held first, so it counts against the free ceiling.
+    const { chargeTo } = await import('../server/keyCall.js');
+    await pool.setPaidKey('exa', x, 5000);
+    const freeBucket = `free:exa@${x}:${month}`;
+    const heldBefore = [];
+    for (let i = 0; i < 3; i += 1) {
+      const bill = await chargeTo('exa', 3000, { id: x, paid: false });
+      heldBefore.push(await store.readCounter(freeBucket));
+      await bill.settle(3000);
+    }
+    check('an unpaid Exa call on the paid key is held before the call, as Brave\'s is', heldBefore.join() === '3000,6000,9000', heldBefore.join());
+    const over = await caught(chargeTo('exa', 3000, { id: x, paid: false }));
+    check('  and refused once the free ceiling would be passed, the count given back', over?.skip === true && (await store.readCounter(freeBucket)) === 9000 && (await store.readCounter(`paid:exa@${x}:${month}`)) === 0, `${over?.message} ${await store.readCounter(freeBucket)}`);
+    const plain = await chargeTo('exa', 3000, { id: 'env', paid: false });
+    check('  while a key that is not the paid one is counted when known, as before', (await store.readCounter(`free:exa:${month}`)) === 0 && (await plain.settle(3000), (await store.readCounter(`free:exa:${month}`)) === 3000));
+    await resetCounts();
+
+    // 2. With the ceilings lifted and every free key spent, the fullest-key fallback never hands over the paid key past its cap.
+    await pool.setPaidKey('exa', 'env', 1);
+    await tiers.spend('exa', 9500, undefined, { keyId: 'env' });
+    await tiers.spend('exa', 9500, undefined, { keyId: x });
+    await pool.countPaid('exa', 'env', 1);
+    process.env.FREE_TIER_ONLY = 'false';
+    const lifted = await pool.pickKey('exa', 1);
+    delete process.env.FREE_TIER_ONLY;
+    check('with the ceilings lifted and the paid key at its cap, an unpaid pick is never the paid key', lifted?.key.id !== 'env' && lifted?.paid === false, JSON.stringify({ id: lifted?.key.id, paid: lifted?.paid }));
+    await resetCounts();
+
+    // 4. A paid choice of 'env' belongs to the key the environment held then.
+    await pool.setPaidKey('exa', 'env', 5);
+    const same = await pool.paidKeyOf('exa');
+    process.env.EXA_API_KEY = KEYS.exaSwapped;
+    const swapped = await pool.paidKeyOf('exa');
+    const swappedPick = await pool.pickKey('exa', 1, { paid: true });
+    process.env.EXA_API_KEY = KEYS.exa;
+    check('the paid choice \'env\' is the environment\'s key at that time: the same key, still the paid key', same?.keyId === 'env' && same.capMonthly === 5, JSON.stringify(same));
+    check('  a different EXA_API_KEY in its place is not the paid key, and spends nothing as one', swapped === null && swappedPick?.paid !== true, JSON.stringify({ swapped, paid: swappedPick?.paid }));
+    await pool.setPaidKey('exa', null);
+    await store.deleteServiceKey(x);
+    await pool.bumpKeysVersion();
+    delete process.env.EXA_API_KEY;
     await resetCounts();
   }
 

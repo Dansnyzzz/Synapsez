@@ -189,11 +189,13 @@ async function hold(share, n, meta) {
   if (until > now) throw new FirecrawlError('Firecrawl asked this key to wait a while', { status: 429, retryAfterMs: until - now, local: true });
   const key = (await keysFor('firecrawl')).find((one) => one.id === meta.id);
   const { left } = key ? await figureOf(key) : { left: null };
-  if (left !== null && left < 1 + MARGIN) {
+  // A charged call on the paid key is past the plan by design (keyPool.js): Firecrawl's own count of
+  // the plan's credits is not a reason to pass it over — Firecrawl itself answers for what it will bill.
+  if (!meta.paid && left !== null && left < 1 + MARGIN) {
     // Too little for the smallest call: spent, by Firecrawl's own count, until its period turns — its free index still answers (keyPool.js).
     throw new FirecrawlError(`Firecrawl says this key has ${left} credits left`, { status: 402, local: true });
   }
-  if (left !== null && left < n + MARGIN) {
+  if (!meta.paid && left !== null && left < n + MARGIN) {
     // Room for a smaller call, not this one: the next key for this call alone, this one left as it is.
     throw Object.assign(new FirecrawlError(`Firecrawl says this key has ${left} credits left`, { local: true }), { passOver: true });
   }

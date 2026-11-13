@@ -33,8 +33,9 @@ export { periodOf, freeTierOnly, e2bMonthCap } from './freeTierPeriod.js';
  *   - E2B, the cloud computer: a one-off credit, spread over the months before
  *     it lapses (`e2bMonthCap`). Its ceiling is worked out, not set.
  *   - Firecrawl (checked 2026-11-11, server/firecrawl.js): 1,000 credits a month on its
- *     Free plan, no card, a 402 at zero. Kept to 950 a key until Firecrawl says the
- *     key's plan (FIRECRAWL_FREE_CREDITS), shared as the owner chose: searches 60%
+ *     Free plan, 5,000 on Hobby, a 402 at zero. Kept to 950 a key until Firecrawl says the
+ *     key's plan, then to 95% of it (FIRECRAWL_FREE_CREDITS); past that only the owner's paid
+ *     key answers, for a charged call and under its monthly cap (keyPool.js). Shared as the owner chose: searches 60%
  *     (570 of one Free key; FIRECRAWL_SEARCH_FREE sets a figure outright), pages read 35%
  *     (FIRECRAWL_SCRAPE_FREE), site maps, crawls and code 5% (FIRECRAWL_MORE_FREE) — each
  *     share and the whole counted. Its Research and Government Indexes cost no credits

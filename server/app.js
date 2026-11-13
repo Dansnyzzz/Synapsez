@@ -94,7 +94,7 @@ import { mountSceneAssets } from './sceneAssets.js';
 import { checkDomain } from './domainCheck.js';
 import { afterTurn, titleShown } from './themes.js';
 import { freeTierReport, tavilyHint } from './freeTier.js';
-import { POOLED, isPooled, envKeyOf, keysFor, checkKey, markKey, paidKeyOf, setPaidKey, bumpKeysVersion, refreshLive } from './keyPool.js';
+import { POOLED, isPooled, envKeyOf, keysFor, checkKey, markKey, paidKeyOf, setPaidKey, bumpKeysVersion, refreshLive, freeAmountOf, readsPlan } from './keyPool.js';
 import { currentKeyId, encryptSecret, sha256 } from './crypto.js';
 import { serviceKeyContext } from './secretContexts.js';
 import { chainTurn, continueTurn } from './turnContinue.js';
@@ -2817,6 +2817,7 @@ export function createApp() {
    * four characters (`hint`) and nothing else.
    */
   const KEY_TRIES_PER_HOUR = 20;
+  const PAST_FREE = 'Billing past the free amount is what the paid key and its monthly cap are for.';
   admin.post(
     '/service-keys',
     requireOwner,
@@ -2839,6 +2840,10 @@ export function createApp() {
       if (held >= spec.maxKeys) {
         return res.status(400).json({ error: spec.maxKeys === 1 ? 'This service takes one key.' : `This service already has ${spec.maxKeys} keys.` });
       }
+      // A free ceiling is for the free amount: past it is billing, and that is what the paid key and its
+      // monthly cap are for (security review M1, 2026-11-13). The service's default, or 95% of the plan it reports.
+      // Refused before any call is made where the default is the limit, so a wrong ceiling costs no try.
+      if (ceiling !== null && !readsPlan(service) && ceiling > (await freeAmountOf(service, key))) return res.status(422).json({ error: PAST_FREE });
       // Each try is a call to the provider, so tries are counted before it is made.
       const counted = await store.hitRateLimit(`service-key:${req.user.id}`, KEY_TRIES_PER_HOUR, 60 * 60_000);
       if (!counted.allowed) {
@@ -2854,6 +2859,8 @@ export function createApp() {
           : `${spec.label} refused this key.`;
         return res.status(422).json({ error });
       }
+      // Past the plan a provider reports is only known once the key is read, so that check comes after it.
+      if (ceiling !== null && readsPlan(service) && ceiling > (await freeAmountOf(service, key))) return res.status(422).json({ error: PAST_FREE });
       const id = crypto.randomUUID();
       const hint = key.slice(-4);
       try {

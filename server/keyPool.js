@@ -163,15 +163,32 @@ const envLive = new Map();
 /** When each key's provider was last asked, so a failing one is not asked on every call. */
 const askedAt = new Map();
 
-/** Only pooled services, each a key id and a cap that is a number of zero or more, or none. */
+/**
+ * Only pooled services, each a key id and a cap that is a number of zero or more, or none. A
+ * choice of the environment's key keeps which key that was (`envId`), for `paidOf`.
+ */
 function cleanPaid(value) {
   const out = {};
   for (const [service, choice] of Object.entries(value && typeof value === 'object' ? value : {})) {
     if (!isPooled(service) || !choice?.keyId) continue;
     const cap = choice.capMonthly == null ? null : Number(choice.capMonthly);
-    out[service] = { keyId: String(choice.keyId), capMonthly: Number.isFinite(cap) && cap >= 0 ? cap : null };
+    out[service] = { keyId: String(choice.keyId), capMonthly: Number.isFinite(cap) && cap >= 0 ? cap : null, ...(choice.envId ? { envId: String(choice.envId) } : {}) };
   }
   return out;
+}
+
+/**
+ * A service's paid choice, if it still names the key it was made for. "The environment's key"
+ * is whichever key the environment holds, so the choice carries that key's identity: another
+ * key put in its place is a new key, and was never chosen to be billed (security review L5,
+ * 2026-11-13) — as its state and figure already inherit nothing (`envIdOf`). A choice saved
+ * before the identity was kept has none, and so stands for no key until the owner chooses again.
+ */
+function paidOf(service, snap) {
+  const choice = snap?.paid?.[service];
+  if (!choice) return null;
+  if (choice.keyId === 'env' && (!choice.envId || choice.envId !== envIdOf(service))) return null;
+  return choice;
 }
 
 async function load() {
@@ -570,7 +587,7 @@ async function roomsOf(call, keys, now) {
 
 /** The paid key, if it is healthy, not yet tried, and under its monthly cap for this call. */
 async function paidChoice(service, keys, need, now) {
-  const choice = (await current()).paid[service];
+  const choice = paidOf(service, await current());
   const key = choice && keys.find((one) => one.id === choice.keyId);
   if (!key) return null;
   if (choice.capMonthly == null) return key;
@@ -594,20 +611,22 @@ async function choose(service, need, { paid = false, exclude = new Set() } = {})
   const usable = (state) => state === 'ok' || (spentServes && state === 'exhausted');
   const keys = (await keysFor(call.service)).filter((key) => usable(key.state) && key.key && !exclude.has(key.id));
   const rooms = await roomsOf(call, keys, now);
+  // The paid key is only ever returned by the paid path below, which holds it to its monthly cap.
+  const paidId = paidOf(call.service, await current())?.keyId;
   let best = null;
   let fullest = null;
   for (const [at, key] of keys.entries()) {
     const { room, share } = rooms[at];
     if (room > 0 && room >= want) {
       if (!best || share > best.share) best = { key, share };
-    } else if (!fullest || share > fullest.share) fullest = { key, share };
+    } else if (key.id !== paidId && (!fullest || share > fullest.share)) fullest = { key, share };
   }
   if (best) return { key: best.key, paid: false };
   if (paid || lifted) {
     const key = await paidChoice(call.service, keys, want, now);
     if (key) return { key, paid: true };
   }
-  // With the ceilings lifted the deployment pays, as it did before several keys.
+  // With the ceilings lifted the deployment pays, as it did before several keys — on a free key, never past the paid key's cap (2026-11-13).
   return lifted && fullest ? { key: fullest.key, paid: false } : null;
 }
 
@@ -812,7 +831,7 @@ export async function withKey(service, need, run, { paid = false } = {}) {
 /** @returns {Promise<{ keyId: string, capMonthly: number|null } | null>} */
 export async function paidKeyOf(service) {
   const id = serviceOf(service);
-  const choice = id ? (await current()).paid[id] : null;
+  const choice = id ? paidOf(id, await current()) : null;
   return choice ? { keyId: choice.keyId, capMonthly: choice.capMonthly } : null;
 }
 
@@ -835,7 +854,7 @@ export async function setPaidKey(service, keyId, capMonthly = null) {
   const store = getStore();
   const saved = cleanPaid(await store.getSetting(PAID));
   if (keyId == null) delete saved[service];
-  else saved[service] = { keyId: String(keyId), capMonthly: cap };
+  else saved[service] = { keyId: String(keyId), capMonthly: cap, ...(String(keyId) === 'env' ? { envId: envIdOf(service) } : {}) };
   await store.setSetting(PAID, saved);
   if (snapshot) snapshot.paid = saved;
   await bump();
@@ -884,6 +903,34 @@ const READERS = Object.freeze({
     return { plan: FIRECRAWL_PLANS[plan] ?? null, used: Math.max(0, plan - left), limit: plan, resets: body.data.billingPeriodEnd || null, at: new Date().toISOString() };
   },
 });
+
+/** Whether a service's provider reports a key's plan (Tavily, Firecrawl), which its free amount then follows. */
+export const readsPlan = (service) => Boolean(windowOf(service)?.live) && Object.hasOwn(READERS, String(service));
+
+/**
+ * What a key may be counted up to as free, which an owner's ceiling for it may not pass (security
+ * review M1, 2026-11-13): 95% of the plan its provider reports (Tavily, Firecrawl — one ask, not
+ * kept), else the service's default for a key. A ceiling past it would spend the provider's
+ * paid amount as if it were free, outside the paid key's monthly cap and its own count.
+ *
+ * @param {string} service
+ * @param {string} key
+ * @returns {Promise<number>}
+ */
+export async function freeAmountOf(service, key) {
+  const window = windowOf(service);
+  if (!window || window.of !== service) return 0;
+  const read = readsPlan(service) ? READERS[service] : null;
+  if (read) {
+    try {
+      const live = await read(key);
+      if (live && Number(live.limit) > 0) return Math.floor(Number(live.limit) * LIVE_SHARE);
+    } catch {
+      /* not said: the default holds, which is the lower of the two in every plan we know */
+    }
+  }
+  return window.limit();
+}
 
 /**
  * One key's plan and use, from its provider (Tavily, Firecrawl; the others null) — asked at
@@ -994,6 +1041,16 @@ export async function checkKey(service, key) {
     log.warn('key pool: a key could not be checked', { service, hint: hintOf(text), error: String(err?.name || 'fetch failed') });
     return { ok: false, reason: 'unreachable' };
   }
+  // Exa's check path only ever answered a made-up key (a 401 INVALID_API_KEY); a real key, a free account's
+  // without Websets above all, may be answered 402, 403, 404 or 429 and was refused as a result (the owner's
+  // live report, 2026-11-13). Any answer below 500 but an authentication failure means Exa knew the key.
+  if (service === 'exa') {
+    if (res.status === 401 || body?.tag === 'INVALID_API_KEY') {
+      log.info('key pool: a key was refused by its service', { service, hint: hintOf(text), status: res.status });
+      return { ok: false, reason: 'refused' };
+    }
+    return res.status >= 500 ? { ok: false, reason: 'unreachable' } : { ok: true };
+  }
   const kind = res.ok ? null : classify(service, { status: res.status, body });
   if (kind === 'invalid') {
     log.info('key pool: a key was refused by its service', { service, hint: hintOf(text), status: res.status });
@@ -1017,7 +1074,7 @@ export async function checkKey(service, key) {
  */
 export async function poolReport(now = new Date()) {
   const snap = await current({ fresh: true });
-  const services = Object.keys(POOLED).map((service) => ({ service, all: compose(service, snap), choice: snap.paid[service] || null }));
+  const services = Object.keys(POOLED).map((service) => ({ service, all: compose(service, snap), choice: paidOf(service, snap) }));
   const paidIn = (service, choice) => keyBucket(service, choice.keyId, now, { paid: true }).bucket;
   const counts = await countsOf(
     services.map(({ service, all }) => [service, all]),

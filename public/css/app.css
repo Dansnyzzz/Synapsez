@@ -11788,6 +11788,7 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 .freepool__state.is-ok { color: var(--ok); }
 .freepool__state.is-invalid { color: var(--danger); }
 .freepool__state.is-exhausted, .freepool__state.is-cooling { color: var(--warn); }
+.freepool__error { grid-column: 1 / -1; margin: 0; color: var(--danger); font-size: 13px; }
 .freepool__acts { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
 .freepool__paid, .freepool__cap { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 .freepool__badge { padding: 1px 8px; border-radius: 999px; background: var(--ok-bg); color: var(--ok); font-size: 12px; }

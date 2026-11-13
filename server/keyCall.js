@@ -1,4 +1,4 @@
-import { withKey, classify } from './keyPool.js';
+import { withKey, classify, paidKeyOf } from './keyPool.js';
 import { take, spend, refund, exhaust } from './freeTier.js';
 
 /**
@@ -68,8 +68,12 @@ export async function throughPool(service, need, run, { paid = false } = {}) {
  * What one call costs, counted against the key that made it. On the owner's paid key
  * (`meta.paid`) it is held before the call — the hold is what keeps that key under its
  * monthly cap (keyPool.js `withKey`) — and the call is not made when the hold says no;
- * otherwise it is counted once it is known, as before. `settle(used)` counts what was used
- * past the hold and gives back what the hold did not use; a second settle does nothing.
+ * otherwise it is counted once it is known, as before — except a call on the key chosen as paid
+ * even when it is not charged: it is held too, so it is counted against the free ceiling before
+ * it is made and refused past it, where counting after would let concurrent calls spend into the
+ * overage with nothing under the cap to say so (owner's paid key, spec B plan task 1, 2026-11-13).
+ * `settle(used)` counts what was used past the hold and gives back what the hold did not use; a
+ * second settle does nothing.
  *
  * @param {string} service
  * @param {number} need
@@ -77,9 +81,10 @@ export async function throughPool(service, need, run, { paid = false } = {}) {
  */
 export async function chargeTo(service, need, { id, paid }) {
   const counted = { keyId: id, paid };
-  const held = paid ? Math.max(0, Math.ceil(Number(need) || 0)) : 0;
+  const onPaidKey = paid || (await paidKeyOf(service))?.keyId === id;
+  const held = onPaidKey ? Math.max(0, Math.ceil(Number(need) || 0)) : 0;
   if (held && !(await take(service, held, undefined, counted))) {
-    throw Object.assign(new Error(`${service}: the paid key's cap for this month is reached`), { skip: true });
+    throw Object.assign(new Error(`${service}: ${paid ? "the paid key's cap for this month is reached" : "the free allowance for this period is used"}`), { skip: true });
   }
   let settled = false;
   return {
