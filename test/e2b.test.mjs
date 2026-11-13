@@ -154,7 +154,12 @@ const e2b = await import('../server/e2b.js');
 const { shellFor } = await import('../server/sandbox.js');
 await store.createUser({ id: 'u-e2b', email: 'e2b@example.com', passwordHash: 'x', name: 'E', role: 'user' });
 // The credit checks above closed November; this suite's machines run in today's month.
-const resetCounters = async () => memory.query("DELETE FROM rate_limits WHERE bucket LIKE 'free:e2b:%'");
+// A month's account share is worked out once and held (server/freeShares.js), so a section that changes the pool starts it again.
+const resetCounters = async () => {
+  await memory.query("DELETE FROM settings WHERE key LIKE 'free_shares:%'");
+  (await import('../server/freeShares.js')).__testing.forget();
+  return memory.query("DELETE FROM rate_limits WHERE bucket LIKE 'free:e2b:%'");
+};
 
 section('a command on E2B runs as root, and drops to the account itself (HAR-001)');
 {
@@ -282,12 +287,18 @@ section("one machine per account, found again — and paid for before it runs");
 
     // HAR-007: one account keeping its machine awake could spend the whole month's pool for everybody.
     await store.createUser({ id: 'u-e2b-greedy', email: 'greedy@example.com', passwordHash: 'x', name: 'G', role: 'user' }).catch(() => {});
+    const freshShares = async () => {
+      await memory.query("DELETE FROM settings WHERE key LIKE 'free_shares:%'");
+      (await import('../server/freeShares.js')).__testing.forget();
+    };
     process.env.E2B_ACCOUNT_SHARE = '0.001';
+    await freshShares();
     try {
       const greedy = await e2b.e2bMachineFor('u-e2b-greedy', 'synz-greedy').then(() => '', (e) => e.name);
       check('an account past its share of the month is not given more of the pool (HAR-007)', greedy === 'E2BOutOfCredit', greedy || 'started');
     } finally {
       delete process.env.E2B_ACCOUNT_SHARE;
+      await freshShares();
     }
     const fair = await e2b.e2bMachineFor('u-e2b-greedy', 'synz-greedy').then((m) => m.provider, (e) => e.name);
     check('  while within its share it starts as before', fair === 'e2b', fair);
@@ -793,31 +804,28 @@ section('a checkpoint');
   e2b.__testing.useSdk(null);
 }
 
-section('the credit, split evenly among whoever is using it (owner, 2026-11-05)');
+section("the credit, a month's share for each account, worked out from the real capacity (owner, 2026-11-13)");
 {
-  const share = (over) => tiers.e2bDayShare({ monthLeft: 3000, spentToday: 0, people: 0, usedToday: 0, daysLeft: 30, floor: 15, ...over });
-  check("alone, an account gets all of today's part of what is left", share({}) === 100, String(share({})));
-  check('with one other, half', share({ people: 1 }) === 50, String(share({ people: 1 })));
-  check('counting itself once it has started', share({ people: 2, usedToday: 10 }) === 40, String(share({ people: 2, usedToday: 10 })));
-  check('what was spent today is still part of today', share({ monthLeft: 2900, spentToday: 100, people: 2, usedToday: 50 }) === 0, String(share({ monthLeft: 2900, spentToday: 100, people: 2, usedToday: 50 })));
-  check('a quiet start leaves more for later days', share({ monthLeft: 3000, daysLeft: 10 }) === 300);
-  check('never below a few minutes of machine, however many are using it', share({ people: 1000 }) === 15);
-  check('and past that, nothing', share({ people: 1000, usedToday: 15 }) === 0);
-
   await resetCounters();
   await memory.query("DELETE FROM rate_limits WHERE bucket LIKE 'free:e2b:%'");
+  await memory.query("DELETE FROM settings WHERE key LIKE 'free_shares:%'");
+  (await import('../server/freeShares.js')).__testing.forget();
   const now = new Date();
   await store.createUser({ id: 'u-share', email: 'share@example.com', passwordHash: 'x', name: 'S', role: 'user' });
+  const limit = (await tiers.allowance('e2b', now)).limit;
   const alone = await tiers.e2bAccountAllowance('u-e2b', now);
+  check('an account may use its whole share on day one — no daily split', alone.left > 0 && alone.left <= Math.floor(limit * 0.34) && alone.left >= 133, `${alone.left} of ${limit}`);
   await tiers.spend('e2b', 10, now);
   await tiers.e2bAccountSpend('u-e2b', 10, now);
-  const other = await tiers.e2bAccountAllowance('u-share', now);
-  check('a second account counts the first, and then itself', other.left <= Math.ceil(alone.left / 2) + 1 && other.left > 0, `${alone.left} → ${other.left}`);
-  const peopleToday = () => store.readCounter(`free:e2b:day:${now.toISOString().slice(0, 10)}:people`);
+  const after = await tiers.e2bAccountAllowance('u-e2b', now);
+  check('what it spends comes off its share', after.left === alone.left - 10, `${alone.left} → ${after.left}`);
+  check("another account's share is its own, the same size", (await tiers.e2bAccountAllowance('u-share', now)).left === alone.left);
   await tiers.e2bAccountSpend('u-e2b', -10, now);
-  check('a start given back was nobody\'s first of the day', (await peopleToday()) === 0, String(await peopleToday()));
-  await tiers.e2bAccountSpend('u-e2b', 10, now);
-  check('giving back does not count somebody twice', (await peopleToday()) === 1, String(await peopleToday()));
+  check('a start given back is given back', (await tiers.e2bAccountAllowance('u-e2b', now)).left === alone.left);
+  check('no per-day buckets are written any more', (await memory.query("SELECT 1 FROM rate_limits WHERE bucket LIKE 'free:e2b:day:%'")).rows.length === 0);
+  await tiers.e2bAccountSpend('u-share', alone.left, now);
+  check('past its share, none is left', (await tiers.e2bAccountAllowance('u-share', now)).left === 0);
+  await tiers.e2bAccountSpend('u-share', -alone.left, now);
 }
 
 /*

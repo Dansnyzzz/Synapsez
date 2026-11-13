@@ -3455,7 +3455,7 @@ async function sitePagesTool({ op = 'map', url, search: term, limit, include_pat
   }
   await assertPublic(parsed);
   if (!firecrawlReady()) return 'Listing and crawling a site needs Firecrawl, which this deployment does not have. Use web_fetch on the pages instead.';
-  if (!(await mayMeter(userId))) return "This account's share of today's metered web calls is used. Use web_fetch on the pages instead.";
+  if (!(await mayMeter(userId))) return "This account's share of this month's metered web calls is used. Use web_fetch on the pages instead.";
   try {
     if (op === 'map') {
       const links = await firecrawlMap(parsed.href, { search: term, limit, signal });

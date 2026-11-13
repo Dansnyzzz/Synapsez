@@ -1,6 +1,7 @@
 import { getStore } from './store/index.js';
 import { log } from './util/trace.js';
 import { periodOf, freeTierOnly, num, numIn, noDatabase } from './freeTierPeriod.js';
+import { monthShares, searchShareOf, machineShareOf, searchBucket, machineBucket, noteArrival } from './freeShares.js';
 import { poolWindow, capacityOf, poolLimit, keyBucket, keyEntry, keyUsage, ceilingOf, countPaid, noteUse, creditBucket, paidKeyOf, poolReport } from './keyPool.js';
 
 // Moved to freeTierPeriod.js so keyPool.js can read them without importing this file; still exported here.
@@ -33,8 +34,8 @@ export { periodOf, freeTierOnly, e2bMonthCap } from './freeTierPeriod.js';
  *   - E2B, the cloud computer: a one-off credit, spread over the months before
  *     it lapses (`e2bMonthCap`). Its ceiling is worked out, not set.
  *   - Firecrawl (checked 2026-11-11, server/firecrawl.js): 1,000 credits a month on its
- *     Free plan, 5,000 on Hobby, a 402 at zero. Kept to 950 a key until Firecrawl says the
- *     key's plan, then to 95% of it (FIRECRAWL_FREE_CREDITS); past that only the owner's paid
+ *     Free plan, 5,000 on Hobby, a 402 at zero. Kept to 950 a key (FIRECRAWL_FREE_CREDITS) until Firecrawl says the
+ *     key's plan, then to 95% of it; past that only the owner's paid
  *     key answers, for a charged call and under its monthly cap (keyPool.js). Shared as the owner chose: searches 60%
  *     (570 of one Free key; FIRECRAWL_SEARCH_FREE sets a figure outright), pages read 35%
  *     (FIRECRAWL_SCRAPE_FREE), site maps, crawls and code 5% (FIRECRAWL_MORE_FREE) — each
@@ -45,9 +46,10 @@ export { periodOf, freeTierOnly, e2bMonthCap } from './freeTierPeriod.js';
  * BRAVE_FREE_REQUESTS, GOOGLE_FREE_DAILY, STACKEXCHANGE_FREE_DAILY), and
  * FREE_TIER_ONLY=false lifts them all, for a deployment that pays.
  *
- * And a fair share: an account may make FREE_TIER_USER_DAILY metered searches
- * a day (30 by default). Past that its searches go to the free engines, so one
- * person cannot spend everyone's month in an afternoon.
+ * And a fair share, a month's (owner, 2026-11-13): each account's metered searches are held
+ * to a share worked out on the 1st from the keys' real capacity and the people using them
+ * (server/freeShares.js). Past it its searches go to the free engines, so one person cannot
+ * spend everyone's month in an afternoon. FREE_TIER_USER_DAILY is no longer read.
  *
  * Market data (checked 2026-11-10, docs/research/2026-11-10-finance-sources.md §4),
  * counted by server/finance/http.js before each call:
@@ -74,8 +76,8 @@ export { periodOf, freeTierOnly, e2bMonthCap } from './freeTierPeriod.js';
  * shares of the sum, and its free indexes 950 calls a day for each key. A key's
  * calls past its free ceiling on the owner's paid key (`{ paid: true }`) are counted
  * apart as well (`paid:<service>@<keyId>:<month>`), up to that key's monthly cap.
- * The fair shares (`mayMeter`, `e2bAccountAllowance`) stay per person; only their
- * pot, the service's sum, grows.
+ * The fair shares (`mayMeter`, `e2bAccountAllowance`) stay per person; their pot,
+ * the service's sum, grows, and the share is worked out from it (freeShares.js).
  */
 
 /** The whole credit's count outlives any month; it only has to outlast the credit. */
@@ -275,75 +277,23 @@ export async function refund(service, amount, now = new Date(), { keyId = 'env',
 }
 
 /**
- * One account's share of E2B's month (HAR-007). The credit is one pool for the
- * whole deployment, and the daily action ceiling still let one account keep its
- * machine awake about ten hours a day — the month gone in under a week, for
- * everybody. Past its share an account's work goes to the Vercel stand-in.
- * E2B_ACCOUNT_SHARE, a fraction of the month (default 0.34).
- *
- * That is the ceiling over a month. Over a day the credit is split evenly among
- * whoever is using it (owner, 2026-11-05: "each user shares the free resources
- * evenly"): what is left of the month, by the days left in it, is today's, and each
- * account that has used a machine today, and this one, gets an equal part. Nobody
- * using it leaves more for tomorrow; more people using it means less each, down to
- * `E2B_ACCOUNT_DAY_FLOOR` thousandths of a dollar, which is a few minutes of machine
- * and what makes it worth starting one at all.
+ * The largest part of E2B's month one account may use (HAR-007; E2B_ACCOUNT_SHARE, a fraction,
+ * default 0.34). The credit is one pool for the whole deployment, so an account's share is
+ * worked out from it (server/freeShares.js) and held for the month — a month's, usable on any
+ * day (owner, 2026-11-13: "limit users by the month, not the day"; the even daily split and
+ * its floor are gone). Past its share an account's work goes to the Vercel stand-in.
  */
 export const e2bAccountShare = (env = process.env) => {
   const n = Number(env.E2B_ACCOUNT_SHARE);
   return n > 0 && n <= 1 ? n : 0.34;
 };
 
-const accountBucketOf = (userId, now) => {
-  const { bucket, ends } = bucketOf('e2b', now);
-  return { bucket: `${bucket}:user:${userId}`, ends };
-};
-
-const dayKeyOf = (now) => now.toISOString().slice(0, 10);
-const dayBuckets = (userId, now) => {
-  const day = dayKeyOf(now);
-  return {
-    mine: `free:e2b:day:${day}:user:${userId}`,
-    total: `free:e2b:day:${day}`,
-    people: `free:e2b:day:${day}:people`,
-    // A day after it ends: a row a day old costs nothing, and a clock a little off costs nothing either.
-    ends: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 2)),
-  };
-};
-/** Days left in this month, today counted. */
-const daysLeftIn = (now) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate() - now.getUTCDate() + 1;
-
-/**
- * What this account may spend today, all else being equal: see above. Exported so
- * the suite can hold it to the numbers.
- *
- * @param {{ monthLeft: number, spentToday: number, people: number, usedToday: number, daysLeft: number, floor: number }} day
- */
-export function e2bDayShare({ monthLeft, spentToday, people, usedToday, daysLeft, floor }) {
-  const pot = Math.max(0, monthLeft + spentToday) / Math.max(1, daysLeft);
-  const sharing = Math.max(1, people + (usedToday > 0 ? 0 : 1));
-  return Math.max(0, Math.max(floor, Math.floor(pot / sharing)) - usedToday);
-}
-
-/** What is left of this account's share of E2B, of the month and of today; unbounded with the ceilings off or the count unreadable. */
+/** What is left of this account's share of E2B's month; unbounded with the ceilings off or the count unreadable. */
 export async function e2bAccountAllowance(userId, now = new Date()) {
   if (!userId || !freeTierOnly()) return { left: Infinity };
-  const { limit, left: monthLeft } = await allowance('e2b', now);
-  if (!Number.isFinite(limit)) return { left: Infinity };
   try {
-    const store = getStore();
-    const used = await store.readCounter(accountBucketOf(userId, now).bucket);
-    const ofMonth = Math.max(0, Math.floor(limit * e2bAccountShare()) - used);
-    const { mine, total, people } = dayBuckets(userId, now);
-    const ofDay = e2bDayShare({
-      monthLeft,
-      spentToday: await store.readCounter(total),
-      people: await store.readCounter(people),
-      usedToday: await store.readCounter(mine),
-      daysLeft: daysLeftIn(now),
-      floor: num('E2B_ACCOUNT_DAY_FLOOR', 15),
-    });
-    return { left: Math.min(ofMonth, ofDay) };
+    const { share, used } = await machineShareOf(userId, now);
+    return { left: Number.isFinite(share) ? Math.max(0, share - used) : Infinity };
   } catch {
     return { left: Infinity };
   }
@@ -353,16 +303,10 @@ export async function e2bAccountAllowance(userId, now = new Date()) {
 export async function e2bAccountSpend(userId, amount, now = new Date()) {
   if (!userId || !Number(amount)) return;
   try {
-    const { bucket, ends } = accountBucketOf(userId, now);
-    const store = getStore();
-    await store.addToCounter(bucket, amount, ends);
-    const day = dayBuckets(userId, now);
-    const mine = await store.addToCounter(day.mine, amount, day.ends);
-    await store.addToCounter(day.total, amount, day.ends);
-    // Their first of the day: one more person to share it among.
-    if (amount > 0 && mine === Math.round(amount)) await store.addToCounter(day.people, 1, day.ends);
-    // A start that failed and was given back was nobody's first of the day after all.
-    if (amount < 0 && mine <= 0) await store.addToCounter(day.people, -1, day.ends);
+    const { bucket, ends } = machineBucket(userId, now);
+    const total = await getStore().addToCounter(bucket, amount, ends);
+    // Its first of the month: the day it started fixes the share for the days that are left.
+    if (amount > 0 && total === Math.round(amount)) await noteArrival('machine', userId, now);
   } catch (err) {
     if (!/not ready yet/.test(String(err?.message))) log.warn('free tier: account share not counted', { error: String(err?.message || err).slice(0, 160) });
   }
@@ -389,23 +333,28 @@ export async function exhaust(service, now = new Date(), { keyId = 'env' } = {})
   }
 }
 
-const userBucket = (userId, now) => `free:user:${userId}:${periodOf('day', now).key}`;
-
-/** Whether this account may still use a metered engine today — its fair share of the pooled allowances. */
+/**
+ * Whether this account may still use a metered engine this month — its share of the pooled
+ * allowances (server/freeShares.js). False for everyone once the pool itself is spent; those
+ * calls are unpaid by construction and never reach the paid key (spec A).
+ */
 export async function mayMeter(userId, now = new Date()) {
   if (!freeTierOnly() || !userId) return true;
   try {
-    return (await getStore().readCounter(userBucket(userId, now))) < num('FREE_TIER_USER_DAILY', 30);
+    const { share, used, dry } = await searchShareOf(userId, now);
+    return !dry && used < share;
   } catch {
     return true;
   }
 }
 
-/** One metered search counted against this account's share for today. */
+/** One metered search counted against this account's share for the month. */
 export async function countMetered(userId, now = new Date()) {
   if (!userId) return;
   try {
-    await getStore().addToCounter(userBucket(userId, now), 1, periodOf('day', now).ends);
+    const { bucket, ends } = searchBucket(userId, now);
+    // Its first of the month: the day it started fixes the share for the days that are left.
+    if ((await getStore().addToCounter(bucket, 1, ends)) === 1) await noteArrival('search', userId, now);
   } catch {
     /* a share that cannot be counted is not worth failing a search over */
   }
@@ -455,7 +404,7 @@ export async function freeTierReport(now = new Date()) {
     if (!noDatabase(err)) log.warn('free tier: the keys could not be listed', { error: String(err?.message || err).slice(0, 160) });
     return [];
   });
-  return { enforced: freeTierOnly(), userDaily: num('FREE_TIER_USER_DAILY', 30), services: rows, pool };
+  return { enforced: freeTierOnly(), shares: await monthShares({ now }).catch(() => null), services: rows, pool };
 }
 
 /** The setting holding the months a pooled service ran past four fifths of its summed capacity. */

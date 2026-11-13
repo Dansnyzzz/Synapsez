@@ -3,6 +3,7 @@ import { escapeHtml } from './markdown.js';
 import { rovingKeys } from './roving.js';
 import { weekDays, rowsFor, callsByDay, heatmap, heatmapBy, shareBy, pace, busiest, usualDay, standing, knownLimits, overviewLimits, decisiveLimits, tightest, project } from './usage-math.js';
 import { geminiDetail, orcaDetail } from './usage-detail.js';
+import { machineTime, countOf } from './free-share.js';
 
 /**
  * Settings → Usage, after Claude's (owner, 2026-10-31): a page per provider the
@@ -463,6 +464,28 @@ export function createUsagePanel(host, deps) {
     return parts.join('');
   }
 
+  /**
+   * This month's free share (server/freeShares.js, owner 2026-11-13): what the account has used
+   * of it, when it starts again, and one plain sentence on how it was worked out. On the
+   * overview only; absent when the ceilings are off or the server could not work it out.
+   */
+  function freeShareCard() {
+    const share = view.scope === 'all' ? view.report.freeShare : null;
+    if (!share || !share.enforced) return '';
+    const date = when(new Date(share.endsAt), { day: 'numeric', month: 'long', timeZone: 'UTC' });
+    const lines = [
+      `<p class="usage__strong">${escapeHtml(t('usage.share.searches', { used: countOf(share.searches.used), share: countOf(share.searches.share) }))}</p>`,
+    ];
+    if (share.machine.shareMills != null) lines.push(`<p class="usage__strong">${escapeHtml(t('usage.share.machine', { used: machineTime(share.machine.usedMills), share: machineTime(share.machine.shareMills) }))}</p>`);
+    lines.push(`<p class="usage__muted">${escapeHtml(t('usage.share.starts', { date }))}</p>`);
+    if (share.dry) lines.push(`<p class="usage__note">${escapeHtml(t('usage.share.dry', { date }))}</p>`);
+    if (share.startedOn > 1) lines.push(`<p class="usage__muted">${escapeHtml(t('usage.share.late', { day: String(share.startedOn), days: String(share.daysInMonth), left: String(share.daysInMonth - share.startedOn + 1) }))}</p>`);
+    if (share.capacity?.searches != null) {
+      lines.push(`<p class="usage__muted">${escapeHtml(t('usage.share.how', { capacity: countOf(share.capacity.searches), reserve: pct(share.reserve), people: countOf(share.people.searches), min: String(share.bounds.searchMin), max: String(share.bounds.searchMax) }))}</p>`);
+    }
+    return `<section class="usage__credit" data-free-share><h4>${escapeHtml(t('usage.share.title'))}</h4>${lines.join('')}</section>`;
+  }
+
   function paint() {
     if (view.error) {
       host.innerHTML = `<p class="usage__note">${escapeHtml(view.error)}</p><button type="button" class="btn btn--ghost btn--small" data-refresh>${escapeHtml(t('usage.retry'))}</button>`;
@@ -493,6 +516,7 @@ export function createUsagePanel(host, deps) {
         ${said ? `<p class="usage__muted usage__insight">${escapeHtml(said)}</p>` : ''}
         ${head.tone ? moreOf(head.limit) : ''}
       </div>
+      ${freeShareCard()}
       <div class="usage__limits">${known.map(limitBar).join('')}${notes}${known.length || notes ? '' : `<p class="usage__muted">${escapeHtml(t('usage.noLimitsKnown'))}</p>`}</div>
       ${view.scope === 'google' ? geminiDetail(view.report, helpers) : view.scope === 'orcarouter' ? orcaDetail(view.report, helpers) : ''}
       <section><h4>${escapeHtml(t('usage.resetsTitle'))}</h4>${resets(coming)}</section>

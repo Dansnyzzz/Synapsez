@@ -370,6 +370,10 @@ try {
     };
     const more = [];
     try {
+      // The month's account share is worked out once and held (server/freeShares.js); the first search of a month pays for it, so it is done before counting.
+      await (await import('../server/freeShares.js')).monthShares();
+      // And the account's first metered search of the month writes the day it started: one more read, once.
+      await (await import('../server/freeTier.js')).countMetered('u-reads');
       const two = await readsFor('the counts read with two Firecrawl keys');
       for (const key of ['fc-third-key-8888', 'fc-fourth-key-9999', 'fc-fifth-key-0000']) more.push(await addKey('firecrawl', key));
       const five = (await pool.keysFor('firecrawl', { fresh: true })).length;

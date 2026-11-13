@@ -6151,6 +6151,25 @@ export function createPgStore(connectionString) {
       );
       return Number(rows[0]?.count || 0);
     },
+    /**
+     * How many different accounts have a live, non-empty counter among the buckets that
+     * match any of these `LIKE` patterns — `free:user:<id>:<month>` and
+     * `free:e2b:<month>:user:<id>`. The id is what is left once the fixed ends are cut off,
+     * so the same account in two months counts once (server/freeShares.js: "people").
+     *
+     * @param {string[]} patterns
+     * @returns {Promise<number>}
+     */
+    async countAccountsByBucket(patterns) {
+      const likes = (Array.isArray(patterns) ? patterns : []).map(String).filter(Boolean);
+      if (!likes.length) return 0;
+      const rows = await q(
+        `SELECT COUNT(DISTINCT regexp_replace(bucket, '^free:user:|^free:e2b:[0-9]{4}-[0-9]{2}:user:|:[0-9]{4}-[0-9]{2}$', '', 'g')) AS n
+           FROM rate_limits WHERE bucket LIKE ANY($1::text[]) AND count > 0 AND expires_at > NOW()`,
+        [likes],
+      );
+      return Number(rows[0]?.n || 0);
+    },
     /** Forget a bucket — called on success, so one good login clears the tally. */
     async clearRateLimit(bucket) {
       await q('DELETE FROM rate_limits WHERE bucket = $1', [bucket]);

@@ -130,6 +130,12 @@ section('Usage: the Overview adds up, and warns only about what is being spent')
     },
     free: { orcarouter: { used: 120, limit: 800, tier: 'high', tiers: [{ minPaidUsd: 0, rpm: 10, rpd: 50 }, { minPaidUsd: 20, rpm: 20, rpd: 800 }], models: [] } },
     inUse: { openrouter: inUse },
+    // This month's free share (server/freeShares.js): 120 of 400 searches, 35 min of 2 h 10 min of the machine.
+    freeShare: {
+      month: '2026-11', endsAt: '2026-12-01T00:00:00.000Z', enforced: true, dry: false, reserve: 0.2, daysInMonth: 30, startedOn: 1,
+      bounds: { searchMin: 30, searchMax: 900 }, capacity: { searches: 10000, machineMills: 7000 }, people: { searches: 20, machines: 3 },
+      searches: { used: 120, share: 400 }, machine: { usedMills: 78, shareMills: 288 },
+    },
     sharedKey: {},
   });
   let answer = report();
@@ -160,6 +166,9 @@ section('Usage: the Overview adds up, and warns only about what is being spent')
   check('  and spending limits one line too', overview.bars.filter((b) => /Spending limit/.test(b)).length === 1, overview.bars.join(' | '));
   check('no warning at the top: the screenshot said "used all your free requests"', !/is-(out|close)/.test(overview.headTone) && !/used all/.test(overview.head), overview.head);
   check('  and none above the composer', overview.banner === false, overview.said);
+  check("the Overview shows this month's free share: X of N, the machine, when it starts again, and how it was worked out",
+    /This month's free share/.test(overview.money) && /Searches: 120 of 400/.test(overview.money) && /Cloud computer: 35 min of 2 h 10 min/.test(overview.money) && /(December 1|1 December)/.test(overview.money) && /capacity this month \(10,000 searches\), less 20% kept for people who join later, shared by 20 people/.test(overview.money) && /never fewer than 30 or more than 900/.test(overview.money),
+    overview.money.slice(0, 400));
   check('the money is one line for the provider too', /OrcaRouter.*Balance OrcaRouter reports: \$6\.00/.test(overview.money) && !/Key 1.*Spent/.test(overview.money));
 
   await page.click('#usage-panel [data-scope="openrouter"]');

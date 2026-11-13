@@ -655,8 +655,10 @@ not there, the model can install, and what an account installs is put back on a 
   `expose_port` gives a public address, `checkpoint` saves and restores (three at most), output streams
   to the row while it runs, and an exit code is explained. A file it was asked to deliver and could not
   find keeps the command's output rather than losing it.
-- **Fair shares.** The month's credit is split evenly among the accounts active today, with a floor, so
-  one person's long job does not spend everybody's (`e2bAccountAllowance`, `server/freeTier.js`).
+- **Fair shares.** Each account's share of the month's credit is worked out on the 1st from the credit
+  and the people using it, held for the month and usable on any day, so one person's long job does not
+  spend everybody's (`e2bAccountAllowance`, `server/freeTier.js`; `server/freeShares.js`).
+  `E2B_ACCOUNT_DAY_FLOOR` and the even daily split were replaced in 1.30.0.
 
 Limits that are the machine's, not a choice: 2 GiB of memory plus a 1 GiB swap file, 10 GiB of disk. What
 does not fit is what the model should say so about, or do with a tool outside the machine.
@@ -1299,8 +1301,15 @@ aside until it resets while DuckDuckGo and Stack Exchange carry on.
 - **Adaptive inside the month:** with under a quarter of Exa's month left, the deep types give way to
   `auto` (about half the price); with too little for the search, `lite`; with nothing, Exa stands aside.
   Tavily drops to basic with one credit left. A 402 (or Tavily's 432/433) is believed for the period.
-- **A fair share:** an account may make `FREE_TIER_USER_DAILY` metered searches a day (30); past it, its
-  searches use the free engines, so one person cannot spend everyone's month in an afternoon.
+- **A fair share, a month's** (owner, 2026-11-13: "limit users by the month, not the day"): on the first call of
+  a UTC month each account's share of metered searches is worked out from what the free keys can really do
+  (Exa at 15 thousandths of a dollar a search, Tavily and Brave 1, Firecrawl's search share 2 credits), less a
+  reserve of 20% kept for people who start later, divided by the people who used them this month or last
+  (never fewer than 10 counted), and kept between 30 and 900. It is stored (setting `free_shares:<month>`), raised
+  if a key is added, never lowered, shown in Settings → Usage with how it was worked out, and the cloud
+  computer's share is worked out the same way (at least 133 thousandths of a dollar, at most `E2B_ACCOUNT_SHARE`).
+  An account that first searches on day *d* gets the days that are left, from the reserve. Past its share, its
+  searches use the free engines. `FREE_TIER_USER_DAILY` was replaced in 1.30.0 and is no longer read.
 - **The same search, asked again within ten minutes,** is answered from memory and spends nothing.
 - **Administrators see each service's use** this period in Settings → People → *Free allowances* (in the
   Administration group).
@@ -2077,7 +2086,9 @@ step, with the optional certificate and how to bring data over from another data
 | `STACKEXCHANGE_KEY` | recommended | A free Stack Apps key for `code_context`: 10,000 Stack Exchange requests a day instead of 300 — a quota of the server's address, shared by every account. |
 | `KEY_CHECKS` | optional | On by default: a key pasted in Settings → Providers is checked with its provider before it is kept (and OpenRouter says whose account it is, and whether it has paid). `off` skips the check — for test suites that save made-up keys. |
 | `FREE_TIER_ONLY` | optional | On by default: every metered search service stops at its free allowance (see "Free tiers"). `false` counts them but stops none, for a deployment that pays. |
-| `FREE_TIER_USER_DAILY` | optional | Metered searches one account may make a day (default `30`); past it, its searches use the free engines. |
+| `FREE_TIER_USER_MONTHLY_MIN` / `FREE_TIER_USER_MONTHLY_MAX` | optional | The bounds of an account's worked-out monthly share of metered searches (defaults `30` and `900`). Replaces `FREE_TIER_USER_DAILY` (1.30.0), which is no longer read. |
+| `FREE_SHARE_RESERVE` | optional | The part of the free keys' capacity kept back on the 1st for people who start later in the month (default `0.2`). |
+| `E2B_ACCOUNT_MIN_MILLS` | optional | The least cloud-computer time an account's share can be worked down to, in thousandths of a dollar (default `133`, about an hour). Replaces `E2B_ACCOUNT_DAY_FLOOR` (1.30.0). |
 | `QUALITY_GATE_ROUNDS` | optional | How many times a finished answer citing an address no source holds is sent back to correct that sentence, before the link is dropped (1–3, default `2`). Each round is one short call, made only while something is still flagged. See "The quality gate". |
 | `PROVIDER_REQUEST_BUDGET_MS` | optional | How long one call to a model may take, every key and retry together (default `240000`, under the 300 s a Vercel function lives). Waits and first-word timeouts are cut to what is left, and a stumble's Retry-After is waited a minute at most, so a provider that will not answer ends the turn with a reason rather than a cut-off stream. This budget starts again with each call, so a turn also has a deadline, 270 s after it began on this function, that bounds what a call waits for — a stumble's retry, a rate-limited key's rest, the wait for a first word — on the turn's steps and when it folds the conversation. It does not cut a reply that is already streaming, and a call still gets 20 s to start (the least worth trying), so a long turn can outlive the function; a turn cut off that way is picked up again (`server/resume.js`) rather than ended early.
 | `EXA_FREE_MILLS`, `TAVILY_FREE_CREDITS`, `BRAVE_FREE_REQUESTS`, `GOOGLE_FREE_DAILY`, `STACKEXCHANGE_FREE_DAILY` | optional | Exa's, Tavily's and Brave's are each key's default ceiling — a service's allowance is the sum over its keys, and a ceiling the owner sets on a key, or Tavily's own report of the key's plan, comes first; Google's and Stack Exchange's are the service's ceiling. Set one if its free tier is not the default: Exa in thousandths of a dollar a month (9500), Tavily credits a month (950), Brave requests a month (950), Google grounded searches a day on the deployment's Gemini key (450), Stack Exchange requests a day (280, or 9500 with a key). |
@@ -2160,7 +2171,7 @@ assuming a fresh one, and that the serverless-only branches behave.
 | `E2B_API_KEY` | Runs each account's cloud computer on E2B first (`server/e2b.js`), with the Vercel Sandbox standing in when E2B cannot: no key, this month's share of the credit spent, all twenty E2B machines running, or E2B not answering. An E2B machine pauses after ten idle minutes, keeping its memory and disk, and is not billed while paused. Every command is sent as root and drops to the account with `setpriv`; none reads a login file, the account's or root's. When the app first meets a machine it closes what E2B leaves open: `/usr/local` becomes root's alone and the account loses its `sudo`, so root is only `as_root`, which asks first. Use a Hobby key with no card on the team, so a spent credit is a refusal and never a bill. |
 | `E2B_TEMPLATE` | The E2B template machines are made from. Leave it unset: the default is `synapsez-computer`, built by `npm run e2b:template` (2 vCPU and 2 GiB, or `E2B_TEMPLATE_CPUS` / `E2B_TEMPLATE_MEMORY_MB`). A machine's memory is fixed when it is made, so this decides everything the cloud browser can do. If the template is not found, machines fall back to `base` for ten minutes and say so. Set this only to use a template of your own. |
 | `E2B_CREDIT_MILLS` / `E2B_CREDIT_EXPIRES` / `E2B_CREDIT_LASTING_MILLS` | The E2B credit, in thousandths of a dollar: the part that lapses (default `100000`), the day it lapses (default `2027-12-01`), and the part that never does (default `5000`). A month may spend what was left of the lapsing part when it began, divided by the months left before it lapses, so a quiet month passes its share on and none of it lapses unused; then the lasting part. Each is taken at 97%. The use and this month's ceiling are in Settings → People → Free allowances (in the Administration group). |
-| `E2B_ACCOUNT_SHARE` | The most of the month's E2B credit one account's machine may use (a fraction, default `0.34`). Past it, that account's cloud computer runs on the Vercel stand-in, so one busy account cannot spend the month for everybody. |
+| `E2B_ACCOUNT_SHARE` | The most of the month's E2B credit one account's machine may use (a fraction, default `0.34`; its share is worked out from the people using it, between `E2B_ACCOUNT_MIN_MILLS` and this). Past it, that account's cloud computer runs on the Vercel stand-in, so one busy account cannot spend the month for everybody. |
 | `CLOUD_ACTIONS_PER_DAY` / `CLOUD_ACTIONS_TOTAL_PER_DAY` | Cloud browser and sandbox actions a day, per account (default `60`) and in all (default `400`) — sized to Hobby's CPU allowance. Raise them on a paid plan. |
 | `CLOUD_BROWSER_BLOCK_TRACKERS` | `0` lets the cloud browser load the well-known analytics, advertising and session-recording hosts it otherwise cannot resolve (on by default; the list is `TRACKERS` in `server/cloudBrowser/service.mjs`). |
 | `CLOUD_CHECKS_PER_DAY` / `CLOUD_CHECKS_TOTAL_PER_DAY` | New stdio MCP servers checked on a scratch machine a day, per account (default `5`) and in all (default `30`). A check installs and starts a package on a machine of its own, so it costs far more than one action. A command somebody has already added needs no check. |

@@ -125,7 +125,7 @@ const standAside = (why) => Object.assign(new Error(why), { skip: true });
 
 /** Whether a metered engine may run for this search, its allowance and this account's share both counted. */
 async function metered(service, ask, cost) {
-  if (!ask.mayMeter) throw standAside(`${service}: this account's share of today's searches is used`);
+  if (!ask.mayMeter) throw standAside(`${service}: this account's share of this month's searches is used`);
   const room = await allowance(service);
   if (room.left < cost) throw standAside(`${service}: the free allowance for this period is used`);
   ask.drew = true;

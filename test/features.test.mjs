@@ -2415,7 +2415,7 @@ section('free tiers: one allowance per service for the whole deployment, a fair 
   const tiers = await import('../server/freeTier.js');
   const { search, searchPlan, clearSearchCache } = await import('../server/search.js');
   const saved = { ...process.env };
-  for (const name of ['EXA_API_KEY', 'TAVILY_API_KEY', 'BRAVE_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'FREE_TIER_ONLY', 'FREE_TIER_USER_DAILY', 'STACKEXCHANGE_KEY']) delete process.env[name];
+  for (const name of ['EXA_API_KEY', 'TAVILY_API_KEY', 'BRAVE_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'FREE_TIER_ONLY', 'FREE_TIER_USER_DAILY', 'FREE_TIER_USER_MONTHLY_MIN', 'FREE_TIER_USER_MONTHLY_MAX', 'STACKEXCHANGE_KEY']) delete process.env[name];
   const realFetch = globalThis.fetch;
   const calls = [];
   const web = (plan) => {
@@ -2488,15 +2488,21 @@ section('free tiers: one allowance per service for the whole deployment, a fair 
     await store.clearRateLimit(`free:exa:${tiers.periodOf('month').key}`);
     await (await import('../server/keyPool.js')).markKey('exa', 'env', 'ok');
 
-    // A fair share: one account's searches past its share go to the free engines.
-    process.env.FREE_TIER_USER_DAILY = '1';
+    // A fair share, a month's (owner, 2026-11-13): one account's searches past its share go to the free engines.
+    process.env.FREE_TIER_USER_MONTHLY_MAX = '1';
+    process.env.FREE_TIER_USER_MONTHLY_MIN = '1';
+    (await import('../server/freeShares.js')).__testing.forget();
+    await store.setSetting(`free_shares:${tiers.periodOf('month').key}`, null);
     web({ 'api.exa.ai': exaAnswer, 'duckduckgo.com': () => new Response(ddg, { status: 200 }) });
     const first = await search('my first', { userId: 'u-share', plan: searchPlan('medium') });
     web({ 'api.exa.ai': exaAnswer, 'duckduckgo.com': () => new Response(ddg, { status: 200 }) });
     const second = await search('my second', { userId: 'u-share', plan: searchPlan('medium') });
     const other = await search('someone else', { userId: 'u-other', plan: searchPlan('medium') });
-    check('one account past its share of the day uses the free engines; another account still has its own', first.engine === 'Exa' && second.engine === 'DuckDuckGo' && other.engine === 'Exa', `${first.engine} ${second.engine} ${other.engine}`);
-    delete process.env.FREE_TIER_USER_DAILY;
+    check('one account past its share of the month uses the free engines; another account still has its own', first.engine === 'Exa' && second.engine === 'DuckDuckGo' && other.engine === 'Exa', `${first.engine} ${second.engine} ${other.engine}`);
+    delete process.env.FREE_TIER_USER_MONTHLY_MAX;
+    delete process.env.FREE_TIER_USER_MONTHLY_MIN;
+    (await import('../server/freeShares.js')).__testing.forget();
+    await store.setSetting(`free_shares:${tiers.periodOf('month').key}`, null);
 
     web({ 'api.exa.ai': exaAnswer });
     process.env.SEARCH_ORDER = 'exa';
@@ -2508,7 +2514,7 @@ section('free tiers: one allowance per service for the whole deployment, a fair 
     check('FREE_TIER_ONLY=false: counted, not stopped', (await tiers.allowance('exa')).left === Infinity);
     delete process.env.FREE_TIER_ONLY;
     const report = await tiers.freeTierReport();
-    check("the administrators' view: each service, its use and ceiling, and when it starts again", report.enforced && report.services.length === tiers.FREE_SERVICES.length && report.services.length === 19 && report.services.find((s) => s.service === 'exa').used > 0 && report.userDaily === 30, JSON.stringify(report.services[0]));
+    check("the administrators' view: each service, its use and ceiling, and when it starts again", report.enforced && report.services.length === tiers.FREE_SERVICES.length && report.services.length === 19 && report.services.find((s) => s.service === 'exa').used > 0 && report.userDaily === undefined && report.shares?.searches > 0, JSON.stringify(report.services[0]));
 
     // Exa's categories, its sense of where someone is, and the same said to the others.
     web({ 'api.exa.ai': exaAnswer });

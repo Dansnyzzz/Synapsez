@@ -556,6 +556,10 @@ section('several keys: a spent or refused key hands over to the next (spec A)');
     return { reads, engine: found.engine };
   };
   try {
+    // The month's account share is worked out once and held (server/freeShares.js); the first search of a month pays for it, so it is done before counting.
+    await (await import('../server/freeShares.js')).monthShares();
+    // And the account's first metered search of the month writes the day it started: one more read, once.
+    await (await import('../server/freeTier.js')).countMetered('u-reads');
     const two = await readsFor('the counts read with two Exa keys');
     for (const key of ['exa-third-key-4444', 'exa-fourth-key-5555', 'exa-fifth-key-6666']) {
       every.push(key);

@@ -1,5 +1,6 @@
 import { t, currentLanguage } from './i18n.js';
 import { escapeHtml } from './markdown.js';
+import { freeShareLine } from './free-share.js';
 
 /*
  * Settings → People → Free allowances, in the Administration group (server/freeTier.js,
@@ -230,7 +231,7 @@ export function createFreeAllowances(host, deps) {
         <div class="ctable__head" role="row"><span role="columnheader">${escapeHtml(t('freetier.service'))}</span><span role="columnheader">${escapeHtml(t('freetier.used'))}</span><span role="columnheader">${escapeHtml(t('freetier.when'))}</span></div>
         ${rows.join('')}
       </div>
-      <p class="hint">${escapeHtml(report.enforced ? t('freetier.enforced', { n: String(report.userDaily) }) : t('freetier.off'))}</p>${
+      <p class="hint">${escapeHtml(report.enforced ? freeShareLine(report.shares) : t('freetier.off'))}</p>${
         Number.isFinite(report.firecrawl?.remaining)
           ? `<p class="hint">${escapeHtml(t('freetier.firecrawlLive', { left: Number(report.firecrawl.remaining).toLocaleString(locale()), plan: report.firecrawl.plan == null ? '—' : Number(report.firecrawl.plan).toLocaleString(locale()) }))}</p>`
           : ''
