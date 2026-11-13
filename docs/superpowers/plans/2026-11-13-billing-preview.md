@@ -548,6 +548,8 @@ SELECT * FROM p;
 
 ### Task 4: The rate, orders and subscriptions
 
+> **Carried from Task 3 review (2026-11-13):** every credit of real money (a transfer, an owner's assignment) passes `topup: true` (it starts the 12-month clock); crediting a transfer and paying its order are separate statements, so after a credit always call `tryApply` again — a usage charge landing in between must never leave a covered order unpaid; never pay a bank-paid order by any path but `payOrderFromBalance` (the transfer was credited to the balance first).
+
 **Files:**
 - Create: `server/billing/fx.js`, `server/billing/orders.js`, `server/billing/subscriptions.js`
 - Test: `test/billing-flow.test.mjs` (PGlite; `fetch` answered in the test as `test/key-pool.test.mjs` does)
@@ -579,6 +581,8 @@ SELECT * FROM p;
 
 ### Task 5: SePay — the webhook, matching, reconciling, simulating
 
+> **Carried from Task 3 review:** `takeTransfer` credits with `topup: true`; the receipt's `buyer_sealed` is sealed with `billingProfileContext(userId)` (secretsReseal already reseals it); `receipts.lines` never carry buyer details; after crediting, `tryApply` again (see Task 4).
+
 **Files:**
 - Create: `server/billing/sepay.js`
 - Modify: `server/app.js` (mount the webhook with the outside hooks, before `express.json`)
@@ -609,6 +613,8 @@ SELECT * FROM p;
 ---
 
 ### Task 6: Metering — searches, the cloud computer, storage
+
+> **Carried from Task 3 review:** a refund (`refundUsage`) passes the **charge's own** VN day, never a day recomputed at refund time (after VN midnight it would land on the next day's row).
 
 **Files:**
 - Create: `server/billing/meter.js`
@@ -655,6 +661,8 @@ Rules:
 ---
 
 ### Task 7: Routes, promo codes, emails, the daily work, deletion and export
+
+> **Carried from Task 3 review:** `getReceipt`, `getOrder` and `listOrders({ userId })` are unscoped store methods — every user-facing route checks the row's `user_id` against the caller (receipt numbers are sequential and guessable: an unscoped route is an IDOR), and never calls `listOrders` with an undefined `userId`; `billingAdminFigures` must leave simulated money out of every figure (ledger entries carry no simulated flag — join on the order/transfer `simulated`/`via`).
 
 **Files:**
 - Create: `server/routes/billing.js`, `server/billing/promo.js`, `server/billing/mail.js`, `server/billing/daily.js`
