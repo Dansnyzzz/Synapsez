@@ -479,7 +479,7 @@ export function createUsagePanel(host, deps) {
     if (share.machine.shareMills != null) lines.push(`<p class="usage__strong">${escapeHtml(t('usage.share.machine', { used: machineTime(share.machine.usedMills), share: machineTime(share.machine.shareMills) }))}</p>`);
     lines.push(`<p class="usage__muted">${escapeHtml(t('usage.share.starts', { date }))}</p>`);
     if (share.dry) lines.push(`<p class="usage__note">${escapeHtml(t('usage.share.dry', { date }))}</p>`);
-    if (share.startedOn > 1) lines.push(`<p class="usage__muted">${escapeHtml(t('usage.share.late', { day: String(share.startedOn), days: String(share.daysInMonth), left: String(share.daysInMonth - share.startedOn + 1) }))}</p>`);
+    if (share.joinedOn > 1) lines.push(`<p class="usage__muted">${escapeHtml(t('usage.share.late', { day: String(share.joinedOn), days: String(share.daysInMonth), left: String(share.daysInMonth - share.joinedOn + 1) }))}</p>`);
     if (share.capacity?.searches != null) {
       lines.push(`<p class="usage__muted">${escapeHtml(t('usage.share.how', { capacity: countOf(share.capacity.searches), reserve: pct(share.reserve), people: countOf(share.people.searches), min: String(share.bounds.searchMin), max: String(share.bounds.searchMax) }))}</p>`);
     }

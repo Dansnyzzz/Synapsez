@@ -6170,6 +6170,48 @@ export function createPgStore(connectionString) {
       );
       return Number(rows[0]?.n || 0);
     },
+    /**
+     * Set a counter to a value only if it has none (a live row): one statement, no read, so it can be
+     * repeated safely until it has been written. The day an account first used something this month
+     * (server/freeShares.js).
+     */
+    async setCounterIfAbsent(bucket, value, expiresAt) {
+      await q(
+        `INSERT INTO rate_limits (bucket, count, expires_at) VALUES ($1, $2::int, $3::timestamptz)
+         ON CONFLICT (bucket) DO UPDATE SET
+           count = CASE WHEN rate_limits.expires_at < NOW() THEN $2::int ELSE rate_limits.count END,
+           expires_at = CASE WHEN rate_limits.expires_at < NOW() THEN $3::timestamptz ELSE rate_limits.expires_at END`,
+        [bucket, Math.round(Number(value) || 0), new Date(expiresAt).toISOString()],
+      );
+    },
+    /**
+     * Write a month's free-share figure so that it can only rise (server/freeShares.js): in one statement,
+     * each of `searches`, `machineMills` and the two `capacity` figures keeps the larger of what is
+     * stored and what is offered, and `people` and `at` follow whichever has the larger capacity. Two
+     * instances working it out at once, from different counts, in either order, leave the same row — the
+     * read-then-write it replaces let the later writer lower it. Returns the row as stored.
+     *
+     * @param {string} key
+     * @param {{ month: string, searches: number, machineMills: number, capacity: { searches: number, machineMills: number }, people: any, at: string }} figure
+     */
+    async raiseSetting(key, figure) {
+      const num = (path, from) => `COALESCE((${from}#>>'${path}')::numeric, 0)`;
+      const rows = await q(
+        `INSERT INTO settings (key, value) VALUES ($1, $2::jsonb)
+         ON CONFLICT (key) DO UPDATE SET value = jsonb_build_object(
+           'month', EXCLUDED.value->'month',
+           'searches', GREATEST(${num('{searches}', 'settings.value')}, ${num('{searches}', 'EXCLUDED.value')}),
+           'machineMills', GREATEST(${num('{machineMills}', 'settings.value')}, ${num('{machineMills}', 'EXCLUDED.value')}),
+           'capacity', jsonb_build_object(
+             'searches', GREATEST(${num('{capacity,searches}', 'settings.value')}, ${num('{capacity,searches}', 'EXCLUDED.value')}),
+             'machineMills', GREATEST(${num('{capacity,machineMills}', 'settings.value')}, ${num('{capacity,machineMills}', 'EXCLUDED.value')})),
+           'people', CASE WHEN settings.value->'people' IS NOT NULL AND ${num('{capacity,searches}', 'settings.value')} >= ${num('{capacity,searches}', 'EXCLUDED.value')} THEN settings.value->'people' ELSE EXCLUDED.value->'people' END,
+           'at', CASE WHEN settings.value->'at' IS NOT NULL AND ${num('{capacity,searches}', 'settings.value')} >= ${num('{capacity,searches}', 'EXCLUDED.value')} THEN settings.value->'at' ELSE EXCLUDED.value->'at' END)
+         RETURNING value`,
+        [key, toJson(figure)],
+      );
+      return rows[0]?.value ?? figure;
+    },
     /** Forget a bucket — called on success, so one good login clears the tally. */
     async clearRateLimit(bucket) {
       await q('DELETE FROM rate_limits WHERE bucket = $1', [bucket]);

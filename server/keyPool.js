@@ -337,6 +337,16 @@ export async function bumpKeysVersion() {
   snapshot = null;
 }
 
+/**
+ * Moves when the keys do (a key added, removed, set aside, chosen as the paid one), on this instance at once
+ * and on the others within 30 s — so a figure worked out from the keys (freeShares.js) is worked out again
+ * then and not before. Reads the snapshot, which asks the database at most every 30 s.
+ */
+export async function keysVersion() {
+  await keysFor('exa');
+  return `${generation}:${snapshot?.version ?? ''}`;
+}
+
 /** A number that differs from every one before it, in practice: two changes in one millisecond still differ. */
 const bump = () => getStore().setSetting(VERSION, Date.now() + Math.random());
 

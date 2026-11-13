@@ -566,6 +566,8 @@ section('several keys: a spent or refused key hands over to the next (spec A)');
       await addKey('exa', key);
     }
     const five = (await pool.keysFor('exa', { fresh: true })).length;
+    // Keys added: the key pool's version moved, so the month figure is worked out again once (and is held again).
+    await (await import('../server/freeShares.js')).monthShares();
     const withFive = await readsFor('the counts read with five Exa keys');
     check('a search with five Exa keys reads the counts no more often than one with two: three reads, whatever the number of keys', five === 5 && two.engine === 'Exa' && withFive.engine === 'Exa' && withFive.reads === two.reads && withFive.reads <= 3, `${two.reads} reads with 2 keys, ${withFive.reads} with ${five}`);
   } finally {

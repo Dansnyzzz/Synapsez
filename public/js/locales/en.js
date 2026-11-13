@@ -2354,7 +2354,7 @@ export const en = {
   'usage.share.hm': '{h} h {m} min',
   'usage.share.min': '{m} min',
   'usage.share.how': 'Worked out on the 1st: the free keys\' capacity this month ({capacity} searches), less {reserve} kept for people who join later, shared by {people} people who used them in the last 30 days; never fewer than {min} or more than {max}.',
-  'usage.share.late': 'You started on day {day} of {days}, so this month\'s share covers {left} of {days} days.',
+  'usage.share.late': 'You joined on day {day} of {days}, so this month\'s share covers {left} of {days} days.',
   'usage.share.dry': 'The free keys are used up for this month. Searches use the free engines until {date}.',
   'usage.estimateHint': 'An estimate: each provider\'s published price plus this app\'s share — your provider\'s own bill shows what it charged.',
   'usage.retry': 'Try again',

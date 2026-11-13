@@ -819,7 +819,8 @@ section("the credit, a month's share for each account, worked out from the real 
   await tiers.e2bAccountSpend('u-e2b', 10, now);
   const after = await tiers.e2bAccountAllowance('u-e2b', now);
   check('what it spends comes off its share', after.left === alone.left - 10, `${alone.left} → ${after.left}`);
-  check("another account's share is its own, the same size", (await tiers.e2bAccountAllowance('u-share', now)).left === alone.left);
+  // u-e2b joined after the 1st (its first machine, earlier in this suite), so its share is the days left; one that has used nothing has the month's whole share.
+  check("another account's share is its own: the month's whole figure until it has used some", (await tiers.e2bAccountAllowance('u-share', now)).left === (await (await import('../server/freeShares.js')).monthShares()).machineMills);
   await tiers.e2bAccountSpend('u-e2b', -10, now);
   check('a start given back is given back', (await tiers.e2bAccountAllowance('u-e2b', now)).left === alone.left);
   check('no per-day buckets are written any more', (await memory.query("SELECT 1 FROM rate_limits WHERE bucket LIKE 'free:e2b:day:%'")).rows.length === 0);

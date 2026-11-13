@@ -377,6 +377,8 @@ try {
       const two = await readsFor('the counts read with two Firecrawl keys');
       for (const key of ['fc-third-key-8888', 'fc-fourth-key-9999', 'fc-fifth-key-0000']) more.push(await addKey('firecrawl', key));
       const five = (await pool.keysFor('firecrawl', { fresh: true })).length;
+      // Keys added: the key pool's version moved, so the month figure is worked out again once (and is held again).
+      await (await import('../server/freeShares.js')).monthShares();
       const withFive = await readsFor('the counts read with five Firecrawl keys');
       check('a search with five Firecrawl keys reads the counts no more often than one with two, and no more than six times', five === 5 && two.engine === 'Firecrawl' && withFive.engine === 'Firecrawl' && withFive.reads === two.reads && withFive.reads <= 6, `${two.reads} reads with 2 keys, ${withFive.reads} with ${five}`);
     } finally {

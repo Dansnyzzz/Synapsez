@@ -2340,7 +2340,7 @@ export const vi = {
   'usage.share.hm': '{h} giờ {m} phút',
   'usage.share.min': '{m} phút',
   'usage.share.how': 'Tính vào ngày 1: năng lực của các khoá miễn phí trong tháng này ({capacity} lượt tìm), trừ {reserve} để dành cho người vào sau, chia cho {people} người đã dùng trong 30 ngày qua; không dưới {min} và không quá {max}.',
-  'usage.share.late': 'Bạn bắt đầu vào ngày {day} trong tháng {days} ngày, nên phần tháng này tính cho {left} trên {days} ngày.',
+  'usage.share.late': 'Bạn tham gia vào ngày {day} trong tháng {days} ngày, nên phần tháng này tính cho {left} trên {days} ngày.',
   'usage.share.dry': 'Các khoá miễn phí đã dùng hết trong tháng này. Tìm kiếm dùng các công cụ miễn phí đến {date}.',
   'usage.estimateHint': 'Đây là ước tính: giá công bố của nhà cung cấp cộng phần của ứng dụng này — hoá đơn của chính nhà cung cấp cho biết họ đã tính bao nhiêu.',
   'usage.retry': 'Thử lại',

@@ -132,10 +132,23 @@ section('an account arriving mid-month gets the days that are left, from the res
   await refreshPool();
   await people(20);
   const day21 = on(21);
-  check('0 used: the share an account would get on day 21', (await shares.searchShareOf('late', day21)).share === Math.max(30, Math.floor(400 * (D - 20) / D)), String((await shares.searchShareOf('late', day21)).share));
+  check('before it has metered anything, a newcomer has the whole share', (await shares.searchShareOf('late', day21)).share === 400);
   await tiers.countMetered('late', day21);
   const later = await shares.searchShareOf('late', on(25));
-  check('  fixed by the day it started, not by the day it asks', later.share === Math.max(30, Math.floor(400 * (D - 20) / D)) && later.startedOn === 21, JSON.stringify(later));
+  check('  once it has, the days left from the day it joined, however late it asks', later.share === Math.max(30, Math.floor(400 * (D - 20) / D)) && later.joinedOn === 21, JSON.stringify(later));
+  await tiers.countMetered('returning', new Date(Date.UTC(Y, M - 1, 20)));
+  await tiers.countMetered('returning', day21);
+  const back = await shares.searchShareOf('returning', on(25));
+  check("an account counted last month is never prorated: it was in the 1st's divisor (controller, 2026-11-13)", back.share === 400 && back.joinedOn === null, JSON.stringify(back));
+  const writeArrival = store.setCounterIfAbsent;
+  store.setCounterIfAbsent = async () => { throw new Error('connection reset'); };
+  await tiers.countMetered('flaky', on(20));
+  store.setCounterIfAbsent = writeArrival;
+  const lost = await shares.searchShareOf('flaky', on(25));
+  check('a day that could not be written means the whole share, not a smaller one each day', lost.share === 400 && lost.joinedOn === null, JSON.stringify(lost));
+  await tiers.countMetered('flaky', on(26));
+  const retried = await shares.searchShareOf('flaky', on(27));
+  check('  and the next count writes it again', retried.joinedOn === 26 && retried.share === Math.max(30, Math.floor(400 * (D - 25) / D)), JSON.stringify(retried));
   await tiers.countMetered('last-day', on(D));
   check('starting on the last day gives the floor of 30', (await shares.searchShareOf('last-day', on(D))).share === 30);
   await tiers.countMetered('first-day', on(1));
@@ -170,6 +183,45 @@ section('held for the month: raised by a new key, never lowered');
   check('a key removed does not lower it', kept.searches === raised.searches, `${kept.searches} vs ${raised.searches}`);
 }
 
+section('the stored figure only rises, in one statement');
+{
+  const figure = (searches, cap, people = 1) => ({ month: monthKey, searches, machineMills: searches * 2, capacity: { searches: cap, machineMills: cap * 2 }, people: { searches: people, machines: people }, at: 't' + people });
+  const key = 'free_shares:test-raise';
+  await sql.query('DELETE FROM settings WHERE key = $1', [key]);
+  const first = await store.raiseSetting(key, figure(500, 900, 5));
+  const lowerAfter = await store.raiseSetting(key, figure(300, 700, 9));
+  check('a lower figure written after a higher one leaves the higher', first.searches === 500 && lowerAfter.searches === 500 && lowerAfter.capacity.searches === 900 && lowerAfter.machineMills === 1000 && lowerAfter.people.searches === 5, JSON.stringify(lowerAfter));
+  const higher = await store.raiseSetting(key, figure(800, 1000, 7));
+  check('  a higher one replaces it, the people with it', higher.searches === 800 && higher.capacity.searches === 1000 && higher.people.searches === 7, JSON.stringify(higher));
+  const mixed = await store.raiseSetting(key, figure(100, 2000, 3));
+  check('  field by field: capacity up, the share kept', mixed.searches === 800 && mixed.capacity.searches === 2000, JSON.stringify(mixed));
+  check('  and what is returned is what is stored', JSON.stringify(await store.getSetting(key)) === JSON.stringify(mixed));
+  await sql.query('DELETE FROM settings WHERE key = $1', [key]);
+}
+
+section('worked out about once, not on every call');
+{
+  await reset();
+  await exaOnly(10_000);
+  await refreshPool();
+  await people(20);
+  let reads = 0;
+  const getSetting = store.getSetting;
+  store.getSetting = (k, ...rest) => { if (String(k).startsWith('free_shares:')) reads += 1; return getSetting.call(store, k, ...rest); };
+  try {
+    for (let i = 0; i < 50; i += 1) await tiers.mayMeter('m' + i, on(3));
+    check('fifty calls read the month figure once', reads === 1, String(reads));
+    await pool.bumpKeysVersion();
+    reads = 0;
+    await tiers.mayMeter('after-a-key-change', on(3));
+    check("a key added or removed (the key pool's version moves) works it out again", reads === 1, String(reads));
+    await tiers.mayMeter('and-then-quiet', on(3));
+    check('  and then it is quiet again', reads === 1, String(reads));
+  } finally {
+    store.getSetting = getSetting;
+  }
+}
+
 section('a day is not a limit');
 {
   await reset();
@@ -196,21 +248,38 @@ section('a day is not a limit');
   })());
 }
 
-section('the pool runs dry: nothing is billed, nobody is let through to the metered engines');
+section('the pool runs dry: nothing is billed, and the free engines answer');
 {
   await reset();
-  await exaOnly(1000);
+  const exaId = await addKey('exa', 'exa-paid-key-7777-pppp', 1000 * 15);
   await refreshPool();
   await people(20);
-  const paidCalls = [];
-  const realTake = tiers.take;
-  check('with room in the pool an account may meter', await tiers.mayMeter('u1', on(2)));
-  await tiers.spend('exa', 1000 * 15, on(2), { keyId: (await pool.keysFor('exa'))[0].id });
+  await pool.setPaidKey('exa', exaId, 5);
+  await tiers.spend('exa', 1000 * 15, on(2), { keyId: exaId });
   shares.__testing.forget();
-  check('with the pool spent, mayMeter is false for everyone', !(await tiers.mayMeter('u1', on(2))) && !(await tiers.mayMeter('u2', on(2))));
+  check('the search pool spent, an account is still let through to the other engines', (await tiers.mayMeter('u1', on(2))) && (await tiers.mayMeter('u2', on(2))));
   const card = await shares.accountShares('u1', on(2));
-  check('  and the account\'s card says the free keys are used up', card.dry === true);
-  check('  no call asked for the paid key', paidCalls.length === 0 && realTake === tiers.take);
+  check('  and the card says the free keys are used up', card.dry === true);
+
+  const { search, searchPlan, clearSearchCache } = await import('../server/search.js');
+  clearSearchCache();
+  const seen = [];
+  const realFetch = globalThis.fetch;
+  const ddg = '<a class="result__a" href="//duckduckgo.com/l/?uddg=' + encodeURIComponent('https://example.com/free') + '">Free</a><a class="result__snippet">s</a>';
+  globalThis.fetch = async (url, init = {}) => {
+    seen.push({ url: String(url), sent: JSON.stringify(init.headers || {}) + String(init.body || '') });
+    return /duckduckgo/.test(String(url)) ? new Response(ddg, { status: 200 }) : new Response('{}', { status: 500 });
+  };
+  let found;
+  try {
+    found = await search('a search with the pool spent and a paid key set', { plan: searchPlan('medium'), userId: 'u1' });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  check('a full search: answered by a free engine', found.engine === 'DuckDuckGo', String(found.engine));
+  check('  the paid key never reached the provider', !seen.some((one) => /exa-paid-key-7777-pppp/.test(one.sent) || /api\.exa\.ai/.test(one.url)), JSON.stringify(seen.map((one) => one.url)));
+  check('  and no paid count was written', (await sql.query("SELECT 1 FROM rate_limits WHERE bucket LIKE 'paid:%'")).length === 0);
+  await pool.setPaidKey('exa', null);
 }
 
 section('failing to work it out never blocks anybody');
@@ -249,8 +318,14 @@ section('the cloud computer: one share for the month, no daily split');
   check('no per-day counter is written', (await sql.query("SELECT 1 FROM rate_limits WHERE bucket LIKE 'free:e2b:day:%'")).length === 0);
   check('another account has its own', (await tiers.e2bAccountAllowance('m2', on(1))).left > 0);
   check('the people are counted by distinct account', (await store.countAccountsByBucket([`free:e2b:${monthKey}:user:%`])) === 1);
-  const arrive = await shares.machineShareOf('m3', on(21));
-  check('arriving on day 21 gets the days left, at least 133', arrive.share === Math.max(133, Math.floor(got.machineMills * (D - 20) / D)) || arrive.share === Math.min(got.machineMills, Math.max(133, Math.floor(got.machineMills * (D - 20) / D))), String(arrive.share));
+  await tiers.e2bAccountSpend('m3', 5, on(21));
+  const arrive = await shares.machineShareOf('m3', on(22));
+  const wantLate = Math.min(got.machineMills, Math.max(133, Math.floor(got.machineMills * (D - 20) / D)));
+  check('a newcomer starting a machine on day 21 gets the days left, at least 133', arrive.share === wantLate && arrive.joinedOn === 21, JSON.stringify([arrive, wantLate]));
+  await tiers.e2bAccountSpend('m4', 5, new Date(Date.UTC(Y, M - 1, 20)));
+  await tiers.e2bAccountSpend('m4', 5, on(21));
+  const back = await shares.machineShareOf('m4', on(22));
+  check('an account with machine time last month is never prorated', back.share === got.machineMills && back.joinedOn === null, JSON.stringify(back));
   delete process.env.E2B_API_KEY;
 }
 
@@ -265,7 +340,7 @@ section('shown to the person and to the administrators');
   await tiers.countMetered('u9', on(1));
   const card = await shares.accountShares('u9', on(2));
   check('an account\'s card: used of share, when it starts again, how it was worked out', card.searches.used === 1 && card.searches.share === 400 && card.endsAt === new Date(Date.UTC(Y, M + 1, 1)).toISOString() && card.capacity.searches === 10_000 && card.people.searches === 20 && card.reserve === 0.2 && card.bounds.searchMin === 30 && card.bounds.searchMax === 900, JSON.stringify(card));
-  check('  a late account says which day it started', (await shares.accountShares('u9', on(2))).startedOn === 1 && (await shares.accountShares('never', on(2))).startedOn === null);
+  check('  a returning account or one joined on the 1st has no joined-late sentence', (await shares.accountShares('u9', on(2))).joinedOn === null && (await shares.accountShares('never', on(2))).joinedOn === null);
 }
 
 console.log(failures ? `\n\x1b[31m${failures} failed\x1b[0m` : '\n\x1b[32mall passed\x1b[0m');

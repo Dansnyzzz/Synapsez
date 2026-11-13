@@ -305,8 +305,8 @@ export async function e2bAccountSpend(userId, amount, now = new Date()) {
   try {
     const { bucket, ends } = machineBucket(userId, now);
     const total = await getStore().addToCounter(bucket, amount, ends);
-    // Its first of the month: the day it started fixes the share for the days that are left.
-    if (amount > 0 && total === Math.round(amount)) await noteArrival('machine', userId, now);
+    // As for searches: the day it joined, written again over its first few starts until it holds.
+    if (amount > 0 && total <= Math.round(amount) * 3) await noteArrival('machine', userId, now);
   } catch (err) {
     if (!/not ready yet/.test(String(err?.message))) log.warn('free tier: account share not counted', { error: String(err?.message || err).slice(0, 160) });
   }
@@ -335,14 +335,15 @@ export async function exhaust(service, now = new Date(), { keyId = 'env' } = {})
 
 /**
  * Whether this account may still use a metered engine this month — its share of the pooled
- * allowances (server/freeShares.js). False for everyone once the pool itself is spent; those
- * calls are unpaid by construction and never reach the paid key (spec A).
+ * allowances (server/freeShares.js). It does not look at the pool: a metered engine with nothing
+ * left stands aside on its own (`take` says no) and a free one answers, and those calls are
+ * unpaid by construction and never reach the paid key (spec A), so nothing is billed either way.
  */
 export async function mayMeter(userId, now = new Date()) {
   if (!freeTierOnly() || !userId) return true;
   try {
-    const { share, used, dry } = await searchShareOf(userId, now);
-    return !dry && used < share;
+    const { share, used } = await searchShareOf(userId, now);
+    return used < share;
   } catch {
     return true;
   }
@@ -353,8 +354,9 @@ export async function countMetered(userId, now = new Date()) {
   if (!userId) return;
   try {
     const { bucket, ends } = searchBucket(userId, now);
-    // Its first of the month: the day it started fixes the share for the days that are left.
-    if ((await getStore().addToCounter(bucket, 1, ends)) === 1) await noteArrival('search', userId, now);
+    // Its first counts of the month: the day it joined fixes a newcomer's share for the days that are left.
+    // Written again until it holds (a write that failed leaves the whole share, never a smaller one).
+    if ((await getStore().addToCounter(bucket, 1, ends)) <= 3) await noteArrival('search', userId, now);
   } catch {
     /* a share that cannot be counted is not worth failing a search over */
   }
