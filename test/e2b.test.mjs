@@ -480,7 +480,81 @@ section('the Vercel stand-in stops at the free Hobby hours, so it can never bill
   const failed = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
   check('a start that fails gives its time back', /boom/.test(failed) && (await store.readCounter(bucket)) === 0, failed);
   failNext = false;
-  check('  and the window is free to be counted by the next try', (await sandbox.machineForUser('u-e2b'), (await store.readCounter(bucket)) === 2400));
+  await sandbox.machineForUser('u-e2b');
+  check('  and the window is free to be counted by the next try', (await store.readCounter(bucket)) === 2400);
+
+  // Every extension of a stand-in's life is counted (review, 2026-11-13).
+  await reset();
+  let extended = 0;
+  let extendFails = false;
+  const awake = (provider) => ({ provider, extendTimeout: async () => { extended += 1; if (extendFails) throw new Error('no'); } });
+  await sandbox.extendStandIn(awake(undefined), 15 * 60_000);
+  check('a browser start on a stand-in counts its 15-minute extension: 1,800', (await store.readCounter(bucket)) === 1800 && extended === 1);
+  await sandbox.extendStandIn(awake(undefined), 15 * 60_000);
+  check('  and a keep-awake tick counts as much again', (await store.readCounter(bucket)) === 3600);
+  await sandbox.extendStandIn(awake(undefined), 5 * 60_000);
+  check('  and a direct upload\'s room counts its minutes: 600', (await store.readCounter(bucket)) === 4200);
+  await sandbox.extendStandIn(awake('e2b'), 15 * 60_000);
+  check('  an E2B machine is paid from its own credit, not counted here', (await store.readCounter(bucket)) === 4200 && extended === 4);
+  extendFails = true;
+  await sandbox.extendStandIn(awake(undefined), 15 * 60_000).catch(() => {});
+  check('  an extension that fails gives its time back', (await store.readCounter(bucket)) === 4200);
+  extendFails = false;
+  await store.addToCounter(bucket, 16_200 - 4200 - 100, new Date(Date.UTC(2100, 0, 1)));
+  extended = 0;
+  const noRoom = await sandbox.extendStandIn(awake(undefined), 15 * 60_000).then(() => '', (e) => e.message);
+  check('  at the ceiling an extension is refused with the same message and Vercel is not asked', /unavailable until the 1st/.test(noRoom) && extended === 0, noRoom);
+  const { readFileSync, readdirSync, statSync } = await import('node:fs');
+  const raw = [];
+  const walk = (dir) => {
+    for (const name of readdirSync(dir)) {
+      const p = `${dir}/${name}`;
+      if (statSync(p).isDirectory()) walk(p);
+      else if (p.endsWith('.js') && !/server\/(sandbox|e2b)\.js$/.test(p) && /\.extendTimeout\??\.?\(/.test(readFileSync(p, 'utf8'))) raw.push(p);
+    }
+  };
+  walk((await import('node:url')).fileURLToPath(new URL('../server', import.meta.url)).replaceAll('\\', '/'));
+  check('  and no site outside the one door extends a machine itself', raw.length === 0, raw.join(', '));
+
+  // A slot is marked counted only by a start that was counted and succeeded.
+  await reset();
+  await store.addToCounter(bucket, 16_200 - 3000, new Date(Date.UTC(2100, 0, 1)));
+  starts = 0;
+  const pair = await Promise.all([sandbox.machineForUser('u-e2b').then(() => 'ok', () => 'no'), sandbox.machineForUser('u-e2b').then(() => 'ok', () => 'no')]);
+  check('two starts at once at the ceiling: one starts, the other is refused', pair.filter((x) => x === 'ok').length === 1 && starts === 1, pair.join());
+  check('  and the count is what started', (await store.readCounter(bucket)) === 16_200 - 3000 + 2400);
+  starts = 0;
+  await sandbox.machineForUser('u-e2b');
+  check('  a later start in that counted slot rides on it, not counted again', starts === 1 && (await store.readCounter(bucket)) === 16_200 - 3000 + 2400);
+  await reset();
+  await store.addToCounter(bucket, 16_200 - 100, new Date(Date.UTC(2100, 0, 1)));
+  starts = 0;
+  const refusedPair = await Promise.all([sandbox.machineForUser('u-e2b').then(() => 'ok', () => 'no'), sandbox.machineForUser('u-e2b').then(() => 'ok', () => 'no')]);
+  const later = await sandbox.machineForUser('u-e2b').then(() => 'ok', () => 'no');
+  check('both refused at the ceiling leaves nothing that waves a later start through', refusedPair.join() === 'no,no' && later === 'no' && starts === 0 && (await store.readCounter(bucket)) === 16_100, `${refusedPair.join()} ${later} ${starts}`);
+
+  await reset();
+  let gate;
+  const held = new Promise((resolve) => { gate = resolve; });
+  let calls = 0;
+  sandbox.__testing.useSdk({
+    Sandbox: {
+      getOrCreate: async () => {
+        calls += 1;
+        if (calls === 1) {
+          await held;
+          throw new Error('boom');
+        }
+        gate();
+        return { domain: () => 'https://sb.vercel.run' };
+      },
+    },
+  });
+  const flight = await Promise.all([sandbox.machineForUser('u-e2b').then(() => 'ok', () => 'no'), sandbox.machineForUser('u-e2b').then(() => 'ok', () => 'no')]);
+  check('a failed start while a second is in flight: the second is counted', flight.join() === 'no,ok' && (await store.readCounter(bucket)) === 2400, flight.join());
+  calls = 5;
+  await sandbox.machineForUser('u-e2b');
+  check('  and the slot then holds the one count', (await store.readCounter(bucket)) === 2400);
 
   await reset();
   await store.addToCounter(bucket, 16_200 - 100, new Date(Date.UTC(2100, 0, 1)));

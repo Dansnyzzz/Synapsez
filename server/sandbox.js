@@ -267,10 +267,12 @@ const clipOutput = (text) => {
  * refuses to start one past VERCEL_SANDBOX_MONTHLY_CPU_HOURS (default 4.5, 90% of Hobby's
  * 5) whatever the plan. Counted before the start, like `take` does for every free service.
  *
- * An account's machine is kept awake SESSION_MS from each start and the code never stops
- * it early, so what is counted is the whole window: once per account per SESSION_MS slot
- * (a marker row, so a burst of tool calls in one slot is not counted twenty times; it
- * can over-count a session that straddles two slots, which is the safe direction).
+ * An account's machine is kept awake SESSION_MS from each start, so a start counts the
+ * whole window, once per account per SESSION_MS slot: a marker row says "this slot was
+ * counted", and it is written only after a start that was counted has succeeded (review,
+ * 2026-11-13). A call that finds no marker counts for itself, so two starts at once may both
+ * count (the safe direction) but none is ever waved through on another's count that is then
+ * refused or refunded. Every later extension of the machine's life counts too (`extendStandIn`).
  */
 const STAND_IN_VCPUS = 2;
 const SCRATCH_MS = 6 * 60 * 1000;
@@ -278,39 +280,75 @@ const STAND_IN_SPENT = "The cloud computer is unavailable until the 1st: this mo
 export const standInCpuSeconds = (ms, vcpus = STAND_IN_VCPUS) => Math.ceil(ms / 1000) * vcpus;
 
 /**
- * Count a stand-in's awake time before it starts. Returns what to hand back if the start
- * fails (`undo`), or throws the message for the model when the month's time is used.
+ * Count a stand-in's awake time before it is started or extended. Returns what to hand back
+ * if that fails (`undo`), or throws the message for the model when the month's time is used.
  *
  * @param {number} ms  how long it will be kept awake
- * @param {{ userId?: string, now?: Date }} [options]  `userId`: an account's machine, counted once per slot
+ * @param {Date} [now]
  * @returns {Promise<() => Promise<void>>}
  */
-async function takeStandIn(ms, { userId = '', now = new Date() } = {}) {
-  const slot = Math.floor(now.getTime() / SESSION_MS);
-  const marker = userId ? `vercelwin:${sandboxName(userId)}:${slot}` : '';
-  const until = new Date((slot + 2) * SESSION_MS);
-  if (marker) {
-    let first = true;
-    try {
-      first = (await getStore().addToCounter(marker, 1, until)) === 1;
-    } catch {
-      /* no count to read: `take` below decides what that means */
-    }
-    // Already counted by the call that opened this slot.
-    if (!first) return async () => {};
-  }
+async function takeStandIn(ms, now = new Date()) {
   const seconds = standInCpuSeconds(ms);
-  const forget = async () => {
-    if (marker) await Promise.resolve().then(() => getStore().addToCounter(marker, -1, until)).catch(() => {});
-  };
-  if (!(await take('vercel', seconds, now))) {
-    await forget();
-    throw new Error(STAND_IN_SPENT);
+  if (!(await take('vercel', seconds, now))) throw new Error(STAND_IN_SPENT);
+  return () => refund('vercel', seconds, now);
+}
+
+const slotOf = (userId, now) => {
+  const slot = Math.floor(now.getTime() / SESSION_MS);
+  return { marker: `vercelwin:${sandboxName(userId)}:${slot}`, until: new Date((slot + 2) * SESSION_MS) };
+};
+
+/**
+ * Start an account's Vercel machine, counted (see above): `start` runs once the time is taken,
+ * and the time is handed back if it fails.
+ *
+ * @template T
+ * @param {string} userId
+ * @param {() => Promise<T>} start
+ * @returns {Promise<T>}
+ */
+async function startCounted(userId, start) {
+  const now = new Date();
+  const { marker, until } = slotOf(userId, now);
+  let counted = false;
+  try {
+    counted = (await getStore().readCounter(marker)) > 0;
+  } catch {
+    /* no count to read: `take` below decides what that means */
   }
-  return async () => {
-    await refund('vercel', seconds, now);
-    await forget();
-  };
+  const undo = counted ? async () => {} : await takeStandIn(SESSION_MS, now);
+  let made;
+  try {
+    made = await start();
+  } catch (err) {
+    await undo();
+    throw err;
+  }
+  if (!counted) await Promise.resolve().then(() => getStore().addToCounter(marker, 1, until)).catch(() => {});
+  return made;
+}
+
+/**
+ * Keep a machine awake `ms` longer. Every extension of a Vercel stand-in's life is counted
+ * before it is asked for, at the full length (if Vercel resets rather than adds, over-counting
+ * is the safe direction), refused with the same message past the ceiling, and given back if
+ * the call itself fails. An E2B machine is paid from its own credit and is not counted here.
+ * The one door for every `extendTimeout` in the app, so none is missed (review, 2026-11-13).
+ *
+ * @param {any} machine
+ * @param {number} ms
+ * @param {{ signal?: AbortSignal }} [options]
+ */
+export async function extendStandIn(machine, ms, { signal } = {}) {
+  if (!machine?.extendTimeout) return;
+  if (machine.provider === 'e2b') return machine.extendTimeout(ms, { signal });
+  const undo = await takeStandIn(ms);
+  try {
+    return await machine.extendTimeout(ms, { signal });
+  } catch (err) {
+    await undo();
+    throw err;
+  }
 }
 
 /** Loaded on first use: most requests never start a machine. */
@@ -470,12 +508,11 @@ export async function machineForUser(userId, { signal } = {}) {
     }
     if (!vercelConfigured()) throw unavailableError(declined);
   }
-  const undo = await takeStandIn(SESSION_MS, { userId });
   let machine;
   try {
-    machine = await machineFor(sandboxName(userId), { signal });
+    machine = await startCounted(userId, () => machineFor(sandboxName(userId), { signal }));
   } catch (err) {
-    await undo();
+    if (err?.message === STAND_IN_SPENT) throw err;
     throw machineStartError(err);
   }
   // Standing in for the E2B machine: a different computer, which the model is told.

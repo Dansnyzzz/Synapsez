@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getStore } from '../store/index.js';
 import { saveGenerated } from '../attachments.js';
-import { BROWSER_PORT, ROOT_BROWSER_PORT, browserAddress, chargeCloud, machineForUser, portAddress, shellFor } from '../sandbox.js';
+import { BROWSER_PORT, ROOT_BROWSER_PORT, browserAddress, chargeCloud, extendStandIn, machineForUser, portAddress, shellFor } from '../sandbox.js';
 import { encryptSecret, decryptSecret } from '../crypto.js';
 import { cloudBrowserContext } from '../secretContexts.js';
 import { readCapped } from '../util/safeFetch.js';
@@ -421,7 +421,7 @@ async function start(userId, { signal } = {}) {
    * stops — and everything on it with it — just after the service comes up,
    * which reads exactly like a helper that died as it started.
    */
-  const roomy = async (m) => Promise.resolve(m.extendTimeout?.(EXTEND_BY_MS, { signal })).catch(() => {});
+  const roomy = async (m) => extendStandIn(m, EXTEND_BY_MS, { signal }).catch(() => {});
   await roomy(machine);
   const url = (await browserAddress(machine, { signal })).replace(/\/$/, '');
   const before = await readConnection(userId).catch(() => null);
@@ -486,7 +486,7 @@ async function keepAwake(userId, conn, { signal } = {}) {
   await saveConnection(userId, conn).catch(() => {});
   try {
     const machine = await machineForUser(userId, { signal });
-    await machine.extendTimeout(EXTEND_BY_MS, { signal });
+    await extendStandIn(machine, EXTEND_BY_MS, { signal });
   } catch {
     /* at the plan's longest session already — the next action restarts it */
   }

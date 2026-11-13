@@ -10,7 +10,7 @@ import { faviconFor, cleanHost } from '../favicon.js';
 import { proxiedImage, mapTile } from '../imageProxy.js';
 import { createDocument, extensionOf, RUNNABLE } from '../office/index.js';
 import { clientError } from '../util/clientError.js';
-import { machineForUser, chargeCloud } from '../sandbox.js';
+import { machineForUser, chargeCloud, extendStandIn } from '../sandbox.js';
 import {
   withStorageShim,
   listArtifactStorage,
@@ -66,7 +66,7 @@ export function mountFileRoutes(api, { wrap, body }) {
   /** A machine pauses in four minutes, and a big file takes longer than that: one megabyte a second is allowed for. */
   const roomFor = async (machine, bytes) => {
     const ms = Math.min(30 * 60_000, Math.max(5 * 60_000, (Number(bytes) || 0) / 1000));
-    await machine.extendTimeout?.(ms);
+    await extendStandIn(machine, ms);
   };
 
   api.post(
