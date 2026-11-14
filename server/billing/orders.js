@@ -96,6 +96,11 @@ export async function findRenewalOrder(sub) {
   return null;
 }
 
+/** Whether this period's renewal is paid. Read-only (findRenewalOrder also closes pending orders made for other terms). */
+export async function paidRenewalFor(sub) {
+  return (await getStore().renewalOrdersFor(sub.userId, addDays(sub.periodEnd, GRACE_DAYS))).find((o) => o.status === 'paid') ?? null;
+}
+
 /** Make (or find) the renewal order. It lasts until grace ends. `created` says whether this call made it. */
 export async function renewalOrderFor(sub, { now = new Date(), useBalance = true } = {}) {
   const store = getStore();
@@ -262,7 +267,7 @@ export async function createOrder(userId, input, { now = new Date(), simulated =
     await tryApply(order.id, { now });
     order = await store.getOrder(order.id);
     if (order.status === 'paid') return { order, paidNow: true, due: null };
-    if (order.status === 'cancelled') throw Object.assign(new Error('Prices changed since this order was made — get a new price.'), { status: 422 });
+    if (order.status === 'cancelled' || order.status === 'refunded') throw Object.assign(new Error('Prices changed since this order was made — get a new price.'), { status: 422 });
     balance = (await store.billingState(userId)).balanceVnd;
   }
   const vnd = order.status === 'pending' ? dueOf(order, balance) : 0;

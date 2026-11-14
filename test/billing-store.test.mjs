@@ -35,7 +35,7 @@ const later = (ms) => new Date(NOW.getTime() + ms);
 const order = (id, userId, over = {}) => ({
   id, userId, kind: 'plan', plan: 'plus', period: 'month', code: `SZ${String(1000000000 + Number(id.replace(/\D/g, '') || 0))}`,
   usdCents: 500, rate: 25656, rateSource: 'erapi', priceVnd: 129000, creditVnd: 0, totalVnd: 129000, useBalance: true,
-  expiresAt: later(1_800_000), simulated: false, ...over,
+  expiresAt: later(1_800_000), simulated: false, basis: 'none|0', ...over,
 });
 
 section('schema 53 applies, with row-level security on every new table');
@@ -97,7 +97,7 @@ section('paying an order from the balance');
   await store.creditBalance(dee.id, 500000, { kind: 'topup', topup: true });
   await store.createOrder(order('o10', dee.id, { expiresAt: later(-1000) }));
   check('an expired order is not paid', (await store.payOrderFromBalance('o10', NOW)) === null);
-  await store.createOrder(order('o11', dee.id, { useBalance: false }));
+  await store.createOrder(order('o11', dee.id, { useBalance: false, kind: 'topup', plan: null, period: null, basis: null }));
   check('use_balance off and not enough received: null even with a big balance', (await store.payOrderFromBalance('o11', NOW)) === null && (await balanceOf(dee.id)) === 500000);
   await store.addOrderReceived('o11', 129000);
   check('  once the transfer has covered it, it can be paid', (await store.payOrderFromBalance('o11', NOW))?.status === 'paid');
@@ -125,6 +125,8 @@ section('orders');
 {
   const eve = await makeUser();
   const created = await store.createOrder(order('o20', eve.id, { kind: 'topup', plan: null, period: null }));
+  const noBasis = await store.createOrder(order('o21b', eve.id, { basis: null })).then(() => null, (err) => err);
+  check('a plan order without a basis is refused by the table, so none can be paid around the per-basis index', noBasis !== null, String(noBasis));
   check('createOrder returns the order, money as numbers', created.id === 'o20' && created.priceVnd === 129000 && created.status === 'pending' && created.rate === 25656, JSON.stringify(created));
   check('getOrderByCode finds it', (await store.getOrderByCode(created.code))?.id === 'o20');
   check('listOrders by user and status', (await store.listOrders({ userId: eve.id, status: 'pending' })).length === 1 && (await store.listOrders({ userId: eve.id, status: 'paid' })).length === 0);

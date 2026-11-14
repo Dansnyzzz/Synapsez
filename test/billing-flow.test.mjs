@@ -605,7 +605,8 @@ section('C1 under concurrency: one payment per basis');
   const n1 = await direct(none.id, { plan: 'plus', usdCents: 500, priceVnd: 129000, totalVnd: 129000 });
   const n2 = await direct(none.id, { plan: 'max', usdCents: 1500, priceVnd: 385000, totalVnd: 385000 });
   await Promise.allSettled([orders.tryApply(n1.id, { now: PMID }), orders.tryApply(n2.id, { now: PMID })]);
-  check('two first purchases at once: one is paid', [n1, n2].filter(async () => true).length === 2 && 500000 - (await balanceOf(none.id)) <= 385000 && (await store.listOrders({ userId: none.id })).filter((o) => o.status === 'paid').length === 1);
+  const paidNone = (await store.listOrders({ userId: none.id })).filter((o) => o.status === 'paid');
+  check('two first purchases at once: exactly one is paid, and its total is what left the balance', paidNone.length === 1 && [n1.id, n2.id].includes(paidNone[0].id) && 500000 - (await balanceOf(none.id)) === paidNone[0].totalVnd, JSON.stringify(paidNone.map((o) => [o.plan, o.totalVnd])));
   const ended = await makeUser();
   await store.saveSubscription(subRow(ended.id, { status: 'ended', periodStart: P0, periodEnd: P1 }));
   await store.creditBalance(ended.id, 500000, { kind: 'topup', topup: true });
@@ -684,6 +685,43 @@ section('N3: an old renewal cannot give a free period again');
   const res = await orders.tryApply(ren.order.id, { now: new Date('2027-03-01T00:00:00Z') });
   const after = await store.getSubscription(e.id);
   check('re-applying the old renewal on an ended plan changes nothing', res?.status !== 'active' && after.status === 'ended' && +after.periodEnd === +before.periodEnd && after.lastOrder === before.lastOrder && (await balanceOf(e.id)) === balBefore, JSON.stringify(after));
+}
+
+section('F: a start and a refund of one order cannot both happen');
+{
+  const f = await makeUser();
+  await store.saveSubscription(subRow(f.id, { status: 'grace', periodStart: P0, periodEnd: P1 }));
+  await store.creditBalance(f.id, 1_000_000, { kind: 'topup', topup: true });
+  const inGrace = new Date(P1.getTime() + 3 * 86_400_000 - 60_000);
+  const pastGrace = new Date(P1.getTime() + 3 * 86_400_000 + 60_000);
+  const o = await upgradeOrder(f.id, { creditVnd: 0, totalVnd: 206000 });
+  const paid = await store.payOrderFromBalance(o.id, inGrace);
+  // The start has read the row (still in grace) when a catch-up past the end of grace refunds the order.
+  const realGet = store.getSubscription.bind(store);
+  let first = true;
+  store.getSubscription = async (id) => { const row = await realGet(id); if (first) { first = false; await new Promise((resolve) => setTimeout(resolve, 80)); } return row; };
+  const y = subs.activate(paid, { now: inGrace });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const x = subs.catchUp(f.id, { now: pastGrace });
+  await Promise.allSettled([y, x]);
+  store.getSubscription = realGet;
+  const ord = await store.getOrder(o.id);
+  const sub = await store.getSubscription(f.id);
+  const bal = await balanceOf(f.id);
+  const refunded = ord.status === 'refunded' && !ord.appliedAt && sub.lastOrder !== o.id && sub.plan === 'plus' && bal === 1_000_000;
+  const started = ord.status === 'paid' && ord.appliedAt instanceof Date && sub.lastOrder === o.id && sub.plan === 'pro' && bal === 794000;
+  check('either refunded and not started, or started and not refunded', (refunded || started) && (await invariant(f.id)), JSON.stringify([ord.status, !!ord.appliedAt, sub.plan, bal]));
+}
+
+section('planInForce reads and writes nothing');
+{
+  const u = await makeUser();
+  await store.saveSubscription(subRow(u.id, { periodStart: P0, periodEnd: P1, cancelAtEnd: true }));
+  const sub = await store.getSubscription(u.id);
+  const { order } = await orders.renewalOrderFor(sub, { now: PMID });
+  await store.patchSubscription(u.id, {}, { nextPlan: 'max', nextPeriod: 'month' });
+  await subs.planInForce(u.id, { now: new Date(P1.getTime() + 3_600_000) });
+  check('a pending renewal made for other terms is left as it was', (await store.getOrder(order.id)).status === 'pending');
 }
 
 section('N5: the 20% band only holds against a recent rate');

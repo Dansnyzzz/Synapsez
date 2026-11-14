@@ -5716,8 +5716,9 @@ export function createPgStore(connectionString) {
     /**
      * Change only the named fields of a subscription, in one statement. `seenEnd` / `seenStatus` make it a compare-and-set:
      * nothing changes (null comes back) when the row is no longer the one the caller read. Without them it is a plain
-     * field-level write that cannot undo anybody else's change to other fields. `appliedOrder` marks that order applied in the
-     * same statement, so a plan is started and its order recorded as applied together or not at all.
+     * field-level write that cannot undo anybody else's change to other fields. `appliedOrder` makes the write a claim on that
+     * order: it happens only while the order is still paid and not applied (the row is locked), and marks it applied in the same
+     * statement. A refund needs the same state, so a start and a refund of one order exclude each other; the loser gets null.
      */
     async patchSubscription(userId, { seenEnd = null, seenStatus = null } = {}, set = {}, { appliedOrder = null } = {}) {
       const COLS = {
@@ -5729,11 +5730,14 @@ export function createPgStore(connectionString) {
       if (!keys.length) return subscriptionRow((await q('SELECT * FROM subscriptions WHERE user_id = $1', [String(userId)]))[0]);
       const values = keys.map((k) => (k === 'paidVnd' ? wholeVnd(set[k]) : set[k] ?? null));
       const rows = await q(
-        `WITH u AS (
+        `WITH a AS (
+           SELECT id FROM billing_orders WHERE id = $4::text AND status = 'paid' AND applied_at IS NULL FOR UPDATE
+         ), u AS (
            UPDATE subscriptions SET ${keys.map((k, i) => `${COLS[k]} = $${i + 5}`).join(', ')}, updated_at = NOW()
-            WHERE user_id = $1 AND ($2::timestamptz IS NULL OR period_end = $2::timestamptz) AND ($3::text IS NULL OR status = $3) RETURNING *
+            WHERE user_id = $1 AND ($2::timestamptz IS NULL OR period_end = $2::timestamptz) AND ($3::text IS NULL OR status = $3)
+              AND ($4::text IS NULL OR EXISTS (SELECT 1 FROM a)) RETURNING *
          ), o AS (
-           UPDATE billing_orders SET applied_at = NOW() WHERE id = $4::text AND EXISTS (SELECT 1 FROM u) RETURNING id
+           UPDATE billing_orders SET applied_at = NOW() WHERE id IN (SELECT id FROM a) AND EXISTS (SELECT 1 FROM u) RETURNING id
          )
          SELECT * FROM u`,
         [String(userId), seenEnd, seenStatus, appliedOrder, ...values],
@@ -5743,11 +5747,15 @@ export function createPgStore(connectionString) {
     /** The first subscription of an account; null when one exists already (somebody else made it first). */
     async createSubscription(s, { appliedOrder = null } = {}) {
       const rows = await q(
-        `WITH u AS (
+        `WITH a AS (
+           SELECT id FROM billing_orders WHERE id = $12::text AND status = 'paid' AND applied_at IS NULL FOR UPDATE
+         ), u AS (
            INSERT INTO subscriptions (user_id, plan, period, status, period_start, period_end, paid_vnd, auto_renew, cancel_at_end, anchor_at, last_order)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT (user_id) DO NOTHING RETURNING *
+           SELECT $1::text, $2::text, $3::text, $4::text, $5::timestamptz, $6::timestamptz, $7::bigint, $8::boolean, $9::boolean, $10::timestamptz, $11::text
+            WHERE $12::text IS NULL OR EXISTS (SELECT 1 FROM a)
+           ON CONFLICT (user_id) DO NOTHING RETURNING *
          ), o AS (
-           UPDATE billing_orders SET applied_at = NOW() WHERE id = $12::text AND EXISTS (SELECT 1 FROM u) RETURNING id
+           UPDATE billing_orders SET applied_at = NOW() WHERE id IN (SELECT id FROM a) AND EXISTS (SELECT 1 FROM u) RETURNING id
          )
          SELECT * FROM u`,
         [s.userId, s.plan, s.period, s.status, s.periodStart, s.periodEnd, wholeVnd(s.paidVnd ?? 0), s.autoRenew !== false, !!s.cancelAtEnd, s.anchorAt ?? null, s.lastOrder ?? null, appliedOrder],
@@ -5767,7 +5775,8 @@ export function createPgStore(connectionString) {
     /**
      * A paid order that can no longer be applied gives its money back: in one statement it turns `refunded` and its total goes back
      * to the balance with a `refund` entry. It is not new money, so the 12-month clock is not restarted. Null when the order was
-     * applied meanwhile or is not paid (so a refund and an activation can never both happen).
+     * applied meanwhile or is not paid. A refund and a start can never both happen because each needs the order paid and unapplied
+     * in its own statement, and the start claims (locks and marks) the order in the same statement that writes the subscription.
      */
     async refundOrder(orderId) {
       const rows = await q(

@@ -1535,9 +1535,12 @@ CREATE TABLE IF NOT EXISTS billing_orders (
   simulated    BOOLEAN NOT NULL DEFAULT FALSE,
   -- The subscription a plan order was quoted on ('none', or plan|period|period_end in ms): it is paid only while that is still true.
   basis        TEXT,
-  -- Set in the same statement that starts what the order bought. A paid order without it has not been applied yet: it is applied or refunded.
+  -- Set by the statement that starts what the order bought, which claims the order (still paid, not yet applied) in that same statement; a refund
+  -- needs the same state, so on one order the start and the refund exclude each other. A paid order without it is applied or refunded, never both.
   applied_at   TIMESTAMPTZ,
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- Every plan or renewal order has a basis, so none can be paid around the per-basis unique index below.
+  CONSTRAINT billing_orders_basis_required CHECK (kind = 'topup' OR basis IS NOT NULL)
 );
 CREATE INDEX IF NOT EXISTS billing_orders_user_idx ON billing_orders (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS billing_orders_pending_idx ON billing_orders (expires_at) WHERE status = 'pending';

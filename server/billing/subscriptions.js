@@ -19,7 +19,7 @@ import { RANK, isPaidPlan, isPeriod, GRACE_DAYS, REMIND_DAYS } from './plans.js'
 import { periodEnd, addDays, monthWindow, renewalEnd } from './period.js';
 import { BillingUnavailable } from './fx.js';
 import { log } from '../util/trace.js';
-import { findRenewalOrder, renewalOrderFor, renewalTerms, settleUnapplied, tryApply } from './orders.js';
+import { findRenewalOrder, paidRenewalFor, renewalOrderFor, renewalTerms, settleUnapplied, tryApply } from './orders.js';
 
 /** Whether a stored subscription still counts at `now`: not ended, and not past its grace. */
 export const isLive = (sub, now) => !!sub && sub.status !== 'ended' && now < addDays(sub.periodEnd, GRACE_DAYS);
@@ -76,6 +76,10 @@ export async function activate(order, { now = new Date() } = {}) {
         : await store.createSubscription({ userId: order.userId, ...fields }, { appliedOrder: order.id });
     }
     if (next) return next;
+    // The write did not happen: either the row moved (look again) or the order was settled meanwhile (stop).
+    const fresh = await store.getOrder(order.id);
+    if (fresh?.status === 'refunded') return null;
+    if (fresh?.appliedAt) return store.getSubscription(order.userId);
   }
   throw Object.assign(new Error('Your plan could not be updated right now. Please try again.'), { status: 503 });
 }
@@ -168,7 +172,7 @@ export async function planInForce(userId, { now = new Date() } = {}) {
   // A plan set to end is free from its end, before any catch-up has written it down.
   let over = !!sub && sub.cancelAtEnd && now >= sub.periodEnd;
   // ...unless the next period was paid before it was cancelled: that one starts at the end, and counts until catchUp says so.
-  if (over && (await findRenewalOrder(sub))?.status === 'paid') over = false;
+  if (over && (await paidRenewalFor(sub))) over = false;
   if (!isLive(sub, now) || over) return { plan: 'free', period: null, status: sub ? 'ended' : 'none', start: null, end: null, month: null };
   // In grace the allowance month is still the last one paid for, not a new one.
   const at = now < sub.periodEnd ? now : new Date(sub.periodEnd.getTime() - 1);
