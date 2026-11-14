@@ -1533,7 +1533,8 @@ section('a new account confirms its email with a code');
 section('the SePay webhook is checked on the raw bytes');
 {
   const crypto = await import('node:crypto');
-  const saved = { secret: process.env.SEPAY_WEBHOOK_SECRET, mode: process.env.BILLING_MODE };
+  const saved = { secret: process.env.SEPAY_WEBHOOK_SECRET, mode: process.env.BILLING_MODE, account: process.env.SEPAY_BANK_ACCOUNT };
+  process.env.SEPAY_BANK_ACCOUNT = '0123456789';
   process.env.SEPAY_WEBHOOK_SECRET = 'http-test-sepay-secret';
   delete process.env.BILLING_MODE;
   // Spacing a JSON parser would not give back: the signature only holds for exactly these bytes.
@@ -1559,6 +1560,7 @@ section('the SePay webhook is checked on the raw bytes');
   const unset = await post(raw, { 'X-SePay-Signature': goodSignature, 'X-SePay-Timestamp': ts });
   check('no secret set: 404 too', unset.status === 404, String(unset.status));
   if (saved.secret === undefined) delete process.env.SEPAY_WEBHOOK_SECRET; else process.env.SEPAY_WEBHOOK_SECRET = saved.secret;
+  if (saved.account === undefined) delete process.env.SEPAY_BANK_ACCOUNT; else process.env.SEPAY_BANK_ACCOUNT = saved.account;
   if (saved.mode === undefined) delete process.env.BILLING_MODE; else process.env.BILLING_MODE = saved.mode;
 }
 

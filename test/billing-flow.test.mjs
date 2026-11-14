@@ -901,10 +901,10 @@ section('transfers: SePay checked on its raw bytes, taken once, matched to its o
   const hal = await makeUser();
   const oh = await planOrder(hal.id);
   const ph = payload({ code: oh.code, content: oh.code, transferAmount: 129000, referenceCode: 'FT-CRASH2' });
-  const realSetOutcome = store.setTransferOutcome;
-  store.setTransferOutcome = async () => { throw new Error('connection lost'); };
+  const realSetOutcome = store.finishTransfer;
+  store.finishTransfer = async () => { throw new Error('connection lost'); };
   const r500b = await send(ph);
-  store.setTransferOutcome = realSetOutcome;
+  store.finishTransfer = realSetOutcome;
   const midT = await store.getTransferByDedupe('ref:FT-CRASH2');
   check('a crash after the credit: 500, the transfer is still marked taking', r500b.status === 500 && midT.outcome === 'taking' && midT.creditedAt instanceof Date);
   const retry2 = await send(ph);
@@ -989,6 +989,112 @@ section('transfers: SePay checked on its raw bytes, taken once, matched to its o
   await send(payload({ code: om.code, content: om.code, transferAmount: 100000, referenceCode: 'FT-PART' }));
   const simPart = await sepay.simulateTransfer(om.id, { now: NOW });
   check('a partly paid order is simulated for what is left', simPart.outcome === 'applied' && (await store.getTransfer(simPart.transferId)).amountVnd === 29000);
+
+  /* fix round 1: the row is the truth, not the redelivery */
+  const seqNow = async () => Number((await query('SELECT last_value FROM receipt_seq'))[0].last_value);
+  const quiet = async (fn) => {
+    const seen = [];
+    const saved = { log: console.log, warn: console.warn, error: console.error, info: console.info };
+    for (const k of Object.keys(saved)) console[k] = (...a) => seen.push(a.join(' '));
+    try { await fn(); } finally { Object.assign(console, saved); }
+    return seen;
+  };
+  {
+    const u = await makeUser();
+    const o = await planOrder(u.id);
+    const p = payload({ code: o.code, content: o.code, referenceCode: 'FT-DUP3' });
+    const seq0 = await seqNow();
+    const res = await Promise.all([send(p), send(p), send(p)]);
+    const t = await store.getTransferByDedupe('ref:FT-DUP3');
+    check('three deliveries at once: all succeed, one credit, one receipt, one plan', res.every(ok) && (await query("SELECT 1 FROM balance_entries WHERE kind = 'topup' AND user_id = $1", [u.id])).length === 1 && (await store.listReceipts(u.id)).length === 1 && (await store.getSubscription(u.id))?.plan === 'plus' && (await balanceOf(u.id)) === 0);
+    check('  and one label that stays: exactly the price is applied, not over', t.outcome === 'applied', t.outcome);
+    const seq1 = await seqNow();
+    await send(p);
+    check('  a later redelivery does not use up a receipt number', (await seqNow()) === seq1 && seq1 > seq0);
+  }
+  {
+    const u = await makeUser();
+    const o = await planOrder(u.id);
+    const real = store.creditTransfer;
+    store.creditTransfer = async () => { throw new Error('boom'); };
+    await send(payload({ code: o.code, content: o.code, referenceCode: 'FT-AMT1', transferAmount: 129000 }));
+    store.creditTransfer = real;
+    const warned = await quiet(async () => { await send(payload({ code: o.code, content: o.code, referenceCode: 'FT-AMT1', transferAmount: 5000000 })); });
+    const t = await store.getTransferByDedupe('ref:FT-AMT1');
+    check('a redelivery under the same reference with another amount credits what was recorded', t.amountVnd === 129000 && (await store.getOrder(o.id)).receivedVnd === 129000 && (await balanceOf(u.id)) === 0 && (await store.getSubscription(u.id))?.plan === 'plus' && (await invariant(u.id)));
+    check('  and says so in the log, with ids and amounts only', warned.some((l) => l.includes('another amount') && l.includes('5000000') && l.includes('129000')) && !warned.some((l) => l.includes(o.code)), JSON.stringify(warned).slice(0, 200));
+  }
+  {
+    const u = await makeUser();
+    const o = await planOrder(u.id);
+    const real = store.creditTransfer;
+    store.creditTransfer = async () => { throw new Error('boom'); };
+    const p = payload({ code: o.code, content: o.code, referenceCode: 'FT-GONE1' });
+    await send(p);
+    store.creditTransfer = real;
+    await store.deleteUser(u.id);
+    const r = await send(p);
+    const t = await store.getTransferByDedupe('ref:FT-GONE1');
+    check('the account goes before the retry: success, the transfer ends unmatched for the owner, nothing credited', ok(r) && t.outcome === 'unmatched' && t.creditedAt === null, JSON.stringify([r.status, t.outcome]));
+  }
+  {
+    const u = await makeUser();
+    const o = await planOrder(u.id);
+    const realFinish = store.finishTransfer;
+    store.finishTransfer = async () => { throw new Error('boom'); };
+    const p = payload({ code: o.code, content: o.code, referenceCode: 'FT-GONE2', transferAmount: 129000 });
+    await send(p);
+    store.finishTransfer = realFinish;
+    await store.deleteUser(u.id);
+    const r = await send(p);
+    check('credited, then the account goes: the retry finishes it (late) without throwing', ok(r) && (await store.getTransferByDedupe('ref:FT-GONE2')).outcome === 'late', String(r.status));
+  }
+  {
+    const u = await makeUser();
+    const o = await planOrder(u.id);
+    await send(payload({ code: o.code, content: o.code, referenceCode: 'FT-PAID1' }));
+    const realFinish = store.finishTransfer;
+    store.finishTransfer = async () => { throw new Error('boom'); };
+    const p = payload({ code: o.code, content: o.code, referenceCode: 'FT-PAID2', transferAmount: 10000 });
+    await send(p);
+    store.finishTransfer = realFinish;
+    await send(p);
+    check('an extra transfer to a paid order that crashed is still late when it resumes', (await store.getTransferByDedupe('ref:FT-PAID2')).outcome === 'late' && (await balanceOf(u.id)) === 10000 && (await store.getOrder(o.id)).receivedVnd === 129000);
+  }
+  {
+    const u = await makeUser();
+    const o = await planOrder(u.id);
+    const r = await send(payload({ code: o.code, content: `${o.code}\u0000 x`, gateway: 'MB\u0000Bank', referenceCode: 'FT-NUL', transferAmount: 129000 }));
+    check('a NUL character in the content does not fail the insert', ok(r) && (await store.getTransferByDedupe('ref:FT-NUL'))?.outcome === 'applied', String(r.status));
+    const spaced = await send(payload({ accountNumber: ' 0123456789 ', code: o.code, content: o.code, referenceCode: 'FT-SPACE', transferAmount: 1000 }));
+    check('an account number with spaces round it is still ours', ok(spaced) && (await store.getTransferByDedupe('ref:FT-SPACE')).outcome === 'late');
+    const accountWas = process.env.SEPAY_BANK_ACCOUNT;
+    delete process.env.SEPAY_BANK_ACCOUNT;
+    const nobank = await send(payload({ code: o.code, content: o.code, referenceCode: 'FT-NOBANK' }));
+    process.env.SEPAY_BANK_ACCOUNT = accountWas;
+    check('without SEPAY_BANK_ACCOUNT the webhook is not ready (404), and nothing is recorded to bar a later poll', nobank.status === 404 && !(await store.getTransferByDedupe('ref:FT-NOBANK')));
+    const warnedOther = await quiet(async () => { await send(payload({ accountNumber: '111', code: o.code, content: o.code, referenceCode: 'FT-WARN' })); });
+    check('an incoming transfer to another account that names an order is ignored with a warning', (await store.getTransferByDedupe('ref:FT-WARN')).outcome === 'ignored' && warnedOther.some((l) => l.includes('SEPAY_BANK_ACCOUNT')));
+  }
+  {
+    const seen = [];
+    const fetchWas = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      const u = new URL(String(url));
+      if (u.host !== 'userapi.sepay.vn') return fetchWas(url, init);
+      seen.push(1);
+      return json({ data: [{ id: 'z1', transaction_date: '2026-11-13 12:00:00', account_number: '0123456789', transfer_type: 'out', amount_in: 0, amount_out: 5000, transaction_content: 'out', reference_number: 'FT-POLL-OUT', bank_brand_name: 'MB' }], meta: { pagination: { has_more: false } } });
+    };
+    sepay._resetSepayForTests();
+    const took0 = await sepay.reconcile({ since: NOW, now: NOW.getTime() });
+    check('a polled row with no money in is skipped without a record', took0 === 0 && seen.length === 1 && !(await store.getTransferByDedupe('ref:FT-POLL-OUT')));
+    process.env.BILLING_MODE = 'off';
+    sepay._resetSepayForTests();
+    const off = await sepay.reconcile({ since: NOW, now: NOW.getTime() });
+    delete process.env.BILLING_MODE;
+    globalThis.fetch = fetchWas;
+    check('with billing off reconcile asks nothing', off === 0 && seen.length === 1);
+  }
 
   /* the secrets stay out of everything said */
   check('no answer carries the secret or the token', ![ra, rep, r500, r500b].some((a) => JSON.stringify(a).includes('whsec') || JSON.stringify(a).includes('api-token')));

@@ -266,8 +266,8 @@ section('schema.sql and SCHEMA_VERSION move together');
   // 51: skills.previous — a skill's words before the assistant last changed them.
   // 52: service_keys — several keys per deployment service. Restamped without a bump for a
   // comment-only change (the key limit, the page's path) before 52 left its branch (2026-11-13).
-  // 53: billing — balances, orders, transfers, subscriptions, promo codes, receipts, e-invoices (spec B1). Restamped without a bump for a comment-only change (receipts.buyer_sealed) before 53 left its branch.
-  const STAMPED = { version: 53, fingerprint: 'bc4ce853a320c976' };
+  // 53: billing — balances, orders, transfers, subscriptions, promo codes, receipts, e-invoices (spec B1). Restamped without a bump, more than once, before 53 left its branch (it never has: the branch was not pushed): first for comments, later for structure (orders.basis and applied_at, the paid-once indexes, sepay_transfers.credited_at and counted, the `taking` outcome, receipts_transfer_once).
+  const STAMPED = { version: 53, fingerprint: '0616cbb40064417b' };
 
   check(
     'the recorded version matches the code',

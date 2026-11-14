@@ -361,7 +361,7 @@ const orderRow = (r) => r && ({
 const transferRow = (r) => r && ({
   id: num(r.id), dedupe: r.dedupe, sepayId: r.sepay_id, referenceCode: r.reference_code, gateway: r.gateway, accountNumber: r.account_number,
   amountVnd: num(r.amount_vnd), code: r.code, content: r.content, transactionAt: asDate(r.transaction_at), orderId: r.order_id,
-  userId: r.user_id, outcome: r.outcome, via: r.via, creditedAt: asDate(r.credited_at), receivedAt: asDate(r.received_at),
+  userId: r.user_id, outcome: r.outcome, via: r.via, creditedAt: asDate(r.credited_at), counted: !!r.counted, receivedAt: asDate(r.received_at),
 }) || null;
 const subscriptionRow = (r) => r && ({
   userId: r.user_id, plan: r.plan, period: r.period, status: r.status, periodStart: asDate(r.period_start), periodEnd: asDate(r.period_end),
@@ -5695,14 +5695,14 @@ export function createPgStore(connectionString) {
     },
     /**
      * Credit what a transfer brought, once. One statement: the transfer is claimed (`credited_at` set only while it is null), and
-     * only then are the balance, the ledger entry (kind topup, ref = the transfer's id) and, when `countReceived`, the order's
+     * only then (and with `counted` recording whether it counted toward the order) are the balance, the ledger entry (kind topup, ref = the transfer's id) and, when `countReceived`, the order's
      * `received_vnd` written. A retry of the same transfer finds it claimed and changes nothing (returns null). Real money, so it
      * starts the 12-month clock.
      */
     async creditTransfer({ transferId, userId, vnd, orderId = null, countReceived = false }) {
       const rows = await q(
         `WITH c AS (
-           UPDATE sepay_transfers SET credited_at = NOW() WHERE id = $1 AND credited_at IS NULL RETURNING id
+           UPDATE sepay_transfers SET credited_at = NOW(), counted = $5::boolean WHERE id = $1 AND credited_at IS NULL RETURNING id
          ), b AS (
            INSERT INTO balances (user_id, vnd, last_topup_at) SELECT $2::text, $3::bigint, NOW() FROM c
            ON CONFLICT (user_id) DO UPDATE SET vnd = balances.vnd + EXCLUDED.vnd, last_topup_at = NOW(), updated_at = NOW()
@@ -5716,6 +5716,16 @@ export function createPgStore(connectionString) {
         [Number(transferId), String(userId), wholeVnd(vnd), orderId, !!countReceived],
       );
       return rows[0] ? Number(rows[0].vnd) : null;
+    },
+    /** The outcome of a transfer that is still being taken; the first to finish it wins (null when it was already finished). */
+    async finishTransfer(id, { outcome, orderId = null, userId = null }) {
+      return transferRow((await q(
+        `UPDATE sepay_transfers SET outcome = $2, order_id = COALESCE($3, order_id), user_id = COALESCE($4, user_id) WHERE id = $1 AND outcome = 'taking' RETURNING *`,
+        [Number(id), outcome, orderId, userId],
+      ))[0]);
+    },
+    async receiptForTransfer(transferId) {
+      return receiptRow((await q('SELECT * FROM receipts WHERE transfer_id = $1', [Number(transferId)]))[0]);
     },
     /** A top-up order closed as paid with what arrived (received_vnd is kept as it is); null unless it was pending. */
     async markTopupPaid(id, now) {

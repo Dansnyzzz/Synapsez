@@ -59,7 +59,8 @@ const transactionAt = (text) => {
   return Number.isNaN(+d) ? null : d;
 };
 const vnStamp = (d) => new Date(+d + 7 * 3_600_000).toISOString().slice(0, 19).replace('T', ' ');
-const cut = (value, n) => (value == null ? null : String(value).slice(0, n));
+// A NUL byte is not storable in Postgres text (22021) and would fail the insert, and so every redelivery, for good.
+const cut = (value, n) => (value == null ? null : String(value).replaceAll(String.fromCharCode(0), '').slice(0, n));
 
 /** What the receipt says it is for. No buyer details: those travel sealed in `buyer_sealed`. */
 function receiptLines(order, amountVnd) {
@@ -68,6 +69,8 @@ function receiptLines(order, amountVnd) {
 
 async function issueReceipt(transfer, order, userId) {
   const store = getStore();
+  // Checked first so a finished retry does not use up a receipt number (the sequence is drawn before the unique index answers).
+  if (await store.receiptForTransfer(transfer.id)) return;
   // The profile's own sealed snapshot is copied: it is already sealed for this account (billingProfileContext), so it opens the same.
   const buyerSealed = (await store.getBillingProfile(userId))?.sealed ?? null;
   try {
@@ -91,7 +94,7 @@ export async function takeTransfer(payload, { via = 'webhook', now = Date.now(),
   const amount = payload?.transferAmount;
   if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error('A transfer needs a positive whole amount.');
   const reference = cut(String(payload.referenceCode ?? '').trim(), 120) || null;
-  const idText = payload.id == null ? '' : String(payload.id).trim();
+  const idText = payload.id == null ? '' : cut(String(payload.id).trim(), 80);
   if (!reference && !idText) throw new Error('A transfer needs a reference or an id.');
   const dedupe = reference ? `ref:${reference}` : `id:${idText}`;
 
@@ -109,42 +112,56 @@ export async function takeTransfer(payload, { via = 'webhook', now = Date.now(),
     outcome: !moneyIn ? 'ignored' : order0 ? 'taking' : 'unmatched',
   };
   let row = await store.recordTransfer(draft);
+  if (row && row.outcome === 'ignored' && payload.transferType === 'in') {
+    // Money in that we ignored but that names an order: a wrong or unset SEPAY_BANK_ACCOUNT would look exactly like this.
+    const named = findCode(payload.code, payload.content);
+    if (named && (await store.getOrderByCode(named))) log.warn('an incoming SePay transfer names an order but was ignored (is SEPAY_BANK_ACCOUNT right?)', { transfer: row.id });
+  }
   if (row && row.outcome !== 'taking') return { outcome: row.outcome, transferId: row.id, orderId: null, repeat: false };
   if (!row) {
     row = await store.getTransferByDedupe(dedupe);
     if (!row) throw new Error('A transfer that was just recorded could not be read back.');
+    // A different transfer reusing a reference must not pass silently as a repeat; the recorded row is what counts.
+    if (row.amountVnd !== amount) log.warn('a SePay transfer repeats a reference with another amount', { transfer: row.id, recorded: row.amountVnd, received: amount, via });
     if (row.outcome !== 'taking') return { outcome: row.outcome, transferId: row.id, orderId: row.orderId, repeat: true };
   }
 
-  // From here the row says which order and account it belongs to; a retry follows the row, not a fresh guess.
+  // From here the row says which order and account it belongs to, and how much it was; a retry follows the row, not the payload.
   const userId = row.userId;
   const order = await store.getOrder(row.orderId);
-  if (!userId || !order) throw new Error('A transfer in progress lost its order.');
-  const finishing = !!row.creditedAt; // an earlier try already credited it
+  if (!userId || !order || !order.userId) {
+    // The order or the account went away while the transfer was being taken: nothing to credit, or already credited with nobody to apply it to.
+    const outcome = row.creditedAt ? 'late' : 'unmatched';
+    const done = await store.finishTransfer(row.id, { outcome });
+    log.warn('a SePay transfer in progress lost its order or account', { transfer: row.id, outcome });
+    return { outcome: (done ?? (await store.getTransfer(row.id))).outcome, transferId: row.id, orderId: null, repeat: false };
+  }
+  const vnd = row.amountVnd;
   const live = order.status === 'pending' && order.expiresAt > at;
-  const dueBefore = finishing || order.kind === 'topup' ? null : dueOf(order, (await store.billingState(userId)).balanceVnd);
-  await store.creditTransfer({ transferId: row.id, userId, vnd: amount, orderId: order.id, countReceived: live });
+  const balance = await store.creditTransfer({ transferId: row.id, userId, vnd, orderId: order.id, countReceived: live });
+  // The statement that claims the credit decides, once, whether it counted toward the order; every later try follows that.
+  const counted = (await store.getTransfer(row.id)).counted;
+  // The balance this transfer found, exact at the credit (null when somebody else, or an earlier try, claimed it).
+  const dueBefore = balance == null || order.kind === 'topup' ? null : dueOf(order, balance - vnd);
 
   let outcome;
-  if (order.kind === 'topup') {
+  if (!counted) {
+    outcome = 'late';
+  } else if (order.kind === 'topup') {
     // A top-up order is only a code and an amount: whatever arrives closes it, and it stays in the balance.
-    if (live) {
-      await store.markTopupPaid(order.id, at);
-      outcome = 'topup';
-    } else {
-      outcome = finishing && order.status === 'paid' ? 'topup' : 'late';
-    }
-  } else if (live || (finishing && order.status === 'paid')) {
+    await store.markTopupPaid(order.id, at);
+    outcome = 'topup';
+  } else {
     await tryApply(order.id, { now: at }); // after every credit, even when the order looks short: it decides
     const after = await store.getOrder(order.id);
-    if (after.status === 'paid') outcome = (finishing ? after.receivedVnd > after.totalVnd : amount > dueBefore) ? 'over' : 'applied';
+    if (after.status === 'paid') outcome = (dueBefore == null ? after.receivedVnd > after.totalVnd : vnd > dueBefore) ? 'over' : 'applied';
     else outcome = after.status === 'pending' ? 'short' : 'late';
-  } else {
-    outcome = 'late';
   }
 
   if (via !== 'simulated') await issueReceipt(row, order, userId);
-  await store.setTransferOutcome(row.id, { outcome, orderId: order.id, userId });
+  // The first to finish sets the label, so two deliveries at once cannot disagree about it.
+  const finished = (await store.finishTransfer(row.id, { outcome, orderId: order.id, userId })) ?? (await store.getTransfer(row.id));
+  outcome = finished.outcome;
   log.info('a SePay transfer was taken', { transfer: row.id, outcome, via });
   return { outcome, transferId: row.id, orderId: order.id, repeat: false };
 }
@@ -156,7 +173,8 @@ export async function takeTransfer(payload, { via = 'webhook', now = Date.now(),
  */
 export async function acceptSepay({ raw, headers, now = Date.now(), env = process.env }) {
   const secret = String(env.SEPAY_WEBHOOK_SECRET || '');
-  if (billingMode(env) === 'off' || !secret) return { status: 404, body: { success: false } };
+  // No account number means no transfer could ever be recognised as ours (and dedupe would then bar a later poll): the endpoint is not ready.
+  if (billingMode(env) === 'off' || !secret || !String(env.SEPAY_BANK_ACCOUNT || '').trim()) return { status: 404, body: { success: false } };
   if (!verifySepay({ raw, headers, secret, now })) return { status: 401, body: { success: false } };
   let payload;
   try {
@@ -198,7 +216,7 @@ const fromList = (row) => ({
  */
 export async function reconcile({ since, orderId = null, now = Date.now(), env = process.env } = {}) {
   const token = String(env.SEPAY_API_TOKEN || '').trim();
-  if (!token) return 0;
+  if (!token || billingMode(env) === 'off') return 0;
   const t = +atOf(now);
   if (t - asked.all < POLL_ALL_MS) return 0;
   if (orderId && t - (asked.byOrder.get(orderId) ?? -Infinity) < POLL_ORDER_MS) return 0;
@@ -228,7 +246,7 @@ export async function reconcile({ since, orderId = null, now = Date.now(), env =
     }
     const rows = Array.isArray(body?.data) ? body.data : Array.isArray(body) ? body : [];
     for (const row of rows) {
-      if (!String(row?.reference_number ?? '').trim()) continue;
+      if (!String(row?.reference_number ?? '').trim() || !(Number(row?.amount_in) > 0)) continue;
       try {
         const done = await takeTransfer(fromList(row), { via: 'poll', now: t, env });
         if (!done.repeat && done.outcome !== 'ignored') taken += 1;

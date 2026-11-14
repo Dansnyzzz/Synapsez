@@ -324,7 +324,8 @@ export function createApp() {
       res.status(answer.status).json(answer.body);
     }),
   );
-  // SePay's transfer webhook (billing, 2026-11-13): its HMAC is over the exact bytes, so it is read raw here, ahead of express.json.
+  // SePay's transfer webhook (billing, 2026-11-13). Unlike the hooks above it is NOT answered at once: its HMAC is its proof (over the exact
+  // bytes, so it is read raw here, ahead of express.json), and the success body is written only after the transfer is in the database.
   app.post('/api/billing/sepay', express.raw({ type: () => true, limit: '256kb' }), outside(async (req, res) => {
     const answer = await acceptSepay({ raw: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), headers: req.headers });
     res.status(answer.status).json(answer.body);

@@ -2105,7 +2105,7 @@ step, with the optional certificate and how to bring data over from another data
 | `SEPAY_BANK_ACCOUNT` | optional | The bank account SePay watches and the QR pays into (the receiving account number). Without it, checkout cannot show a QR. |
 | `SEPAY_BANK_CODE` | optional | The bank's short code for the QR, as SePay's QR image expects it (for example `MBBank`). |
 | `SEPAY_ACCOUNT_NAME` | optional | The account holder's name shown beside the QR. |
-| `SEPAY_WEBHOOK_SECRET` | optional | The secret of SePay's webhook (HMAC-SHA256, set in SePay's dashboard when the webhook is made): `POST /api/billing/sepay` is checked on its raw bytes with it and answers 404 while it is unset. Without it no transfer is ever taken. |
+| `SEPAY_WEBHOOK_SECRET` | optional | The secret of SePay's webhook (HMAC-SHA256, set in SePay's dashboard when the webhook is made): `POST /api/billing/sepay` is checked on its raw bytes with it and answers 404 while it is unset. Without it the webhook answers 404 (the backup poll, with `SEPAY_API_TOKEN`, can still take transfers). |
 | `SEPAY_API_TOKEN` | optional | A SePay API key (Cài đặt công ty → API Keys) for the backup poll of `userapi.sepay.vn`, which takes transfers the webhook missed. Without it nothing is polled. |
 | `E2B_ACCOUNT_MIN_MILLS` | optional | The least cloud-computer time an account's share can be worked down to, in thousandths of a dollar (default `133`, about an hour). Replaces `E2B_ACCOUNT_DAY_FLOOR` (1.30.0). |
 | `QUALITY_GATE_ROUNDS` | optional | How many times a finished answer citing an address no source holds is sent back to correct that sentence, before the link is dropped (1–3, default `2`). Each round is one short call, made only while something is still flagged. See "The quality gate". |

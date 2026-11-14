@@ -312,10 +312,12 @@ section('crediting a transfer, once');
   check('countReceived false credits the balance and leaves the order alone', (await balanceOf(kay.id)) === 65000 && (await store.getOrder('o95')).receivedVnd === 60000);
   const paid = await store.markTopupPaid('o95', NOW);
   check('a top-up order is marked paid with what arrived, once', paid?.status === 'paid' && paid.receivedVnd === 60000 && (await store.markTopupPaid('o95', NOW)) === null);
+  check('credit says whether it counted, and the first to finish a transfer wins', (await store.getTransfer(tr.id)).counted === true && (await store.getTransfer(tr2.id)).counted === false && (await store.finishTransfer(tr.id, { outcome: 'short' }))?.outcome === 'short' && (await store.finishTransfer(tr.id, { outcome: 'applied' })) === null && (await store.getTransfer(tr.id)).outcome === 'short');
   await store.createOrder(order('o96', kay.id));
   check('a plan order is never marked paid this way', (await store.markTopupPaid('o96', NOW)) === null && (await store.getOrder('o96')).status === 'pending');
   const r1 = await store.createReceipt({ userId: kay.id, transferId: tr.id, amountVnd: 60000, lines: [] });
   const r2 = await store.createReceipt({ userId: kay.id, transferId: tr.id, amountVnd: 60000, lines: [] }).then(() => null, (err) => err);
+  check('receiptForTransfer finds it, or says none', (await store.receiptForTransfer(tr.id))?.number === r1.number && (await store.receiptForTransfer(tr2.id)) === null);
   check('one receipt per transfer', !!r1.number && r2?.code === '23505', String(r2?.code));
 }
 

@@ -1571,6 +1571,8 @@ CREATE TABLE IF NOT EXISTS sepay_transfers (
   via            TEXT NOT NULL CHECK (via IN ('webhook','poll','simulated')),
   -- Set by the statement that credits the balance for this transfer and gates it, so a retry can never credit it twice.
   credited_at    TIMESTAMPTZ,
+  -- Whether that credit counted toward its order (the order was live then): decided once, by the claiming statement, so a retry never relabels it.
+  counted        BOOLEAN NOT NULL DEFAULT FALSE,
   received_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS sepay_transfers_outcome_idx ON sepay_transfers (outcome, received_at DESC);
