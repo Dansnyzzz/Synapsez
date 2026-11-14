@@ -376,8 +376,16 @@ const receiptRow = (r) => r && ({
   number: r.number, userId: r.user_id, transferId: num(r.transfer_id), orderId: r.order_id, amountVnd: num(r.amount_vnd),
   lines: typeof r.lines === 'string' ? JSON.parse(r.lines) : r.lines, buyerSealed: r.buyer_sealed, issuedAt: asDate(r.issued_at),
 }) || null;
+const INVOICE_SOURCE = `SELECT o.id, o.user_id, o.kind, o.plan, o.period, o.total_vnd,
+  (SELECT t.amount_vnd FROM sepay_transfers t WHERE t.order_id = o.id AND t.via <> 'simulated' AND t.outcome IN ('applied', 'over', 'topup') ORDER BY t.id LIMIT 1) AS transfer_vnd
+  FROM billing_orders o`;
+const invoiceSourceRow = (r) => r && ({
+  id: r.id, userId: r.user_id, kind: r.kind, plan: r.plan, period: r.period, totalVnd: num(r.total_vnd), amountVnd: r.transfer_vnd == null ? null : num(r.transfer_vnd),
+}) || null;
 const einvoiceRow = (r) => r && ({
   orderId: r.order_id, referenceCode: r.reference_code, trackingCode: r.tracking_code, status: r.status, error: r.error, updatedAt: asDate(r.updated_at),
+  // When its order was paid (only from the queries that join it): the age a stuck invoice is judged by.
+  paidAt: r.paid_at === undefined ? null : asDate(r.paid_at),
 }) || null;
 
 /**
@@ -5993,9 +6001,33 @@ export function createPgStore(connectionString) {
     async getEinvoice(orderId) {
       return einvoiceRow((await q('SELECT * FROM einvoices WHERE order_id = $1', [String(orderId)]))[0]);
     },
-    /** E-invoices not yet finished: any status other than `issued` or `failed`. */
-    async listEinvoicesPending() {
-      return (await q(`SELECT * FROM einvoices WHERE status NOT IN ('issued', 'failed') ORDER BY updated_at`)).map(einvoiceRow);
+    /**
+     * E-invoices not yet finished (any status but `issued` or `failed`), the one asked about longest ago first, with the date their
+     * order was paid. Capped, because the daily step asks about at most that many in a run.
+     */
+    async listEinvoicesPending(limit = 50) {
+      return (await q(
+        `SELECT e.*, o.paid_at FROM einvoices e LEFT JOIN billing_orders o ON o.id = e.order_id
+          WHERE e.status NOT IN ('issued', 'failed') ORDER BY e.updated_at, e.order_id LIMIT $1`,
+        [Math.max(0, Math.trunc(limit))],
+      )).map(einvoiceRow);
+    },
+    /**
+     * Orders that money paid (a real transfer, not play money) since `since` and that have no e-invoice row yet, oldest first.
+     * `amountVnd` is what the first such transfer brought; a top-up is invoiced for that, a plan for its price.
+     */
+    async listOrdersToInvoice({ since, limit = 50 }) {
+      return (await q(
+        `${INVOICE_SOURCE} WHERE o.status = 'paid' AND NOT o.simulated AND o.paid_at >= $1::timestamptz
+            AND NOT EXISTS (SELECT 1 FROM einvoices e WHERE e.order_id = o.id)
+            AND EXISTS (SELECT 1 FROM sepay_transfers t WHERE t.order_id = o.id AND t.via <> 'simulated' AND t.outcome IN ('applied', 'over', 'topup'))
+          ORDER BY o.paid_at, o.id LIMIT $2`,
+        [since, Math.max(0, Math.trunc(limit))],
+      )).map(invoiceSourceRow);
+    },
+    /** One order as the e-invoice is built from it (to retry an invoice that was refused), or null. */
+    async invoiceSource(orderId) {
+      return invoiceSourceRow((await q(`${INVOICE_SOURCE} WHERE o.id = $1`, [String(orderId)]))[0]);
     },
 
     /**
@@ -6037,7 +6069,7 @@ export function createPgStore(connectionString) {
         (e.kind IN ('topup', 'assign') AND EXISTS (SELECT 1 FROM sepay_transfers t WHERE t.id::text = e.ref AND t.via = 'simulated'))
         OR (e.kind IN ('plan', 'refund') AND EXISTS (SELECT 1 FROM billing_orders o WHERE o.id = e.ref AND ${simulatedOrder}))
       )`;
-      const [kinds, paid, counts, held, size] = await Promise.all([
+      const [kinds, paid, counts, held, size, einvoicesFailed] = await Promise.all([
         q(
           `SELECT e.kind, COALESCE(SUM(e.delta_vnd) FILTER (WHERE e.delta_vnd > 0), 0) AS in_vnd, COALESCE(-SUM(e.delta_vnd) FILTER (WHERE e.delta_vnd < 0), 0) AS out_vnd
              FROM balance_entries e WHERE e.created_at >= $1::timestamptz AND NOT ${simulatedEntry} GROUP BY e.kind`,
@@ -6050,6 +6082,7 @@ export function createPgStore(connectionString) {
                      FROM (SELECT e.user_id, SUM(e.delta_vnd) AS s FROM balance_entries e WHERE e.user_id IS NOT NULL AND NOT ${simulatedEntry} GROUP BY e.user_id) x
                      LEFT JOIN balances b ON b.user_id = x.user_id) y`),
         q('SELECT pg_database_size(current_database()) AS n').catch(() => []),
+        q("SELECT COUNT(*) AS n FROM einvoices WHERE status = 'failed'"),
       ]);
       const entries = {};
       for (const r of kinds) entries[r.kind] = { inVnd: Number(r.in_vnd), outVnd: Number(r.out_vnd) };
@@ -6062,6 +6095,8 @@ export function createPgStore(connectionString) {
         balancesHeldVnd: Number(held[0].total),
         accounts: Number(held[0].accounts),
         databaseBytes: size[0] ? Number(size[0].n) : null,
+        // E-invoices given up on (unsettled 7 days after the payment): the owner has to see to these with SePay.
+        einvoicesFailed: Number(einvoicesFailed[0].n),
       };
     },
     /** Accounts that asked for a low-balance email: the threshold, when the last one went, and the balance now. */

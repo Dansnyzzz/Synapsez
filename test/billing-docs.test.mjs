@@ -52,6 +52,7 @@ const { takeTransfer } = await import('../server/billing/sepay.js');
 const orders = await import('../server/billing/orders.js');
 const { billingTick, einvoiceStep } = await import('../server/billing/daily.js');
 const { LIMITS } = await import('../server/ratelimit.js');
+const { setPrefs } = await import('../server/settings.js');
 
 const PORT = 5239;
 const server = createApp().listen(PORT);
@@ -117,6 +118,10 @@ section('the receipt is a PDF with what a receipt must say');
 
   const taxed = squash(await textOf(await drawReceipt(receipt, { language: 'vi', env: { BILLING_TAX_RATE: '10', BILLING_SELLER_NAME: 'Công ty Mẫu' } })));
   check('with BILLING_TAX_RATE a tax line appears (of the total, tax included), and the seller comes from the environment', taxed.includes('thuế GTGT 10%') && taxed.includes('11.727 ₫') && taxed.includes('Công ty Mẫu'), taxed);
+  const creditOnly = squash(await textOf(await drawReceipt({ ...receipt, lines: [{ kind: 'credit', plan: null, period: null, code: 'SZ0123456789', amountVnd: 129_000 }] }, { language: 'vi', env: { BILLING_TAX_RATE: '10' } })));
+  check('a credit-only receipt (money added to the balance) has no VAT line even when a rate is set', creditOnly.includes('Tiền đã chuyển vào số dư') && !creditOnly.includes('Trong đó thuế'), creditOnly);
+  const many = squash(await textOf(await drawReceipt({ ...receipt, lines: Array.from({ length: 60 }, (_, i) => ({ kind: 'topup', plan: null, period: null, code: 'SZ0123456789', amountVnd: 1000 + i })) }, { language: 'en', env: {} })));
+  check('a receipt with far more lines than a page holds keeps its footer and says how many it left out', many.includes('Payment receipt — not a VAT invoice.') && /and [0-9]+ more/.test(many), many.slice(-200));
   const bad = squash(await textOf(await drawReceipt(receipt, { language: 'vi', env: { BILLING_TAX_RATE: 'ten' } })));
   check('  a rate that is not a number draws none', !bad.includes('Trong đó thuế'));
 
@@ -160,7 +165,10 @@ section('GET /api/billing/receipts/:number.pdf');
   check('  with the headers the brief names', res.headers.get('content-type') === 'application/pdf' && res.headers.get('content-disposition') === `attachment; filename="${made.number}.pdf"` && res.headers.get('cache-control') === 'no-store', [...res.headers.entries()].filter(([k]) => /content|cache/.test(k)).join(' | '));
   const read = squash(await textOf(res.bytes));
   check('  and it is this receipt, in English for an account that did not choose Vietnamese', read.includes(made.number) && read.includes('Payment receipt') && read.includes('70,000 ₫') && read.includes('Owner Person'), read);
-  await store.setPrefs?.(owner.id, { language: 'vi' }).catch(() => {});
+  await setPrefs(owner.id, { language: 'vi' });
+  const inVi = squash(await textOf((await owner.j.call('GET', `/api/billing/receipts/${made.number}.pdf`)).bytes));
+  check('  and in Vietnamese once the account chose it', inVi.includes('Biên nhận thanh toán') && inVi.includes('70.000 ₫'), inVi);
+  await setPrefs(owner.id, { language: 'en' });
   const other404 = await other.j.call('GET', `/api/billing/receipts/${made.number}.pdf`);
   check("another account's receipt is a 404 (numbers are guessable)", other404.status === 404 && !other404.bytes.toString().includes('%PDF'), `${other404.status}`);
   check('  so is one that does not exist', (await owner.j.call('GET', '/api/billing/receipts/SZR-2026-999999.pdf')).status === 404);
@@ -343,8 +351,32 @@ section('einvoiceStatus and einvoicePdf');
   check('  one SePay does not know stays unknown, and is not created', still.status === 'unknown');
 }
 
-section('the daily step asks about unfinished invoices, each in its own try');
+/* ── the daily step does all the e-invoice work; the webhook does none ───────────── */
+const setup = async (name, amount = 50_000, via = 'webhook') => {
+  const acc = await account(name, { role: 'admin' });
+  const o = await orders.createOrder(acc.id, { kind: 'topup', amountVnd: amount });
+  await takeTransfer({ id: null, referenceCode: `DOCS-${name}`, gateway: 'Bank', transactionDate: '2026-11-13 10:00:00', accountNumber: '0123456789', code: o.order.code, content: o.order.code, transferType: 'in', transferAmount: amount }, { via });
+  return { acc, order: o.order };
+};
+const backdate = (id, days) => store.rawQuery('UPDATE billing_orders SET paid_at = $2::timestamptz WHERE id = $1', [id, new Date(+NOW - days * 86_400_000)]);
+const checks = () => calls.filter((c) => c.path.startsWith('/v1/invoices/create/check/'));
+
+section('a webhook never calls the e-invoice API, even with e-invoices on');
+let hooked;
 {
+  Object.assign(process.env, ENV);
+  outside.length = 0;
+  hooked = await setup('hook');
+  check('a paid top-up taken while e-invoices are on reaches no e-invoice host', !outside.some((h) => h.startsWith('einvoice-api')), outside.join());
+  check('  and leaves no invoice row (the daily step will issue it)', (await store.getEinvoice(hooked.order.id)) === null);
+  for (const k of Object.keys(ENV)) delete process.env[k];
+}
+
+section('the daily step: issue, ask, retry, give up, within a budget');
+{
+  // Whatever earlier sections left is out of the way: this section counts what it asks.
+  await store.rawQuery("UPDATE einvoices SET status = 'failed' WHERE status NOT IN ('issued', 'failed')");
+  await store.rawQuery("UPDATE billing_orders SET paid_at = $1::timestamptz WHERE status = 'paid' AND id NOT IN (SELECT order_id FROM einvoices) AND id <> $2", [new Date(+NOW - 30 * 86_400_000), hooked.order.id]);
   reset();
   for (const id of ['d-ok', 'd-bad', 'd-ok2']) await store.saveEinvoice({ orderId: id, referenceCode: id, trackingCode: `trk-${id}`, status: 'pending' });
   await store.saveEinvoice({ orderId: 'd-err', referenceCode: 'd-err', status: 'error', error: 'refused' });
@@ -356,51 +388,104 @@ section('the daily step asks about unfinished invoices, each in its own try');
     return json({ success: true, data: { status: 'Success' } });
   }) });
   check('with them on: the pending ones are looked at; a failure of one leaves the others', (await store.getEinvoice('d-ok')).status === 'issued' && (await store.getEinvoice('d-ok2')).status === 'issued' && (await store.getEinvoice('d-bad')).status === 'pending', String(looked));
-  check('  an error row and an issued row are left alone', (await store.getEinvoice('d-err')).status === 'error' && !calls.some((c) => c.path.includes('d-err') || c.path.includes('d-done')));
+  check('  an issued row is left alone, and an error row with no order to build from is skipped', !calls.some((c) => c.path.includes('d-done') || c.path.includes('d-err')));
+  await store.rawQuery("UPDATE einvoices SET status = 'failed' WHERE status NOT IN ('issued', 'failed')");
+
+  // 60 unfinished rows: no more than 50 asked in a run, and the ten left over are asked in the next (nobody starves).
+  reset();
+  for (let i = 0; i < 60; i += 1) await store.saveEinvoice({ orderId: `l-${i}`, referenceCode: `l-${i}`, trackingCode: `trk-l-${i}`, status: 'pending' });
+  const answerOk = recorded(() => json({ success: true, data: { status: 'Success' } }));
+  const first = await einvoiceStep({ now: NOW, env: ENV, fetchImpl: answerOk });
+  const issuedAfterFirst = (await store.rawQuery("SELECT COUNT(*)::int AS n FROM einvoices WHERE order_id LIKE 'l-%' AND status = 'issued'"))[0].n;
+  check('60 pending rows: at most 50 are asked in one run', first === 50 && checks().length === 50 && issuedAfterFirst === 50, `${first} ${checks().length} ${issuedAfterFirst}`);
+  const second = await einvoiceStep({ now: NOW, env: ENV, fetchImpl: answerOk });
+  const issuedAfterSecond = (await store.rawQuery("SELECT COUNT(*)::int AS n FROM einvoices WHERE order_id LIKE 'l-%' AND status = 'issued'"))[0].n;
+  check('  the other ten are asked in the next run', second === 10 && issuedAfterSecond === 60, `${second} ${issuedAfterSecond}`);
+
+  // A stuck row: seven days after the order was paid it is given up on, with its last words, and not asked again.
+  reset();
+  const stuck = await setup('stuck');
+  await backdate(stuck.order.id, 8);
+  await store.saveEinvoice({ orderId: stuck.order.id, referenceCode: stuck.order.id, trackingCode: 'trk-stuck', status: 'unknown', error: 'SePay did not confirm' });
+  const young = await setup('young');
+  await store.saveEinvoice({ orderId: young.order.id, referenceCode: young.order.id, trackingCode: 'trk-young', status: 'pending' });
+  const stillPending = recorded(() => json({ success: true, data: { status: 'Pending' } }));
+  await einvoiceStep({ now: NOW, env: ENV, fetchImpl: stillPending });
+  const gone = await store.getEinvoice(stuck.order.id);
+  check('an invoice unresolved 8 days after payment becomes failed, keeping its last error', gone.status === 'failed' && /did not confirm/.test(gone.error), JSON.stringify(gone));
+  check('  a young one that is still pending stays pending', (await store.getEinvoice(young.order.id)).status === 'pending');
+  reset();
+  await einvoiceStep({ now: NOW, env: ENV, fetchImpl: stillPending });
+  check('  the failed one is not asked again', !calls.some((c) => c.path.includes('stuck')));
+  const figures = await owner.j.call('GET', '/api/admin/billing');
+  check('  the administrator sees how many e-invoices failed', figures.status === 200 && figures.json?.figures?.einvoicesFailed >= 1, JSON.stringify(figures.json?.figures?.einvoicesFailed));
+  await store.rawQuery("UPDATE einvoices SET status = 'failed' WHERE status NOT IN ('issued', 'failed')");
+
+  // A paid order with no row gets its invoice from the step; old money, play money and an order with a row do not.
+  reset();
+  const fresh = await setup('fresh');
+  const old = await setup('oldpay');
+  await backdate(old.order.id, 10);
+  const play = await setup('playpay', 50_000, 'simulated');
+  const made = [];
+  await einvoiceStep({ now: NOW, env: ENV, fetchImpl: recorded((req) => {
+    if (req.path !== '/v1/invoices/create') return json({}, 404);
+    made.push(req.body);
+    return json({ success: true, data: { tracking_code: `trk-${req.body.reference_code}` } });
+  }) });
+  const freshRow = await store.getEinvoice(fresh.order.id);
+  const hookRow = await store.getEinvoice(hooked.order.id);
+  check('a paid order with no row gets its invoice from the next daily step', freshRow?.status === 'pending' && made.some((b) => b.reference_code === fresh.order.id && b.total_amount === 50_000), JSON.stringify(freshRow));
+  check('  so does the one the webhook took while it was on', hookRow !== null);
+  check('  an order paid more than 7 days ago is not invoiced late (the date must be today)', (await store.getEinvoice(old.order.id)) === null && !made.some((b) => b.reference_code === old.order.id));
+  check('  simulated money is not invoiced', (await store.getEinvoice(play.order.id)) === null && !made.some((b) => b.reference_code === play.order.id));
+  const before = made.length;
+  await einvoiceStep({ now: NOW, env: ENV, fetchImpl: recorded((req) => (req.path === '/v1/invoices/create' ? (made.push(req.body), json({ success: true, data: { tracking_code: 'again' } })) : json({ success: true, data: { status: 'Pending' } }))) });
+  check('  and it is asked for once: the next run sends no second create', made.length === before);
+
+  // An error row is retried; the repeat is a 409 and then the status is fetched.
+  reset();
+  const retry = await setup('retry');
+  await store.saveEinvoice({ orderId: retry.order.id, referenceCode: retry.order.id, status: 'error', error: 'REGISTRATION_NOT_TAX_APPROVED: not yet' });
+  await einvoiceStep({ now: NOW, env: ENV, fetchImpl: recorded((req) => (req.path === '/v1/invoices/create'
+    ? json({ success: false, error: { code: 'EINVOICE_DOCUMENT_EXISTED', message: 'exists' } }, 409)
+    : json({ success: true, data: { status: 'issued' } }))) });
+  check('an error row is retried, the repeat is a 409, and the status is fetched', created().length === 1 && calls.some((c) => c.method === 'GET' && c.path === `/v1/invoices/${retry.order.id}`) && (await store.getEinvoice(retry.order.id)).status === 'issued', JSON.stringify(await store.getEinvoice(retry.order.id)));
+
+  // The time budget stops the loop cleanly.
+  reset();
+  await store.saveEinvoice({ orderId: 'b-1', referenceCode: 'b-1', trackingCode: 'trk-b-1', status: 'pending' });
+  const spent = await einvoiceStep({ now: NOW, env: ENV, budgetMs: -1, fetchImpl: async () => { throw new Error('out of time: nothing may be asked'); } });
+  check('with its time budget spent the step stops cleanly, having asked nothing', spent === 0 && (await store.getEinvoice('b-1')).status === 'pending');
+  await store.rawQuery("UPDATE einvoices SET status = 'failed' WHERE status NOT IN ('issued', 'failed')");
 }
 
-/* ── the tie to a paid order, and the invoice route ───────────────── */
-section('a paid order and e-invoices: off sends nothing, on asks once');
+/* ── the invoice route ───────────────────────────────────────────── */
+section('GET /api/billing/invoices/:id.pdf');
 {
-  const buyerAcc = await account('payer', { role: 'admin' });
-  await buyerAcc.j.call('PUT', '/api/billing/profile', { name: 'Payer Person', email: 'payer@example.test', country: 'VN' });
-  outside.length = 0;
-  const o1 = await orders.createOrder(buyerAcc.id, { kind: 'topup', amountVnd: 50_000 });
-  const t1 = await takeTransfer({ id: null, referenceCode: 'DOCS-INV-1', gateway: 'Bank', transactionDate: '2026-11-13 10:00:00', accountNumber: '0123456789', code: o1.order.code, content: o1.order.code, transferType: 'in', transferAmount: 50_000 }, { via: 'webhook' });
-  check('e-invoices off: a paid top-up reaches SePay not at all (no fetch to its host)', t1.outcome === 'topup' && !outside.some((h) => h.startsWith('einvoice-api')) && (await store.getEinvoice(o1.order.id)) === null, outside.join());
-
-  let creates = 0;
-  einvoiceRoutes = ({ method, url, body }) => {
+  einvoiceRoutes = ({ url, body }) => {
     if (url.pathname === '/v1/token') return json({ success: true, data: { access_token: 'jwt-live.x.y', expires_in: 86400 } });
     if (url.pathname === '/v1/provider-accounts') return json({ success: true, data: { items: [{ id: 'acc-1', active: true }] } });
     if (url.pathname === '/v1/provider-accounts/acc-1') return json({ success: true, data: { templates: [{ template_code: '2', invoice_series: `C${new Date(Date.now() + 7 * 3_600_000).toISOString().slice(2, 4)}TSE` }] } });
-    if (url.pathname === '/v1/invoices/create') { creates += 1; return json({ success: true, data: { tracking_code: `trk-${body.reference_code}` } }); }
+    if (url.pathname === '/v1/invoices/create') return json({ success: true, data: { tracking_code: `trk-${body.reference_code}` } });
     if (url.pathname.startsWith('/v1/invoices/create/check/')) return json({ success: true, data: { status: 'Success' } });
     if (url.pathname.endsWith('/download')) return json({ success: true, data: { content: FAKE_PDF.toString('base64') } });
     return json({}, 404);
   };
+  const paidFor = await setup('invpay');
+  const playFor = await setup('invplay', 50_000, 'simulated');
   Object.assign(process.env, ENV);
   einvoice._resetEinvoiceForTests();
-  const o2 = await orders.createOrder(buyerAcc.id, { kind: 'topup', amountVnd: 50_000 });
-  const t2 = await takeTransfer({ id: null, referenceCode: 'DOCS-INV-2', gateway: 'Bank', transactionDate: '2026-11-13 10:10:00', accountNumber: '0123456789', code: o2.order.code, content: o2.order.code, transferType: 'in', transferAmount: 50_000 }, { via: 'webhook' });
-  const row = await store.getEinvoice(o2.order.id);
-  check('on: a paid top-up asks for its invoice once, with the order id as reference', t2.outcome === 'topup' && creates === 1 && row?.status === 'pending' && row.referenceCode === o2.order.id, JSON.stringify(row));
-  await takeTransfer({ id: null, referenceCode: 'DOCS-INV-2', gateway: 'Bank', transactionDate: '2026-11-13 10:10:00', accountNumber: '0123456789', code: o2.order.code, content: o2.order.code, transferType: 'in', transferAmount: 50_000 }, { via: 'webhook' });
-  check('  a repeated delivery does not ask again', creates === 1);
-  const sim = await orders.createOrder(buyerAcc.id, { kind: 'topup', amountVnd: 50_000 });
-  await takeTransfer({ id: null, referenceCode: 'DOCS-SIM', gateway: 'Bank', transactionDate: '2026-11-13 10:20:00', accountNumber: '0123456789', code: sim.order.code, content: sim.order.code, transferType: 'in', transferAmount: 50_000 }, { via: 'simulated' });
-  check('  simulated money is not invoiced', creates === 1 && (await store.getEinvoice(sim.order.id)) === null);
-
-  section('GET /api/billing/invoices/:id.pdf');
-  const res = await buyerAcc.j.call('GET', `/api/billing/invoices/${o2.order.id}.pdf`);
-  check('the order\'s owner gets the invoice PDF (status settles to issued first)', res.status === 200 && res.bytes.equals(FAKE_PDF), `${res.status}`);
-  check('  with the brief\'s headers', res.headers.get('content-type') === 'application/pdf' && res.headers.get('content-disposition') === `attachment; filename="${o2.order.id}.pdf"` && res.headers.get('cache-control') === 'no-store', [...res.headers.entries()].filter(([k]) => /content-(type|disp)|cache/.test(k)).join(' | '));
-  check("  another account's invoice is a 404", (await other.j.call('GET', `/api/billing/invoices/${o2.order.id}.pdf`)).status === 404);
-  check('  an order with no invoice is a 404', (await buyerAcc.j.call('GET', `/api/billing/invoices/${o1.order.id}.pdf`)).status === 404);
-  check('  an id that does not exist is a 404', (await buyerAcc.j.call('GET', '/api/billing/invoices/nope.pdf')).status === 404);
-  check('  a member gets a 404', (await member.j.call('GET', `/api/billing/invoices/${o2.order.id}.pdf`)).status === 404);
+  await einvoiceStep({ now: new Date() });
+  const res = await paidFor.acc.j.call('GET', `/api/billing/invoices/${paidFor.order.id}.pdf`);
+  check("the order's owner gets the invoice PDF (status settles to issued first)", res.status === 200 && res.bytes.equals(FAKE_PDF), `${res.status}`);
+  check("  with the brief's headers", res.headers.get('content-type') === 'application/pdf' && res.headers.get('content-disposition') === `attachment; filename="${paidFor.order.id}.pdf"` && res.headers.get('cache-control') === 'no-store', [...res.headers.entries()].filter(([k]) => /content-(type|disp)|cache/.test(k)).join(' | '));
+  check("  another account's invoice is a 404", (await other.j.call('GET', `/api/billing/invoices/${paidFor.order.id}.pdf`)).status === 404);
+  check('  an order with no invoice is a 404', (await playFor.acc.j.call('GET', `/api/billing/invoices/${playFor.order.id}.pdf`)).status === 404);
+  check('  an id that does not exist is a 404', (await paidFor.acc.j.call('GET', '/api/billing/invoices/nope.pdf')).status === 404);
+  check('  a member gets a 404', (await member.j.call('GET', `/api/billing/invoices/${paidFor.order.id}.pdf`)).status === 404);
   for (const k of Object.keys(ENV)) delete process.env[k];
-  check('  with e-invoices off there is no invoice to give (404)', (await buyerAcc.j.call('GET', `/api/billing/invoices/${o2.order.id}.pdf`)).status === 404);
+  check('  with e-invoices off there is no invoice to give (404)', (await paidFor.acc.j.call('GET', `/api/billing/invoices/${paidFor.order.id}.pdf`)).status === 404);
 }
 
 section('billingTick carries the e-invoice step');

@@ -19,14 +19,10 @@ import { log } from '../util/trace.js';
 import { forgetBillable } from './meter.js';
 import { sendBillingMail, within } from './mail.js';
 import { audit } from '../audit.js';
-import { decryptSecret } from '../crypto.js';
-import { billingProfileContext } from '../secretContexts.js';
-import { einvoiceEnabled, issueEinvoice } from './einvoice.js';
 
 const WINDOW_S = 300;
 // A mail that hangs must not hold SePay's answer: after this the webhook answers and the mail goes on (or fails) by itself.
 const TELL_MS = 8_000;
-const EINVOICE_MS = 20_000;
 const USERAPI = 'https://userapi.sepay.vn/v2/transactions';
 const POLL_ALL_MS = 10_000;
 const POLL_ORDER_MS = 30_000;
@@ -106,27 +102,6 @@ async function tell({ transfer, order, userId, outcome }) {
     });
   } catch (err) {
     log.warn('a SePay transfer could not be announced', { transfer: transfer.id, error: String(err?.message || err).slice(0, 120) });
-  }
-}
-
-/**
- * Ask for the e-invoice of an order that money has just paid (only when e-invoices are on). Never throws: SePay being down must not
- * turn a taken transfer into a 500 that SePay's webhook would then retry. A top-up is invoiced for what came in; a plan for its price.
- */
-async function invoiceFor(order, transfer, userId, now, env) {
-  try {
-    const sealed = (await getStore().getBillingProfile(userId))?.sealed;
-    let buyer = null;
-    if (sealed) {
-      try {
-        buyer = JSON.parse(decryptSecret(sealed, billingProfileContext(userId)) || 'null');
-      } catch {
-        buyer = null; // the invoice goes out without a buyer rather than not at all
-      }
-    }
-    await issueEinvoice({ id: order.id, kind: order.kind, plan: order.plan, period: order.period, totalVnd: order.kind === 'topup' ? transfer.amountVnd : order.totalVnd }, buyer, { now, env });
-  } catch (err) {
-    log.warn('an e-invoice could not be asked for', { transfer: transfer.id, error: String(err?.message || err).slice(0, 120) });
   }
 }
 
@@ -236,7 +211,6 @@ export async function takeTransfer(payload, { via = 'webhook', now = Date.now(),
   outcome = finished.outcome;
   // Only the delivery that finished it tells the account, so a retry never mails twice; simulated money tells nobody.
   if (won && via !== 'simulated') await within(TELL_MS, tell({ transfer: row, order, userId, outcome }));
-  if (won && via !== 'simulated' && ['applied', 'over', 'topup'].includes(outcome) && einvoiceEnabled(env)) await within(EINVOICE_MS, invoiceFor(order, row, userId, at, env));
   log.info('a SePay transfer was taken', { transfer: row.id, outcome, via });
   return { outcome, transferId: row.id, orderId: order.id, repeat: false };
 }

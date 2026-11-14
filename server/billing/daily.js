@@ -20,7 +20,7 @@ import { chargeStorageDay, forgetBillable } from './meter.js';
 import { reconcile, takeTransfer } from './sepay.js';
 import { mailable, sendBillingMail } from './mail.js';
 import { EXPIRY_WARNING_DAYS, GRACE_DAYS, TOPUP } from './plans.js';
-import { einvoiceEnabled, einvoiceStatus } from './einvoice.js';
+import { buyerFor, einvoiceEnabled, einvoiceStatus, issueEinvoice } from './einvoice.js';
 
 /** A transfer left `taking` this long is not a request still being served: it is finished from its stored row. */
 const TAKING_MS = 5 * 60_000;
@@ -91,23 +91,74 @@ export async function catchUpAndTell(userId, { now = new Date() } = {}) {
   return after;
 }
 
+/** Invoices in one run, how long the run may take, and how long an unsettled invoice is chased (it is also how far back unpaid-for ones are issued: the date must be today). */
+const EINVOICE_BATCH = 50;
+const EINVOICE_BUDGET_MS = 60_000;
+const EINVOICE_GIVE_UP_DAYS = 7;
+
 /**
- * Ask SePay how the e-invoices not yet finished are doing (pending, or unconfirmed and so only ever asked about). Each is its own
- * try, so one bad answer leaves the rest. Does nothing, and asks nothing, while e-invoices are off. Returns how many it looked at.
+ * All of the e-invoice work, once a Vietnamese day and never inside a webhook, for at most 50 rows and 60 seconds, each row in its
+ * own try (one bad answer leaves the rest, and the budget stops the loop cleanly):
+ *  1. issue for paid orders (real transfers) that have no invoice yet, oldest first, paid within the last 7 days;
+ *  2. ask the status of the pending and unconfirmed ones (an unconfirmed one is never created again, only asked about);
+ *  3. try the refused ones again (safe: the reference code is the order's id, so a repeat is a 409 and then a status fetch);
+ *  4. one still unsettled 7 days after its order was paid is failed with its last error and left alone; the owner sees the count.
+ * A row that was asked is stamped, so the ones not reached today are first in line tomorrow. Does nothing, and asks nothing, while
+ * e-invoices are off. Returns how many rows it worked on.
+ *
+ * @param {{ now?: Date, env?: NodeJS.ProcessEnv, fetchImpl?: typeof fetch, budgetMs?: number, limit?: number }} [options]
  */
-export async function einvoiceStep({ now = new Date(), env = process.env, fetchImpl = globalThis.fetch } = {}) {
+export async function einvoiceStep({ now = new Date(), env = process.env, fetchImpl = globalThis.fetch, budgetMs = EINVOICE_BUDGET_MS, limit = EINVOICE_BATCH } = {}) {
   if (!einvoiceEnabled(env)) return 0;
-  let looked = 0;
-  for (const row of await getStore().listEinvoicesPending()) {
-    if (row.status !== 'pending' && row.status !== 'unknown') continue;
-    try {
-      await einvoiceStatus(row.orderId, { now, env, fetchImpl });
-      looked += 1;
-    } catch (err) {
-      fail('an e-invoice status', err);
+  const store = getStore();
+  const stop = Date.now() + budgetMs;
+  const since = addDays(now, -EINVOICE_GIVE_UP_DAYS);
+  let worked = 0;
+  const room = () => worked < limit && Date.now() < stop;
+  const issue = async (src) => {
+    const total = src.kind === 'topup' ? (src.amountVnd ?? src.totalVnd) : src.totalVnd;
+    await issueEinvoice({ id: src.id, kind: src.kind, plan: src.plan, period: src.period, totalVnd: total }, await buyerFor(src.userId), { now, env, fetchImpl });
+  };
+
+  if (room()) {
+    for (const src of await store.listOrdersToInvoice({ since, limit: limit - worked })) {
+      if (!room()) break;
+      worked += 1;
+      try {
+        await issue(src);
+      } catch (err) {
+        fail('an e-invoice to issue', err);
+      }
     }
   }
-  return looked;
+  if (!room()) return worked;
+  for (const row of await store.listEinvoicesPending(limit - worked)) {
+    if (!room()) break;
+    const keep = { orderId: row.orderId, referenceCode: row.referenceCode, trackingCode: row.trackingCode };
+    try {
+      if (row.paidAt && row.paidAt < since) {
+        await store.saveEinvoice({ ...keep, status: 'failed', error: row.error || 'SePay did not settle this invoice within 7 days of the payment.' });
+        continue;
+      }
+      const src = row.status === 'error' ? await store.invoiceSource(row.orderId) : null;
+      if (row.status === 'error' && !src) {
+        // Its order is gone: nothing to build it from, and it would hold a place in the queue for good.
+        await store.saveEinvoice({ ...keep, status: 'failed', error: row.error });
+        continue;
+      }
+      worked += 1;
+      if (src) {
+        await issue(src);
+      } else {
+        const after = await einvoiceStatus(row.orderId, { now, env, fetchImpl });
+        // Asked and nothing changed: stamp it, so the rows not reached today are the first asked next time.
+        if (after && +after.updatedAt === +row.updatedAt) await store.saveEinvoice({ ...keep, status: after.status, error: after.error });
+      }
+    } catch (err) {
+      fail('an e-invoice', err);
+    }
+  }
+  return worked;
 }
 
 async function remind(now) {

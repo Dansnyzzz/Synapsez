@@ -11,9 +11,13 @@
  *  - `issued_date` has to be today, and "today" is the Vietnamese day (a server in UTC is a day behind from 00:00 to 07:00).
  *  - The token lasts 24 h and has no refresh. It is cached for the seller's one set of credentials (not per user: no account's
  *    data is in it) until 5 minutes before it ends, and a 401 fetches a new one once.
+ * Nothing here runs inside the SePay webhook: a create can take as long as SePay's own patience, and a webhook that waits on it
+ * could time out and be sent again. The daily step (daily.js) issues, asks and retries, with a time budget and a cap.
  * Credentials, the token and the Authorization header are never logged or put in a stored message.
  */
 import { getStore } from '../store/index.js';
+import { decryptSecret } from '../crypto.js';
+import { billingProfileContext } from '../secretContexts.js';
 import { log } from '../util/trace.js';
 import { vnDay } from './period.js';
 
@@ -131,6 +135,17 @@ async function templateFor(env, fetchImpl, now) {
   const found = mine.find((t) => String(t?.invoice_series).includes(year));
   if (!found) throw new Error(`The provider account has no series ${year} for template ${code}.`);
   return { providerAccountId: String(account.id), templateCode: String(found.template_code), series: String(found.invoice_series) };
+}
+
+/** The buyer from an account's billing information, opened; null when there is none, the account is gone, or it will not open. */
+export async function buyerFor(userId) {
+  if (!userId) return null;
+  try {
+    const sealed = (await getStore().getBillingProfile(userId))?.sealed;
+    return sealed ? JSON.parse(decryptSecret(sealed, billingProfileContext(userId)) || 'null') : null;
+  } catch {
+    return null; // the invoice goes out without a buyer rather than not at all
+  }
 }
 
 /** What the invoice says was sold. */

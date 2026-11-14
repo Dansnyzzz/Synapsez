@@ -15,6 +15,9 @@ import { billingProfileContext } from '../secretContexts.js';
 const FONT_FILE = fileURLToPath(new URL('../assets/fonts/Arimo-VariableWeight.ttf', import.meta.url));
 const FONT = 'Receipt Arimo';
 
+/** Below this the lines of a receipt stop, to leave room for the total, a tax line and the footer. */
+const LINES_END = 690;
+
 const lang = (language) => (language === 'vi' ? 'vi' : 'en');
 
 /** "129.000 ₫" in Vietnamese, "129,000 ₫" in English. */
@@ -153,7 +156,15 @@ export async function drawReceipt(receipt, { language = 'en', seller, env = proc
   text(vi ? 'Nội dung' : 'Description', left + 8, 11, { color: '#3a4350' });
   text(vi ? 'Số tiền' : 'Amount', right - 8, 11, { color: '#3a4350', align: 'right' });
   y += 24;
-  for (const line of receipt.lines || []) {
+  // The footer is fixed at the page's foot, so the lines stop where the total still fits above it. A receipt has one line today (one
+  // transfer, one order); the clamp is for the day it has more, and says how many it left out rather than drawing over the footer.
+  const all = receipt.lines || [];
+  for (const [index, line] of all.entries()) {
+    if (y > LINES_END) {
+      text(vi ? `…và ${all.length - index} dòng khác` : `…and ${all.length - index} more`, left + 8, 11, { color: '#5b6470' });
+      y += 16;
+      break;
+    }
     ctx.font = `11px "${FONT}"`;
     const parts = wrapText(ctx, lineLabel(line, language), 340);
     text(parts[0] || '', left + 8, 11);
@@ -174,7 +185,9 @@ export async function drawReceipt(receipt, { language = 'en', seller, env = proc
 
   // A tax line only when the seller says what rate applies; a guess would be a tax statement nobody made.
   const rate = String(env.BILLING_TAX_RATE ?? '').trim() === '' ? NaN : Number(env.BILLING_TAX_RATE);
-  if (Number.isFinite(rate) && rate >= 0) {
+  // Money added to the balance bought nothing, so no tax is stated on it: tax belongs to the sale of a plan or a top-up's use.
+  const sold = (receipt.lines || []).some((l) => l?.kind !== 'credit');
+  if (Number.isFinite(rate) && rate >= 0 && sold) {
     const tax = Math.round((Math.trunc(receipt.amountVnd) * rate) / (100 + rate));
     text(vi ? `Trong đó thuế GTGT ${rate}%` : `Of which VAT ${rate}%`, left + 8, 11, { color: '#5b6470' });
     text(money(tax, language), right - 8, 11, { color: '#5b6470', align: 'right' });
