@@ -735,6 +735,266 @@ section('N5: the 20% band only holds against a recent rate');
   await prime();
 }
 
+section('transfers: SePay checked on its raw bytes, taken once, matched to its order or kept');
+{
+  const sepay = await import('../server/billing/sepay.js');
+  const { encryptSecret, openSecret } = await import('../server/crypto.js');
+  const { billingProfileContext } = await import('../server/secretContexts.js');
+  await prime();
+  process.env.SEPAY_BANK_ACCOUNT = '0123456789';
+  process.env.SEPAY_BANK_CODE = 'MBBank';
+  process.env.SEPAY_WEBHOOK_SECRET = 'whsec-test-secret';
+  process.env.SEPAY_API_TOKEN = 'api-token-test';
+  delete process.env.BILLING_MODE;
+  const SECRET = process.env.SEPAY_WEBHOOK_SECRET;
+  const ts0 = Math.floor(NOW.getTime() / 1000);
+  const sign = (raw, ts, secret = SECRET) => `sha256=${crypto.createHmac('sha256', secret).update(`${ts}.${raw}`).digest('hex')}`;
+  const headersFor = (raw, ts = ts0) => ({ 'x-sepay-signature': sign(raw, ts), 'x-sepay-timestamp': String(ts) });
+  const verify = (raw, headers, secret = SECRET, now = NOW.getTime()) => sepay.verifySepay({ raw: Buffer.from(raw), headers, secret, now });
+  const body = '{"id":1,"transferAmount":5000}';
+
+  /* verification */
+  check('a good signature verifies', verify(body, headersFor(body)) === true);
+  check('  the header names may be any case', verify(body, { 'X-SePay-Signature': sign(body, ts0), 'X-SePay-Timestamp': String(ts0) }) === true);
+  check('a missing signature does not', verify(body, { 'x-sepay-timestamp': String(ts0) }) === false);
+  check('a missing timestamp does not', verify(body, { 'x-sepay-signature': sign(body, ts0) }) === false);
+  check('sha1= instead of sha256= does not', verify(body, { ...headersFor(body), 'x-sepay-signature': sign(body, ts0).replace('sha256=', 'sha1=') }) === false);
+  check('one hex character short does not', verify(body, { ...headersFor(body), 'x-sepay-signature': sign(body, ts0).slice(0, -1) }) === false);
+  const sig = sign(body, ts0);
+  const flipped = sig.slice(0, 7) + (sig[7] === '0' ? '1' : '0') + sig.slice(8);
+  check('one bit wrong does not', verify(body, { ...headersFor(body), 'x-sepay-signature': flipped }) === false);
+  check('non-hex letters do not (and nothing throws)', verify(body, { ...headersFor(body), 'x-sepay-signature': `sha256=${'z'.repeat(64)}` }) === false);
+  check('a signature over other bytes does not', verify(`${body} `, headersFor(body)) === false);
+  check('another secret does not', verify(body, headersFor(body), 'other-secret') === false);
+  check('an unset secret never verifies', verify(body, headersFor(body), '') === false);
+  check('301 s old does not', verify(body, headersFor(body, ts0 - 301)) === false);
+  check('301 s ahead does not', verify(body, headersFor(body, ts0 + 301)) === false);
+  check('300 s old still does', verify(body, headersFor(body, ts0 - 300)) === true);
+  check('a timestamp that is not a number does not', verify(body, { 'x-sepay-signature': sign(body, 'abc'), 'x-sepay-timestamp': 'abc' }) === false);
+
+  /* the webhook's answers */
+  const payload = (over = {}) => ({
+    id: 90000 + (n += 1), gateway: 'MBBank', transactionDate: '2026-11-13 12:00:00', accountNumber: '0123456789', subAccount: '', code: null,
+    content: '', transferType: 'in', description: '', transferAmount: 129000, accumulated: 0, referenceCode: `FT${n * 7919}`, ...over,
+  });
+  const send = (p, { now = NOW, headers = null } = {}) => {
+    const raw = Buffer.from(typeof p === 'string' ? p : JSON.stringify(p));
+    return sepay.acceptSepay({ raw, headers: headers ?? headersFor(raw, Math.floor(now.getTime() / 1000)), now: now.getTime() });
+  };
+  const ok = (a) => a.status === 200 && a.body.success === true && Object.keys(a.body).length === 1;
+  const topupEntries = async () => Number((await query("SELECT COALESCE(SUM(delta_vnd), 0) AS s FROM balance_entries WHERE kind = 'topup'"))[0].s);
+  const transferCount = async () => Number((await query('SELECT COUNT(*) AS c FROM sepay_transfers'))[0].c);
+  const planOrder = async (userId, plan = 'plus', now = NOW) => (await orders.createOrder(userId, { kind: 'plan', plan, period: 'month' }, { now })).order;
+
+  process.env.BILLING_MODE = 'off';
+  check('mode off: the endpoint does not exist (404)', (await send(payload())).status === 404);
+  delete process.env.BILLING_MODE;
+  const savedSecret = process.env.SEPAY_WEBHOOK_SECRET;
+  delete process.env.SEPAY_WEBHOOK_SECRET;
+  check('no secret set: 404, not 401', (await send(payload())).status === 404);
+  process.env.SEPAY_WEBHOOK_SECRET = savedSecret;
+  check('a bad signature is 401', (await send(payload(), { headers: { 'x-sepay-signature': `sha256=${'0'.repeat(64)}`, 'x-sepay-timestamp': String(ts0) } })).status === 401);
+  check('a request without the headers is 401', (await send(payload(), { headers: {} })).status === 401);
+  check('a stale timestamp is 401', (await send(payload(), { headers: headersFor(Buffer.from(JSON.stringify(payload())), ts0 - 400) })).status === 401);
+  const beforeCount = await transferCount();
+  check('a signed body that is not JSON is 400', (await send('not json')).status === 400);
+  check('  nor an array', (await send('[1]')).status === 400);
+  check('  nor an object without a numeric transferAmount', (await send({ id: 5, transferAmount: '129000' })).status === 400);
+  check('  nor a zero amount', (await send(payload({ transferAmount: 0 }))).status === 400);
+  check('  and none of those wrote a transfer', (await transferCount()) === beforeCount);
+
+  /* exact amount */
+  const ann = await makeUser();
+  await store.setBillingProfile(ann.id, encryptSecret(JSON.stringify({ name: 'Ann Buyer' }), billingProfileContext(ann.id)));
+  const oa = await planOrder(ann.id);
+  const exact = payload({ code: oa.code, content: `${oa.code} chuyen khoan`, transferAmount: 129000, referenceCode: 'FT-EXACT' });
+  const ra = await send(exact);
+  const subA = await store.getSubscription(ann.id);
+  check('exactly the price: 200 with exactly {"success": true}', ok(ra) && JSON.stringify(ra.body) === '{"success":true}', JSON.stringify(ra));
+  check('  the plan is active and the order paid', subA?.plan === 'plus' && subA.status === 'active' && (await store.getOrder(oa.id)).status === 'paid');
+  const tA = await store.getTransferByDedupe('ref:FT-EXACT');
+  check('  the transfer is recorded as applied, linked to the order and the account', tA.outcome === 'applied' && tA.orderId === oa.id && tA.userId === ann.id && tA.via === 'webhook' && tA.creditedAt instanceof Date, JSON.stringify(tA));
+  check('  the money went in and out of the balance, ledger intact', (await balanceOf(ann.id)) === 0 && (await invariant(ann.id)));
+  const rcA = await store.listReceipts(ann.id);
+  check('  one receipt, for the transfer, with no buyer details in its lines', rcA.length === 1 && rcA[0].transferId === tA.id && rcA[0].amountVnd === 129000 && !JSON.stringify(rcA[0].lines).includes('Ann'), JSON.stringify(rcA));
+  check('  its sealed buyer opens with the billing profile context', openSecret(rcA[0].buyerSealed, billingProfileContext(ann.id)).value.includes('Ann Buyer'));
+
+  /* a repeat */
+  const rep = await send(exact);
+  check('the same referenceCode again: success, and nothing taken twice', ok(rep) && (await store.listTransfers({ limit: 500 })).filter((t) => t.referenceCode === 'FT-EXACT').length === 1 && (await balanceOf(ann.id)) === 0 && (await store.listReceipts(ann.id)).length === 1);
+  const noRef = payload({ referenceCode: '', code: null, content: 'hello', transferAmount: 7000, id: 4242 });
+  await send(noRef);
+  await send(noRef);
+  check('without a reference the id is the key, so that repeats too', (await query("SELECT 1 FROM sepay_transfers WHERE dedupe = 'id:4242'")).length === 1);
+
+  /* ignored */
+  const bob = await makeUser();
+  const ob = await planOrder(bob.id);
+  const before = await topupEntries();
+  const rOut = await send(payload({ transferType: 'out', code: ob.code, content: ob.code }));
+  const rOther = await send(payload({ accountNumber: '999999', code: ob.code, content: ob.code }));
+  check('money going out is answered and ignored, no credit', ok(rOut) && (await topupEntries()) === before && (await store.listTransfers({ outcome: 'ignored' })).length >= 2);
+  check('another account number is ignored too', ok(rOther) && (await balanceOf(bob.id)) === 0 && (await store.getOrder(ob.id)).status === 'pending');
+
+  /* short, then the rest */
+  const rs = await send(payload({ code: ob.code, content: ob.code, transferAmount: 100000, referenceCode: 'FT-SHORT1' }));
+  const shortT = await store.getTransferByDedupe('ref:FT-SHORT1');
+  const shortOrder = await store.getOrder(ob.id);
+  check('short: the balance goes up, the order stays pending', ok(rs) && shortT.outcome === 'short' && (await balanceOf(bob.id)) === 100000 && shortOrder.status === 'pending' && !(await store.getSubscription(bob.id)));
+  check('  dueOf the rest is what is missing', orders.dueOf(shortOrder, await balanceOf(bob.id)) === 29000);
+  const rs2 = await send(payload({ code: ob.code, content: `SZ chuyen ${ob.code}`, transferAmount: 29000, referenceCode: 'FT-SHORT2' }));
+  const shortT2 = await store.getTransferByDedupe('ref:FT-SHORT2');
+  check('a second transfer with the same code finishes it: applied, plan active, balance used', ok(rs2) && shortT2.outcome === 'applied' && (await store.getSubscription(bob.id))?.plan === 'plus' && (await balanceOf(bob.id)) === 0 && (await store.getOrder(ob.id)).status === 'paid' && (await invariant(bob.id)));
+  check('  each credited transfer has its receipt', (await store.listReceipts(bob.id)).length === 2);
+
+  /* over */
+  const cy = await makeUser();
+  const oc = await planOrder(cy.id);
+  await send(payload({ code: oc.code, content: oc.code, transferAmount: 150000, referenceCode: 'FT-OVER' }));
+  check('more than the price: over, the plan starts, the rest stays in the balance', (await store.getTransferByDedupe('ref:FT-OVER')).outcome === 'over' && (await store.getSubscription(cy.id))?.plan === 'plus' && (await balanceOf(cy.id)) === 21000 && (await invariant(cy.id)));
+
+  /* late */
+  const dan = await makeUser();
+  const od = await planOrder(dan.id);
+  const rl = await send(payload({ code: od.code, content: od.code, transferAmount: 129000, referenceCode: 'FT-LATE' }), { now: hours(1) });
+  check('after the order expired: late, the money is credited, no plan', ok(rl) && (await store.getTransferByDedupe('ref:FT-LATE')).outcome === 'late' && (await balanceOf(dan.id)) === 129000 && !(await store.getSubscription(dan.id)) && (await store.getOrder(od.id)).receivedVnd === 0);
+  const eli = await makeUser();
+  const oe = await planOrder(eli.id);
+  await store.cancelOrder(oe.id, eli.id);
+  await send(payload({ code: oe.code, content: oe.code, transferAmount: 50000, referenceCode: 'FT-CANC' }));
+  check('a cancelled order is late too', (await store.getTransferByDedupe('ref:FT-CANC')).outcome === 'late' && (await balanceOf(eli.id)) === 50000);
+
+  /* unmatched */
+  const beforeUn = await topupEntries();
+  await send(payload({ content: 'chuyen tien an trua', transferAmount: 80000, referenceCode: 'FT-NOCODE' }));
+  await send(payload({ code: 'SZ0000000001', content: 'SZ0000000001', transferAmount: 80000, referenceCode: 'FT-NOORDER' }));
+  const un = await store.getTransferByDedupe('ref:FT-NOCODE');
+  const un2 = await store.getTransferByDedupe('ref:FT-NOORDER');
+  check('no code, or a code with no order: unmatched, nothing credited, kept for the owner', un.outcome === 'unmatched' && un2.outcome === 'unmatched' && un.userId === null && un.creditedAt === null && (await topupEntries()) === beforeUn);
+  check('  and no receipt for it', (await query('SELECT 1 FROM receipts WHERE transfer_id = ANY($1::bigint[])', [[un.id, un2.id]])).length === 0);
+
+  /* a top-up order */
+  const fay = await makeUser();
+  const ot = (await orders.createOrder(fay.id, { kind: 'topup', amountVnd: 100000 }, { now: NOW })).order;
+  await send(payload({ code: ot.code, content: ot.code, transferAmount: 100000, referenceCode: 'FT-TOPUP' }));
+  const topT = await store.getTransferByDedupe('ref:FT-TOPUP');
+  const topO = await store.getOrder(ot.id);
+  check('a top-up: the balance is credited, the order marked paid with what arrived', topT.outcome === 'topup' && (await balanceOf(fay.id)) === 100000 && topO.status === 'paid' && topO.receivedVnd === 100000 && (await store.billingState(fay.id)).lastTopupAt instanceof Date);
+  await send(payload({ code: ot.code, content: ot.code, transferAmount: 20000, referenceCode: 'FT-TOPUP2' }));
+  check('  a second transfer to a paid top-up is credited too (late)', (await store.getTransferByDedupe('ref:FT-TOPUP2')).outcome === 'late' && (await balanceOf(fay.id)) === 120000 && (await invariant(fay.id)));
+
+  /* a failing store: 500, nothing half-written, and the retry finishes it */
+  const gil = await makeUser();
+  const og = await planOrder(gil.id);
+  const pg = payload({ code: og.code, content: og.code, transferAmount: 129000, referenceCode: 'FT-CRASH1' });
+  const realCredit = store.creditTransfer;
+  store.creditTransfer = async () => { throw new Error('connection lost'); };
+  const r500 = await send(pg);
+  store.creditTransfer = realCredit;
+  check('the store fails before the credit: 500 and {success:false}', r500.status === 500 && JSON.stringify(r500.body) === '{"success":false}');
+  check('  nothing is half-written: no credit, order pending, no receipt', (await balanceOf(gil.id)) === 0 && (await store.getOrder(og.id)).status === 'pending' && (await store.listReceipts(gil.id)).length === 0);
+  check('  the error text is not in the answer', !JSON.stringify(r500).includes('connection'));
+  const retry1 = await send(pg);
+  check('SePay retries: the transfer is finished, credited once, plan active', ok(retry1) && (await store.getTransferByDedupe('ref:FT-CRASH1')).outcome === 'applied' && (await store.getSubscription(gil.id))?.plan === 'plus' && (await balanceOf(gil.id)) === 0 && (await invariant(gil.id)) && (await store.listReceipts(gil.id)).length === 1);
+
+  /* a crash after the credit */
+  const hal = await makeUser();
+  const oh = await planOrder(hal.id);
+  const ph = payload({ code: oh.code, content: oh.code, transferAmount: 129000, referenceCode: 'FT-CRASH2' });
+  const realSetOutcome = store.setTransferOutcome;
+  store.setTransferOutcome = async () => { throw new Error('connection lost'); };
+  const r500b = await send(ph);
+  store.setTransferOutcome = realSetOutcome;
+  const midT = await store.getTransferByDedupe('ref:FT-CRASH2');
+  check('a crash after the credit: 500, the transfer is still marked taking', r500b.status === 500 && midT.outcome === 'taking' && midT.creditedAt instanceof Date);
+  const retry2 = await send(ph);
+  const endT = await store.getTransferByDedupe('ref:FT-CRASH2');
+  check('the retry finishes it: credited once, order paid, plan active, outcome set', ok(retry2) && endT.outcome === 'applied' && (await store.getOrder(oh.id)).status === 'paid' && (await store.getSubscription(hal.id))?.plan === 'plus' && (await balanceOf(hal.id)) === 0 && (await invariant(hal.id)));
+  check('  the ledger holds one credit for it and the receipt is issued once', (await query("SELECT 1 FROM balance_entries WHERE kind = 'topup' AND ref = $1", [String(endT.id)])).length === 1 && (await store.listReceipts(hal.id)).length === 1);
+  const retry3 = await send(ph);
+  check('  and a third delivery changes nothing', ok(retry3) && (await store.listReceipts(hal.id)).length === 1 && (await balanceOf(hal.id)) === 0);
+
+  /* a top-up that crashed after the credit */
+  const ivy = await makeUser();
+  const oi = (await orders.createOrder(ivy.id, { kind: 'topup', amountVnd: 100000 }, { now: NOW })).order;
+  const pi = payload({ code: oi.code, content: oi.code, transferAmount: 100000, referenceCode: 'FT-CRASH3' });
+  const realMark = store.markTopupPaid;
+  store.markTopupPaid = async () => { throw new Error('connection lost'); };
+  const r500c = await send(pi);
+  store.markTopupPaid = realMark;
+  await send(pi);
+  const oiAfter = await store.getOrder(oi.id);
+  check('a top-up that crashed before its order was closed: the retry closes it, credit once', r500c.status === 500 && (await balanceOf(ivy.id)) === 100000 && oiAfter.status === 'paid' && oiAfter.receivedVnd === 100000 && (await store.getTransferByDedupe('ref:FT-CRASH3')).outcome === 'topup');
+
+  /* reconcile */
+  const polls = [];
+  let pollRows = [];
+  const fetchBefore = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const u = new URL(String(url));
+    if (u.host !== 'userapi.sepay.vn') return fetchBefore(url, init);
+    polls.push({ path: u.pathname, auth: init?.headers?.Authorization ?? init?.headers?.authorization, query: Object.fromEntries(u.searchParams) });
+    return json({ data: pollRows, meta: { pagination: { total: pollRows.length, per_page: 100, current_page: 1, last_page: 1, has_more: false } } });
+  };
+  const jay = await makeUser();
+  const oj = await planOrder(jay.id);
+  const row = (over = {}) => ({
+    id: '0b1f2e3a-0000-4000-8000-000000000001', transaction_date: '2026-11-13 12:00:00', account_number: '0123456789', va: null, transfer_type: 'in', amount_in: 129000, amount_out: 0,
+    accumulated: 0, transaction_content: `${oj.code} chuyen khoan`, reference_number: 'FT-POLL1', code: oj.code, bank_brand_name: 'MBBank', ...over,
+  });
+  pollRows = [row(), row({ id: '0b1f2e3a-0000-4000-8000-000000000002', reference_number: null, amount_in: 5000, transaction_content: 'no reference' })];
+  sepay._resetSepayForTests();
+  const since = new Date(NOW.getTime() - 86_400_000);
+  const took = await sepay.reconcile({ since, now: NOW.getTime() });
+  check('reconcile asks the v2 transactions list with the bearer token', polls.length === 1 && polls[0].path === '/v2/transactions' && polls[0].auth === 'Bearer api-token-test', JSON.stringify(polls));
+  const tj = await store.getTransferByDedupe('ref:FT-POLL1');
+  check('  a row with a reference number is taken (via poll); one without is left', took === 1 && tj.via === 'poll' && tj.outcome === 'applied' && (await store.getSubscription(jay.id))?.plan === 'plus' && (await query("SELECT 1 FROM sepay_transfers WHERE content = 'no reference'")).length === 0);
+  const afterPoll = await balanceOf(jay.id);
+  const rj = await send(payload({ code: oj.code, content: oj.code, transferAmount: 129000, referenceCode: 'FT-POLL1' }));
+  check('the webhook that repeats a polled transfer credits nothing more', ok(rj) && (await balanceOf(jay.id)) === afterPoll && (await query("SELECT 1 FROM balance_entries WHERE kind = 'topup' AND user_id = $1", [jay.id])).length === 1);
+  check('  and that same poll again takes nothing', (await sepay.reconcile({ since, now: NOW.getTime() + 11_000 })) === 0);
+  const asked0 = polls.length;
+  check('throttled: not twice within 10 s overall', (await sepay.reconcile({ since, now: NOW.getTime() + 12_000 })) === 0 && polls.length === asked0);
+  sepay._resetSepayForTests();
+  const p1 = polls.length;
+  await sepay.reconcile({ since: NOW, orderId: oj.id, now: NOW.getTime() });
+  await sepay.reconcile({ since: NOW, orderId: oj.id, now: NOW.getTime() + 11_000 });
+  check('  and not twice within 30 s for one order', polls.length === p1 + 1);
+  await sepay.reconcile({ since: NOW, orderId: oj.id, now: NOW.getTime() + 31_000 });
+  check('  while after 30 s it asks again, naming the order\'s code', polls.length === p1 + 2 && polls.at(-1).query.q === oj.code && polls.at(-1).query.transfer_type === 'in', JSON.stringify(polls.at(-1)));
+  const tokenWas = process.env.SEPAY_API_TOKEN;
+  delete process.env.SEPAY_API_TOKEN;
+  sepay._resetSepayForTests();
+  const p2 = polls.length;
+  check('without SEPAY_API_TOKEN: 0, and nothing is asked', (await sepay.reconcile({ since: NOW, now: NOW.getTime() })) === 0 && polls.length === p2);
+  process.env.SEPAY_API_TOKEN = tokenWas;
+  globalThis.fetch = fetchBefore;
+
+  /* simulated */
+  const kim = await makeUser();
+  const ok2 = await planOrder(kim.id);
+  const sim = await sepay.simulateTransfer(ok2.id, { now: NOW });
+  const simT = await store.getTransfer(sim.transferId);
+  check('simulateTransfer in preview takes the order\'s due as a simulated transfer', sim.status === 200 && sim.outcome === 'applied' && simT.via === 'simulated' && simT.amountVnd === 129000 && (await store.getSubscription(kim.id))?.plan === 'plus');
+  check('  and never issues a receipt', (await store.listReceipts(kim.id)).length === 0);
+  const lee = await makeUser();
+  const ol = await planOrder(lee.id);
+  process.env.BILLING_MODE = 'live';
+  const refused = await sepay.simulateTransfer(ol.id, { now: NOW });
+  delete process.env.BILLING_MODE;
+  check('in live it is refused (409) and nothing moves', refused.status === 409 && (await balanceOf(lee.id)) === 0 && (await store.getOrder(ol.id)).status === 'pending');
+  check('an unknown order is 404, a settled order 409', (await sepay.simulateTransfer('nope', { now: NOW })).status === 404 && (await sepay.simulateTransfer(ok2.id, { now: NOW })).status === 409);
+  const mia = await makeUser();
+  const om = await planOrder(mia.id);
+  await send(payload({ code: om.code, content: om.code, transferAmount: 100000, referenceCode: 'FT-PART' }));
+  const simPart = await sepay.simulateTransfer(om.id, { now: NOW });
+  check('a partly paid order is simulated for what is left', simPart.outcome === 'applied' && (await store.getTransfer(simPart.transferId)).amountVnd === 29000);
+
+  /* the secrets stay out of everything said */
+  check('no answer carries the secret or the token', ![ra, rep, r500, r500b].some((a) => JSON.stringify(a).includes('whsec') || JSON.stringify(a).includes('api-token')));
+  await prime();
+}
+
 globalThis.fetch = realFetch;
 await db.close();
 if (failures) {

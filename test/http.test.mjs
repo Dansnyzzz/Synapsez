@@ -1529,6 +1529,39 @@ section('a new account confirms its email with a code');
   }
 }
 
+// ── the SePay webhook ───────────────────────────────────────────────
+section('the SePay webhook is checked on the raw bytes');
+{
+  const crypto = await import('node:crypto');
+  const saved = { secret: process.env.SEPAY_WEBHOOK_SECRET, mode: process.env.BILLING_MODE };
+  process.env.SEPAY_WEBHOOK_SECRET = 'http-test-sepay-secret';
+  delete process.env.BILLING_MODE;
+  // Spacing a JSON parser would not give back: the signature only holds for exactly these bytes.
+  const raw = '{ "id": 77001,  "transferType": "out",  "transferAmount": 5000, "referenceCode": "HTTP-OUT-1" }';
+  const stamp = () => String(Math.floor(Date.now() / 1000));
+  const signedWith = (text, ts) => `sha256=${crypto.createHmac('sha256', process.env.SEPAY_WEBHOOK_SECRET).update(`${ts}.${text}`).digest('hex')}`;
+  const post = (text, headers) => fetch(`${base}/api/billing/sepay`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: text });
+  const ts = stamp();
+  const good = await post(raw, { 'X-SePay-Signature': signedWith(raw, ts), 'X-SePay-Timestamp': ts });
+  const said = await good.json().catch(() => null);
+  check('a JSON content type still reaches the handler with the exact bytes: signed, 200 {"success":true}', good.status === 200 && said?.success === true, `${good.status} ${JSON.stringify(said)}`);
+  const reserialised = JSON.stringify(JSON.parse(raw));
+  const bad = await post(raw, { 'X-SePay-Signature': signedWith(reserialised, ts), 'X-SePay-Timestamp': ts });
+  check('a signature over the re-serialised body is 401', bad.status === 401, String(bad.status));
+  const none = await post(raw, {});
+  check('no signature is 401', none.status === 401, String(none.status));
+  process.env.BILLING_MODE = 'off';
+  const off = await post(raw, { 'X-SePay-Signature': signedWith(raw, ts), 'X-SePay-Timestamp': ts });
+  check('billing off: the endpoint does not exist (404)', off.status === 404, String(off.status));
+  delete process.env.BILLING_MODE;
+  const goodSignature = signedWith(raw, ts);
+  delete process.env.SEPAY_WEBHOOK_SECRET;
+  const unset = await post(raw, { 'X-SePay-Signature': goodSignature, 'X-SePay-Timestamp': ts });
+  check('no secret set: 404 too', unset.status === 404, String(unset.status));
+  if (saved.secret === undefined) delete process.env.SEPAY_WEBHOOK_SECRET; else process.env.SEPAY_WEBHOOK_SECRET = saved.secret;
+  if (saved.mode === undefined) delete process.env.BILLING_MODE; else process.env.BILLING_MODE = saved.mode;
+}
+
 // ── signing out ─────────────────────────────────────────────────────
 section('signing out');
 {

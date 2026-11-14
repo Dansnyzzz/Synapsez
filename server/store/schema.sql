@@ -1533,7 +1533,8 @@ CREATE TABLE IF NOT EXISTS billing_orders (
   expires_at   TIMESTAMPTZ NOT NULL,
   paid_at      TIMESTAMPTZ,
   simulated    BOOLEAN NOT NULL DEFAULT FALSE,
-  -- The subscription a plan order was quoted on ('none', or plan|period|period_end in ms): it is paid only while that is still true.
+  -- The subscription a plan or renewal order was quoted on: `none|<end ms of the lapse>` (`none|0` for a first purchase) or
+  -- `<plan>|<period>|<period_end ms>`. It is paid only while that is still true; a top-up has none.
   basis        TEXT,
   -- Set by the statement that starts what the order bought, which claims the order (still paid, not yet applied) in that same statement; a refund
   -- needs the same state, so on one order the start and the refund exclude each other. A paid order without it is applied or refunded, never both.
@@ -1565,8 +1566,11 @@ CREATE TABLE IF NOT EXISTS sepay_transfers (
   transaction_at TIMESTAMPTZ,
   order_id       TEXT REFERENCES billing_orders(id) ON DELETE SET NULL,
   user_id        TEXT REFERENCES users(id) ON DELETE SET NULL,
-  outcome        TEXT NOT NULL CHECK (outcome IN ('applied','short','over','late','topup','unmatched','assigned','dismissed','ignored')),
+  -- `taking` is a transfer being worked on: only a crash leaves it, and the next retry of the same transfer finishes it.
+  outcome        TEXT NOT NULL CHECK (outcome IN ('taking','applied','short','over','late','topup','unmatched','assigned','dismissed','ignored')),
   via            TEXT NOT NULL CHECK (via IN ('webhook','poll','simulated')),
+  -- Set by the statement that credits the balance for this transfer and gates it, so a retry can never credit it twice.
+  credited_at    TIMESTAMPTZ,
   received_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS sepay_transfers_outcome_idx ON sepay_transfers (outcome, received_at DESC);
@@ -1625,6 +1629,8 @@ CREATE TABLE IF NOT EXISTS receipts (
   issued_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS receipts_user_idx ON receipts (user_id, issued_at DESC);
+-- One receipt per transfer, so a retry that finishes a transfer cannot issue it twice.
+CREATE UNIQUE INDEX IF NOT EXISTS receipts_transfer_once ON receipts (transfer_id) WHERE transfer_id IS NOT NULL;
 -- The electronic invoice asked of SePay for an order, and where it has got to. No foreign
 -- key: it is a tax record and outlives the account.
 CREATE TABLE IF NOT EXISTS einvoices (

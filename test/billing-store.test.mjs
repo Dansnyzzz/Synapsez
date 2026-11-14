@@ -124,9 +124,9 @@ section('paying an order from the balance');
 section('orders');
 {
   const eve = await makeUser();
-  const created = await store.createOrder(order('o20', eve.id, { kind: 'topup', plan: null, period: null }));
+  const created = await store.createOrder(order('o20', eve.id, { kind: 'topup', plan: null, period: null, basis: null }));
   const noBasis = await store.createOrder(order('o21b', eve.id, { basis: null })).then(() => null, (err) => err);
-  check('a plan order without a basis is refused by the table, so none can be paid around the per-basis index', noBasis !== null, String(noBasis));
+  check('a plan order without a basis is refused by the table, so none can be paid around the per-basis index', noBasis?.code === '23514', String(noBasis?.code));
   check('createOrder returns the order, money as numbers', created.id === 'o20' && created.priceVnd === 129000 && created.status === 'pending' && created.rate === 25656, JSON.stringify(created));
   check('getOrderByCode finds it', (await store.getOrderByCode(created.code))?.id === 'o20');
   check('listOrders by user and status', (await store.listOrders({ userId: eve.id, status: 'pending' })).length === 1 && (await store.listOrders({ userId: eve.id, status: 'paid' })).length === 0);
@@ -293,6 +293,30 @@ section('the admin figures');
 {
   const f = await store.billingAdminFigures(new Date('2026-01-01T00:00:00Z'));
   check('money in by kind, balances held, order counts, database size', f.entries.topup.inVnd > 0 && f.balancesHeldVnd > 0 && f.orders.paid >= 1 && f.orders.pending >= 1 && (f.databaseBytes === null || f.databaseBytes > 0), JSON.stringify(f));
+}
+
+section('crediting a transfer, once');
+{
+  const kay = await makeUser();
+  await store.createOrder(order('o95', kay.id, { kind: 'topup', plan: null, period: null, basis: null, useBalance: false, totalVnd: 100000, priceVnd: 100000 }));
+  const tr = await store.recordTransfer({ dedupe: 'ref:KAY', amountVnd: 60000, outcome: 'taking', via: 'webhook', userId: kay.id, orderId: 'o95' });
+  check('a transfer in flight is taking and not yet credited', tr.outcome === 'taking' && tr.creditedAt === null && (await store.getTransferByDedupe('ref:KAY'))?.id === tr.id);
+  const first = await store.creditTransfer({ transferId: tr.id, userId: kay.id, vnd: 60000, orderId: 'o95', countReceived: true });
+  const again = await store.creditTransfer({ transferId: tr.id, userId: kay.id, vnd: 60000, orderId: 'o95', countReceived: true });
+  const ledger = (await entries(kay.id)).filter((e) => e.kind === 'topup');
+  check('the first credit returns the balance, a repeat changes nothing and returns null', first === 60000 && again === null && (await balanceOf(kay.id)) === 60000 && ledger.length === 1 && ledger[0].ref === String(tr.id));
+  check('  the order counts what arrived once, and the transfer is marked credited', (await store.getOrder('o95')).receivedVnd === 60000 && (await store.getTransfer(tr.id)).creditedAt instanceof Date);
+  check('  real money starts the 12-month clock', (await store.billingState(kay.id)).lastTopupAt instanceof Date);
+  const tr2 = await store.recordTransfer({ dedupe: 'ref:KAY2', amountVnd: 5000, outcome: 'taking', via: 'webhook', userId: kay.id, orderId: 'o95' });
+  await store.creditTransfer({ transferId: tr2.id, userId: kay.id, vnd: 5000, orderId: 'o95', countReceived: false });
+  check('countReceived false credits the balance and leaves the order alone', (await balanceOf(kay.id)) === 65000 && (await store.getOrder('o95')).receivedVnd === 60000);
+  const paid = await store.markTopupPaid('o95', NOW);
+  check('a top-up order is marked paid with what arrived, once', paid?.status === 'paid' && paid.receivedVnd === 60000 && (await store.markTopupPaid('o95', NOW)) === null);
+  await store.createOrder(order('o96', kay.id));
+  check('a plan order is never marked paid this way', (await store.markTopupPaid('o96', NOW)) === null && (await store.getOrder('o96')).status === 'pending');
+  const r1 = await store.createReceipt({ userId: kay.id, transferId: tr.id, amountVnd: 60000, lines: [] });
+  const r2 = await store.createReceipt({ userId: kay.id, transferId: tr.id, amountVnd: 60000, lines: [] }).then(() => null, (err) => err);
+  check('one receipt per transfer', !!r1.number && r2?.code === '23505', String(r2?.code));
 }
 
 section('deleting an account');

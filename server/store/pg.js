@@ -361,7 +361,7 @@ const orderRow = (r) => r && ({
 const transferRow = (r) => r && ({
   id: num(r.id), dedupe: r.dedupe, sepayId: r.sepay_id, referenceCode: r.reference_code, gateway: r.gateway, accountNumber: r.account_number,
   amountVnd: num(r.amount_vnd), code: r.code, content: r.content, transactionAt: asDate(r.transaction_at), orderId: r.order_id,
-  userId: r.user_id, outcome: r.outcome, via: r.via, receivedAt: asDate(r.received_at),
+  userId: r.user_id, outcome: r.outcome, via: r.via, creditedAt: asDate(r.credited_at), receivedAt: asDate(r.received_at),
 }) || null;
 const subscriptionRow = (r) => r && ({
   userId: r.user_id, plan: r.plan, period: r.period, status: r.status, periodStart: asDate(r.period_start), periodEnd: asDate(r.period_end),
@@ -5689,6 +5689,37 @@ export function createPgStore(connectionString) {
     },
     async getTransfer(id) {
       return transferRow((await q('SELECT * FROM sepay_transfers WHERE id = $1', [Number(id)]))[0]);
+    },
+    async getTransferByDedupe(dedupe) {
+      return transferRow((await q('SELECT * FROM sepay_transfers WHERE dedupe = $1', [String(dedupe)]))[0]);
+    },
+    /**
+     * Credit what a transfer brought, once. One statement: the transfer is claimed (`credited_at` set only while it is null), and
+     * only then are the balance, the ledger entry (kind topup, ref = the transfer's id) and, when `countReceived`, the order's
+     * `received_vnd` written. A retry of the same transfer finds it claimed and changes nothing (returns null). Real money, so it
+     * starts the 12-month clock.
+     */
+    async creditTransfer({ transferId, userId, vnd, orderId = null, countReceived = false }) {
+      const rows = await q(
+        `WITH c AS (
+           UPDATE sepay_transfers SET credited_at = NOW() WHERE id = $1 AND credited_at IS NULL RETURNING id
+         ), b AS (
+           INSERT INTO balances (user_id, vnd, last_topup_at) SELECT $2::text, $3::bigint, NOW() FROM c
+           ON CONFLICT (user_id) DO UPDATE SET vnd = balances.vnd + EXCLUDED.vnd, last_topup_at = NOW(), updated_at = NOW()
+           RETURNING vnd
+         ), e AS (
+           INSERT INTO balance_entries (user_id, kind, delta_vnd, ref) SELECT $2::text, 'topup', $3::bigint, c.id::text FROM c
+         ), o AS (
+           UPDATE billing_orders SET received_vnd = received_vnd + $3::bigint WHERE id = $4 AND $5::boolean AND EXISTS (SELECT 1 FROM c) RETURNING id
+         )
+         SELECT vnd FROM b`,
+        [Number(transferId), String(userId), wholeVnd(vnd), orderId, !!countReceived],
+      );
+      return rows[0] ? Number(rows[0].vnd) : null;
+    },
+    /** A top-up order closed as paid with what arrived (received_vnd is kept as it is); null unless it was pending. */
+    async markTopupPaid(id, now) {
+      return orderRow((await q(`UPDATE billing_orders SET status = 'paid', paid_at = $2::timestamptz, applied_at = $2::timestamptz WHERE id = $1 AND kind = 'topup' AND status = 'pending' RETURNING *`, [String(id), now]))[0]);
     },
     async listTransfers({ outcome = null, limit = 50 } = {}) {
       const rows = await q('SELECT * FROM sepay_transfers WHERE ($1::text IS NULL OR outcome = $1) ORDER BY received_at DESC, id DESC LIMIT $2', [outcome, Math.max(1, Math.min(500, Number(limit) || 50))]);

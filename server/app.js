@@ -138,6 +138,7 @@ import { mountAutomationRoutes } from './routes/automations.js';
 import { mountBotRoutes } from './routes/bots.js';
 import { acceptHook, HOOK_BODY_MAX } from './hooks.js';
 import { acceptTelegram } from './telegramInbound.js';
+import { acceptSepay } from './billing/sepay.js';
 import { flushOutbox } from './outbox.js';
 import { mountConnectorRoutes } from './routes/connectors.js';
 import { translateErrors, translateEvent, languageOf, translateMessage } from './i18n/index.js';
@@ -323,6 +324,11 @@ export function createApp() {
       res.status(answer.status).json(answer.body);
     }),
   );
+  // SePay's transfer webhook (billing, 2026-11-13): its HMAC is over the exact bytes, so it is read raw here, ahead of express.json.
+  app.post('/api/billing/sepay', express.raw({ type: () => true, limit: '256kb' }), outside(async (req, res) => {
+    const answer = await acceptSepay({ raw: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), headers: req.headers });
+    res.status(answer.status).json(answer.body);
+  }));
   app.post(
     '/api/hooks/:routeId',
     express.raw({ type: () => true, limit: HOOK_BODY_MAX }),
