@@ -5551,8 +5551,8 @@ export function createPgStore(connectionString) {
      * The ledger, newest first. `before` is an entry id (the last one of the previous page). Each row carries `balanceAfterVnd`, the
      * running sum over ALL of the account's entries in id order, worked out before the kind and page filters are applied, so a filter
      * or a later page never changes the figures. A usage row is one row per category and day, and its whole delta for the day sits at
-     * the place of its first use; so a later entry of the same day carries a figure that already includes that day's use so far, and the
-     * usage row's own figure is the balance as it stood after that day's use up to the moment of reading, not at the first use.
+     * the place of its first use; so a later entry of the same day carries a figure that already includes that day's use so far, and a
+     * usage row's own figure is the balance before the day's first use, less all of that day's use so far.
      */
     async listBalanceEntries(userId, { kind = null, before = null, limit = 50 } = {}) {
       const rows = await q(
@@ -6836,15 +6836,18 @@ export function createPgStore(connectionString) {
       return counts;
     },
     /**
-     * Add to a running total in one upsert — a period that has ended starts again
-     * from this amount. A negative amount takes back what was counted for work
-     * that never ran (freeTier.js `refund`); the total never goes below nothing.
+     * The sum of the live counters whose bucket matches a LIKE pattern, in one query, for a total across keys. Nothing is escaped
+     * here: the callers' patterns (cost.js) have no `%` or `_` in their fixed parts today, so a new caller must keep it so or escape.
      */
-    // The sum of the live counters whose bucket matches a LIKE pattern (the caller escapes it): one query, for a total across keys.
     async sumCountersLike(pattern) {
       const rows = await q('SELECT COALESCE(SUM(count), 0) AS n FROM rate_limits WHERE bucket LIKE $1 AND expires_at > NOW()', [String(pattern)]);
       return Number(rows[0]?.n || 0);
     },
+    /**
+     * Add to a running total in one upsert — a period that has ended starts again
+     * from this amount. A negative amount takes back what was counted for work
+     * that never ran (freeTier.js `refund`); the total never goes below nothing.
+     */
     async addToCounter(bucket, amount, expiresAt) {
       const rows = await q(
         `INSERT INTO rate_limits (bucket, count, expires_at) VALUES ($1, GREATEST(0, $2::int), $3::timestamptz)

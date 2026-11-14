@@ -162,9 +162,9 @@ async function lowBalance(now) {
     if (a.lowAlertSentAt) continue;
     const person = await personFor(a.userId);
     if (!person) continue;
-    /** @type {Record<string, any>} */
     // Nothing is prepared for a mail that will not go: no provider (or an account that cannot see billing) makes no QR order.
     if (!(await mailable(person))) continue;
+    /** @type {Record<string, any>} */
     const data = { balanceVnd: a.balanceVnd, thresholdVnd: a.lowBalanceVnd };
     try {
       const withPlan = (await planInForce(a.userId, { now })).plan !== 'free';

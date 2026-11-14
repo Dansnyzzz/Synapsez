@@ -88,7 +88,8 @@ async function tell({ transfer, order, userId, outcome }) {
       return;
     }
     if (outcome !== 'applied' && outcome !== 'over' && outcome !== 'topup') return;
-    await audit(null, userId, 'billing_order_paid', { order: order.id, kind: order.kind, plan: order.plan ?? null, period: order.period ?? null, amountVnd: transfer.amountVnd });
+    // A top-up that was cancelled took the money into the balance but did not become paid: no audit line says it did.
+    if (order.status !== 'cancelled') await audit(null, userId, 'billing_order_paid', { order: order.id, kind: order.kind, plan: order.plan ?? null, period: order.period ?? null, amountVnd: transfer.amountVnd });
     const receipt = await store.receiptForTransfer(transfer.id);
     await sendBillingMail('paid', person, {
       amountVnd: transfer.amountVnd, what: { kind: order.kind, plan: order.plan, period: order.period },
