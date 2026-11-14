@@ -131,18 +131,17 @@ export async function takeTransfer(payload, { via = 'webhook', now = Date.now(),
   const order = await store.getOrder(row.orderId);
   if (!userId || !order || !order.userId) {
     // The order or the account went away while the transfer was being taken: nothing to credit, or already credited with nobody to apply it to.
-    const outcome = row.creditedAt ? 'late' : 'unmatched';
-    const done = await store.finishTransfer(row.id, { outcome });
-    log.warn('a SePay transfer in progress lost its order or account', { transfer: row.id, outcome });
-    return { outcome: (done ?? (await store.getTransfer(row.id))).outcome, transferId: row.id, orderId: null, repeat: false };
+    // Whether it was credited is decided by the statement itself, not by the row read above: another run may have credited it since.
+    const done = (await store.endLostTransfer(row.id)) ?? (await store.getTransfer(row.id));
+    log.warn('a SePay transfer in progress lost its order or account', { transfer: row.id, outcome: done.outcome });
+    return { outcome: done.outcome, transferId: row.id, orderId: null, repeat: false };
   }
   const vnd = row.amountVnd;
   const live = order.status === 'pending' && order.expiresAt > at;
-  const balance = await store.creditTransfer({ transferId: row.id, userId, vnd, orderId: order.id, countReceived: live });
+  await store.creditTransfer({ transferId: row.id, userId, vnd, orderId: order.id, countReceived: live });
   // The statement that claims the credit decides, once, whether it counted toward the order; every later try follows that.
   const counted = (await store.getTransfer(row.id)).counted;
-  // The balance this transfer found, exact at the credit (null when somebody else, or an earlier try, claimed it).
-  const dueBefore = balance == null || order.kind === 'topup' ? null : dueOf(order, balance - vnd);
+  // What was still due when this transfer was credited is kept on the row by the claiming statement itself, so every run judges `over` the same way.
 
   let outcome;
   if (!counted) {
@@ -154,8 +153,9 @@ export async function takeTransfer(payload, { via = 'webhook', now = Date.now(),
   } else {
     await tryApply(order.id, { now: at }); // after every credit, even when the order looks short: it decides
     const after = await store.getOrder(order.id);
+    const dueBefore = (await store.getTransfer(row.id)).dueBefore;
     if (after.status === 'paid') outcome = (dueBefore == null ? after.receivedVnd > after.totalVnd : vnd > dueBefore) ? 'over' : 'applied';
-    else outcome = after.status === 'pending' ? 'short' : 'late';
+    else outcome = after.status === 'pending' && after.expiresAt > at ? 'short' : 'late';
   }
 
   if (via !== 'simulated') await issueReceipt(row, order, userId);
@@ -174,7 +174,9 @@ export async function takeTransfer(payload, { via = 'webhook', now = Date.now(),
 export async function acceptSepay({ raw, headers, now = Date.now(), env = process.env }) {
   const secret = String(env.SEPAY_WEBHOOK_SECRET || '');
   // No account number means no transfer could ever be recognised as ours (and dedupe would then bar a later poll): the endpoint is not ready.
-  if (billingMode(env) === 'off' || !secret || !String(env.SEPAY_BANK_ACCOUNT || '').trim()) return { status: 404, body: { success: false } };
+  if (billingMode(env) === 'off' || !secret) return { status: 404, body: { success: false } };
+  // Set up but not ready: a status SePay will retry, rather than a 404 that says the endpoint is not there.
+  if (!String(env.SEPAY_BANK_ACCOUNT || '').trim()) return { status: 503, body: { success: false } };
   if (!verifySepay({ raw, headers, secret, now })) return { status: 401, body: { success: false } };
   let payload;
   try {
@@ -216,7 +218,8 @@ const fromList = (row) => ({
  */
 export async function reconcile({ since, orderId = null, now = Date.now(), env = process.env } = {}) {
   const token = String(env.SEPAY_API_TOKEN || '').trim();
-  if (!token || billingMode(env) === 'off') return 0;
+  // Without our account number every row would be recorded as ignored, and dedupe would then bar the real take later.
+  if (!token || billingMode(env) === 'off' || !String(env.SEPAY_BANK_ACCOUNT || '').trim()) return 0;
   const t = +atOf(now);
   if (t - asked.all < POLL_ALL_MS) return 0;
   if (orderId && t - (asked.byOrder.get(orderId) ?? -Infinity) < POLL_ORDER_MS) return 0;

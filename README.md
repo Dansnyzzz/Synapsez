@@ -2102,7 +2102,7 @@ step, with the optional certificate and how to bring data over from another data
 | `FREE_SHARE_RESERVE` | optional | The part of the free keys' capacity kept back on the 1st for people who start later in the month (default `0.2`). |
 | `FREE_STORAGE_BYTES` | optional | What an account that is not an administrator may keep in files while they live in the database (default `500000000`, 0.5 GB); see "Photos and files". |
 | `BILLING_MODE` | optional | Who sees billing: `preview` (the default when unset or unknown) shows plans, checkout and the Billing tab to administrators only, and nobody is refused; `off` hides it and every billing route answers 404; `live` is for going live (B2) and is not used yet. |
-| `SEPAY_BANK_ACCOUNT` | optional | The bank account SePay watches and the QR pays into (the receiving account number). Without it, checkout cannot show a QR. |
+| `SEPAY_BANK_ACCOUNT` | optional | The bank account SePay watches and the QR pays into (the receiving account number). Without it checkout cannot show a QR and no transfer is taken: the webhook answers 503 and the backup poll asks nothing. |
 | `SEPAY_BANK_CODE` | optional | The bank's short code for the QR, as SePay's QR image expects it (for example `MBBank`). |
 | `SEPAY_ACCOUNT_NAME` | optional | The account holder's name shown beside the QR. |
 | `SEPAY_WEBHOOK_SECRET` | optional | The secret of SePay's webhook (HMAC-SHA256, set in SePay's dashboard when the webhook is made): `POST /api/billing/sepay` is checked on its raw bytes with it and answers 404 while it is unset. Without it the webhook answers 404 (the backup poll, with `SEPAY_API_TOKEN`, can still take transfers). |

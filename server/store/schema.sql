@@ -1573,6 +1573,8 @@ CREATE TABLE IF NOT EXISTS sepay_transfers (
   credited_at    TIMESTAMPTZ,
   -- Whether that credit counted toward its order (the order was live then): decided once, by the claiming statement, so a retry never relabels it.
   counted        BOOLEAN NOT NULL DEFAULT FALSE,
+  -- What was still due on the order when this transfer was credited (kept so every run labels `over` the same way).
+  due_before     BIGINT,
   received_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS sepay_transfers_outcome_idx ON sepay_transfers (outcome, received_at DESC);
@@ -1643,6 +1645,20 @@ CREATE TABLE IF NOT EXISTS einvoices (
   error          TEXT,
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- A balance that leaves (with its account, by the cascade) is written off as a forfeit entry by the database itself, in the same
+-- statement that deletes it. Done here rather than in deleteUser because a credit landing at the same moment as the delete creates
+-- a balance row the delete's own snapshot never saw; the cascade still removes it, and without this the books would no longer balance.
+CREATE OR REPLACE FUNCTION forfeit_balance() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF OLD.vnd > 0 THEN
+    INSERT INTO balance_entries (user_id, kind, delta_vnd, note) VALUES (NULL, 'forfeit', -OLD.vnd, 'account deleted');
+  END IF;
+  RETURN OLD;
+END
+$$;
+DROP TRIGGER IF EXISTS balances_forfeit ON balances;
+CREATE TRIGGER balances_forfeit AFTER DELETE ON balances FOR EACH ROW EXECUTE FUNCTION forfeit_balance();
 
 -- ── Schema 49 ────────────────────────────────────────────────────────────────
 -- Row-level security on every table here (harness audit, 2026-11-12). On Supabase the

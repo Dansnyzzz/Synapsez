@@ -1072,7 +1072,7 @@ section('transfers: SePay checked on its raw bytes, taken once, matched to its o
     delete process.env.SEPAY_BANK_ACCOUNT;
     const nobank = await send(payload({ code: o.code, content: o.code, referenceCode: 'FT-NOBANK' }));
     process.env.SEPAY_BANK_ACCOUNT = accountWas;
-    check('without SEPAY_BANK_ACCOUNT the webhook is not ready (404), and nothing is recorded to bar a later poll', nobank.status === 404 && !(await store.getTransferByDedupe('ref:FT-NOBANK')));
+    check('without SEPAY_BANK_ACCOUNT the webhook is not ready (503), and nothing is recorded to bar a later poll', nobank.status === 503 && !(await store.getTransferByDedupe('ref:FT-NOBANK')));
     const warnedOther = await quiet(async () => { await send(payload({ accountNumber: '111', code: o.code, content: o.code, referenceCode: 'FT-WARN' })); });
     check('an incoming transfer to another account that names an order is ignored with a warning', (await store.getTransferByDedupe('ref:FT-WARN')).outcome === 'ignored' && warnedOther.some((l) => l.includes('SEPAY_BANK_ACCOUNT')));
   }
@@ -1094,6 +1094,97 @@ section('transfers: SePay checked on its raw bytes, taken once, matched to its o
     delete process.env.BILLING_MODE;
     globalThis.fetch = fetchWas;
     check('with billing off reconcile asks nothing', off === 0 && seen.length === 1);
+  }
+
+  /* fix round 2 */
+  {
+    const u = await makeUser();
+    const o = await planOrder(u.id);
+    const p = payload({ code: o.code, content: o.code, referenceCode: 'FT-STALE' });
+    const realCredit = store.creditTransfer;
+    store.creditTransfer = async () => { throw new Error('boom'); };
+    await send(p);
+    store.creditTransfer = realCredit;
+    // Run B has read the transfer as not credited when run A credits it, crashes at the finish, and the account goes.
+    const realGetOrder = store.getOrder;
+    const realFinish = store.finishTransfer;
+    let armed = true;
+    store.getOrder = async (id) => {
+      if (armed) {
+        armed = false;
+        store.getOrder = realGetOrder;
+        store.finishTransfer = async () => { throw new Error('crash of A at finish'); };
+        await send(p);
+        store.finishTransfer = realFinish;
+        await store.deleteUser(u.id);
+      }
+      return realGetOrder(id);
+    };
+    const rb = await send(p);
+    store.getOrder = realGetOrder;
+    const t = await store.getTransferByDedupe('ref:FT-STALE');
+    check('a transfer another run credited is never ended unmatched (it ends late, so an owner cannot assign it again)', ok(rb) && t.creditedAt instanceof Date && t.outcome === 'late', JSON.stringify([rb.status, t.outcome]));
+  }
+  {
+    const u = await makeUser();
+    await store.creditBalance(u.id, 50000, { kind: 'topup', topup: true });
+    const o = await planOrder(u.id);
+    const straight = await sepay.takeTransfer(payload({ code: o.code, content: o.code, referenceCode: 'FT-LAB1' }), { now: NOW });
+    const v = await makeUser();
+    await store.creditBalance(v.id, 50000, { kind: 'topup', topup: true });
+    const o2 = await planOrder(v.id);
+    const realCredit = store.creditTransfer;
+    store.creditTransfer = async (...a) => { const x = await realCredit.apply(store, a); if (x != null) await new Promise((r) => setTimeout(r, 100)); return x; };
+    const p = payload({ code: o2.code, content: o2.code, referenceCode: 'FT-LAB2' });
+    const two = await Promise.all([sepay.takeTransfer(p, { now: NOW }), sepay.takeTransfer(p, { now: NOW })]);
+    store.creditTransfer = realCredit;
+    check('with a balance already there the label is the same whichever run finishes first', straight.outcome === 'over' && two.every((x) => x.outcome === 'over') && (await store.getTransferByDedupe('ref:FT-LAB2')).outcome === 'over', JSON.stringify([straight.outcome, two.map((x) => x.outcome)]));
+  }
+  {
+    const u = await makeUser();
+    const o = await planOrder(u.id);
+    process.env.SEPAY_API_TOKEN = 'tok-again';
+    const accountWas = process.env.SEPAY_BANK_ACCOUNT;
+    delete process.env.SEPAY_BANK_ACCOUNT;
+    const asked = [];
+    const fetchWas = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      if (new URL(String(url)).host !== 'userapi.sepay.vn') return fetchWas(url, init);
+      asked.push(1);
+      return json({ data: [{ id: 'u9', transaction_date: '2026-11-13 12:00:00', account_number: '0123456789', amount_in: 129000, transaction_content: o.code, reference_number: 'FT-POLLNOACCT', code: o.code, bank_brand_name: 'MB' }], meta: { pagination: { has_more: false } } });
+    };
+    sepay._resetSepayForTests();
+    const took = await sepay.reconcile({ since: NOW, now: NOW.getTime() });
+    const hook = await send(payload({ code: o.code, content: o.code, referenceCode: 'FT-POLLNOACCT' }));
+    process.env.SEPAY_BANK_ACCOUNT = accountWas;
+    globalThis.fetch = fetchWas;
+    const later = await send(payload({ code: o.code, content: o.code, referenceCode: 'FT-POLLNOACCT' }));
+    check('without the account number the poll asks nothing and the webhook answers 503 (retryable), so nothing is barred by an ignored row', took === 0 && asked.length === 0 && hook.status === 503 && ok(later) && (await store.getTransferByDedupe('ref:FT-POLLNOACCT')).outcome === 'applied');
+  }
+  {
+    const u = await makeUser();
+    const o = (await orders.createOrder(u.id, { kind: 'topup', amountVnd: 100000 }, { now: NOW })).order;
+    const p = payload({ code: o.code, content: o.code, referenceCode: 'FT-TOPEXP', transferAmount: 100000 });
+    const realMark = store.markTopupPaid;
+    store.markTopupPaid = async () => { throw new Error('boom'); };
+    await send(p);
+    store.markTopupPaid = realMark;
+    await store.expireOrders(hours(2));
+    const r = await send(p, { now: hours(2) });
+    const oo = await store.getOrder(o.id);
+    check('a top-up whose order the sweeper expired before the retry still ends topup, with the order paid', ok(r) && (await store.getTransferByDedupe('ref:FT-TOPEXP')).outcome === 'topup' && oo.status === 'paid' && oo.receivedVnd === 100000 && (await balanceOf(u.id)) === 100000);
+  }
+  {
+    const u = await makeUser();
+    const o = await planOrder(u.id);
+    const p = payload({ code: o.code, content: o.code, referenceCode: 'FT-SEQ' });
+    const realFinish = store.finishTransfer;
+    store.finishTransfer = async () => { throw new Error('boom'); };
+    await send(p);
+    store.finishTransfer = realFinish;
+    const before = await seqNow();
+    await send(p);
+    check('a retry after the receipt was issued does not draw another receipt number', (await seqNow()) === before && (await store.listReceipts(u.id)).length === 1);
   }
 
   /* the secrets stay out of everything said */

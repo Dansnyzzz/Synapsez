@@ -345,6 +345,40 @@ section('deleting an account');
   check('an account with no balance deletes without a forfeit', (await query("SELECT 1 FROM balance_entries WHERE kind = 'forfeit'")).length === 1);
 }
 
+section('a balance that leaves is written off by the database itself');
+{
+  const { splitStatements } = await import('../server/store/pg.js');
+  const fs = await import('node:fs');
+  const sql = fs.readFileSync(new URL('../server/store/schema.sql', import.meta.url), 'utf8');
+  const start = sql.indexOf('CREATE OR REPLACE FUNCTION forfeit_balance');
+  const end = sql.indexOf('FOR EACH ROW EXECUTE FUNCTION forfeit_balance();') + 'FOR EACH ROW EXECUTE FUNCTION forfeit_balance();'.length;
+  for (const s of splitStatements(sql.slice(start, end))) await query(s);
+  check('applying the trigger again leaves exactly one', Number((await query("SELECT COUNT(*) AS c FROM pg_trigger WHERE tgname = 'balances_forfeit'"))[0].c) === 1);
+  const before = Number((await query("SELECT COUNT(*) AS c FROM balance_entries WHERE kind = 'forfeit'"))[0].c);
+  const lou = await makeUser();
+  await store.creditBalance(lou.id, 7000, { kind: 'topup', topup: true });
+  await query('DELETE FROM balances WHERE user_id = $1', [lou.id]);
+  const f = await query("SELECT * FROM balance_entries WHERE kind = 'forfeit' ORDER BY id DESC LIMIT 1");
+  check('deleting a balance row directly writes its forfeit', Number(f[0].delta_vnd) === -7000 && f[0].user_id === null && f[0].note === 'account deleted');
+  const mel = await makeUser();
+  await store.debitBalance(mel.id, 1, { kind: 'adjust' });
+  await store.creditBalance(mel.id, 100, { kind: 'adjust' });
+  await store.debitBalance(mel.id, 100, { kind: 'adjust' });
+  await query('DELETE FROM balances WHERE user_id = $1', [mel.id]);
+  check('an empty balance leaves no forfeit', Number((await query("SELECT COUNT(*) AS c FROM balance_entries WHERE kind = 'forfeit'"))[0].c) === before + 1);
+  const ned = await makeUser();
+  await store.creditBalance(ned.id, 3000, { kind: 'topup', topup: true });
+  await store.deleteUser(ned.id);
+  const forfeits = await query("SELECT delta_vnd FROM balance_entries WHERE kind = 'forfeit' ORDER BY id DESC LIMIT 2");
+  check('deleteUser writes exactly one forfeit, equal to the balance', Number(forfeits[0].delta_vnd) === -3000 && Number(forfeits[1].delta_vnd) === -7000);
+  const total = (await query('SELECT (SELECT COALESCE(SUM(vnd), 0) FROM balances) AS b, (SELECT COALESCE(SUM(delta_vnd), 0) FROM balance_entries) AS e'))[0];
+  check('the books still balance', Number(total.b) === Number(total.e), JSON.stringify(total));
+  const pat = await makeUser();
+  await store.createOrder(order('o97', pat.id, { kind: 'topup', plan: null, period: null, basis: null, useBalance: false, totalVnd: 60000, priceVnd: 60000 }));
+  await store.expireOrders(later(3_600_000));
+  check('a top-up order the sweeper expired can still be closed as paid by its transfer', (await store.markTopupPaid('o97', later(3_600_000)))?.status === 'paid');
+}
+
 section('after everything, every balance equals the sum of its entries');
 {
   const rows = await query('SELECT b.user_id, b.vnd, COALESCE((SELECT SUM(delta_vnd) FROM balance_entries e WHERE e.user_id = b.user_id), 0) AS s FROM balances b');

@@ -361,7 +361,7 @@ const orderRow = (r) => r && ({
 const transferRow = (r) => r && ({
   id: num(r.id), dedupe: r.dedupe, sepayId: r.sepay_id, referenceCode: r.reference_code, gateway: r.gateway, accountNumber: r.account_number,
   amountVnd: num(r.amount_vnd), code: r.code, content: r.content, transactionAt: asDate(r.transaction_at), orderId: r.order_id,
-  userId: r.user_id, outcome: r.outcome, via: r.via, creditedAt: asDate(r.credited_at), counted: !!r.counted, receivedAt: asDate(r.received_at),
+  userId: r.user_id, outcome: r.outcome, via: r.via, creditedAt: asDate(r.credited_at), counted: !!r.counted, dueBefore: num(r.due_before), receivedAt: asDate(r.received_at),
 }) || null;
 const subscriptionRow = (r) => r && ({
   userId: r.user_id, plan: r.plan, period: r.period, status: r.status, periodStart: asDate(r.period_start), periodEnd: asDate(r.period_end),
@@ -719,14 +719,11 @@ export function createPgStore(connectionString) {
     },
     async deleteUser(id) {
       // Money records outlive the account (owner, 2026-11-12). One statement, so no credit can land between the
-      // balance leaving and the account going, and the books balance whenever it is stopped: the balance row is
-      // removed and a forfeit entry written from what was actually in it (the account is gone, so its user_id is
-      // NULL from the start, as every other entry of it becomes), a receipt loses the buyer's details, the user goes.
+      // balance leaving and the account going, and the books balance whenever it is stopped: the user goes and the
+      // cascade removes the balance row, where the database's own trigger (balances_forfeit) writes the forfeit entry
+      // from what was actually in it; a receipt loses the buyer's details in the same statement.
       const gone = await q(
-        `WITH gone AS (DELETE FROM balances WHERE user_id = $1 RETURNING vnd),
-              f AS (INSERT INTO balance_entries (user_id, kind, delta_vnd, note)
-                    SELECT NULL, 'forfeit', -vnd, 'account deleted' FROM gone WHERE vnd > 0),
-              r AS (UPDATE receipts SET buyer_sealed = NULL WHERE user_id = $1),
+        `WITH r AS (UPDATE receipts SET buyer_sealed = NULL WHERE user_id = $1),
               u AS (DELETE FROM users WHERE id = $1 RETURNING is_owner)
          SELECT is_owner FROM u`,
         [id],
@@ -5702,7 +5699,10 @@ export function createPgStore(connectionString) {
     async creditTransfer({ transferId, userId, vnd, orderId = null, countReceived = false }) {
       const rows = await q(
         `WITH c AS (
-           UPDATE sepay_transfers SET credited_at = NOW(), counted = $5::boolean WHERE id = $1 AND credited_at IS NULL RETURNING id
+           UPDATE sepay_transfers SET credited_at = NOW(), counted = $5::boolean,
+                  due_before = (SELECT GREATEST(0, o.total_vnd - CASE WHEN o.use_balance THEN COALESCE((SELECT b0.vnd FROM balances b0 WHERE b0.user_id = $2::text), 0) ELSE o.received_vnd END)
+                                  FROM billing_orders o WHERE o.id = $4::text)
+            WHERE id = $1 AND credited_at IS NULL RETURNING id
          ), b AS (
            INSERT INTO balances (user_id, vnd, last_topup_at) SELECT $2::text, $3::bigint, NOW() FROM c
            ON CONFLICT (user_id) DO UPDATE SET vnd = balances.vnd + EXCLUDED.vnd, last_topup_at = NOW(), updated_at = NOW()
@@ -5724,12 +5724,19 @@ export function createPgStore(connectionString) {
         [Number(id), outcome, orderId, userId],
       ))[0]);
     },
+    /** A transfer stuck in `taking` whose order or account is gone: unmatched if nothing was credited, else late. Decided in the statement, so a credit another run just made is seen. */
+    async endLostTransfer(id) {
+      return transferRow((await q(
+        `UPDATE sepay_transfers SET outcome = CASE WHEN credited_at IS NULL THEN 'unmatched' ELSE 'late' END WHERE id = $1 AND outcome = 'taking' RETURNING *`,
+        [Number(id)],
+      ))[0]);
+    },
     async receiptForTransfer(transferId) {
       return receiptRow((await q('SELECT * FROM receipts WHERE transfer_id = $1', [Number(transferId)]))[0]);
     },
-    /** A top-up order closed as paid with what arrived (received_vnd is kept as it is); null unless it was pending. */
+    /** A top-up order closed as paid with what arrived (received_vnd is kept as it is); null unless it was pending, or expired by the sweeper before this transfer was finished. */
     async markTopupPaid(id, now) {
-      return orderRow((await q(`UPDATE billing_orders SET status = 'paid', paid_at = $2::timestamptz, applied_at = $2::timestamptz WHERE id = $1 AND kind = 'topup' AND status = 'pending' RETURNING *`, [String(id), now]))[0]);
+      return orderRow((await q(`UPDATE billing_orders SET status = 'paid', paid_at = $2::timestamptz, applied_at = $2::timestamptz WHERE id = $1 AND kind = 'topup' AND status IN ('pending', 'expired') RETURNING *`, [String(id), now]))[0]);
     },
     async listTransfers({ outcome = null, limit = 50 } = {}) {
       const rows = await q('SELECT * FROM sepay_transfers WHERE ($1::text IS NULL OR outcome = $1) ORDER BY received_at DESC, id DESC LIMIT $2', [outcome, Math.max(1, Math.min(500, Number(limit) || 50))]);
