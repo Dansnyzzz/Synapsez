@@ -17,16 +17,12 @@ import { findCode } from './codes.js';
 import { dueOf, tryApply } from './orders.js';
 import { log } from '../util/trace.js';
 import { forgetBillable } from './meter.js';
-import { sendBillingMail } from './mail.js';
+import { sendBillingMail, within } from './mail.js';
 import { audit } from '../audit.js';
 
 const WINDOW_S = 300;
 // A mail that hangs must not hold SePay's answer: after this the webhook answers and the mail goes on (or fails) by itself.
 const TELL_MS = 8_000;
-const within = (ms, work) => {
-  let timer;
-  return Promise.race([work, new Promise((resolve) => { timer = setTimeout(resolve, ms); })]).finally(() => clearTimeout(timer));
-};
 const USERAPI = 'https://userapi.sepay.vn/v2/transactions';
 const POLL_ALL_MS = 10_000;
 const POLL_ORDER_MS = 30_000;
@@ -176,7 +172,7 @@ export async function takeTransfer(payload, { via = 'webhook', now = Date.now(),
   const live = order.status === 'pending' && order.expiresAt > at;
   // Simulated money is not money: it must not start the 12-month clock either, or a balance made of play money would expire real ones' dates.
   await store.creditTransfer({ transferId: row.id, userId, vnd, orderId: order.id, countReceived: live, clock: via !== 'simulated' });
-  // A top-up makes the account billable at once, not when metering's 30 s answer runs out (meter.js). Promo/assign credits (Task 7) must do the same.
+  // A top-up makes the account billable at once, not when metering's 30 s answer runs out (meter.js). Promo and assign credits do the same in billing/promo.js and routes/billing.js.
   forgetBillable(userId);
   // The statement that claims the credit decides, once, whether it counted toward the order; every later try follows that.
   const counted = (await store.getTransfer(row.id)).counted;

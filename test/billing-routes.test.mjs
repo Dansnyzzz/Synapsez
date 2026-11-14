@@ -109,7 +109,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // The first account is the owner; the others are made after it.
 const owner = await account('owner', { role: 'admin' });
-const dan = await account('dan', { role: 'admin' });
+const dan = await account('dan', { role: 'admin', permissions: ['billing'] });
+const nolist = await account('nolist', { role: 'admin' });
 const carol = await account('carol', { role: 'admin', permissions: ['models'] });
 const bob = await account('bob');
 const frank = await account('frank', { role: 'admin' });
@@ -148,6 +149,18 @@ section('who can see billing at all');
   const kinds = ['billing_order_paid', 'billing_transfer_assigned', 'billing_transfer_dismissed', 'billing_promo_created', 'billing_promo_disabled', 'billing_simulated', 'billing_profile_updated'];
   check('the seven audit kinds exist', kinds.every((k) => AUDIT_KINDS.includes(k)));
   check('orders and promo tries are limited to ten an hour', LIMITS['billing-order']?.limit === 10 && LIMITS['billing-promo']?.limit === 10 && LIMITS['billing-order'].windowMs === 3_600_000);
+}
+
+section('the billing permission is only ever granted');
+{
+  const { permissionsOf } = await import('../server/adminRoles.js');
+  const row = await store.getUserById(nolist.id);
+  check('an administrator with no stored list holds what they held before billing, not billing', row.admin_permissions == null && !permissionsOf(row).includes('billing') && permissionsOf(row).includes('users') && permissionsOf(row).length === 7, permissionsOf(row).join());
+  const owned = await store.getUserById(owner.id);
+  check('the owner holds everything, billing included; an explicit grant gives it', permissionsOf(owned).includes('billing') && permissionsOf(await store.getUserById(dan.id)).join() === 'billing');
+  const closed = [];
+  for (const [method, url, body] of [['GET', '/api/admin/billing'], ['GET', '/api/admin/billing/orders'], ['GET', '/api/admin/billing/transfers'], ['GET', '/api/admin/billing/promos'], ['POST', '/api/admin/billing/promos', { code: 'NOLISTCODE1', creditVnd: 5000, maxUses: 1 }], ['DELETE', '/api/admin/billing/promos/NOLISTCODE1'], ['POST', '/api/admin/billing/transfers/1/assign', { email: bob.email }], ['POST', '/api/admin/billing/transfers/1/dismiss'], ['POST', '/api/admin/billing/simulate', { orderId: 'x' }]]) closed.push([method + ' ' + url, (await nolist.j.call(method, url, body)).status]);
+  check('and every administrator route of billing is a 403 for them', closed.every(([, st]) => st === 403), closed.filter(([, st]) => st !== 403).map((a) => a.join(' ')).join(' | '));
 }
 
 section('the plans, with and without a rate');
@@ -267,6 +280,12 @@ let planOrderId;
   // Up to Pro, then a downgrade is scheduled and withdrawn.
   const up = await owner.j.call('POST', '/api/billing/orders', { kind: 'plan', plan: 'pro', period: 'month' });
   await owner.j.call('POST', '/api/admin/billing/simulate', { orderId: up.json?.order?.id });
+  const beforeFlag = (await store.getSubscription(owner.id)).autoRenew;
+  const half = await owner.j.call('PUT', '/api/billing/subscription', { autoRenew: !beforeFlag, nextPlan: 'max', nextPeriod: 'month' });
+  check('a request whose plan change is refused changes nothing at all (not even auto-renew)', half.status === 422 && (await store.getSubscription(owner.id)).autoRenew === beforeFlag, String(half.status));
+  const both = await owner.j.call('PUT', '/api/billing/subscription', { autoRenew: !beforeFlag, nextPlan: 'plus', nextPeriod: 'month' });
+  check('  and one that is accepted applies both', both.status === 200 && both.json.plan.autoRenew === !beforeFlag && both.json.plan.nextPlan === 'plus', JSON.stringify(both.json?.plan));
+  await owner.j.call('PUT', '/api/billing/subscription', { autoRenew: beforeFlag, nextPlan: null });
   const down = await owner.j.call('PUT', '/api/billing/subscription', { nextPlan: 'plus', nextPeriod: 'month' });
   check('a downgrade is scheduled for the period end', down.status === 200 && down.json?.plan?.plan === 'pro' && down.json.plan.nextPlan === 'plus' && down.json.plan.nextPeriod === 'month', JSON.stringify(down.json));
   const withdrawn = await owner.j.call('PUT', '/api/billing/subscription', { nextPlan: null });
@@ -363,6 +382,17 @@ section('unmatched transfers: assign once, or dismiss');
   const record = (await store.listAudit(owner.id, 80)).map((e) => e.kind);
   check('both are in the record', record.includes('billing_transfer_assigned') && record.includes('billing_transfer_dismissed'), record.join());
 
+  const simTransfer = await store.recordTransfer({ dedupe: 'ref:SIM-UNMATCHED', referenceCode: 'SIM-UNMATCHED', amountVnd: 10_000, outcome: 'unmatched', via: 'simulated' });
+  const simAssign = await owner.j.call('POST', '/api/admin/billing/transfers/' + simTransfer.id + '/assign', { email: bob.email });
+  check('a simulated transfer can never be assigned (409), and credits nothing', simAssign.status === 409 && (await store.getTransfer(simTransfer.id)).creditedAt === null);
+  const assignedAudit = (await store.listAudit(owner.id, 100)).find((e) => e.kind === 'billing_transfer_assigned');
+  check('the record of an assignment names the account it went to', assignedAudit?.detail?.to === bob.id, JSON.stringify(assignedAudit?.detail));
+  const lena = await account('lena', { role: 'admin' });
+  await lena.j.call('PUT', '/api/billing/profile', { name: 'Lena', email: 'receipts@lena.test', country: 'VN' });
+  const t4 = await unmatched('REF-ASSIGN-3', 55_000);
+  mails.length = 0;
+  await owner.j.call('POST', '/api/admin/billing/transfers/' + t4 + '/assign', { email: lena.email });
+  check("the paid mail with the receipt goes to the billing information's email when there is one", mails.some((m) => m.to === 'receipts@lena.test' && /SZR-/.test(m.text)) && !mails.some((m) => m.to === lena.email), mails.map((m) => m.to).join());
   // An ordinary member holding a balance is not metered by billing, but an administrator is, at once.
   const t3 = await unmatched('REF-ASSIGN-2', 90_000);
   forgetBillable();
@@ -374,11 +404,11 @@ section('unmatched transfers: assign once, or dismiss');
 section('the admin card');
 {
   const card = await owner.j.call('GET', '/api/admin/billing');
-  check('the figures, the mode and the rate', card.status === 200 && card.json.mode === 'preview' && card.json.figures?.entries?.assign?.inVnd === 160_000 && card.json.rate?.rate === 25_500, JSON.stringify(card.json).slice(0, 300));
+  check('the figures, the mode and the rate', card.status === 200 && card.json.mode === 'preview' && card.json.figures?.entries?.assign?.inVnd === 215_000 && card.json.rate?.rate === 25_500, JSON.stringify(card.json).slice(0, 300));
   check('  an administrator without the permission gets a 403', (await carol.j.call('GET', '/api/admin/billing')).status === 403);
   check('  and a member a 403', (await bob.j.call('GET', '/api/admin/billing')).status === 403);
   check('  orders are listed', (await owner.j.call('GET', '/api/admin/billing/orders')).json?.orders?.some((o) => o.id === planOrderId));
-  check('  without a key, the machine count is null; the limit and the database figures are the defaults', card.json.capacity?.machines?.running === null && card.json.capacity.machines.limit === 20 && card.json.capacity.database.includedBytes === 8e9 && Number.isFinite(card.json.capacity.database.bytes) || card.json.capacity?.database?.bytes === null, JSON.stringify(card.json.capacity));
+  check('  without a key, the machine count is null; the limit and the database figures are the defaults', card.json.capacity?.machines?.running === null && card.json.capacity.machines.limit === 20 && card.json.capacity.database.includedBytes === 8e9 && (Number.isFinite(card.json.capacity.database.bytes) || card.json.capacity.database.bytes === null), JSON.stringify(card.json.capacity));
   process.env.E2B_API_KEY = 'e2b-test-key-should-never-leave-0001';
   process.env.E2B_CONCURRENT_LIMIT = '40';
   process.env.DATABASE_INCLUDED_GB = '2';
@@ -391,6 +421,42 @@ section('the admin card');
   delete process.env.E2B_API_KEY;
   delete process.env.E2B_CONCURRENT_LIMIT;
   delete process.env.DATABASE_INCLUDED_GB;
+
+  // The key is read from the environment it is given, not from the process's.
+  const { capacityOf } = await import('../server/billing/capacity.js');
+  const seen = await capacityOf({ bytes: 1, env: { E2B_API_KEY: 'another-e2b-key-0002', E2B_CONCURRENT_LIMIT: '7' } });
+  check('capacityOf reads its own env argument', seen.machines.running === 3 && seen.machines.limit === 7 && (await capacityOf({ bytes: 1, env: {} })).machines.running === null);
+
+  // Cost and margin, from seeded paid counters.
+  const pool = await import('../server/keyPool.js');
+  process.env.EXA_API_KEY = 'exa-cost-test-key-0001';
+  process.env.E2B_API_KEY = 'e2b-cost-test-key-0001';
+  process.env.TAVILY_API_KEY = 'tavily-cost-test-key-0001';
+  const exaKey = (await pool.keysFor('exa', { fresh: true }))[0];
+  const tavilyKey = (await pool.keysFor('tavily', { fresh: true }))[0];
+  const e2bKey = (await pool.keysFor('e2b', { fresh: true }))[0];
+  await pool.countPaid('exa', exaKey.id, 5000);
+  await pool.countPaid('tavily', tavilyKey.id, 100);
+  await pool.countPaid('e2b', e2bKey.id, 2000);
+  await getStore().chargeUsage(carol.id, 'search', 3, 1200, new Date().toISOString().slice(0, 10));
+  const costed = (await owner.j.call('GET', '/api/admin/billing')).json;
+  const by = costed.cost?.byService;
+  check('the card has the real cost of the paid units this month, by service, at the rate', by?.exa?.units === 5000 && by.exa.usd === 5 && by.exa.vnd === 127_500 && by.tavily.units === 100 && Math.abs(by.tavily.usd - 0.8) < 1e-9 && by.tavily.vnd === 20_400 && by.e2b.vnd === 51_000, JSON.stringify(costed.cost));
+  check('  a service with no paid use is 0 (brave, firecrawl)', by?.brave?.units === 0 && by.brave.vnd === 0 && by.firecrawl.vnd === 0);
+  check('  the total, the real money in this month and the margin', costed.cost.totalVnd === 127_500 + 20_400 + 51_000 && costed.moneyInMonthVnd === 1200 && costed.marginVnd === 1200 - costed.cost.totalVnd, JSON.stringify([costed.cost?.totalVnd, costed.moneyInMonthVnd, costed.marginVnd]));
+  check('  and the 30-day figures are still there', !!costed.figures?.entries && costed.days === 30);
+  delete process.env.EXA_API_KEY;
+  delete process.env.E2B_API_KEY;
+  delete process.env.TAVILY_API_KEY;
+
+  // Held balances never count more than an account really holds (simulated spending lowers the balance, not the real ledger).
+  const heldBefore = (await owner.j.call('GET', '/api/admin/billing')).json.figures.balancesHeldVnd;
+  const jo = await account('jo', { role: 'admin' });
+  await getStore().creditBalance(jo.id, 300_000, { kind: 'adjust' });
+  const simPlan = await orders.createOrder(jo.id, { kind: 'plan', plan: 'plus', period: 'month' }, { simulated: true });
+  const joBalance = (await store.billingState(jo.id)).balanceVnd;
+  const heldAfter = (await owner.j.call('GET', '/api/admin/billing')).json.figures.balancesHeldVnd;
+  check('what is held for an account is at most its real balance', simPlan.paidNow && joBalance < 300_000 && heldAfter - heldBefore === joBalance, (heldAfter - heldBefore) + ' vs ' + joBalance);
 }
 
 section('the transactions and receipts are the caller\'s own');
@@ -405,6 +471,18 @@ section('the transactions and receipts are the caller\'s own');
   const carolReceipts = await carol.j.call('GET', '/api/billing/receipts');
   const danReceipts = await dan.j.call('GET', '/api/billing/receipts');
   check('receipts: carol sees hers (the assign), dan none', carolReceipts.json?.receipts?.length === 1 && /^SZR-\d{4}-\d{6}$/.test(carolReceipts.json.receipts[0].number) && danReceipts.json?.receipts?.length === 0);
+}
+
+section('the running balance on each transaction');
+{
+  const ivy = await account('ivy', { role: 'admin' });
+  await getStore().creditBalance(ivy.id, 100_000, { kind: 'adjust' });
+  await getStore().debitBalance(ivy.id, 30_000, { kind: 'adjust' });
+  await getStore().creditBalance(ivy.id, 50_000, { kind: 'topup', topup: true });
+  const all = (await ivy.j.call('GET', '/api/billing/transactions')).json.entries.map((e) => e.balanceAfterVnd);
+  const only = (await ivy.j.call('GET', '/api/billing/transactions?kind=adjust')).json.entries.map((e) => e.balanceAfterVnd);
+  check('each row says what the balance was after it, newest first', all.join() === '120000,70000,100000', all.join());
+  check('  and a filter by kind does not change those figures', only.join() === '70000,100000', only.join());
 }
 
 section('mail: every kind, both languages');
@@ -505,6 +583,12 @@ section('low balance, once until it is topped up again; expiry warned 30 days ah
   const day = (n) => new Date(Date.now() + n * 86_400_000 + 30 * 60_000);
   await billingTick({ now: day(5) });
   check('below the threshold: one mail', hers().length === 1 && (await getStore().getBillingProfile(gina.id)).lowAlertSentAt !== null, String(hers().length));
+  check('  it carries a QR for the smallest top-up, an order made for it, and the amount', /qr\.sepay\.vn/.test(hers()[0].html) && /SZ\d{10}/.test(hers()[0].text) && (await store.listOrders({ userId: gina.id })).some((o) => o.kind === 'topup' && o.totalVnd === TOPUP.minNoPlan) && /50[.,]000/.test(hers()[0].text), hers()[0].text.slice(0, 300));
+  const kim = await account('kim');
+  await getStore().creditBalance(kim.id, 50_000, { kind: 'adjust' });
+  await getStore().setLowBalance(kim.id, 50_000);
+  await billingTick({ now: day(5) });
+  check('  a balance exactly at the threshold is not below it: no mail', !mails.some((m) => m.to === kim.email));
   await billingTick({ now: day(6) });
   check('  the next day: no second mail', hers().length === 1);
   await getStore().creditBalance(gina.id, 100_000, { kind: 'adjust' });
@@ -552,8 +636,7 @@ section('your data');
   const danExport = JSON.parse((await dan.j.call('GET', '/api/account/export')).text);
   check('the billing information is in the owner\'s own export, in the clear', danExport.billing.profile?.email === 'tran.a@example.test' && danExport.billing.orders.length >= 1, JSON.stringify(danExport.billing.profile));
   check('  and nobody else\'s orders or ledger are in it', danExport.billing.orders.every((o) => o.code) && !JSON.stringify(danExport.billing).includes(bob.id) && !JSON.stringify(danExport.billing).includes('REF-ASSIGN-1'));
-  const text = exp.text;
-  check('no sealed text and no payment secret travels in it', !/v2\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\./.test(text) || true);
+  check('no sealed text travels in it', !/buyerSealed|buyer_sealed|"sealed"/.test(exp.text) && !/"v2\.[A-Za-z0-9_-]+\./.test(exp.text));
 }
 
 server.close();

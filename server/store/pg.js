@@ -350,7 +350,7 @@ function wholeVnd(v) {
 const asDay = (v) => (v == null ? null : v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10));
 const entryRow = (r) => r && ({
   id: num(r.id), userId: r.user_id, kind: r.kind, category: r.category, day: asDay(r.day), units: num(r.units),
-  deltaVnd: num(r.delta_vnd), ref: r.ref, note: r.note, createdAt: asDate(r.created_at),
+  deltaVnd: num(r.delta_vnd), ref: r.ref, note: r.note, createdAt: asDate(r.created_at), balanceAfterVnd: r.balance_after == null ? null : num(r.balance_after),
 });
 const orderRow = (r) => r && ({
   id: r.id, userId: r.user_id, kind: r.kind, plan: r.plan, period: r.period, code: r.code, usdCents: num(r.usd_cents),
@@ -5547,11 +5547,16 @@ export function createPgStore(connectionString) {
       );
       return Number(rows[0].vnd);
     },
-    /** The ledger, newest first. `before` is an entry id (the last one of the previous page). */
+    /**
+     * The ledger, newest first. `before` is an entry id (the last one of the previous page). Each row carries `balanceAfterVnd`, the
+     * running sum over ALL of the account's entries in id order, worked out before the kind and page filters are applied, so a filter
+     * or a later page never changes the figures. A usage row is one row per category and day that grows during its day, so its figure
+     * is the balance as of the end of that day (later entries of the same day are counted in it), not at the first use.
+     */
     async listBalanceEntries(userId, { kind = null, before = null, limit = 50 } = {}) {
       const rows = await q(
-        `SELECT * FROM balance_entries
-          WHERE user_id = $1 AND ($2::text IS NULL OR kind = $2) AND ($3::bigint IS NULL OR id < $3)
+        `SELECT * FROM (SELECT e.*, SUM(e.delta_vnd) OVER (ORDER BY e.id) AS balance_after FROM balance_entries e WHERE e.user_id = $1) x
+          WHERE ($2::text IS NULL OR kind = $2) AND ($3::bigint IS NULL OR id < $3)
           ORDER BY id DESC LIMIT $4`,
         [String(userId), kind, before, Math.max(1, Math.min(200, Number(limit) || 50))],
       );
@@ -5692,9 +5697,12 @@ export function createPgStore(connectionString) {
     },
     /**
      * Credit what a transfer brought, once. One statement: the transfer is claimed (`credited_at` set only while it is null), and
-     * only then (and with `counted` recording whether it counted toward the order) are the balance, the ledger entry (kind topup, ref = the transfer's id) and, when `countReceived`, the order's
-     * `received_vnd` written. A retry of the same transfer finds it claimed and changes nothing (returns null). Real money, so it
-     * starts the 12-month clock.
+     * only then (and with `counted` recording whether it counted toward the order) are the balance, the ledger entry (ref = the transfer's id) and, when `countReceived`, the order's
+     * `received_vnd` written. A retry of the same transfer finds it claimed and changes nothing (returns null).
+     *   kind         the ledger entry's kind: `topup` (a bank transfer matched to an order) or `assign` (the owner gave it to an account)
+     *   clock        whether this credit starts the 12-month expiry clock (real money does; a simulated transfer does not)
+     *   onlyOutcome  the claim also needs the transfer to be in this outcome (assign: `unmatched`), so it excludes a dismiss
+     *   setOutcome   the outcome the claiming statement gives it, and with it the transfer is attached to `userId` (assign: `assigned`)
      */
     async creditTransfer({ transferId, userId, vnd, orderId = null, countReceived = false, kind = 'topup', clock = true, onlyOutcome = null, setOutcome = null }) {
       const rows = await q(
@@ -6017,8 +6025,8 @@ export function createPgStore(connectionString) {
      *   entries          { [kind]: { inVnd, outVnd } } - sums of positive and of negative ledger entries per kind
      *   paidOrdersVnd    total_vnd of real orders paid since then
      *   orders           { pending, paid, expired, cancelled, refunded } counts of real orders (all time)
-     *   balancesHeldVnd  what the deployment owes in service: each account's real ledger, never below 0 (usage that drew on simulated
-     *                    money can only lower it), added up
+     *   balancesHeldVnd  what the deployment owes in service: each account's real ledger (simulated entries left out), never below 0 and
+     *                    never more than the balance the account really holds (spending of simulated money lowers the balance, not that ledger)
      *   accounts         how many accounts hold real money
      *   databaseBytes    pg_database_size, or null where the role may not ask
      */
@@ -6036,8 +6044,10 @@ export function createPgStore(connectionString) {
         ),
         q(`SELECT COALESCE(SUM(o.total_vnd), 0) AS n FROM billing_orders o WHERE o.status = 'paid' AND NOT ${simulatedOrder} AND o.paid_at >= $1::timestamptz`, [since]),
         q(`SELECT o.status, COUNT(*) AS n FROM billing_orders o WHERE NOT ${simulatedOrder} GROUP BY o.status`),
-        q(`SELECT COALESCE(SUM(GREATEST(0, s)), 0) AS total, COUNT(*) FILTER (WHERE s > 0) AS accounts
-             FROM (SELECT e.user_id, SUM(e.delta_vnd) AS s FROM balance_entries e WHERE e.user_id IS NOT NULL AND NOT ${simulatedEntry} GROUP BY e.user_id) x`),
+        q(`SELECT COALESCE(SUM(h), 0) AS total, COUNT(*) FILTER (WHERE h > 0) AS accounts
+             FROM (SELECT LEAST(GREATEST(0, x.s), COALESCE(b.vnd, 0)) AS h
+                     FROM (SELECT e.user_id, SUM(e.delta_vnd) AS s FROM balance_entries e WHERE e.user_id IS NOT NULL AND NOT ${simulatedEntry} GROUP BY e.user_id) x
+                     LEFT JOIN balances b ON b.user_id = x.user_id) y`),
         q('SELECT pg_database_size(current_database()) AS n').catch(() => []),
       ]);
       const entries = {};

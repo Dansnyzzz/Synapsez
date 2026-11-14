@@ -6,7 +6,6 @@
  * What is remembered is one public number for the deployment (not anybody's data), for a minute, per key: a page that polls
  * does not become a poll of E2B. Any failure is `null` (unknown), never an error and never an old number made to look current.
  */
-import { envKeyOf } from '../keyPool.js';
 import { log } from '../util/trace.js';
 
 const LIST = 'https://api.e2b.app/v2/sandboxes';
@@ -49,7 +48,8 @@ export async function capacityOf({ bytes, env = process.env, now = Date.now() })
   const limit = positive(env.E2B_CONCURRENT_LIMIT, 20);
   const includedBytes = Math.round(positive(env.DATABASE_INCLUDED_GB, 8) * 1e9);
   const database = { bytes: bytes ?? null, includedBytes };
-  const key = envKeyOf('e2b');
+  // From the environment it is given (the process's by default), not from a global.
+  const key = String(env.E2B_API_KEY || '').trim();
   if (!key) return { machines: { running: null, limit }, database };
   if (kept && kept.key === key && now - kept.at < CACHE_MS) return { machines: { running: kept.running, limit }, database };
   let running = null;

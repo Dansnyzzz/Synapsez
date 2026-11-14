@@ -19,12 +19,18 @@
  * NULL), and keeps the powers they already had in the page: all of those below. So
  * does one made with `scripts/make-admin.js`, by somebody at the database already.
  * Anyone made here has a list, and a list, once written, is the whole of it.
+ *
+ * `billing` (owner, 2026-11-13) is the exception to "keeps the powers they already had": it is money (promo codes, assigning real
+ * transfers, the names of payers), so an administrator with no list does NOT get it by default. It comes from the owner's explicit
+ * grant, or from being the owner.
  */
 
 /** Everything an administrator can be given, in the order Settings lists them. */
 export const ADMIN_PERMISSIONS = Object.freeze(['users', 'delete_users', 'models', 'feedback', 'activity', 'free_tier', 'themes', 'billing']);
 
 const known = new Set(ADMIN_PERMISSIONS);
+/** What an administrator with no stored list holds: everything that existed before billing, and nothing added since that is money. */
+const BEFORE_LISTS = Object.freeze(ADMIN_PERMISSIONS.filter((p) => p !== 'billing'));
 
 export const isOwner = (user) => user?.role === 'admin' && user?.is_owner === true;
 
@@ -45,7 +51,7 @@ export function permissionsOf(user) {
   if (user?.role !== 'admin') return [];
   if (isOwner(user)) return [...ADMIN_PERMISSIONS];
   const list = storedList(user.admin_permissions);
-  return list ? ADMIN_PERMISSIONS.filter((p) => list.includes(p)) : [...ADMIN_PERMISSIONS];
+  return list ? ADMIN_PERMISSIONS.filter((p) => list.includes(p)) : [...BEFORE_LISTS];
 }
 
 export const can = (user, permission) => permissionsOf(user).includes(permission);

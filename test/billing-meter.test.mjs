@@ -220,6 +220,8 @@ section('storage: a day past the plan\'s GB');
   store.storageBytesByUser = async (ids) => new Map(ids.map((id) => [id, id === admin.id ? 3.25e9 : 0]));
   const out = await meter.chargeStorageDay({ now: new Date('2027-06-15T05:00:00Z') });
   check('3.25 GB on Plus (3 GB) in a 30-day month: 3 tenths over = ceil(300/30) = 10đ', out.charged === 1 && (await balanceOf(admin)) === 990, JSON.stringify(out));
+  const twice = await meter.chargeStorageDay({ now: new Date('2027-06-15T06:00:00Z') });
+  check('  the same day asked again charges nobody again (a claim per account and day)', twice.charged === 0 && (await balanceOf(admin)) === 990, JSON.stringify(twice));
   const row = await usage(admin, 'storage');
   check('  one usage row: 3 tenths, 10đ', row.u === 3 && row.v === -10, JSON.stringify(row));
   const broke = await makeUser();

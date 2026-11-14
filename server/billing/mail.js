@@ -11,6 +11,10 @@ import { layoutEmail, escapeHtml } from '../mailTemplate.js';
 import { sendEmail, senderName, publicUrl, emailBackend } from '../email.js';
 import { mailLanguage } from '../auth.js';
 import { log } from '../util/trace.js';
+import { getStore } from '../store/index.js';
+import { decryptSecret } from '../crypto.js';
+import { billingProfileContext } from '../secretContexts.js';
+import { GRACE_DAYS } from './plans.js';
 
 export const BILLING_MAIL_KINDS = Object.freeze(['paid', 'plan-changed', 'renewal-soon', 'renewed', 'grace', 'ended', 'low-balance', 'expiring', 'late-money']);
 
@@ -118,11 +122,11 @@ function pieces(kind, language, data, links) {
       };
     case 'grace':
       return {
-        subject: vi ? `Gói ${plan} của bạn đã hết hạn - còn 3 ngày để gia hạn` : `Your ${plan} plan has run out - 3 days to renew`,
+        subject: vi ? `Gói ${plan} của bạn đã hết kỳ - còn ${GRACE_DAYS} ngày để gia hạn` : `Your ${plan} plan period is over - ${GRACE_DAYS} days to renew`,
         title: vi ? 'Gói đã hết kỳ' : 'Your plan period is over',
         lead: vi
-          ? 'Gói của bạn vẫn dùng được trong 3 ngày. Những ngày này không bị tính tiền. Hãy gia hạn trước khi hết hạn để không bị gián đoạn.'
-          : 'Your plan keeps working for 3 more days, and those days are not charged. Renew before then to avoid a break.',
+          ? `Gói của bạn vẫn dùng được thêm ${GRACE_DAYS} ngày. Nếu bạn gia hạn trong thời gian này, các ngày đó nằm trong kỳ mới; nếu không, chúng không bị tính tiền. Hãy gia hạn trước khi hết hạn để không bị gián đoạn.`
+          : `Your plan keeps working for ${GRACE_DAYS} more days. If you renew in that time those days are covered by the renewed period; if you do not, they are not charged. Renew before then to avoid a break.`,
         facts: [
           [vi ? 'Gia hạn trước' : 'Renew by', date(data.endsAt)],
           [vi ? 'Số tiền gia hạn' : 'Renewal price', data.amountVnd == null ? '' : money(data.amountVnd)],
@@ -137,14 +141,24 @@ function pieces(kind, language, data, links) {
         facts: [],
         action: open,
       };
-    case 'low-balance':
+    case 'low-balance': {
+      const qr = data.qr || null;
       return {
         subject: vi ? 'Số dư của bạn đang thấp' : 'Your balance is low',
         title: vi ? 'Số dư thấp' : 'Low balance',
-        lead: vi ? `Số dư của bạn đã xuống dưới mức bạn đặt (${money(data.thresholdVnd)}). Nạp thêm để không bị gián đoạn.` : `Your balance has fallen below the level you set (${money(data.thresholdVnd)}). Top up to avoid a break.`,
-        facts: [[vi ? 'Số dư hiện có' : 'Balance now', money(data.balanceVnd)]],
+        lead: (vi ? `Số dư của bạn đã xuống dưới mức bạn đặt (${money(data.thresholdVnd)}). Nạp thêm để không bị gián đoạn.` : `Your balance has fallen below the level you set (${money(data.thresholdVnd)}). Top up to avoid a break.`)
+          + (qr ? (vi ? ' Quét mã QR để nạp số tiền nhỏ nhất; tiền chuyển sau khi mã hết hạn vẫn được cộng vào số dư.' : ' Scan the QR code to add the smallest top-up; money sent after the code has expired still lands in your balance.') : ''),
+        facts: [
+          [vi ? 'Số dư hiện có' : 'Balance now', money(data.balanceVnd)],
+          [vi ? 'Số tiền nạp' : 'Top-up amount', qr && data.topupVnd ? money(data.topupVnd) : ''],
+          [vi ? 'Nội dung chuyển khoản' : 'Transfer content', data.code || qr?.content || ''],
+          [vi ? 'Ngân hàng' : 'Bank', qr ? `${qr.bank || ''} ${qr.account || ''}`.trim() : ''],
+          [vi ? 'Chủ tài khoản' : 'Account holder', qr?.holder || ''],
+        ],
+        picture: qr?.image ? { url: qr.image, alt: vi ? 'Mã QR chuyển khoản' : 'Transfer QR code' } : null,
         action: { label: vi ? 'Nạp thêm' : 'Add credits', url: links.billing },
       };
+    }
     case 'expiring':
       return {
         subject: vi ? `Số dư của bạn hết hạn vào ${date(data.expiresAt)}` : `Your balance expires on ${date(data.expiresAt)}`,
@@ -211,6 +225,23 @@ export function buildBillingMail(kind, { language = 'en', data = {}, baseUrl = p
   return { subject: p.subject, html, text };
 }
 
+/** A step that is waited for at most `ms`: after that the caller goes on and the work finishes (or fails) by itself. */
+export function within(ms, work) {
+  let timer;
+  return Promise.race([work, new Promise((resolve) => { timer = setTimeout(resolve, ms); })]).finally(() => clearTimeout(timer));
+}
+
+/** The address a receipt goes to: the billing information's, when the account gave one, else the account's own. Never logged. */
+async function receiptAddress(user) {
+  try {
+    const sealed = (await getStore().getBillingProfile(String(user.id)))?.sealed;
+    const given = sealed ? JSON.parse(decryptSecret(sealed, billingProfileContext(String(user.id))) || 'null')?.email : null;
+    return typeof given === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(given) ? given : user.email;
+  } catch {
+    return user.email;
+  }
+}
+
 /**
  * Tell an account something about its billing. Never throws; the answer says what happened:
  * `{ ok: true }` sent, `{ ok: false, skipped: true }` no mail provider (or no address) so nothing was sent,
@@ -228,7 +259,8 @@ export async function sendBillingMail(kind, user, data = {}, { send = sendEmail,
     if (backend === 'console') return { ok: false, skipped: true };
     const language = await mailLanguage(/** @type {any} */ (user), undefined);
     const mail = buildBillingMail(kind, { language, data, baseUrl });
-    const result = await send({ to: user.email, subject: mail.subject, html: mail.html, text: mail.text });
+    const to = kind === 'paid' && user.id ? await receiptAddress(user) : user.email;
+    const result = await send({ to, subject: mail.subject, html: mail.html, text: mail.text });
     return { ok: !!result?.ok, skipped: false };
   } catch (err) {
     log.warn('a billing email could not be sent', { kind, error: String(err?.message || err).slice(0, 160) });

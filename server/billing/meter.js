@@ -17,6 +17,7 @@ import { PLANS, paygPrices } from './plans.js';
 import { vnDay, vnDayEnd, addDays, addMonths, daysInVnMonth } from './period.js';
 import { meteringRate } from './fx.js';
 import { catchUp, planInForce } from './subscriptions.js';
+import { BILLABLE_MAX, BILLABLE_MS, billableCache, forgetBillable } from './billable.js';
 
 /**
  * @typedef {{ billed: boolean, source: 'included'|'balance'|'none'|null, paid: boolean, refused: boolean, units: number,
@@ -28,16 +29,7 @@ export const NOT_BILLED = Object.freeze({
   billed: false, source: null, paid: false, refused: false, units: 0, settle: async () => {}, release: async () => {},
 });
 
-const BILLABLE_MS = 30_000;
-const BILLABLE_MAX = 500;
-/** user id -> { until, value }: one yes/no per account per instance, a question every call would otherwise ask the database. */
-const billableCache = new Map();
-
-/** Forget the answer for one account (this instance charged or credited it), or for all (tests). */
-export function forgetBillable(userId) {
-  if (userId == null) billableCache.clear();
-  else billableCache.delete(String(userId));
-}
+export { forgetBillable };
 
 /**
  * Whether this account is metered by billing: an administrator in preview (any account in live) that holds a
@@ -299,6 +291,8 @@ export async function chargeStorageDay({ now = new Date() } = {}) {
       const overTenths = Math.max(0, Math.ceil((sizes.get(id) || 0) / 1e8) - PLANS[plan].storageGb * 10);
       if (!overTenths) continue;
       const vnd = Math.ceil((overTenths * price) / 10 / daysInVnMonth(now));
+      // A claim per account and day, besides the daily claim of the job that calls this: a day is charged to an account once.
+      if ((await store.addToCounter(`bill:storage:${id}:${day}`, 1, vnDayEnd(now))) !== 1) continue;
       if ((await store.chargeUsage(id, 'storage', overTenths, vnd, day)) !== null) {
         forgetBillable(id);
         out.charged += 1;

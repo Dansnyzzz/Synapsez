@@ -14,12 +14,12 @@ import { getStore } from '../store/index.js';
 import { log } from '../util/trace.js';
 import { billingMode } from './mode.js';
 import { addDays, vnDay, vnDayEnd } from './period.js';
-import { catchUp, remindersDue } from './subscriptions.js';
-import { dueOf, qrFor } from './orders.js';
+import { catchUp, planInForce, remindersDue } from './subscriptions.js';
+import { createOrder, dueOf, qrFor } from './orders.js';
 import { chargeStorageDay, forgetBillable } from './meter.js';
 import { reconcile, takeTransfer } from './sepay.js';
 import { sendBillingMail } from './mail.js';
-import { EXPIRY_WARNING_DAYS, GRACE_DAYS } from './plans.js';
+import { EXPIRY_WARNING_DAYS, GRACE_DAYS, TOPUP } from './plans.js';
 
 /** A transfer left `taking` this long is not a request still being served: it is finished from its stored row. */
 const TAKING_MS = 5 * 60_000;
@@ -147,19 +147,33 @@ async function warnExpiring(now) {
   return sent;
 }
 
-/** Low-balance mails: one when the balance is at or under the threshold, none again until it has been above it. */
+/**
+ * Low-balance mails: one when the balance is below the threshold, none again until it is back at or over it. The mail carries a QR
+ * for the smallest top-up the account may make (an order is made for it); money sent after that order expires still lands in the balance.
+ */
 async function lowBalance(now) {
   const store = getStore();
   let sent = 0;
   for (const a of await store.listLowBalanceAccounts()) {
-    if (a.balanceVnd > a.lowBalanceVnd) {
+    if (a.balanceVnd >= a.lowBalanceVnd) {
       if (a.lowAlertSentAt) await store.markLowAlert(a.userId, null);
       continue;
     }
     if (a.lowAlertSentAt) continue;
     const person = await personFor(a.userId);
     if (!person) continue;
-    const result = await sendBillingMail('low-balance', person, { balanceVnd: a.balanceVnd, thresholdVnd: a.lowBalanceVnd });
+    /** @type {Record<string, any>} */
+    const data = { balanceVnd: a.balanceVnd, thresholdVnd: a.lowBalanceVnd };
+    try {
+      const withPlan = (await planInForce(a.userId, { now })).plan !== 'free';
+      const amount = withPlan ? TOPUP.minWithPlan : TOPUP.minNoPlan;
+      const made = await createOrder(a.userId, { kind: 'topup', amountVnd: amount }, { now });
+      if (made.due) Object.assign(data, { topupVnd: amount, code: /** @type {any} */ (made.order).code, qr: made.due.qr });
+    } catch (err) {
+      // No rate or bank details, or the cap: the mail still goes, without a QR.
+      fail('the low-balance top-up order', err);
+    }
+    const result = await sendBillingMail('low-balance', person, data);
     if (result.ok) {
       await store.markLowAlert(a.userId, now);
       sent += 1;

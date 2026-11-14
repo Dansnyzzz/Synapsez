@@ -13,6 +13,7 @@ import { newPaymentCode } from './codes.js';
 import { addDays, prorate } from './period.js';
 import { usdVnd, BillingUnavailable } from './fx.js';
 import { activate, basisOf, isLive, moveKind, planInForce } from './subscriptions.js';
+import { forgetBillable } from './billable.js';
 
 const dong = (n) => Number(n).toLocaleString('en-US');
 
@@ -144,7 +145,10 @@ export async function settleUnapplied(userId, { now = new Date() } = {}) {
   const started = [];
   for (const order of await store.unappliedOrders(userId)) {
     const sub = await activate(order, { now });
-    if (sub === null) await store.refundOrder(order.id);
+    if (sub === null) {
+      // Money back in the balance makes the account billable now, not when the 30-second answer runs out.
+      if (await store.refundOrder(order.id)) forgetBillable(order.userId);
+    }
     else if (sub.lastOrder === order.id) started.push(order);
   }
   return started;
@@ -191,7 +195,7 @@ export async function tryApply(orderId, { now = new Date() } = {}) {
   if (paid.kind === 'plan') await store.cancelPendingPlanOrders(paid.userId, paid.id);
   const started = await activate(paid, { now });
   if (started === null) {
-    await store.refundOrder(paid.id);
+    if (await store.refundOrder(paid.id)) forgetBillable(paid.userId);
     return null;
   }
   return started;

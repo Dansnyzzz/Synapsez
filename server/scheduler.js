@@ -1026,8 +1026,10 @@ export function startScheduler() {
     // drifted from this file — would throw before reaching it, and an
     // unhandled rejection every sixty seconds takes the process down on Node.
     sweep().catch((err) => log.error('sweep failed', err));
-    // Billing's day (billing/daily.js), which a deployment gets from the cron heartbeat. Loaded when first needed: it reaches mail and
-    // sign-in code that this file is itself reached from, and a process that never bills should not pay for it.
+    // Billing's day (billing/daily.js), which a deployment gets from the cron heartbeat. It runs in every local process, each minute:
+    // with billing off it returns at once, and otherwise it is a handful of indexed queries (orders past their time, transfers left
+    // `taking`, plans near an end), the heavy part claimed once per Vietnamese day. Loaded when first needed: it reaches mail and
+    // sign-in code that this file is itself reached from.
     import('./billing/daily.js').then((m) => m.billingTick()).catch((err) => log.error('billing tick failed', err));
   }, 60_000);
   timer.unref?.();

@@ -15,9 +15,10 @@ import { isLive, planInForce, scheduleChange, setAutoRenew, setCancelAtEnd } fro
 import { periodUsage, forgetBillable } from '../billing/meter.js';
 import { reconcile, simulateTransfer } from '../billing/sepay.js';
 import { capacityOf } from '../billing/capacity.js';
+import { costOfMonth } from '../billing/cost.js';
 import { createPromo, redeem } from '../billing/promo.js';
 import { catchUpAndTell, tellOnce } from '../billing/daily.js';
-import { sendBillingMail } from '../billing/mail.js';
+import { sendBillingMail, within } from '../billing/mail.js';
 
 /**
  * Billing's HTTP surface (spec B1, Task 7; owner, 2026-11-13).
@@ -145,10 +146,11 @@ export function mountBillingRoutes(api, admin, { wrap }) {
     await catchUpAndTell(req.user.id).catch((err) => log.warn('billing: a plan could not be brought up to date', { error: String(err?.message || err).slice(0, 160) }));
     next();
   });
-  api.use('/billing', gate, settle);
+  // The gate is for everything; `settle` is added per route AFTER its own rate limit, so a refused try costs no catch-up.
+  api.use('/billing', gate);
 
   // ── the account's own billing ────────────────────────────────────
-  api.get('/billing', route(async (req, res) => {
+  api.get('/billing', settle, route(async (req, res) => {
     const now = new Date();
     const store = getStore();
     const [plan, state, usage, row] = await Promise.all([planView(req.user.id, now), store.billingState(req.user.id), periodUsage(req.user.id, { now }), store.getBillingProfile(req.user.id)]);
@@ -163,7 +165,7 @@ export function mountBillingRoutes(api, admin, { wrap }) {
     });
   }));
 
-  api.get('/billing/plans', route(async (req, res) => {
+  api.get('/billing/plans', settle, route(async (req, res) => {
     const now = new Date();
     let rate = null;
     try {
@@ -188,13 +190,13 @@ export function mountBillingRoutes(api, admin, { wrap }) {
     });
   }));
 
-  api.post('/billing/quote', route(async (req, res) => {
+  api.post('/billing/quote', settle, route(async (req, res) => {
     const q = await quote(req.user.id, { plan: req.body?.plan, period: req.body?.period });
     const { basis: _basis, ...visible } = q;
     res.json(visible);
   }));
 
-  api.post('/billing/orders', rateLimit('billing-order', (req) => req.user?.id), route(async (req, res) => {
+  api.post('/billing/orders', rateLimit('billing-order', (req) => req.user?.id), settle, route(async (req, res) => {
     const b = isObject(req.body) ? req.body : {};
     const input = {
       kind: b.kind, plan: typeof b.plan === 'string' ? b.plan : undefined, period: typeof b.period === 'string' ? b.period : undefined,
@@ -224,16 +226,22 @@ export function mountBillingRoutes(api, admin, { wrap }) {
     return order && order.userId === req.user.id ? order : null;
   };
 
-  api.get('/billing/orders/:id', route(async (req, res) => {
-    const store = getStore();
-    let order = await mineOrder(req);
-    if (!order) return res.status(404).json(NOT_FOUND);
-    // Once a second per order: a page that polls cannot become a flood of questions to SePay.
-    const counted = await store.hitRateLimit(`billing-status:${order.id}`, 1, 1000).catch(() => null);
+  // Once a second per order, checked before the catch-up: a page that polls cannot become a flood of questions to SePay, and a refused
+  // poll costs nothing. The order is looked up (and must be the caller's) first, so a stranger's id is a 404 and is never counted.
+  const statusLimit = wrap(async (req, res, next) => {
+    const found = await mineOrder(req);
+    if (!found) return res.status(404).json(NOT_FOUND);
+    const counted = await getStore().hitRateLimit(`billing-status:${found.id}`, 1, 1000).catch(() => null);
     if (counted && !counted.allowed) {
       res.set('Retry-After', '1');
       return res.status(429).json({ error: 'Ask again in a moment.', code: 'rate_limited' });
     }
+    next();
+  });
+  api.get('/billing/orders/:id', statusLimit, settle, route(async (req, res) => {
+    const store = getStore();
+    let order = await mineOrder(req);
+    if (!order) return res.status(404).json(NOT_FOUND);
     // A transfer the webhook has not delivered may be waiting at SePay; asking is spaced by reconcile itself.
     if (order.status === 'pending') {
       await reconcile({ orderId: order.id }).catch(() => 0);
@@ -243,7 +251,7 @@ export function mountBillingRoutes(api, admin, { wrap }) {
     res.json({ status: order.status, receivedVnd: order.receivedVnd, dueVnd: order.status === 'pending' ? dueOf(order, balance) : 0, plan: order.plan });
   }));
 
-  api.post('/billing/orders/:id/cancel', route(async (req, res) => {
+  api.post('/billing/orders/:id/cancel', settle, route(async (req, res) => {
     const order = await mineOrder(req);
     if (!order) return res.status(404).json(NOT_FOUND);
     const closed = await getStore().cancelOrder(order.id, req.user.id);
@@ -251,15 +259,14 @@ export function mountBillingRoutes(api, admin, { wrap }) {
     res.json({ status: closed.status });
   }));
 
-  api.put('/billing/subscription', route(async (req, res) => {
+  api.put('/billing/subscription', settle, route(async (req, res) => {
     const b = req.body;
     const allowed = ['autoRenew', 'cancelAtEnd', 'nextPlan', 'nextPeriod'];
     if (!isObject(b) || !Object.keys(b).length || Object.keys(b).some((k) => !allowed.includes(k))) return res.status(400).json({ error: 'Say what to change: auto-renew, cancelling at the period end, or the next plan.' });
     for (const k of ['autoRenew', 'cancelAtEnd']) if (k in b && typeof b[k] !== 'boolean') return res.status(400).json({ error: 'Auto-renew and cancelling are on or off.' });
     for (const k of ['nextPlan', 'nextPeriod']) if (k in b && b[k] !== null && typeof b[k] !== 'string') return res.status(400).json({ error: 'Choose a plan and a period from the list.' });
     const userId = req.user.id;
-    if ('autoRenew' in b) await setAutoRenew(userId, b.autoRenew);
-    if ('cancelAtEnd' in b) await setCancelAtEnd(userId, b.cancelAtEnd);
+    // All or nothing: the plan change is the part that can be refused for what it is, so it goes first; the two switches only need a plan.
     if ('nextPlan' in b || 'nextPeriod' in b) {
       const sub = await getStore().getSubscription(userId);
       if (!sub) return res.status(422).json({ error: 'You have no plan to change.' });
@@ -273,10 +280,12 @@ export function mountBillingRoutes(api, admin, { wrap }) {
         }
       }
     }
+    if ('autoRenew' in b) await setAutoRenew(userId, b.autoRenew);
+    if ('cancelAtEnd' in b) await setCancelAtEnd(userId, b.cancelAtEnd);
     res.json({ plan: await planView(userId, new Date()) });
   }));
 
-  api.put('/billing/profile', route(async (req, res) => {
+  api.put('/billing/profile', settle, route(async (req, res) => {
     const checked = checkProfile(req.body);
     if ('error' in checked) return res.status(400).json({ error: checked.error });
     // The whole profile is sealed to this account; what is stored is not the text and is never logged.
@@ -285,7 +294,7 @@ export function mountBillingRoutes(api, admin, { wrap }) {
     res.json({ profile: checked.value });
   }));
 
-  api.put('/billing/alerts', route(async (req, res) => {
+  api.put('/billing/alerts', settle, route(async (req, res) => {
     const v = req.body?.lowBalanceVnd;
     if (v !== null && (!Number.isSafeInteger(v) || v < 0 || v > 100_000_000)) return res.status(400).json({ error: 'Enter the amount in whole đồng, or turn the alert off.' });
     const store = getStore();
@@ -295,12 +304,12 @@ export function mountBillingRoutes(api, admin, { wrap }) {
     res.json({ alerts: { lowBalanceVnd: v } });
   }));
 
-  api.post('/billing/promo', rateLimit('billing-promo', (req) => req.user?.id), route(async (req, res) => {
+  api.post('/billing/promo', rateLimit('billing-promo', (req) => req.user?.id), settle, route(async (req, res) => {
     const creditedVnd = await redeem(req.user.id, req.body?.code);
     res.json({ creditedVnd, balanceVnd: (await getStore().billingState(req.user.id)).balanceVnd });
   }));
 
-  api.get('/billing/transactions', route(async (req, res) => {
+  api.get('/billing/transactions', settle, route(async (req, res) => {
     const kind = req.query.kind == null || req.query.kind === '' ? null : String(req.query.kind);
     if (kind !== null && !KINDS.includes(kind)) return res.status(400).json({ error: 'Choose a kind of transaction from the list.' });
     const before = req.query.before == null || req.query.before === '' ? null : Number(req.query.before);
@@ -308,13 +317,13 @@ export function mountBillingRoutes(api, admin, { wrap }) {
     const size = Math.min(100, Math.max(1, Math.trunc(Number(req.query.limit)) || 50));
     const rows = await getStore().listBalanceEntries(req.user.id, { kind, before, limit: size });
     res.json({
-      entries: rows.map((e) => ({ id: e.id, kind: e.kind, category: e.category, day: e.day, units: e.units, deltaVnd: e.deltaVnd, ref: e.ref, note: e.note, createdAt: e.createdAt })),
+      entries: rows.map((e) => ({ id: e.id, kind: e.kind, category: e.category, day: e.day, units: e.units, deltaVnd: e.deltaVnd, ref: e.ref, note: e.note, createdAt: e.createdAt, balanceAfterVnd: e.balanceAfterVnd })),
       next: rows.length === size ? rows[rows.length - 1].id : null,
     });
   }));
 
   // The list only. The PDF of one is Task 8's, and it checks the same thing: the receipt's account is the caller.
-  api.get('/billing/receipts', route(async (req, res) => {
+  api.get('/billing/receipts', settle, route(async (req, res) => {
     const rows = await getStore().listReceipts(req.user.id);
     res.json({ receipts: rows.map((r) => ({ number: r.number, amountVnd: r.amountVnd, issuedAt: r.issuedAt, orderId: r.orderId })) });
   }));
@@ -332,6 +341,11 @@ export function mountBillingRoutes(api, admin, { wrap }) {
     res.json({
       mode: billingMode(), days, since, rate, figures,
       capacity: await capacityOf({ bytes: figures.databaseBytes }),
+      // This UTC month: what the paid keys cost (spec A's paid counters at list prices), the real money taken in, and the difference.
+      ...(await costOfMonth({ now }).then((c) => ({ cost: { byService: c.byService, totalVnd: c.totalVnd }, moneyInMonthVnd: c.moneyInMonthVnd, marginVnd: c.marginVnd })).catch((err) => {
+        log.warn('billing: the cost of the month could not be worked out', { error: String(err?.message || err).slice(0, 160) });
+        return { cost: null, moneyInMonthVnd: null, marginVnd: null };
+      })),
       // Whether this administrator may simulate a transfer: the owner, in preview.
       simulate: billingMode() === 'preview' && isOwner(req.user),
     });
@@ -369,6 +383,8 @@ export function mountBillingRoutes(api, admin, { wrap }) {
     const id = Number(req.params.id);
     const transfer = Number.isSafeInteger(id) ? await store.getTransfer(id) : null;
     if (!transfer) return res.status(404).json({ error: 'That transfer was not found.' });
+    // Play money is never given to an account.
+    if (transfer.via === 'simulated') return res.status(409).json({ error: 'This transfer is no longer waiting to be assigned.' });
     const target = await store.getUserByEmail(email);
     if (!target) return res.status(404).json({ error: 'No account has that email.' });
     // One statement: the transfer is claimed only while it is still unmatched and uncredited, and it credits the balance then.
@@ -377,9 +393,9 @@ export function mountBillingRoutes(api, admin, { wrap }) {
     if (balance === null) return res.status(409).json({ error: 'This transfer is no longer waiting to be assigned.' });
     forgetBillable(target.id);
     const receipt = await receiptFor(transfer, target.id);
-    await audit(req, req.user.id, 'billing_transfer_assigned', { transfer: transfer.id, amountVnd: transfer.amountVnd });
+    await audit(req, req.user.id, 'billing_transfer_assigned', { transfer: transfer.id, to: target.id, amountVnd: transfer.amountVnd });
     if (!target.suspended_at) {
-      await sendBillingMail('paid', { id: target.id, email: target.email, name: target.name }, { amountVnd: transfer.amountVnd, what: { kind: 'topup' }, balanceVnd: balance, receiptNumber: receipt });
+      await within(8_000, sendBillingMail('paid', { id: target.id, email: target.email, name: target.name }, { amountVnd: transfer.amountVnd, what: { kind: 'topup' }, balanceVnd: balance, receiptNumber: receipt }));
     }
     res.json({ ok: true, outcome: 'assigned', balanceVnd: balance, receipt });
   }));
