@@ -20,6 +20,7 @@ import { chargeStorageDay, forgetBillable } from './meter.js';
 import { reconcile, takeTransfer } from './sepay.js';
 import { mailable, sendBillingMail } from './mail.js';
 import { EXPIRY_WARNING_DAYS, GRACE_DAYS, TOPUP } from './plans.js';
+import { einvoiceEnabled, einvoiceStatus } from './einvoice.js';
 
 /** A transfer left `taking` this long is not a request still being served: it is finished from its stored row. */
 const TAKING_MS = 5 * 60_000;
@@ -90,9 +91,23 @@ export async function catchUpAndTell(userId, { now = new Date() } = {}) {
   return after;
 }
 
-/** Task 8 fills this in: ask SePay how the e-invoices not yet finished are doing. Returns how many it looked at. */
-export async function einvoiceStep() {
-  return 0;
+/**
+ * Ask SePay how the e-invoices not yet finished are doing (pending, or unconfirmed and so only ever asked about). Each is its own
+ * try, so one bad answer leaves the rest. Does nothing, and asks nothing, while e-invoices are off. Returns how many it looked at.
+ */
+export async function einvoiceStep({ now = new Date(), env = process.env, fetchImpl = globalThis.fetch } = {}) {
+  if (!einvoiceEnabled(env)) return 0;
+  let looked = 0;
+  for (const row of await getStore().listEinvoicesPending()) {
+    if (row.status !== 'pending' && row.status !== 'unknown') continue;
+    try {
+      await einvoiceStatus(row.orderId, { now, env, fetchImpl });
+      looked += 1;
+    } catch (err) {
+      fail('an e-invoice status', err);
+    }
+  }
+  return looked;
 }
 
 async function remind(now) {
@@ -195,7 +210,7 @@ async function dayWork(now) {
   });
   const expiring = await step('expiry warnings', () => warnExpiring(now));
   const reconciled = await step('reconciling with SePay', () => reconcile({ since: addDays(now, -RECONCILE_DAYS), now }));
-  const einvoices = await step('e-invoice status', () => einvoiceStep());
+  const einvoices = await step('e-invoice status', () => einvoiceStep({ now }));
   const lowAlerts = await step('low-balance mails', () => lowBalance(now));
   return { storage, expired, expiring, reconciled, einvoices, lowAlerts };
 }

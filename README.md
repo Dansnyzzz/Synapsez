@@ -2107,6 +2107,12 @@ step, with the optional certificate and how to bring data over from another data
 | `SEPAY_ACCOUNT_NAME` | optional | The account holder's name shown beside the QR. |
 | `SEPAY_WEBHOOK_SECRET` | optional | The secret of SePay's webhook (HMAC-SHA256, set in SePay's dashboard when the webhook is made): `POST /api/billing/sepay` is checked on its raw bytes with it and answers 404 while it is unset. Without it the webhook answers 404 (the backup poll, with `SEPAY_API_TOKEN`, can still take transfers). |
 | `SEPAY_API_TOKEN` | optional | A SePay API key (Cài đặt công ty → API Keys) for the backup poll of `userapi.sepay.vn`, which takes transfers the webhook missed. Without it nothing is polled. |
+| `BILLING_SELLER_NAME` | optional | The seller's name printed on receipts (default `Synapsez`). |
+| `BILLING_TAX_RATE` | optional | A VAT percentage (for example `10`). Receipts and e-invoices carry a tax line only when this is a number; unset means none. A receipt is never a VAT invoice either way. |
+| `SEPAY_EINVOICE_CLIENT_ID` | optional | The client id of SePay's e-invoice API. E-invoices are built but stay **off** until this, the secret and the template are all set - and they need a tax code and a digital signature registered with SePay. With them off nothing reaches SePay. |
+| `SEPAY_EINVOICE_CLIENT_SECRET` | optional | The client secret of SePay's e-invoice API (Basic auth to get a 24-hour token). Never logged or returned. |
+| `SEPAY_EINVOICE_TEMPLATE` | optional | The invoice template code from your SePay provider account (`1` = VAT invoice, `2` = sales invoice). The series (`C26...`) is read from the provider account each time, never fixed here. |
+| `SEPAY_EINVOICE_SANDBOX` | optional | `1` sends e-invoice calls to SePay's sandbox (`einvoice-api-sandbox.sepay.vn`) instead of production. |
 | `E2B_CONCURRENT_LIMIT` | optional | How many cloud-computer machines E2B lets this deployment run at once (default 20). The billing administrator's card shows the machines running against it, counted from E2B with `E2B_API_KEY` (asked at most once a minute; the key stays on the server). |
 | `DATABASE_INCLUDED_GB` | optional | The database size, in gigabytes, that the hosting plan includes (default 8). The billing administrator's card shows the database against it. |
 | `E2B_ACCOUNT_MIN_MILLS` | optional | The least cloud-computer time an account's share can be worked down to, in thousandths of a dollar (default `133`, about an hour). Replaces `E2B_ACCOUNT_DAY_FLOOR` (1.30.0). |

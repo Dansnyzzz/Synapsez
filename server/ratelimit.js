@@ -77,6 +77,8 @@ export const LIMITS = {
   /** Billing (owner, 2026-11-13): an account asks for ten orders an hour; and tries ten promo codes (a code is a guess at money). */
   'billing-order': { limit: 10, windowMs: 3_600_000 },
   'billing-promo': { limit: 10, windowMs: 3_600_000 },
+  /** A receipt is drawn, an invoice is fetched from SePay: thirty PDFs a minute is a page's worth of downloads and no flood. */
+  'billing-pdf': { limit: 30, windowMs: 60_000 },
 };
 
 /**

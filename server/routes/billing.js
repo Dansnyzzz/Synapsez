@@ -19,6 +19,9 @@ import { costOfMonth } from '../billing/cost.js';
 import { createPromo, redeem } from '../billing/promo.js';
 import { catchUpAndTell, tellOnce } from '../billing/daily.js';
 import { sendBillingMail, within } from '../billing/mail.js';
+import { drawReceipt } from '../billing/receipt.js';
+import { einvoiceStatus, einvoicePdf } from '../billing/einvoice.js';
+import { mailLanguage } from '../auth.js';
 
 /**
  * Billing's HTTP surface (spec B1, Task 7; owner, 2026-11-13).
@@ -326,10 +329,34 @@ export function mountBillingRoutes(api, admin, { wrap }) {
     });
   }));
 
-  // The list only. The PDF of one is Task 8's, and it checks the same thing: the receipt's account is the caller.
+  // The list; the PDF of one is below and checks the same thing: the receipt's account is the caller.
   api.get('/billing/receipts', settle, route(async (req, res) => {
     const rows = await getStore().listReceipts(req.user.id);
     res.json({ receipts: rows.map((r) => ({ number: r.number, amountVnd: r.amountVnd, issuedAt: r.issuedAt, orderId: r.orderId })) });
+  }));
+
+  /** A PDF as a download. Numbers are sequential and guessable, so what is sent was checked against the caller before this. */
+  const sendPdf = (res, name, bytes) => {
+    res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${name}.pdf"`, 'Cache-Control': 'no-store', 'Content-Length': String(bytes.length) });
+    res.end(bytes);
+  };
+
+  api.get('/billing/receipts/:number.pdf', rateLimit('billing-pdf', (req) => req.user?.id), settle, route(async (req, res) => {
+    const receipt = await getStore().getReceipt(req.params.number);
+    // Another account's receipt, a deleted account's (no owner left), and one that does not exist are the same 404.
+    if (!receipt || !receipt.userId || receipt.userId !== req.user.id) return res.status(404).json(NOT_FOUND);
+    const language = await mailLanguage(req.user, req);
+    sendPdf(res, receipt.number, await drawReceipt(receipt, { language }));
+  }));
+
+  // The invoice is looked up by its order's id: the order's account is the caller, or it is a 404 like any other.
+  api.get('/billing/invoices/:id.pdf', rateLimit('billing-pdf', (req) => req.user?.id), settle, route(async (req, res) => {
+    const order = await mineOrder(req);
+    if (!order) return res.status(404).json(NOT_FOUND);
+    const row = await einvoiceStatus(order.id);
+    const bytes = row?.status === 'issued' ? await einvoicePdf(order.id) : null;
+    if (!bytes) return res.status(404).json(NOT_FOUND);
+    sendPdf(res, row.referenceCode, bytes);
   }));
 
   // ── the administrator's billing ──────────────────────────────────

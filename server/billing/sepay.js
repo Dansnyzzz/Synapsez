@@ -19,10 +19,14 @@ import { log } from '../util/trace.js';
 import { forgetBillable } from './meter.js';
 import { sendBillingMail, within } from './mail.js';
 import { audit } from '../audit.js';
+import { decryptSecret } from '../crypto.js';
+import { billingProfileContext } from '../secretContexts.js';
+import { einvoiceEnabled, issueEinvoice } from './einvoice.js';
 
 const WINDOW_S = 300;
 // A mail that hangs must not hold SePay's answer: after this the webhook answers and the mail goes on (or fails) by itself.
 const TELL_MS = 8_000;
+const EINVOICE_MS = 20_000;
 const USERAPI = 'https://userapi.sepay.vn/v2/transactions';
 const POLL_ALL_MS = 10_000;
 const POLL_ORDER_MS = 30_000;
@@ -67,8 +71,13 @@ const vnStamp = (d) => new Date(+d + 7 * 3_600_000).toISOString().slice(0, 19).r
 // A NUL byte is not storable in Postgres text (22021) and would fail the insert, and so every redelivery, for good.
 const cut = (value, n) => (value == null ? null : String(value).replaceAll(String.fromCharCode(0), '').slice(0, n));
 
-/** What the receipt says it is for. No buyer details: those travel sealed in `buyer_sealed`. */
-function receiptLines(order, amountVnd) {
+/**
+ * What the receipt says it is for. No buyer details: those travel sealed in `buyer_sealed`. Money that came `late` or `short` bought
+ * nothing (it went to the balance), so its line says that, not the plan the code named; the outcome is passed in rather than joined
+ * from the transfer because it is known right here, before the transfer row is finished.
+ */
+function receiptLines(order, amountVnd, outcome) {
+  if (outcome === 'late' || outcome === 'short') return [{ kind: 'credit', plan: null, period: null, code: order.code, amountVnd }];
   return [{ kind: order.kind, plan: order.plan ?? null, period: order.period ?? null, code: order.code, amountVnd }];
 }
 
@@ -100,14 +109,35 @@ async function tell({ transfer, order, userId, outcome }) {
   }
 }
 
-async function issueReceipt(transfer, order, userId) {
+/**
+ * Ask for the e-invoice of an order that money has just paid (only when e-invoices are on). Never throws: SePay being down must not
+ * turn a taken transfer into a 500 that SePay's webhook would then retry. A top-up is invoiced for what came in; a plan for its price.
+ */
+async function invoiceFor(order, transfer, userId, now, env) {
+  try {
+    const sealed = (await getStore().getBillingProfile(userId))?.sealed;
+    let buyer = null;
+    if (sealed) {
+      try {
+        buyer = JSON.parse(decryptSecret(sealed, billingProfileContext(userId)) || 'null');
+      } catch {
+        buyer = null; // the invoice goes out without a buyer rather than not at all
+      }
+    }
+    await issueEinvoice({ id: order.id, kind: order.kind, plan: order.plan, period: order.period, totalVnd: order.kind === 'topup' ? transfer.amountVnd : order.totalVnd }, buyer, { now, env });
+  } catch (err) {
+    log.warn('an e-invoice could not be asked for', { transfer: transfer.id, error: String(err?.message || err).slice(0, 120) });
+  }
+}
+
+async function issueReceipt(transfer, order, userId, outcome) {
   const store = getStore();
   // Checked first so a finished retry does not use up a receipt number (the sequence is drawn before the unique index answers).
   if (await store.receiptForTransfer(transfer.id)) return;
   // The profile's own sealed snapshot is copied: it is already sealed for this account (billingProfileContext), so it opens the same.
   const buyerSealed = (await store.getBillingProfile(userId))?.sealed ?? null;
   try {
-    await store.createReceipt({ userId, transferId: transfer.id, orderId: order.id, amountVnd: transfer.amountVnd, lines: receiptLines(order, transfer.amountVnd), buyerSealed });
+    await store.createReceipt({ userId, transferId: transfer.id, orderId: order.id, amountVnd: transfer.amountVnd, lines: receiptLines(order, transfer.amountVnd, outcome), buyerSealed });
   } catch (err) {
     if (err?.code !== '23505') throw err; // one receipt per transfer: a finished retry meets the one already issued
   }
@@ -199,13 +229,14 @@ export async function takeTransfer(payload, { via = 'webhook', now = Date.now(),
     else outcome = after.status === 'pending' && after.expiresAt > at ? 'short' : 'late';
   }
 
-  if (via !== 'simulated') await issueReceipt(row, order, userId);
+  if (via !== 'simulated') await issueReceipt(row, order, userId, outcome);
   // The first to finish sets the label, so two deliveries at once cannot disagree about it.
   const won = await store.finishTransfer(row.id, { outcome, orderId: order.id, userId });
   const finished = won ?? (await store.getTransfer(row.id));
   outcome = finished.outcome;
   // Only the delivery that finished it tells the account, so a retry never mails twice; simulated money tells nobody.
   if (won && via !== 'simulated') await within(TELL_MS, tell({ transfer: row, order, userId, outcome }));
+  if (won && via !== 'simulated' && ['applied', 'over', 'topup'].includes(outcome) && einvoiceEnabled(env)) await within(EINVOICE_MS, invoiceFor(order, row, userId, at, env));
   log.info('a SePay transfer was taken', { transfer: row.id, outcome, via });
   return { outcome, transferId: row.id, orderId: order.id, repeat: false };
 }
