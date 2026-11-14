@@ -480,6 +480,21 @@ section('deep research and code_context settle one unit per metered search');
   check('code_context charges at most one unit however many sources answered', (await counter(bucket)) - before === 1, String((await counter(bucket)) - before));
 }
 
+section('a member out of their share is told about the share, not a balance');
+{
+  process.env.FIRECRAWL_API_KEY = 'fc-test-key';
+  const pool3 = await import('../server/keyPool.js');
+  await pool3.warmPools();
+  const member = await makeUser('user');
+  const { searchBucket } = await import('../server/freeShares.js');
+  const { bucket, ends } = searchBucket(member.id, new Date());
+  await store.addToCounter(bucket, 1_000_000, ends);
+  const said = await CLOUD_IMPLEMENTATIONS.site_pages({ op: 'map', url: 'https://example.com' }, { userId: member.id });
+  check('the share sentence, and never the word balance', /share of this month's metered web calls is used/.test(said) && !/balance/i.test(said), said);
+  delete process.env.FIRECRAWL_API_KEY;
+  await pool3.warmPools();
+}
+
 refuser.close();
 
 globalThis.fetch = realFetch;

@@ -392,7 +392,7 @@ const THIN_PAGE_CHARS = 200;
 async function fetchedThroughExa(url, maxChars, why, { moreThan = 0, userId = null, held = null } = {}) {
   const limit = Math.min(Math.max(Number(maxChars) || PAGE_CHARS, 500), 200_000);
   // A billable account's read is a held unit (billing/meter.js), kept when Exa read the page and given back when not.
-  // `held`: a web_search that is already paying for its one unit; its page reads are not units of their own.
+  // `held`: the web_search this read belongs to; its reads are covered by the search's own unit, kept or not.
   const hold = held ? NO_OWN_HOLD : await holdSearch(userId);
   let read = null;
   try {
@@ -456,7 +456,7 @@ function firecrawlPage(read, url, maxChars, why, moreThan) {
  * month's credits on pages nobody asked for by name; a refused one is simply skipped there.
  *
  * @param {{ url: string, max_chars?: number }} input
- * `held`: the web_search that is reading this page, already paying its one unit (its `paid` flag rides on).
+ * `held`: the web_search reading this page; its reads are covered by the search's own unit, kept or not (its `paid` flag rides on).
  *
  * @param {{ userId?: string|null, signal?: AbortSignal, viaFirecrawl?: boolean, held?: { paid: boolean } | null }} [context]
  */
@@ -3498,7 +3498,10 @@ async function sitePagesTool({ op = 'map', url, search: term, limit, include_pat
   const billed = hold.billed && !hold.refused && hold.source !== 'none';
   if (hold.refused || (!billed && !(await mayMeter(userId)))) {
     await hold.release();
-    return "This month's allowance and balance for metered web calls are used up. Use web_fetch on the pages instead.";
+    // Only a billable account sees billing; a member whose free share is used hears about the share, never a balance.
+    return hold.refused
+      ? "This month's allowance and balance for metered web calls are used up. Use web_fetch on the pages instead."
+      : "This account's share of this month's metered web calls is used. Use web_fetch on the pages instead.";
   }
   // What Firecrawl really charged: a map is one unit once it answered (even with no links), a crawl is by the pages read.
   let units = 0;

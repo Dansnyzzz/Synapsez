@@ -870,9 +870,9 @@ const starting = new Map();
 /**
  * The account's E2B machine, resumed or made, and paid for until it next
  * pauses. Throws `E2BOutOfCredit` when the month's allowance cannot pay, and
- * the SDK's own errors otherwise (see `e2bUnavailable`). `paid`: the work is
- * charged, for its start and every time it is kept awake — true when a billing
- * hold paid for it (billing/meter.js).
+ * the SDK's own errors otherwise (see `e2bUnavailable`). `paid`: the caller says the
+ * work is charged, so the paid key may serve its start and every time it is kept awake;
+ * a billable account's hold (billing/meter.js) makes it so on its own, so callers leave it false.
  *
  * @param {string} userId
  * @param {string} name  the account's machine name (sandbox.js `sandboxName`)
@@ -911,7 +911,8 @@ export async function e2bForgetAccount(userId) {
  * @param {{ ms?: number, userId?: string, internet?: boolean, role?: string, paid?: boolean }} [options]
  *   `userId`: whose share pays for it, for a job somebody asked for.
  *   `internet: false`: for a stranger's file, which then has nowhere to call.
- *   `paid`: the job is charged — true when a billing hold paid for it, or the caller says so.
+ *   `paid`: the caller says the job is charged, so the owner's paid key may serve it; a billable account's hold
+ *   makes it so on its own (`payUntil`), so callers leave it false.
  */
 export async function e2bScratch({ ms = SCRATCH_MS, userId, internet = true, role = 'mcp-check', paid = false } = {}) {
   const { Sandbox } = await loadSdk();
