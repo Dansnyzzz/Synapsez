@@ -698,18 +698,21 @@ export function fuseResults(answered, count) {
  * is answered from memory and spends nothing; a metered engine runs only
  * inside its allowance and the account's share of the day.
  *
+ * `billed`: a hold (billing/meter.js) already paid for it, so the account's free share is neither asked nor
+ * counted; the result says whether a metered engine answered (`metered`), which is what the hold keeps.
+ *
  * `paid`: the search is charged, so a pooled engine may go on to the owner's
  * paid key once every free key is full (keyPool.js) — false until spec B
  * charges people.
  *
  * @param {string} query
- * @param {{ count?: number, userId?: string|null, plan?: any, recency?: string|null, sites?: string[]|string, category?: string|null, country?: string|null, paid?: boolean }} [options]
- * @returns `{ engine, engines, results, attempts, answer }` — `attempts` records
+ * @param {{ count?: number, userId?: string|null, plan?: any, recency?: string|null, sites?: string[]|string, category?: string|null, country?: string|null, paid?: boolean, billed?: boolean, noMetered?: boolean }} [options]
+ * @returns `{ engine, engines, results, attempts, answer, metered }` — `attempts` records
  *   what was tried and why it did not answer, which is the difference between
  *   "there is nothing about this on the web" and "the search key expired last
  *   Tuesday"; `answer` is Exa's own summary when a deep search gave one.
  */
-export async function search(query, { count, userId = null, plan = SEARCH_LEVELS.medium, recency = null, sites = [], category = null, country = null, paid = false } = {}) {
+export async function search(query, { count, userId = null, plan = SEARCH_LEVELS.medium, recency = null, sites = [], category = null, country = null, paid = false, billed = false, noMetered = false } = {}) {
   const wanted = Math.min(Math.max(Number(count) || plan.count || 8, 1), 20);
   // The stored keys, read (at most every 30 s) before the chain asks which engines have one.
   await warmPools();
@@ -732,7 +735,10 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
     category: SEARCH_CATEGORIES.includes(String(category)) ? String(category) : null,
     country: /^[A-Z]{2}$/.test(String(country)) ? String(country) : null,
     userId,
-    mayMeter: await mayMeter(userId),
+    // A billed search (server/billing/meter.js) is paid for from the plan or the balance, so the free share does not
+    // apply to it (2026-11-14); any other search is as it always was.
+    // `noMetered`: billing refused the call (live), so no metered engine may run, as when the share is used.
+    mayMeter: noMetered ? false : billed ? true : await mayMeter(userId),
     paid: paid === true,
     // Set when a metered engine was asked, so the account's share is counted once.
     drew: false,
@@ -741,7 +747,8 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
   // these words, and served B what A's own key had paid for.
   const cacheKey = JSON.stringify([userId || '', query.trim().toLowerCase(), chain, wanted, plan.exa, plan.tavily, plan.snippet, plan.fuse, ask.recency, ask.sites, ask.category, ask.country]);
   const cached = recall(cacheKey);
-  if (cached) return cached;
+  // A cache hit asked no engine, so it is never a metered use (owner, 2026-11-13).
+  if (cached) return { ...cached, metered: false };
 
   /*
    * Down the chain, in one lane — or two side by side when the plan fuses.
@@ -782,13 +789,13 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
     }
   };
   await Promise.all(Array.from({ length: plan.fuse ? 2 : 1 }, lane));
-  if (ask.drew) await countMetered(userId);
+  if (ask.drew && !billed) await countMetered(userId);
   // In chain order, whichever finished first.
   answered.sort((a, b) => a.at - b.at);
   attempts.sort((a, b) => a.at - b.at);
   const tried = attempts.map(({ engine, error }) => ({ engine, error }));
 
-  if (!answered.length) return { engine: null, engines: [], results: [], attempts: tried, answer: null };
+  if (!answered.length) return { engine: null, engines: [], results: [], attempts: tried, answer: null, metered: false };
   const engines = answered.map((a) => a.label);
   const results = fuseResults(answered, wanted);
   /**
@@ -814,7 +821,8 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
     answer: answered.find((a) => a.answer)?.answer || null,
   };
   remember(cacheKey, found);
-  return found;
+  // Whether a metered engine answered: what a billed search keeps, where a free engine alone costs nothing.
+  return { ...found, metered: answered.some((a) => ENGINES[chain[a.at]].metered) };
 }
 
 /*

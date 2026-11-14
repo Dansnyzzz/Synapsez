@@ -2,6 +2,7 @@ import path from 'node:path';
 import { getStore } from './store/index.js';
 import { take, spend, refund, e2bAccountAllowance, e2bAccountSpend } from './freeTier.js';
 import { envKeyOf, pickKey, poolHas } from './keyPool.js';
+import { holdSandbox, NOT_BILLED } from './billing/meter.js';
 import { log } from './util/trace.js';
 
 /**
@@ -235,6 +236,10 @@ const E2B_KEY = 'env';
  * monthly cap before it runs (`take`) — and, being the person's own, not drawn
  * from their share of the free month.
  *
+ * A billable account's window is held first (billing/meter.js `holdSandbox`): from the plan's minutes or the balance,
+ * which makes the start a charged one (the paid key may serve it) and spares the account's free share. It rides on the
+ * receipt, so `giveBack` returns it. In preview a window nothing can hold goes on as it always did.
+ *
  * @param {{ cpu: number, memMb: number, paidUntil?: number }} record
  * @param {number} until
  * @param {string} [userId]
@@ -244,20 +249,30 @@ async function payUntil(record, until, userId, { paid = false } = {}) {
   const from = Math.max(Date.now(), Number(record.paidUntil) || 0);
   if (until <= from) return null;
   const cost = priceOf(record, from, until);
-  const pick = await pickKey('e2b', cost, { paid });
-  if (!pick || pick.key.id !== E2B_KEY) throw new E2BOutOfCredit();
-  const shared = userId && !pick.paid ? userId : undefined;
-  if (shared && cost > (await e2bAccountAllowance(shared)).left) throw new E2BOutOfCredit();
-  const counted = { keyId: E2B_KEY, paid: pick.paid };
-  if (pick.paid) {
-    if (!(await take('e2b', cost, undefined, counted))) throw new E2BOutOfCredit();
-  } else {
-    await spend('e2b', cost, undefined, counted);
+  const hold = userId ? await holdSandbox(userId, Math.ceil((until - from) / 1000)) : NOT_BILLED;
+  try {
+    if (hold.refused) throw new E2BOutOfCredit();
+    const billed = hold.billed && hold.source !== 'none';
+    const pick = await pickKey('e2b', cost, { paid: paid || (billed && hold.paid) });
+    if (!pick || pick.key.id !== E2B_KEY) throw new E2BOutOfCredit();
+    // A window billing paid for is not also drawn from the account's free share.
+    const shared = userId && !pick.paid && !billed ? userId : undefined;
+    if (shared && cost > (await e2bAccountAllowance(shared)).left) throw new E2BOutOfCredit();
+    const counted = { keyId: E2B_KEY, paid: pick.paid };
+    if (pick.paid) {
+      if (!(await take('e2b', cost, undefined, counted))) throw new E2BOutOfCredit();
+    } else {
+      await spend('e2b', cost, undefined, counted);
+    }
+    if (shared) await e2bAccountSpend(shared, cost);
+    const before = record.paidUntil;
+    record.paidUntil = until;
+    return { cost, before, userId: shared, paid: pick.paid, hold };
+  } catch (err) {
+    // The window was never taken: what billing held for it goes back.
+    await hold.release();
+    throw err;
   }
-  if (shared) await e2bAccountSpend(shared, cost);
-  const before = record.paidUntil;
-  record.paidUntil = until;
-  return { cost, before, userId: shared, paid: pick.paid };
 }
 
 /**
@@ -266,13 +281,14 @@ async function payUntil(record, until, userId, { paid = false } = {}) {
  * of the month's credit, and a few hundred closed E2B for the month.
  *
  * @param {{ paidUntil?: number }} record
- * @param {{ cost: number, before?: number, userId?: string, paid?: boolean } | null} receipt
+ * @param {{ cost: number, before?: number, userId?: string, paid?: boolean, hold?: import('./billing/meter.js').Hold } | null} receipt
  */
 async function giveBack(record, receipt) {
   if (!receipt) return;
   record.paidUntil = receipt.before;
   await refund('e2b', receipt.cost, undefined, { keyId: E2B_KEY, paid: !!receipt.paid });
   if (receipt.userId) await e2bAccountSpend(receipt.userId, -receipt.cost);
+  await receipt.hold?.release();
 }
 
 // The most of a command's output, and of a file, this server takes in (SBX-005).

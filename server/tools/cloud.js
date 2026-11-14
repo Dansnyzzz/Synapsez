@@ -45,6 +45,8 @@ import { log } from '../util/trace.js';
 import { search, formatResults, searchPlan, readThroughExa, countryOf } from '../search.js';
 import { firecrawlReady, firecrawlScrape, firecrawlMap, firecrawlCrawl, researchPapers, readPaper, relatedPapers, lawSearch } from '../firecrawl.js';
 import { mayMeter, countMetered, periodOf } from '../freeTier.js';
+import { holdSearch } from '../billing/meter.js';
+import { unitsForPages } from '../billing/plans.js';
 import { untrusted } from './untrusted.js';
 import { searchProject } from '../projects.js';
 import { normaliseQuestions, answerText } from './askOptions.js';
@@ -387,9 +389,16 @@ const THIN_PAGE_CHARS = 200;
  * or sent only script (`readThroughExa`, owner 2026-11-02). Null when Exa has
  * no key or could not read it either, and the caller says what went wrong.
  */
-async function fetchedThroughExa(url, maxChars, why, { moreThan = 0 } = {}) {
+async function fetchedThroughExa(url, maxChars, why, { moreThan = 0, userId = null } = {}) {
   const limit = Math.min(Math.max(Number(maxChars) || PAGE_CHARS, 500), 200_000);
-  const read = await readThroughExa(url, { maxChars: limit });
+  // A billable account's read is a held unit (billing/meter.js), kept when Exa read the page and given back when not.
+  const hold = await holdSearch(userId);
+  let read = null;
+  try {
+    read = await readThroughExa(url, { maxChars: limit, paid: hold.paid });
+  } finally {
+    await hold.settle(read ? 1 : 0);
+  }
   // Only when it read more than this server did: a short page may simply be short.
   if (!read || read.text.trim().length <= moreThan) return null;
   return `# ${url} (read through Exa — ${why})\n\n${untrusted(url, read.text.slice(0, limit))}`;
@@ -405,16 +414,31 @@ async function fetchedThroughExa(url, maxChars, why, { moreThan = 0 } = {}) {
  * @param {{ moreThan?: number, userId?: string|null, signal?: AbortSignal }} [options]
  */
 async function fetchedThroughFirecrawl(url, maxChars, why, { moreThan = 0, userId = null, signal } = {}) {
-  if (!firecrawlReady() || !(await mayMeter(userId))) return null;
-  let read;
+  if (!firecrawlReady()) return null;
+  // A billable account pays its units (billing/meter.js) instead of using up the free share; any other is as it was.
+  const hold = await holdSearch(userId);
+  const billed = hold.billed && !hold.refused && hold.source !== 'none';
+  let units = 0;
   try {
-    read = await firecrawlScrape(url, { signal });
-  } catch (err) {
-    log.info('web_fetch: Firecrawl could not read it', { error: String(err?.message || err).slice(0, 160) });
-    return null;
+    if (hold.refused || (!billed && !(await mayMeter(userId)))) return null;
+    let read;
+    try {
+      read = await firecrawlScrape(url, { signal, paid: hold.paid });
+    } catch (err) {
+      log.info('web_fetch: Firecrawl could not read it', { error: String(err?.message || err).slice(0, 160) });
+      return null;
+    }
+    if (!read) return null;
+    units = unitsForPages(read.pages || 1);
+    if (!billed) await countMetered(userId);
+    return firecrawlPage(read, url, maxChars, why, moreThan);
+  } finally {
+    await hold.settle(units);
   }
-  if (!read) return null;
-  await countMetered(userId);
+}
+
+/** What Firecrawl read, as the tool says it; null when it is an error page or no better than what was had. */
+function firecrawlPage(read, url, maxChars, why, moreThan) {
   const body = read.text.trim();
   // An error page in a browser's clothes is not the page.
   if (body.length <= moreThan || (read.status >= 400 && body.length < THIN_PAGE_CHARS)) return null;
@@ -443,7 +467,7 @@ async function webFetch({ url, max_chars: maxChars }, { userId = null, signal, v
     // server will not visit at all — a private one — never reaches here with a
     // status, and is never sent on.
     const refused = err.status && !GONE.has(err.status);
-    const viaExa = refused ? await fetchedThroughExa(url, maxChars, err.message) : null;
+    const viaExa = refused ? await fetchedThroughExa(url, maxChars, err.message, { userId }) : null;
     if (viaExa) return viaExa;
     const throughFirecrawl = refused ? await firecrawl(url, err.message) : null;
     if (throughFirecrawl) return throughFirecrawl;
@@ -452,7 +476,7 @@ async function webFetch({ url, max_chars: maxChars }, { userId = null, signal, v
   const { parsed, text, note, html, truncated, cap } = page;
   if (html && !note && text.trim().length < THIN_PAGE_CHARS) {
     const why = `${parsed.host} sent almost no text without running its scripts`;
-    const viaExa = await fetchedThroughExa(parsed.href, maxChars, why, { moreThan: text.trim().length });
+    const viaExa = await fetchedThroughExa(parsed.href, maxChars, why, { moreThan: text.trim().length, userId });
     if (viaExa) return viaExa;
     const throughFirecrawl = await firecrawl(parsed.href, why, { moreThan: text.trim().length });
     if (throughFirecrawl) return throughFirecrawl;
@@ -690,7 +714,18 @@ async function webSearch({ query, count, depth, recency, sites, category }, cont
   const plan = await planFor(userId, depth);
   // `userId` so the search is attributed in the log and counted against the
   // account's fair share of the deployment's free allowances (freeTier.js).
-  const found = await search(query, { count: Number(count) || plan.count, userId, plan, recency, sites, category, country: plan.country });
+  // A billable account holds a unit first (billing/meter.js): kept when a metered engine answered, given back when a free
+  // one did or nothing did. For anybody else the hold is NOT_BILLED and this is the search it always was.
+  const hold = await holdSearch(userId);
+  let found;
+  try {
+    found = await search(query, {
+      count: Number(count) || plan.count, userId, plan, recency, sites, category, country: plan.country,
+      paid: hold.paid, billed: hold.billed && !hold.refused && hold.source !== 'none', noMetered: hold.refused,
+    });
+  } finally {
+    await hold.settle(found?.metered ? 1 : 0);
+  }
   const listing = formatResults(query, found);
   if (!plan.read || !found.results?.length) return listing;
 
@@ -3455,19 +3490,28 @@ async function sitePagesTool({ op = 'map', url, search: term, limit, include_pat
   }
   await assertPublic(parsed);
   if (!firecrawlReady()) return 'Listing and crawling a site needs Firecrawl, which this deployment does not have. Use web_fetch on the pages instead.';
-  if (!(await mayMeter(userId))) return "This account's share of this month's metered web calls is used. Use web_fetch on the pages instead.";
+  const hold = await holdSearch(userId);
+  const billed = hold.billed && !hold.refused && hold.source !== 'none';
+  if (hold.refused || (!billed && !(await mayMeter(userId)))) {
+    await hold.release();
+    return "This account's share of this month's metered web calls is used. Use web_fetch on the pages instead.";
+  }
+  // What Firecrawl really charged: a map is one unit once it answered (even with no links), a crawl is by the pages read.
+  let units = 0;
   try {
     if (op === 'map') {
-      const links = await firecrawlMap(parsed.href, { search: term, limit, signal });
-      await countMetered(userId);
+      const links = await firecrawlMap(parsed.href, { search: term, limit, signal, paid: hold.paid });
+      units = 1;
+      if (!billed) await countMetered(userId);
       if (!links.length) return `Found no pages on ${parsed.host}.`;
       const lines = links.slice(0, 200).map((l) => `- ${l.url}${l.title ? ` — ${clipText(l.title, 120)}` : ''}`).join('\n');
       return `${links.length} page${links.length === 1 ? '' : 's'} on ${parsed.host}${term ? `, most relevant to "${term}" first` : ''}:\n${untrusted(parsed.href, lines)}\nOpen the one you need with web_fetch.`;
     }
     if (op === 'crawl') {
       const paths = (Array.isArray(includePaths) ? includePaths : []).map(String).filter(Boolean);
-      const { pages, finished } = await firecrawlCrawl(parsed.href, { limit, includePaths: paths, deadline, signal });
-      await countMetered(userId);
+      const { pages, finished } = await firecrawlCrawl(parsed.href, { limit, includePaths: paths, deadline, signal, paid: hold.paid });
+      units = pages.length ? unitsForPages(pages.length) : 0;
+      if (!billed) await countMetered(userId);
       if (!pages.length) return `Read no pages of ${parsed.host}${finished ? '' : ' before this run ran short of time'}.`;
       let total = 0;
       const blocks = [];
@@ -3479,12 +3523,14 @@ async function sitePagesTool({ op = 'map', url, search: term, limit, include_pat
       }
       return `${blocks.length} page${blocks.length === 1 ? '' : 's'} of ${parsed.host}${finished ? '' : ' (stopped where this run ran short of time — what was read so far)'}, the first ${CRAWL_PAGE_CHARS} characters of each:\n${untrusted(parsed.href, blocks.join('\n\n'))}\nweb_fetch one for the rest of it.`;
     }
+    throw new Error('op is "map" or "crawl".');
   } catch (err) {
     const aside = firecrawlAside(err, 'Use web_fetch on the pages instead.');
     if (aside) return aside;
     throw err;
+  } finally {
+    await hold.settle(units);
   }
-  throw new Error('op is "map" or "crawl".');
 }
 
 export const CLOUD_IMPLEMENTATIONS = {
@@ -3520,7 +3566,18 @@ export const CLOUD_IMPLEMENTATIONS = {
   read_chat: readChatTool,
   // Claude's get_code_context_exa: code and documentation for a programming question,
   // as far as the reasoning level goes.
-  code_context: async (input, { userId, signal }) => codeContextTool(input, { userId, signal, plan: await planFor(userId) }),
+  code_context: async (input, { userId, signal }) => {
+    const hold = await holdSearch(userId);
+    let charged = 0;
+    try {
+      return await codeContextTool(input, {
+        userId, signal, plan: await planFor(userId), paid: hold.paid, billed: hold.billed && !hold.refused && hold.source !== 'none', noMetered: hold.refused,
+        onCharge: (n) => { charged = Math.max(charged, n); },
+      });
+    } finally {
+      await hold.settle(charged);
+    }
+  },
   // Claude's connector search. Withheld when Settings → Capabilities switches it
   // off (memory.js); asked again here, as search_chats asks, for a call that
   // names it anyway.

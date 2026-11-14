@@ -168,9 +168,12 @@ async function fromStackOverflow(query, count, { fetchImpl, signal }) {
  * once every free key is full (keyPool.js) — false until spec B charges people.
  *
  * @param {{ query: string, max_results?: number }} input
- * @param {{ userId?: string, signal?: AbortSignal, fetchImpl?: typeof fetch, plan?: any, paid?: boolean }} [context]
+ * `billed`/`noMetered`/`onCharge`: as a hold (billing/meter.js) uses them. The web search fallback is billed or
+ * not; `onCharge(1)` says once that a metered source answered, which is what the caller's hold keeps.
+ *
+ * @param {{ userId?: string, signal?: AbortSignal, fetchImpl?: typeof fetch, plan?: any, paid?: boolean, billed?: boolean, noMetered?: boolean, onCharge?: (units: number) => void }} [context]
  */
-export async function codeContextTool({ query, max_results }, { userId = null, signal, fetchImpl = fetch, plan = SEARCH_LEVELS.high, paid = false } = {}) {
+export async function codeContextTool({ query, max_results }, { userId = null, signal, fetchImpl = fetch, plan = SEARCH_LEVELS.high, paid = false, billed = false, noMetered = false, onCharge = () => {} } = {}) {
   const asked = String(query ?? '').trim().slice(0, 300);
   if (!asked) throw new Error('Say what code or documentation to find — a library and what it should do, or an error message.');
   const count = Math.min(Math.max(Number(max_results) || plan.code || 4, 1), 8);
@@ -181,15 +184,17 @@ export async function codeContextTool({ query, max_results }, { userId = null, s
   const timed = signal ? AbortSignal.any([signal, limit]) : limit;
 
   const [exa, overflow] = await Promise.all([
-    fromExa(asked, count, plan, { fetchImpl, signal: timed, paid }).catch(() => []),
+    noMetered ? [] : fromExa(asked, count, plan, { fetchImpl, signal: timed, paid }).catch(() => []),
     fromStackOverflow(asked, count, { fetchImpl, signal: timed }).catch(() => []),
   ]);
   // Firecrawl only when Exa had nothing: its credits are the month's, and few.
-  const developer = exa.length ? [] : await fromFirecrawl(asked, count, { signal: timed, paid }).catch(() => []);
+  const developer = exa.length || noMetered ? [] : await fromFirecrawl(asked, count, { signal: timed, paid }).catch(() => []);
+  if (exa.length || developer.length) onCharge(1);
   let found = [...exa, ...developer, ...overflow];
   // Nothing from either: documentation pages from the ordinary search.
   if (!found.length) {
-    const web = await search(`${asked} documentation example`, { count, userId, plan, paid }).catch(() => null);
+    const web = await search(`${asked} documentation example`, { count, userId, plan, paid, billed, noMetered }).catch(() => null);
+    if (web?.metered) onCharge(1);
     found = (web?.results || []).map((r) => ({ source: 'Web', title: String(r.title || r.url), url: String(r.url || ''), text: clip(String(r.snippet || r.content || '')) }));
   }
   if (!found.length) {

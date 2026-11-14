@@ -1,4 +1,5 @@
 import { getStore } from './store/index.js';
+import { billedPlanOf } from './billing/meter.js';
 
 /**
  * Half a gigabyte of files for an account with no plan, while files live in the database
@@ -58,13 +59,17 @@ const storageFullError = (message, usedBytes, limitBytes) => new StorageFull(mes
 const unlimited = (user) => user?.role === 'admin';
 
 /**
- * What an account uses and may use. `limitBytes` is null for one with no limit.
+ * What an account uses and may use. `limitBytes` is null for one with no limit. An account billing meters
+ * (billing/meter.js) and that holds a paid plan has its plan's gigabytes instead of either: past them it is
+ * charged by the day (chargeStorageDay), never refused (owner, 2026-11-13).
  *
  * @param {{ id?: string, role?: string } | null | undefined} user
  * @returns {Promise<{ usedBytes: number, limitBytes: number | null }>}
  */
 export async function storageOf(user) {
   const usedBytes = user?.id ? await getStore().bytesOfUser(user.id) : 0;
+  const billed = await billedPlanOf(user);
+  if (billed) return { usedBytes, limitBytes: Math.round(billed.storageGb * 1e9) };
   return { usedBytes, limitBytes: unlimited(user) ? null : freeStorageBytes() };
 }
 
@@ -77,6 +82,8 @@ export async function storageOf(user) {
  */
 export async function assertRoom(user, bytes) {
   if (unlimited(user)) return;
+  // A plan's gigabytes are a rate, not a wall: what is over them is charged by the day.
+  if (await billedPlanOf(user)) return;
   const { usedBytes, limitBytes } = await storageOf(user);
   if (limitBytes == null || usedBytes + (Number(bytes) || 0) <= limitBytes) return;
   throw storageFullError(
