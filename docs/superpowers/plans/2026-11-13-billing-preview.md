@@ -662,6 +662,8 @@ Rules:
 
 ### Task 7: Routes, promo codes, emails, the daily work, deletion and export
 
+> **Carried from Task 4–5 reviews:** the owner's **assign** of an unmatched transfer requires `credited_at IS NULL` in the same statement (a second wall against crediting the same money twice); the daily job resumes `sepay_transfers` rows still `taking` after a few minutes (`takeTransfer` on the stored row); simulated money stays out of every figure **and** out of the 12-month clock — an order paid by a simulated transfer is not flagged `simulated`, so join on `sepay_transfers.via` (or have `simulateTransfer` refuse an order that already holds a real transfer); a `late` outcome sends the `late-money` mail (hook it where `takeTransfer` returns); in grace, buying the same plan and period is routed to a renewal; a subscription row is never deleted (its basis would collide with the first purchase).
+
 > **Carried from Task 3 review:** `getReceipt`, `getOrder` and `listOrders({ userId })` are unscoped store methods — every user-facing route checks the row's `user_id` against the caller (receipt numbers are sequential and guessable: an unscoped route is an IDOR), and never calls `listOrders` with an undefined `userId`; `billingAdminFigures` must leave simulated money out of every figure (ledger entries carry no simulated flag — join on the order/transfer `simulated`/`via`).
 
 **Files:**
@@ -696,6 +698,8 @@ Rules:
 ---
 
 ### Task 8: Receipts and e-invoices (off)
+
+> **Carried from Task 5 review:** a receipt for a `late` transfer must not describe a purchase — the lines say money added to the balance (pass the transfer outcome into the lines, or join the transfer when drawing).
 
 **Files:**
 - Create: `server/billing/receipt.js`, `server/billing/einvoice.js`
