@@ -74,6 +74,9 @@ export const LIMITS = {
   'hook-ip': { limit: 60, windowMs: 60_000 },
   /** A team file read or added on the Bot page (spec B.5): a look first, then the import. */
   'team-file': { limit: 40, windowMs: 60 * 60_000 },
+  /** Billing (owner, 2026-11-13): an account asks for ten orders an hour; and tries ten promo codes (a code is a guess at money). */
+  'billing-order': { limit: 10, windowMs: 3_600_000 },
+  'billing-promo': { limit: 10, windowMs: 3_600_000 },
 };
 
 /**

@@ -32,6 +32,8 @@ export const AUDIT_KINDS = [
   'secrets_policy_changed',
   // The owner adding or removing a key of a deployment service, or choosing its paid key (keyPool.js, hints only).
   'service_key_added', 'service_key_removed', 'service_paid_key_set',
+  // Billing (owner, 2026-11-13): an order paid, money assigned or dismissed by hand, promo codes, a simulated transfer, billing information.
+  'billing_order_paid', 'billing_transfer_assigned', 'billing_transfer_dismissed', 'billing_promo_created', 'billing_promo_disabled', 'billing_simulated', 'billing_profile_updated',
 ];
 
 /** The network a request came from, never the address itself. */

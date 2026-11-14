@@ -17,8 +17,16 @@ import { findCode } from './codes.js';
 import { dueOf, tryApply } from './orders.js';
 import { log } from '../util/trace.js';
 import { forgetBillable } from './meter.js';
+import { sendBillingMail } from './mail.js';
+import { audit } from '../audit.js';
 
 const WINDOW_S = 300;
+// A mail that hangs must not hold SePay's answer: after this the webhook answers and the mail goes on (or fails) by itself.
+const TELL_MS = 8_000;
+const within = (ms, work) => {
+  let timer;
+  return Promise.race([work, new Promise((resolve) => { timer = setTimeout(resolve, ms); })]).finally(() => clearTimeout(timer));
+};
 const USERAPI = 'https://userapi.sepay.vn/v2/transactions';
 const POLL_ALL_MS = 10_000;
 const POLL_ORDER_MS = 30_000;
@@ -66,6 +74,33 @@ const cut = (value, n) => (value == null ? null : String(value).replaceAll(Strin
 /** What the receipt says it is for. No buyer details: those travel sealed in `buyer_sealed`. */
 function receiptLines(order, amountVnd) {
   return [{ kind: order.kind, plan: order.plan ?? null, period: order.period ?? null, code: order.code, amountVnd }];
+}
+
+/**
+ * What the account is told when a transfer is finished: money that came too late (it was credited but bought nothing), or
+ * that an order was paid (with its receipt). The order paid is also put in the account's own record. Never throws: a mail or an
+ * audit write that fails must not turn a taken transfer into a 500 that SePay would then retry for nothing.
+ */
+async function tell({ transfer, order, userId, outcome }) {
+  try {
+    const store = getStore();
+    const user = await store.getUserById(userId);
+    if (!user || user.suspended_at) return;
+    const person = { id: user.id, email: user.email, name: user.name };
+    if (outcome === 'late') {
+      await sendBillingMail('late-money', person, { amountVnd: transfer.amountVnd, code: order.code });
+      return;
+    }
+    if (outcome !== 'applied' && outcome !== 'over' && outcome !== 'topup') return;
+    await audit(null, userId, 'billing_order_paid', { order: order.id, kind: order.kind, plan: order.plan ?? null, period: order.period ?? null, amountVnd: transfer.amountVnd });
+    const receipt = await store.receiptForTransfer(transfer.id);
+    await sendBillingMail('paid', person, {
+      amountVnd: transfer.amountVnd, what: { kind: order.kind, plan: order.plan, period: order.period },
+      balanceVnd: (await store.billingState(userId)).balanceVnd, receiptNumber: receipt?.number ?? null,
+    });
+  } catch (err) {
+    log.warn('a SePay transfer could not be announced', { transfer: transfer.id, error: String(err?.message || err).slice(0, 120) });
+  }
 }
 
 async function issueReceipt(transfer, order, userId) {
@@ -139,7 +174,8 @@ export async function takeTransfer(payload, { via = 'webhook', now = Date.now(),
   }
   const vnd = row.amountVnd;
   const live = order.status === 'pending' && order.expiresAt > at;
-  await store.creditTransfer({ transferId: row.id, userId, vnd, orderId: order.id, countReceived: live });
+  // Simulated money is not money: it must not start the 12-month clock either, or a balance made of play money would expire real ones' dates.
+  await store.creditTransfer({ transferId: row.id, userId, vnd, orderId: order.id, countReceived: live, clock: via !== 'simulated' });
   // A top-up makes the account billable at once, not when metering's 30 s answer runs out (meter.js). Promo/assign credits (Task 7) must do the same.
   forgetBillable(userId);
   // The statement that claims the credit decides, once, whether it counted toward the order; every later try follows that.
@@ -164,8 +200,11 @@ export async function takeTransfer(payload, { via = 'webhook', now = Date.now(),
 
   if (via !== 'simulated') await issueReceipt(row, order, userId);
   // The first to finish sets the label, so two deliveries at once cannot disagree about it.
-  const finished = (await store.finishTransfer(row.id, { outcome, orderId: order.id, userId })) ?? (await store.getTransfer(row.id));
+  const won = await store.finishTransfer(row.id, { outcome, orderId: order.id, userId });
+  const finished = won ?? (await store.getTransfer(row.id));
   outcome = finished.outcome;
+  // Only the delivery that finished it tells the account, so a retry never mails twice; simulated money tells nobody.
+  if (won && via !== 'simulated') await within(TELL_MS, tell({ transfer: row, order, userId, outcome }));
   log.info('a SePay transfer was taken', { transfer: row.id, outcome, via });
   return { outcome, transferId: row.id, orderId: order.id, repeat: false };
 }

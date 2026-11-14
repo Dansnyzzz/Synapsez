@@ -19,6 +19,8 @@ import { TIDY_KEY, standingProposals, acceptProposal, rejectProposal } from '../
 import { normaliseImport, IMPORT_LIMITS } from '../../public/js/import-formats.js';
 import { clientError } from '../util/clientError.js';
 import { exportTeam } from '../bots/porting.js';
+import { decryptSecret } from '../crypto.js';
+import { billingProfileContext } from '../secretContexts.js';
 
 /**
  * What was hidden in an account's conversations over thirty days, counted. The count reads
@@ -437,7 +439,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
     wrap(async (req, res) => {
       const store = getStore();
       const userId = req.user.id;
-      const [prefs, buckets, skills, active, archived, tasks, workflows, feedback, skillDraft, artifactData, research, mcpServers, holdings, indexed, team] = await Promise.all([
+      const [prefs, buckets, skills, active, archived, tasks, workflows, feedback, skillDraft, artifactData, research, mcpServers, holdings, indexed, team, billing] = await Promise.all([
         getPrefs(userId),
         store.listMemoryBuckets(userId),
         store.listSkills(userId),
@@ -456,6 +458,8 @@ export function mountAccountRoutes(api, admin, { wrap }) {
         store.docInventory(userId),
         // The bots, their memory and the groups, as the Bot page's own export writes them (spec B.5).
         exportTeam(userId),
+        // What billing holds about the account (owner, 2026-11-12): the information given, orders, the ledger and receipts.
+        billingExport(store, userId),
       ]);
 
       const stamp = new Date().toISOString().slice(0, 10);
@@ -546,7 +550,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
 
       let count = 0;
       try {
-        count = await writeExport(write, { store, userId, user: req.user, prefs, memory, botMemory, memoryProposals, skills, tasks, workflows, projects, feedback, skillDraft, artifactData, research, mcpServers, holdings, indexed, team });
+        count = await writeExport(write, { store, userId, user: req.user, prefs, memory, botMemory, memoryProposals, skills, tasks, workflows, projects, feedback, skillDraft, artifactData, research, mcpServers, holdings, indexed, team, billing });
       } catch (err) {
         /*
          * Half a JSON file that downloads as "complete" is worse than a failed
@@ -748,11 +752,43 @@ export function argsWithoutSecrets(args) {
 }
 
 /**
+ * What billing holds about an account, for the export: shown to its owner in the clear (the sealed text is never in it), money
+ * records as numbers and dates. Empty lists for an account that never used billing, so the shape is always the same.
+ */
+export async function billingExport(store, userId) {
+  const row = await store.getBillingProfile(userId).catch(() => null);
+  let profile = null;
+  try {
+    profile = row?.sealed ? JSON.parse(decryptSecret(row.sealed, billingProfileContext(userId)) || 'null') : null;
+  } catch {
+    profile = null;
+  }
+  const entries = [];
+  for (let before = null, pages = 0; pages < 100; pages += 1) {
+    const page = await store.listBalanceEntries(userId, { before, limit: 200 });
+    for (const e of page) entries.push({ id: e.id, kind: e.kind, category: e.category, day: e.day, units: e.units, deltaVnd: e.deltaVnd, ref: e.ref, note: e.note, createdAt: e.createdAt });
+    if (page.length < 200) break;
+    before = page[page.length - 1].id;
+  }
+  const state = await store.billingState(userId);
+  const sub = state.subscription;
+  return {
+    profile,
+    lowBalanceVnd: row?.lowBalanceVnd ?? null,
+    balanceVnd: state.balanceVnd,
+    subscription: sub ? { plan: sub.plan, period: sub.period, status: sub.status, periodStart: sub.periodStart, periodEnd: sub.periodEnd, autoRenew: sub.autoRenew, cancelAtEnd: sub.cancelAtEnd, nextPlan: sub.nextPlan, nextPeriod: sub.nextPeriod } : null,
+    orders: (await store.listOrders({ userId, limit: 500 })).map((o) => ({ id: o.id, kind: o.kind, plan: o.plan, period: o.period, code: o.code, priceVnd: o.priceVnd, creditVnd: o.creditVnd, totalVnd: o.totalVnd, receivedVnd: o.receivedVnd, status: o.status, simulated: o.simulated, createdAt: o.createdAt, paidAt: o.paidAt, expiresAt: o.expiresAt })),
+    entries,
+    receipts: (await store.listReceipts(userId)).map((r) => ({ number: r.number, amountVnd: r.amountVnd, issuedAt: r.issuedAt, orderId: r.orderId, lines: r.lines })),
+  };
+}
+
+/**
  * The export's body, a piece at a time through `write` — see the route.
  *
  * @returns how many conversations went into it
  */
-async function writeExport(write, { store, userId, user, prefs, memory, botMemory = [], memoryProposals = [], skills, tasks, workflows, projects, feedback = [], skillDraft = null, artifactData = null, research = [], mcpServers = [], holdings = { themes: [], titles: [], places: [], answers: [] }, indexed = [], team = null }) {
+async function writeExport(write, { store, userId, user, prefs, memory, botMemory = [], memoryProposals = [], skills, tasks, workflows, projects, feedback = [], skillDraft = null, artifactData = null, research = [], mcpServers = [], holdings = { themes: [], titles: [], places: [], answers: [] }, indexed = [], team = null, billing = null }) {
   // The username, a skill's files, the feedback sent (PRV-014), the skill draft
   // kept on the account (PRV-027), what artifacts' pages saved (PRV-028), the
   // deep-research runs and the MCP servers added (PRV-029) are held too, so they
@@ -804,6 +840,8 @@ async function writeExport(write, { store, userId, user, prefs, memory, botMemor
       // The bot team as the Bot page exports it (synapsez-bots/1): bots, their memory,
       // groups, their tasks — so the one export holds them too, and the Bot page can read it back.
       `"team":${JSON.stringify(team || null)},` +
+      // Billing: the information given for receipts (opened for its owner), orders, every ledger entry, receipts, the plan and the balance.
+      `"billing":${JSON.stringify(billing || null)},` +
       `"feedback":${JSON.stringify(
         feedback.map((f) => ({
           topic: f.topic_other || f.topic,

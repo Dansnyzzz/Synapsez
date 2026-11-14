@@ -139,6 +139,9 @@ import { mountBotRoutes } from './routes/bots.js';
 import { acceptHook, HOOK_BODY_MAX } from './hooks.js';
 import { acceptTelegram } from './telegramInbound.js';
 import { acceptSepay } from './billing/sepay.js';
+import { billingVisible } from './billing/mode.js';
+import { billingTick } from './billing/daily.js';
+import { mountBillingRoutes } from './routes/billing.js';
 import { flushOutbox } from './outbox.js';
 import { mountConnectorRoutes } from './routes/connectors.js';
 import { translateErrors, translateEvent, languageOf, translateMessage } from './i18n/index.js';
@@ -447,6 +450,8 @@ export function createApp() {
     emailVerified: !!user.email_verified_at,
     twoFactor: !!user.totp_enabled_at,
     recoveryCodesLeft: Array.isArray(user.recovery_codes) ? user.recovery_codes.length : 0,
+    // Whether billing is shown to this account at all (preview: administrators only). The server decides; the browser is told.
+    billing: { visible: billingVisible(user) },
   });
 
   // ── session ─────────────────────────────────────────────────────────
@@ -603,6 +608,12 @@ export function createApp() {
     // read to say whether work will run with every browser closed.
     await getStore().setSetting(HEARTBEAT_KEY, new Date(started).toISOString()).catch(() => {});
     await sweep().catch(() => {});
+    // Billing's day: orders closed, plans brought up to date, reminders, and once a Vietnamese day the rest (billing/daily.js).
+    // Never allowed to stop the tasks below.
+    const billing = await billingTick().catch((err) => {
+      log.warn('billing tick failed', { error: String(err?.message || err).slice(0, 160) });
+      return null;
+    });
     // Tasks get a budget too. Without one they ran until the invocation was
     // killed, which both left a task marked mid-run and guaranteed workflows
     // inherited nothing — the very thing `remaining()` was written to prevent.
@@ -627,7 +638,7 @@ export function createApp() {
     const groups = await resumeGroupRounds({ budgetMs: remaining() }).catch(() => []);
     // What is waiting to go out — a Telegram reply that failed a moment ago (spec C.3).
     const outbox = await flushOutbox({ limit: 40 }).catch(() => null);
-    return { ran, workflows, resumed, groups, outbox };
+    return { ran, workflows, resumed, groups, outbox, billing };
   }
 
   /**
@@ -2477,6 +2488,8 @@ export function createApp() {
   admin.use(requireAdmin);
   mountAccountRoutes(api, admin, { wrap });
   mountFeedbackRoutes(api, admin, { wrap });
+  // Plans, balance, orders, promo codes and the owner's billing tools (routes/billing.js): administrators only in preview.
+  mountBillingRoutes(api, admin, { wrap });
 
   // ── the agent stream ────────────────────────────────────────────────
   /**

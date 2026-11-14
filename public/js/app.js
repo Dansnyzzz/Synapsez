@@ -7048,7 +7048,7 @@ async function loadRecommended() {
 }
 
 /** The permissions an owner can give, in the order the server lists them, from what it says this account holds. */
-const ADMIN_POWERS = ['users', 'delete_users', 'models', 'feedback', 'activity', 'free_tier', 'themes'];
+const ADMIN_POWERS = ['users', 'delete_users', 'models', 'feedback', 'activity', 'free_tier', 'themes', 'billing'];
 
 /** The boxes for what an administrator may do, each saying what it means. */
 function powerBoxes(idPrefix, chosen) {

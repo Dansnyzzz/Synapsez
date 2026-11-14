@@ -5696,26 +5696,42 @@ export function createPgStore(connectionString) {
      * `received_vnd` written. A retry of the same transfer finds it claimed and changes nothing (returns null). Real money, so it
      * starts the 12-month clock.
      */
-    async creditTransfer({ transferId, userId, vnd, orderId = null, countReceived = false }) {
+    async creditTransfer({ transferId, userId, vnd, orderId = null, countReceived = false, kind = 'topup', clock = true, onlyOutcome = null, setOutcome = null }) {
       const rows = await q(
         `WITH c AS (
            UPDATE sepay_transfers SET credited_at = NOW(), counted = $5::boolean,
                   due_before = (SELECT GREATEST(0, o.total_vnd - CASE WHEN o.use_balance THEN COALESCE((SELECT b0.vnd FROM balances b0 WHERE b0.user_id = $2::text), 0) ELSE o.received_vnd END)
-                                  FROM billing_orders o WHERE o.id = $4::text)
-            WHERE id = $1 AND credited_at IS NULL RETURNING id
+                                  FROM billing_orders o WHERE o.id = $4::text),
+                  outcome = COALESCE($8::text, outcome),
+                  user_id = CASE WHEN $8::text IS NULL THEN user_id ELSE $2::text END
+            WHERE id = $1 AND credited_at IS NULL AND ($7::text IS NULL OR outcome = $7::text) RETURNING id
          ), b AS (
-           INSERT INTO balances (user_id, vnd, last_topup_at) SELECT $2::text, $3::bigint, NOW() FROM c
-           ON CONFLICT (user_id) DO UPDATE SET vnd = balances.vnd + EXCLUDED.vnd, last_topup_at = NOW(), updated_at = NOW()
+           INSERT INTO balances (user_id, vnd, last_topup_at) SELECT $2::text, $3::bigint, CASE WHEN $9::boolean THEN NOW() END FROM c
+           ON CONFLICT (user_id) DO UPDATE SET vnd = balances.vnd + EXCLUDED.vnd,
+             last_topup_at = CASE WHEN $9::boolean THEN NOW() WHEN balances.vnd = 0 THEN NULL ELSE balances.last_topup_at END, updated_at = NOW()
            RETURNING vnd
          ), e AS (
-           INSERT INTO balance_entries (user_id, kind, delta_vnd, ref) SELECT $2::text, 'topup', $3::bigint, c.id::text FROM c
+           INSERT INTO balance_entries (user_id, kind, delta_vnd, ref) SELECT $2::text, $6::text, $3::bigint, c.id::text FROM c
          ), o AS (
            UPDATE billing_orders SET received_vnd = received_vnd + $3::bigint WHERE id = $4 AND $5::boolean AND EXISTS (SELECT 1 FROM c) RETURNING id
          )
          SELECT vnd FROM b`,
-        [Number(transferId), String(userId), wholeVnd(vnd), orderId, !!countReceived],
+        [Number(transferId), String(userId), wholeVnd(vnd), orderId, !!countReceived, kind, onlyOutcome, setOutcome, !!clock],
       );
       return rows[0] ? Number(rows[0].vnd) : null;
+    },
+    /**
+     * The owner's dismissal of an unmatched transfer: it turns `dismissed` only while it is still `unmatched` and nothing was
+     * credited, in one statement, so a dismiss and an assign of one transfer exclude each other (the assign needs the same state).
+     * Null when it was not in that state.
+     */
+    async dismissTransfer(id) {
+      return transferRow((await q(`UPDATE sepay_transfers SET outcome = 'dismissed' WHERE id = $1 AND outcome = 'unmatched' AND credited_at IS NULL RETURNING *`, [Number(id)]))[0]);
+    },
+    /** Transfers still `taking` that were received before `before`: a crash left them, and the day's work finishes them. Oldest first. */
+    async listTakingTransfers(before, limit = 50) {
+      const rows = await q(`SELECT * FROM sepay_transfers WHERE outcome = 'taking' AND received_at <= $1::timestamptz ORDER BY id LIMIT $2`, [before, Math.max(1, Math.min(200, Number(limit) || 50))]);
+      return rows.map(transferRow);
     },
     /** The outcome of a transfer that is still being taken; the first to finish it wins (null when it was already finished). */
     async finishTransfer(id, { outcome, orderId = null, userId = null }) {
@@ -5995,24 +6011,33 @@ export function createPgStore(connectionString) {
     },
 
     /**
-     * The owner's money figures since `since` (Task 7 renders them):
-     *   entries          { [kind]: { inVnd, outVnd } } — sums of positive and of negative ledger entries per kind
-     *   paidOrdersVnd    total_vnd of real (not simulated) orders paid since then
-     *   orders           { pending, paid, expired, cancelled } counts (all time)
-     *   balancesHeldVnd  SUM of every balance now — what the deployment owes in service
-     *   accounts         how many accounts hold a balance above 0
+     * The owner's money figures since `since` (Task 7 renders them). Simulated money (preview's "simulate a transfer") is in none
+     * of them: a ledger entry carries no flag, so an entry is left out when the transfer it refers to was simulated (a top-up or an
+     * assignment), or when its order was (a plan, a refund) - an order counts as simulated when it is flagged or any of its transfers was.
+     *   entries          { [kind]: { inVnd, outVnd } } - sums of positive and of negative ledger entries per kind
+     *   paidOrdersVnd    total_vnd of real orders paid since then
+     *   orders           { pending, paid, expired, cancelled, refunded } counts of real orders (all time)
+     *   balancesHeldVnd  what the deployment owes in service: each account's real ledger, never below 0 (usage that drew on simulated
+     *                    money can only lower it), added up
+     *   accounts         how many accounts hold real money
      *   databaseBytes    pg_database_size, or null where the role may not ask
      */
     async billingAdminFigures(since) {
+      const simulatedOrder = `(o.simulated OR EXISTS (SELECT 1 FROM sepay_transfers t WHERE t.order_id = o.id AND t.via = 'simulated'))`;
+      const simulatedEntry = `(
+        (e.kind IN ('topup', 'assign') AND EXISTS (SELECT 1 FROM sepay_transfers t WHERE t.id::text = e.ref AND t.via = 'simulated'))
+        OR (e.kind IN ('plan', 'refund') AND EXISTS (SELECT 1 FROM billing_orders o WHERE o.id = e.ref AND ${simulatedOrder}))
+      )`;
       const [kinds, paid, counts, held, size] = await Promise.all([
         q(
-          `SELECT kind, COALESCE(SUM(delta_vnd) FILTER (WHERE delta_vnd > 0), 0) AS in_vnd, COALESCE(-SUM(delta_vnd) FILTER (WHERE delta_vnd < 0), 0) AS out_vnd
-             FROM balance_entries WHERE created_at >= $1::timestamptz GROUP BY kind`,
+          `SELECT e.kind, COALESCE(SUM(e.delta_vnd) FILTER (WHERE e.delta_vnd > 0), 0) AS in_vnd, COALESCE(-SUM(e.delta_vnd) FILTER (WHERE e.delta_vnd < 0), 0) AS out_vnd
+             FROM balance_entries e WHERE e.created_at >= $1::timestamptz AND NOT ${simulatedEntry} GROUP BY e.kind`,
           [since],
         ),
-        q(`SELECT COALESCE(SUM(total_vnd), 0) AS n FROM billing_orders WHERE status = 'paid' AND NOT simulated AND paid_at >= $1::timestamptz`, [since]),
-        q('SELECT status, COUNT(*) AS n FROM billing_orders GROUP BY status'),
-        q('SELECT COALESCE(SUM(vnd), 0) AS total, COUNT(*) FILTER (WHERE vnd > 0) AS accounts FROM balances'),
+        q(`SELECT COALESCE(SUM(o.total_vnd), 0) AS n FROM billing_orders o WHERE o.status = 'paid' AND NOT ${simulatedOrder} AND o.paid_at >= $1::timestamptz`, [since]),
+        q(`SELECT o.status, COUNT(*) AS n FROM billing_orders o WHERE NOT ${simulatedOrder} GROUP BY o.status`),
+        q(`SELECT COALESCE(SUM(GREATEST(0, s)), 0) AS total, COUNT(*) FILTER (WHERE s > 0) AS accounts
+             FROM (SELECT e.user_id, SUM(e.delta_vnd) AS s FROM balance_entries e WHERE e.user_id IS NOT NULL AND NOT ${simulatedEntry} GROUP BY e.user_id) x`),
         q('SELECT pg_database_size(current_database()) AS n').catch(() => []),
       ]);
       const entries = {};
@@ -6027,6 +6052,27 @@ export function createPgStore(connectionString) {
         accounts: Number(held[0].accounts),
         databaseBytes: size[0] ? Number(size[0].n) : null,
       };
+    },
+    /** Accounts that asked for a low-balance email: the threshold, when the last one went, and the balance now. */
+    async listLowBalanceAccounts(limit = 5000) {
+      const rows = await q(
+        `SELECT p.user_id, p.low_balance_vnd, p.low_alert_sent_at, COALESCE(b.vnd, 0) AS vnd
+           FROM billing_profiles p LEFT JOIN balances b ON b.user_id = p.user_id
+          WHERE p.low_balance_vnd IS NOT NULL ORDER BY p.user_id LIMIT $1`,
+        [Math.max(1, Math.min(10_000, Number(limit) || 5000))],
+      );
+      return rows.map((r) => ({ userId: r.user_id, lowBalanceVnd: Number(r.low_balance_vnd), lowAlertSentAt: asDate(r.low_alert_sent_at), balanceVnd: Number(r.vnd) }));
+    },
+    /** Balances that expire (12 months after the last top-up) after `from` and by `to`: the ones to warn. */
+    async listBalancesExpiringBetween(from, to, limit = 5000) {
+      const rows = await q(
+        `SELECT user_id, vnd, last_topup_at, last_topup_at + INTERVAL '12 months' AS expires_at FROM balances
+          WHERE vnd > 0 AND last_topup_at IS NOT NULL
+            AND last_topup_at + INTERVAL '12 months' > $1::timestamptz AND last_topup_at + INTERVAL '12 months' <= $2::timestamptz
+          ORDER BY last_topup_at LIMIT $3`,
+        [from, to, Math.max(1, Math.min(10_000, Number(limit) || 5000))],
+      );
+      return rows.map((r) => ({ userId: r.user_id, vnd: Number(r.vnd), lastTopupAt: asDate(r.last_topup_at), expiresAt: asDate(r.expires_at) }));
     },
 
     /** A wait a bot parks until its next run (spec C.2): refused (null) past `max` open ones, or for a bot not this account's. */
