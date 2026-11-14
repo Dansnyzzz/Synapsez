@@ -274,7 +274,7 @@ const TBS = { day: 'qdr:d', week: 'qdr:w', month: 'qdr:m', year: 'qdr:y' };
  * categories; GitHub its domain (its `github` category is gone, a 400 since 2026-11-03).
  *
  * `paid`: charged, so the owner's paid key may answer once every free key is full (keyPool.js),
- * as for every call here — false until spec B charges people.
+ * as for every call here — true when a billing hold paid for it (billing/meter.js).
  *
  * @param {string} query
  * @param {{ count?: number, recency?: string|null, sites?: string[], category?: string|null, country?: string|null, timeoutMs?: number, signal?: AbortSignal, paid?: boolean }} [options]
@@ -339,7 +339,9 @@ const PDF_PAGES = 5;
  *
  * @param {string} url
  * @param {{ timeoutMs?: number, signal?: AbortSignal, paid?: boolean }} [options]
- * @returns {Promise<{ text: string, status: number|null, title: string|null, url: string, pages: number|null } | null>}
+ * `pages` is the document's total; `pagesRead` is what was read of it (a PDF stops at PDF_PAGES), which is what a billed
+ * call is charged by (owner, 2026-11-13: a unit per three pages read).
+ * @returns {Promise<{ text: string, status: number|null, title: string|null, url: string, pages: number|null, pagesRead: number } | null>}
  */
 export async function firecrawlScrape(url, { timeoutMs = 45_000, signal, paid = false } = {}) {
   const json = await withCredits(
@@ -386,6 +388,7 @@ export async function firecrawlScrape(url, { timeoutMs = 45_000, signal, paid = 
     title: meta.title ? String(meta.title) : null,
     url: String(meta.url || meta.sourceURL || url),
     pages: Number(meta.totalPages) || pages,
+    pagesRead: Math.min(pages || Number(meta.totalPages) || 1, PDF_PAGES),
   };
 }
 

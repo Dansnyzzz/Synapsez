@@ -383,8 +383,104 @@ section('a billable account\'s cloud computer window is held and given back');
   const other = await makeUser('user');
   await e2b.e2bMachineFor(other.id, 'synz-other');
   check('an account that is not billable writes no billing counter', Number((await query("SELECT COUNT(*) AS c FROM rate_limits WHERE bucket LIKE $1", [`bill:%:${other.id}:%`]))[0].c) === 0);
+  check('a billed window is not also drawn from a free share', Number((await query("SELECT COALESCE(SUM(count),0) AS c FROM rate_limits WHERE bucket LIKE $1", ['free:e2b:%:user:' + admin.id]))[0].c) === 0);
+  const pool = async () => Number((await query("SELECT COALESCE(SUM(count),0) AS c FROM rate_limits WHERE bucket LIKE 'free:e2b:%' AND bucket NOT LIKE '%:user:%'"))[0].c);
+  const poolBefore = await pool();
+  const heldBefore = await counter(bucket);
+  state.createError = named('Error', 'all busy');
+  const failed = await e2b.e2bScratch({ userId: admin.id, ms: 120_000 }).then(() => null, (e) => e);
+  check('a scratch machine that fails to start gives back its hold and the credit', failed && (await counter(bucket)) === heldBefore && (await pool()) === poolBefore, `${await counter(bucket)} vs ${heldBefore}, pool ${await pool()} vs ${poolBefore}`);
+  state.createError = null;
+  const scratch = await e2b.e2bScratch({ userId: admin.id, ms: 120_000 });
+  check('  and one that starts keeps its 2 minutes', typeof scratch.runCommand === 'function' && (await counter(bucket)) === heldBefore + 120);
   e2b.__testing.useSdk(null);
 }
+
+/** An administrator whose plan is in force at the real time (the tools hold at `new Date()`), and its month's counter names. */
+const liveAdmin = async (plan = 'plus') => {
+  const admin = await makeUser();
+  const at = Date.now();
+  await store.createSubscription({ userId: admin.id, plan, period: 'year', status: 'active', periodStart: new Date(at - 3_600_000), periodEnd: new Date(at + 300 * 86_400_000), paidVnd: 1, anchorAt: new Date(at - 3_600_000) });
+  const key = month((await meter.periodUsage(admin.id)).month.start);
+  return { admin, search: `bill:search:${admin.id}:${key}`, sandbox: `bill:sandbox:${admin.id}:${key}` };
+};
+const http = await import('node:http');
+const refuser = http.createServer((_req, res) => { res.statusCode = 403; res.end('no'); });
+await new Promise((resolve) => refuser.listen(0, '127.0.0.1', resolve));
+const refusedUrl = `http://127.0.0.1:${refuser.address().port}/paper`;
+process.env.ALLOW_PRIVATE_FETCH = 'true';
+const stubWeb = (extra = {}) => {
+  asked = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    asked.push(url);
+    for (const [fragment, respond] of Object.entries(extra)) if (url.includes(fragment)) return respond(init);
+    if (url.startsWith('http://127.0.0.1')) return realFetch(input, init);
+    if (url.includes('api.exa.ai/contents')) return json({ results: [{ title: 'P', url: refusedUrl, text: 'Exa read this page in full. '.repeat(20) }] });
+    if (url.includes('api.exa.ai')) return json({ results: [{ title: 'P', url: refusedUrl, highlights: ['a'] }] });
+    if (url.includes('duckduckgo')) return new Response(ddgPage(3), { status: 200, headers: { 'Content-Type': 'text/html' } });
+    throw new Error(`nothing stubbed for ${url}`);
+  };
+};
+
+section('a web_search that reads its pages through Exa is still one unit');
+{
+  const { admin, search: bucket } = await liveAdmin();
+  search.clearSearchCache();
+  await heal();
+  stubWeb();
+  await CLOUD_IMPLEMENTATIONS.web_search({ query: 'one unit whatever is read', depth: 'thorough' }, { userId: admin.id });
+  check('the page was read through Exa', asked.some((u) => u.includes('api.exa.ai/contents')), asked.join(' '));
+  check('  and the whole call settled exactly 1 unit', (await counter(bucket)) === 1, String(await counter(bucket)));
+}
+
+section('Firecrawl, end to end: charged by the pages read');
+{
+  process.env.FIRECRAWL_API_KEY = 'fc-test-key';
+  const pool2 = await import('../server/keyPool.js');
+  await pool2.warmPools();
+  const { admin, search: bucket } = await liveAdmin();
+  const crawlOf = (k) => Array.from({ length: k }, (_, i) => ({ markdown: `Page ${i}`, metadata: { sourceURL: `https://example.com/p${i}`, title: `P${i}`, statusCode: 200 } }));
+  stubWeb({
+    'firecrawl.dev/v2/crawl/crawl-1': () => json({ success: true, status: 'completed', creditsUsed: 10, data: crawlOf(10) }),
+    'firecrawl.dev/v2/crawl': () => json({ success: true, id: 'crawl-1' }),
+  });
+  const out = await CLOUD_IMPLEMENTATIONS.site_pages({ op: 'crawl', url: 'https://example.com', limit: 10 }, { userId: admin.id, deadline: Date.now() + 200_000 });
+  check('a crawl of 10 pages settles 4 units', /10 pages of example\.com/.test(out) && (await counter(bucket)) === 4, `${out.slice(0, 80)} / ${await counter(bucket)}`);
+  const fc = await import('../server/firecrawl.js');
+  stubWeb({ 'firecrawl.dev/v2/scrape': () => json({ success: true, data: { markdown: 'A long PDF. '.repeat(40), metadata: { statusCode: 200, totalPages: 300, creditsUsed: 6 } } }) });
+  const scraped = await fc.firecrawlScrape('https://example.com/big.pdf');
+  check('a scrape of a 300-page PDF says 5 pages were read', scraped?.pages === 300 && scraped?.pagesRead === 5, JSON.stringify([scraped?.pages, scraped?.pagesRead]));
+  const before = await counter(bucket);
+  search.clearSearchCache();
+  stubWeb({
+    'api.exa.ai': () => json({}, 500),
+    'firecrawl.dev/v2/scrape': () => json({ success: true, data: { markdown: 'A long PDF. '.repeat(40), metadata: { statusCode: 200, totalPages: 300, numPages: 300, creditsUsed: 6 } } }),
+  });
+  const page = await CLOUD_IMPLEMENTATIONS.web_fetch({ url: refusedUrl }, { userId: admin.id });
+  check('web_fetch of it through Firecrawl settles 2 units (5 pages read), not 100', /read through Firecrawl/.test(page) && (await counter(bucket)) - before === 2, `${page.slice(0, 60)} / ${(await counter(bucket)) - before}`);
+  delete process.env.FIRECRAWL_API_KEY;
+  await pool2.warmPools();
+}
+
+section('deep research and code_context settle one unit per metered search');
+{
+  const { admin, search: bucket } = await liveAdmin();
+  const { gatherEvidence } = await import('../server/research/gather.js');
+  search.clearSearchCache();
+  await heal();
+  stubWeb();
+  await gatherEvidence(['alpha topic', 'beta topic'], { userId: admin.id, readPage: async () => '', target: 0, timeoutMs: 1000 });
+  check('two metered searches in a research run are two units', (await counter(bucket)) === 2, String(await counter(bucket)));
+  search.clearSearchCache();
+  await heal();
+  stubWeb({ 'stackexchange': () => json({ items: [] }) });
+  const before = await counter(bucket);
+  await CLOUD_IMPLEMENTATIONS.code_context({ query: 'how to call the thing' }, { userId: admin.id });
+  check('code_context charges at most one unit however many sources answered', (await counter(bucket)) - before === 1, String((await counter(bucket)) - before));
+}
+
+refuser.close();
 
 globalThis.fetch = realFetch;
 console.log(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m` : '\n\x1b[32mAll billing meter checks passed.\x1b[0m');

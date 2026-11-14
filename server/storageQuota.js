@@ -8,7 +8,7 @@ import { billedPlanOf } from './billing/meter.js';
  * A file is kept as base64 in Postgres (`attachments.data`, `attachment_versions.data`), so a
  * gigabyte of them costs about 4,265đ a month of database disk and nothing limited an account.
  * Until files move to object storage a person who is not an administrator keeps at most this
- * much; the day they do, the number is a plan's, not this one.
+ * much; an account billing meters that holds a paid plan has that plan's gigabytes instead (storageOf).
  *
  * What is counted is the file's own bytes (the `bytes` column), every kept copy of it
  * included, and what is refused is only a new file or a new copy. A picture drawn from a file

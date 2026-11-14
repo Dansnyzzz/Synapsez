@@ -45,7 +45,7 @@ import { log } from '../util/trace.js';
 import { search, formatResults, searchPlan, readThroughExa, countryOf } from '../search.js';
 import { firecrawlReady, firecrawlScrape, firecrawlMap, firecrawlCrawl, researchPapers, readPaper, relatedPapers, lawSearch } from '../firecrawl.js';
 import { mayMeter, countMetered, periodOf } from '../freeTier.js';
-import { holdSearch } from '../billing/meter.js';
+import { holdSearch, NOT_BILLED as NO_OWN_HOLD } from '../billing/meter.js';
 import { unitsForPages } from '../billing/plans.js';
 import { untrusted } from './untrusted.js';
 import { searchProject } from '../projects.js';
@@ -389,13 +389,14 @@ const THIN_PAGE_CHARS = 200;
  * or sent only script (`readThroughExa`, owner 2026-11-02). Null when Exa has
  * no key or could not read it either, and the caller says what went wrong.
  */
-async function fetchedThroughExa(url, maxChars, why, { moreThan = 0, userId = null } = {}) {
+async function fetchedThroughExa(url, maxChars, why, { moreThan = 0, userId = null, held = null } = {}) {
   const limit = Math.min(Math.max(Number(maxChars) || PAGE_CHARS, 500), 200_000);
   // A billable account's read is a held unit (billing/meter.js), kept when Exa read the page and given back when not.
-  const hold = await holdSearch(userId);
+  // `held`: a web_search that is already paying for its one unit; its page reads are not units of their own.
+  const hold = held ? NO_OWN_HOLD : await holdSearch(userId);
   let read = null;
   try {
-    read = await readThroughExa(url, { maxChars: limit, paid: hold.paid });
+    read = await readThroughExa(url, { maxChars: limit, paid: held ? held.paid : hold.paid });
   } finally {
     await hold.settle(read ? 1 : 0);
   }
@@ -407,7 +408,7 @@ async function fetchedThroughExa(url, maxChars, why, { moreThan = 0, userId = nu
 /**
  * The page through Firecrawl's browser, said as such — when Exa could not read it either
  * (server/firecrawl.js, owner 2026-11-11). A credit of the deployment's free month, and one
- * of this account's metered calls today (freeTier.js). Null when there is no Firecrawl, no
+ * of this account's metered calls this month (freeTier.js), or a held unit for a billable account (billing/meter.js). Null when there is no Firecrawl, no
  * room left, or it read nothing better; the caller then says what went wrong.
  *
  * @param {string} url @param {any} maxChars @param {string} why
@@ -429,7 +430,8 @@ async function fetchedThroughFirecrawl(url, maxChars, why, { moreThan = 0, userI
       return null;
     }
     if (!read) return null;
-    units = unitsForPages(read.pages || 1);
+    // By the pages read, not the document's total: a 300-page PDF is read to its fifth page (firecrawl.js PDF_PAGES).
+    units = unitsForPages(read.pagesRead || 1);
     if (!billed) await countMetered(userId);
     return firecrawlPage(read, url, maxChars, why, moreThan);
   } finally {
@@ -454,9 +456,11 @@ function firecrawlPage(read, url, maxChars, why, moreThan) {
  * month's credits on pages nobody asked for by name; a refused one is simply skipped there.
  *
  * @param {{ url: string, max_chars?: number }} input
- * @param {{ userId?: string|null, signal?: AbortSignal, viaFirecrawl?: boolean }} [context]
+ * `held`: the web_search that is reading this page, already paying its one unit (its `paid` flag rides on).
+ *
+ * @param {{ userId?: string|null, signal?: AbortSignal, viaFirecrawl?: boolean, held?: { paid: boolean } | null }} [context]
  */
-async function webFetch({ url, max_chars: maxChars }, { userId = null, signal, viaFirecrawl = true } = {}) {
+async function webFetch({ url, max_chars: maxChars }, { userId = null, signal, viaFirecrawl = true, held = null } = {}) {
   const firecrawl = (target, why, options = {}) => (viaFirecrawl ? fetchedThroughFirecrawl(target, maxChars, why, { userId, signal, ...options }) : null);
   let page;
   try {
@@ -467,7 +471,7 @@ async function webFetch({ url, max_chars: maxChars }, { userId = null, signal, v
     // server will not visit at all — a private one — never reaches here with a
     // status, and is never sent on.
     const refused = err.status && !GONE.has(err.status);
-    const viaExa = refused ? await fetchedThroughExa(url, maxChars, err.message, { userId }) : null;
+    const viaExa = refused ? await fetchedThroughExa(url, maxChars, err.message, { userId, held }) : null;
     if (viaExa) return viaExa;
     const throughFirecrawl = refused ? await firecrawl(url, err.message) : null;
     if (throughFirecrawl) return throughFirecrawl;
@@ -476,7 +480,7 @@ async function webFetch({ url, max_chars: maxChars }, { userId = null, signal, v
   const { parsed, text, note, html, truncated, cap } = page;
   if (html && !note && text.trim().length < THIN_PAGE_CHARS) {
     const why = `${parsed.host} sent almost no text without running its scripts`;
-    const viaExa = await fetchedThroughExa(parsed.href, maxChars, why, { moreThan: text.trim().length, userId });
+    const viaExa = await fetchedThroughExa(parsed.href, maxChars, why, { moreThan: text.trim().length, userId, held });
     if (viaExa) return viaExa;
     const throughFirecrawl = await firecrawl(parsed.href, why, { moreThan: text.trim().length });
     if (throughFirecrawl) return throughFirecrawl;
@@ -733,7 +737,7 @@ async function webSearch({ query, count, depth, recency, sites, category }, cont
   // not a whole article each. A page that will not open is skipped, not fatal.
   const top = found.results.slice(0, plan.read);
   const pages = await Promise.all(
-    top.map((r) => webFetch({ url: r.url, max_chars: EXCERPT_CHARS }, { userId, viaFirecrawl: false }).catch(() => null)),
+    top.map((r) => webFetch({ url: r.url, max_chars: EXCERPT_CHARS }, { userId, viaFirecrawl: false, held: { paid: !!(found.metered && hold.paid) } }).catch(() => null)),
   );
   const read = pages
     .map((text, i) => (text ? `── Page ${i + 1}: ${top[i].url}\n${text}` : null))
@@ -3494,7 +3498,7 @@ async function sitePagesTool({ op = 'map', url, search: term, limit, include_pat
   const billed = hold.billed && !hold.refused && hold.source !== 'none';
   if (hold.refused || (!billed && !(await mayMeter(userId)))) {
     await hold.release();
-    return "This account's share of this month's metered web calls is used. Use web_fetch on the pages instead.";
+    return "This month's allowance and balance for metered web calls are used up. Use web_fetch on the pages instead.";
   }
   // What Firecrawl really charged: a map is one unit once it answered (even with no links), a crawl is by the pages read.
   let units = 0;

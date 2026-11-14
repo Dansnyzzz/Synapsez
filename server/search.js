@@ -702,8 +702,8 @@ export function fuseResults(answered, count) {
  * counted; the result says whether a metered engine answered (`metered`), which is what the hold keeps.
  *
  * `paid`: the search is charged, so a pooled engine may go on to the owner's
- * paid key once every free key is full (keyPool.js) — false until spec B
- * charges people.
+ * paid key once every free key is full (keyPool.js) — true when a billing hold paid for it
+ * (billing/meter.js).
  *
  * @param {string} query
  * @param {{ count?: number, userId?: string|null, plan?: any, recency?: string|null, sites?: string[]|string, category?: string|null, country?: string|null, paid?: boolean, billed?: boolean, noMetered?: boolean }} [options]

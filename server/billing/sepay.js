@@ -16,6 +16,7 @@ import { billingMode } from './mode.js';
 import { findCode } from './codes.js';
 import { dueOf, tryApply } from './orders.js';
 import { log } from '../util/trace.js';
+import { forgetBillable } from './meter.js';
 
 const WINDOW_S = 300;
 const USERAPI = 'https://userapi.sepay.vn/v2/transactions';
@@ -139,6 +140,8 @@ export async function takeTransfer(payload, { via = 'webhook', now = Date.now(),
   const vnd = row.amountVnd;
   const live = order.status === 'pending' && order.expiresAt > at;
   await store.creditTransfer({ transferId: row.id, userId, vnd, orderId: order.id, countReceived: live });
+  // A top-up makes the account billable at once, not when metering's 30 s answer runs out (meter.js). Promo/assign credits (Task 7) must do the same.
+  forgetBillable(userId);
   // The statement that claims the credit decides, once, whether it counted toward the order; every later try follows that.
   const counted = (await store.getTransfer(row.id)).counted;
   // What was still due when this transfer was credited is kept on the row by the claiming statement itself, so every run judges `over` the same way.
@@ -152,6 +155,7 @@ export async function takeTransfer(payload, { via = 'webhook', now = Date.now(),
     outcome = 'topup';
   } else {
     await tryApply(order.id, { now: at }); // after every credit, even when the order looks short: it decides
+    forgetBillable(userId); // a plan that has just started makes the account billable
     const after = await store.getOrder(order.id);
     const dueBefore = (await store.getTransfer(row.id)).dueBefore;
     if (after.status === 'paid') outcome = (dueBefore == null ? after.receivedVnd > after.totalVnd : vnd > dueBefore) ? 'over' : 'applied';

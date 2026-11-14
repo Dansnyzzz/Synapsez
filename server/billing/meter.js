@@ -239,6 +239,7 @@ export async function holdSandbox(userId, seconds, { now = new Date() } = {}) {
       const day = vnDay(now);
       const paidBucket = sandboxPaidBucket(id, month);
       const after = await store.addToCounter(paidBucket, secs, ends);
+      // Windows released out of order can leave a minute less charged than started; that favours the customer and is accepted.
       const minutes = Math.ceil(after / 60) - Math.ceil((after - secs) / 60);
       // A window inside a minute already paid for costs nothing and writes no ledger row.
       const charged = minutes > 0 ? await store.chargeUsage(id, 'sandbox', minutes, minutes * perMinute, day) : 0;

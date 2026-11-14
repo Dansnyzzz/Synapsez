@@ -165,7 +165,7 @@ async function fromStackOverflow(query, count, { fetchImpl, signal }) {
 
 /**
  * `paid`: charged, so Exa, Firecrawl and the web search may go on to the owner's paid key
- * once every free key is full (keyPool.js) — false until spec B charges people.
+ * once every free key is full (keyPool.js) — true when a billing hold paid for it (billing/meter.js).
  *
  * @param {{ query: string, max_results?: number }} input
  * `billed`/`noMetered`/`onCharge`: as a hold (billing/meter.js) uses them. The web search fallback is billed or
