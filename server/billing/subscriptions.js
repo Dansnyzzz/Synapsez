@@ -8,15 +8,18 @@
  * and the cron route calls it for every account that is near an end, so both places reach the same
  * answer and neither depends on a process staying alive.
  *
- * Money moves only through orders, and a subscription is only ever changed by field-level statements or
- * by a compare-and-set on the row that was read (store.patchSubscription), so two requests at once cannot
- * undo each other's change or charge twice.
+ * Money moves only through orders. A subscription is changed by field-level statements or by a compare-and-set on
+ * the row that was read (store.patchSubscription), so one request does not overwrite another's field. Two orders
+ * paid at once cannot both take money because of the unique index on (user, basis) over paid orders (schema 53): the
+ * second payment's statement fails whole. A paid order is started and marked applied in one statement, and one that
+ * can no longer be started is refunded (orders.js settleUnapplied), so money never stays without its plan.
  */
 import { getStore } from '../store/index.js';
 import { RANK, isPaidPlan, isPeriod, GRACE_DAYS, REMIND_DAYS } from './plans.js';
 import { periodEnd, addDays, monthWindow, renewalEnd } from './period.js';
 import { BillingUnavailable } from './fx.js';
-import { findRenewalOrder, renewalOrderFor, renewalTerms, tryApply } from './orders.js';
+import { log } from '../util/trace.js';
+import { findRenewalOrder, renewalOrderFor, renewalTerms, settleUnapplied, tryApply } from './orders.js';
 
 /** Whether a stored subscription still counts at `now`: not ended, and not past its grace. */
 export const isLive = (sub, now) => !!sub && sub.status !== 'ended' && now < addDays(sub.periodEnd, GRACE_DAYS);
@@ -32,11 +35,15 @@ export function moveKind(sub, plan, period) {
   return 'upgrade';
 }
 
-/** The subscription a plan order is quoted on, as the order remembers it: 'none', or plan|period|period end in ms. */
-export const basisOf = (sub, now) => (isLive(sub, now) ? `${sub.plan}|${sub.period}|${sub.periodEnd.getTime()}` : 'none');
+/**
+ * The subscription an order is based on, as the order remembers it: plan|period|period end in ms while one is in force, else
+ * none|<end in ms of the lapse it follows> (none|0 for a first purchase), so each lapse can be paid for once.
+ */
+export const basisOf = (sub, now) => (isLive(sub, now) ? `${sub.plan}|${sub.period}|${sub.periodEnd.getTime()}` : `none|${sub ? sub.periodEnd.getTime() : 0}`);
 
 /**
- * Start or continue a plan because its order was paid. A new plan or an upgrade starts a period now; a
+ * Start or continue a plan because its order was paid. Null when the order can no longer be applied (the plan it was based on
+ * has moved on, or the period it renews is not the row's): the caller refunds it. A new plan or an upgrade starts a period now; a
  * renewal continues from the old end, counted from the original start day so a short month does not move it.
  * Applying is idempotent: the order is recorded on the row (`last_order`), a renewal is also tied to its
  * period, and the write is a compare-and-set on the row that was read (re-read and tried again if it moved).
@@ -47,23 +54,26 @@ export async function activate(order, { now = new Date() } = {}) {
     const old = await store.getSubscription(order.userId);
     if (old?.lastOrder === order.id) return old;
     let next;
-    if (order.kind === 'renewal' && old && old.status !== 'ended') {
-      if (+addDays(old.periodEnd, GRACE_DAYS) !== +order.expiresAt) return old;
+    if (order.kind === 'renewal') {
+      // A renewal continues the period it was made for, and only that one: it never starts a plan of its own.
+      if (!old || +addDays(old.periodEnd, GRACE_DAYS) !== +order.expiresAt) return null;
       // Paid before the end: the money is taken and the order is recorded as paid, the plan changes at the end.
       if (now < old.periodEnd) return old;
       const anchor = old.anchorAt ?? old.periodStart;
       next = await store.patchSubscription(order.userId, { seenEnd: old.periodEnd }, {
         plan: order.plan, period: order.period, status: 'active', periodStart: old.periodEnd, periodEnd: renewalEnd(anchor, old.periodEnd, order.period),
         paidVnd: order.priceVnd, anchorAt: anchor, nextPlan: null, nextPeriod: null, remindedAt: null, renewalOrder: null, lastOrder: order.id,
-      });
+      }, { appliedOrder: order.id });
     } else {
+      // Only the plan the order was quoted on is replaced; anything else is not overwritten.
+      if (order.basis && order.basis !== basisOf(old, now)) return null;
       const fields = {
         plan: order.plan, period: order.period, status: 'active', periodStart: now, periodEnd: periodEnd(now, order.period), paidVnd: order.priceVnd,
         anchorAt: now, cancelAtEnd: false, nextPlan: null, nextPeriod: null, remindedAt: null, renewalOrder: null, lastOrder: order.id,
       };
       next = old
-        ? await store.patchSubscription(order.userId, { seenEnd: old.periodEnd }, fields)
-        : await store.createSubscription({ userId: order.userId, ...fields });
+        ? await store.patchSubscription(order.userId, { seenEnd: old.periodEnd }, fields, { appliedOrder: order.id })
+        : await store.createSubscription({ userId: order.userId, ...fields }, { appliedOrder: order.id });
     }
     if (next) return next;
   }
@@ -136,14 +146,14 @@ async function renewFromBalance(sub, now) {
 /**
  * The subscription in force after doing what is due for this account (lazy, idempotent, safe to call on
  * every request). A renewal that was paid (early, or whose activation never finished) starts at the end whatever
- * auto-renew says; otherwise cancel-at-end or three days of grace gone means ended; otherwise renewed from the
+ * auto-renew says (settleUnapplied); otherwise cancel-at-end or three days of grace gone means ended; otherwise renewed from the
  * balance when it can be, else grace.
  */
 export async function catchUp(userId, { now = new Date() } = {}) {
+  // Paid orders that were never started are started now (or refunded) before anything else is decided.
+  await settleUnapplied(userId, { now });
   const sub = await getStore().getSubscription(userId);
   if (!sub || sub.status === 'ended' || now < sub.periodEnd) return sub;
-  const paid = await findRenewalOrder(sub);
-  if (paid?.status === 'paid') return activate(paid, { now });
   if (sub.cancelAtEnd || now >= addDays(sub.periodEnd, GRACE_DAYS)) return transition(sub, { status: 'ended' });
   if (sub.autoRenew) {
     const renewed = await renewFromBalance(sub, now);
@@ -156,7 +166,9 @@ export async function catchUp(userId, { now = new Date() } = {}) {
 export async function planInForce(userId, { now = new Date() } = {}) {
   const sub = await getStore().getSubscription(userId);
   // A plan set to end is free from its end, before any catch-up has written it down.
-  const over = !!sub && sub.cancelAtEnd && now >= sub.periodEnd;
+  let over = !!sub && sub.cancelAtEnd && now >= sub.periodEnd;
+  // ...unless the next period was paid before it was cancelled: that one starts at the end, and counts until catchUp says so.
+  if (over && (await findRenewalOrder(sub))?.status === 'paid') over = false;
   if (!isLive(sub, now) || over) return { plan: 'free', period: null, status: sub ? 'ended' : 'none', start: null, end: null, month: null };
   // In grace the allowance month is still the last one paid for, not a new one.
   const at = now < sub.periodEnd ? now : new Date(sub.periodEnd.getTime() - 1);
@@ -187,9 +199,10 @@ export async function remindersDue(now = new Date()) {
       const { order } = await renewalOrderFor(sub, { now });
       const saved = await store.patchSubscription(sub.userId, { seenEnd: sub.periodEnd, seenStatus: sub.status }, { remindedAt: now, renewalOrder: order.id });
       if (saved) out.push({ userId: sub.userId, order });
-    } catch {
+    } catch (err) {
       // No rate today, or this one account's rows are in a state we cannot read: the others still get theirs,
       // and this one is tried again on the next pass.
+      log.warn('a renewal reminder could not be made', { user: sub.userId, error: String(err?.message || err).slice(0, 160) });
     }
   }
   return out;

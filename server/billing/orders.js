@@ -107,6 +107,8 @@ export async function renewalOrderFor(sub, { now = new Date(), useBalance = true
       const order = await store.createOrder({
         id: crypto.randomUUID(), code: newPaymentCode(), userId: sub.userId, kind: 'renewal', plan, period, usdCents: PLANS[plan].usdCents[period],
         rate: rate.rate, rateSource: rate.source, priceVnd, creditVnd: 0, totalVnd: priceVnd, useBalance, expiresAt: addDays(sub.periodEnd, GRACE_DAYS),
+        // The period it continues: an upgrade quoted on the same period shares this basis, so only one of them can ever be paid.
+        basis: `${sub.plan}|${sub.period}|${sub.periodEnd.getTime()}`,
       });
       return { order, created: true };
     } catch (err) {
@@ -127,25 +129,36 @@ function renewalStillWanted(order, sub) {
 const refuseStale = (order) => getStore().cancelOrder(order.id, order.userId).then(() => null);
 
 /**
- * A plan order that was paid but whose plan never started (the process died between the two) is started now, once:
- * only while the plan is still the one it was quoted on and it is the account's latest paid order.
+ * Start every paid order of the account whose plan has not started (the process died between paying and starting, or a renewal
+ * paid early has reached its end), and refund the ones that can no longer be started: the paid order's money goes back to the
+ * balance in one statement, so it never stays without its plan. A renewal paid early is left alone until its period ends.
+ * Returns the orders it started.
  */
-async function mend(order, sub, now) {
-  if (sub?.lastOrder === order.id) return sub;
-  if (order.kind === 'renewal') return sub ? activate(order, { now }) : null;
-  if (order.basis && order.basis === basisOf(sub, now)) {
-    const latest = (await getStore().listOrders({ userId: order.userId, status: 'paid', limit: 10 })).find((o) => o.kind === 'plan' || o.kind === 'renewal');
-    if (latest?.id === order.id) return activate(order, { now });
+export async function settleUnapplied(userId, { now = new Date() } = {}) {
+  const store = getStore();
+  const started = [];
+  for (const order of await store.unappliedOrders(userId)) {
+    const sub = await activate(order, { now });
+    if (sub === null) await store.refundOrder(order.id);
+    else if (sub.lastOrder === order.id) started.push(order);
   }
-  return sub;
+  return started;
+}
+
+/** A paid order: nothing to do when it was applied, else apply it (or refund it) now. */
+async function mend(order, sub, now) {
+  if (order.appliedAt || sub?.lastOrder === order.id) return sub;
+  await settleUnapplied(order.userId, { now });
+  return getStore().getSubscription(order.userId);
 }
 
 /**
  * The one door that pays an order and starts what it bought: the balance pays it (or nothing happens),
  * then the plan is activated. Safe to call again and again, and after every credit: a paid order changes
- * nothing (or mends an activation that never finished), an order the balance cannot yet cover stays pending.
- * A plan order is paid only while the plan it was quoted on is still the plan in force. Returns the
- * subscription it started or changed, or null.
+ * nothing (or is started, or refunded, if that never finished), an order the balance cannot yet cover stays pending.
+ * An order is paid only while the plan it is based on is still the plan in force; when two orders based on the same plan
+ * are paid at once, the unique index on paid (user, basis) makes the second payment fail whole, nothing leaves the balance, and
+ * that order is closed as stale. Returns the subscription it started or changed, or null (it never throws for a stale order).
  */
 export async function tryApply(orderId, { now = new Date() } = {}) {
   const store = getStore();
@@ -154,17 +167,44 @@ export async function tryApply(orderId, { now = new Date() } = {}) {
   const sub = await store.getSubscription(order.userId);
   if (order.status === 'paid') return mend(order, sub, now);
   if (order.status !== 'pending') return null;
-  if (order.kind === 'renewal' ? !renewalStillWanted(order, sub) : order.basis && order.basis !== basisOf(sub, now)) return refuseStale(order);
-  const paid = await store.payOrderFromBalance(order.id, now);
+  if (order.kind === 'renewal' && !renewalStillWanted(order, sub)) return refuseStale(order);
+  if (order.basis && order.basis !== basisOf(sub, now)) return refuseStale(order);
+  let paid;
+  try {
+    paid = await store.payOrderFromBalance(order.id, now);
+  } catch (err) {
+    if (err?.code === '23505') return refuseStale(order);
+    throw err;
+  }
   if (!paid) {
     // Short balance or a lapsed order leaves it pending; a plan that moved between the check above and the debit
     // is refused by the payment itself, and the order is closed here.
     const again = await store.getOrder(order.id);
-    if (again?.status === 'pending' && again.kind === 'plan' && again.basis && again.basis !== basisOf(await store.getSubscription(order.userId), now)) return refuseStale(again);
+    if (again?.status === 'pending' && again.basis && again.basis !== basisOf(await store.getSubscription(order.userId), now)) return refuseStale(again);
     return null;
   }
   if (paid.kind === 'plan') await store.cancelPendingPlanOrders(paid.userId, paid.id);
-  return activate(paid, { now });
+  const started = await activate(paid, { now });
+  if (started === null) {
+    await store.refundOrder(paid.id);
+    return null;
+  }
+  return started;
+}
+
+/**
+ * Before a plan order is asked for: finish what an earlier try left (a paid order that never started is started, so asking
+ * again is not paying again), and refuse a change while the next period is already paid for.
+ */
+async function beforePlanOrder(userId, input, now) {
+  const started = await settleUnapplied(userId, { now });
+  const same = started.find((o) => o.kind === 'plan' && o.plan === input.plan && o.period === input.period);
+  if (same) return same;
+  const sub = await getStore().getSubscription(userId);
+  if (isLive(sub, now) && (await findRenewalOrder(sub))?.status === 'paid') {
+    throw Object.assign(new Error('Your renewal is already paid — you can change plan when it starts.'), { status: 422 });
+  }
+  return null;
 }
 
 async function draftOf(userId, kind, input, now) {
@@ -208,7 +248,10 @@ export async function createOrder(userId, input, { now = new Date(), simulated =
     if (!isLive(sub, now)) throw Object.assign(new Error('You have no plan to renew.'), { status: 422 });
     if (sub.cancelAtEnd) throw Object.assign(new Error('This plan is set to end at the period end. Turn that off to renew it.'), { status: 422 });
     ({ order, created } = await renewalOrderFor(sub, { now, useBalance: input.useBalance !== false }));
+    if (order.status === 'paid') throw Object.assign(new Error('This renewal is already paid.'), { status: 422 });
   } else {
+    const prior = kind === 'plan' ? await beforePlanOrder(userId, input, now) : null;
+    if (prior) return { order: await store.getOrder(prior.id), paidNow: true, due: null };
     const draft = await draftOf(userId, kind, { ...input, useBalance: input.useBalance !== false }, now);
     // One open plan QR at a time: the older one would be quoted on a plan that this one is about to change.
     if (kind === 'plan') await store.cancelPendingPlanOrders(userId);
@@ -222,7 +265,7 @@ export async function createOrder(userId, input, { now = new Date(), simulated =
     if (order.status === 'cancelled') throw Object.assign(new Error('Prices changed since this order was made — get a new price.'), { status: 422 });
     balance = (await store.billingState(userId)).balanceVnd;
   }
-  const vnd = dueOf(order, balance);
+  const vnd = order.status === 'pending' ? dueOf(order, balance) : 0;
   if (!vnd) return { order, paidNow: false, due: null };
   try {
     return { order, paidNow: false, due: { vnd, qr: qrFor(order, vnd, env) } };

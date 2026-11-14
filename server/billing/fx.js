@@ -35,6 +35,8 @@ export class BillingUnavailable extends Error {
 }
 
 /** @typedef {{ rate: number, source: 'erapi' | 'vietcombank' | 'frankfurter', at: string }} Rate */
+
+// What this instance last read: one public number, the same for every account.
 /** @type {Rate | null} */
 let memory = null;
 
@@ -53,8 +55,11 @@ async function stored() {
   }
 }
 
-/** One source after another; the first plausible rate wins. */
-/** @returns {Promise<Rate | null>} */
+/**
+ * One source after another; the first plausible rate wins.
+ *
+ * @returns {Promise<Rate | null>}
+ */
 async function ask(now, last) {
   /** @type {Array<{ source: 'erapi' | 'vietcombank' | 'frankfurter', pick: (rows: any[]) => any }>} */
   const chain = [
@@ -89,7 +94,8 @@ export async function usdVnd({ now = new Date() } = {}) {
     return kept;
   }
   const last = [memory, kept].filter(Boolean).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
-  const got = await ask(now, last?.rate ?? null);
+  // The band holds against a recent rate only: a stored rate older than we would charge with must not lock billing out for good.
+  const got = await ask(now, last && ageOf(last, now) <= USABLE_MS ? last.rate : null);
   if (got) {
     memory = got;
     try {

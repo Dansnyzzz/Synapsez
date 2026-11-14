@@ -343,7 +343,7 @@ const far = new Date('2030-01-01T00:00:00Z');
 /** An order made straight in the store, as if quoted earlier: no createOrder rules in the way. */
 const direct = (userId, over = {}) => store.createOrder({
   id: crypto.randomUUID(), userId, kind: 'plan', plan: 'pro', period: 'month', code: newPaymentCode(), usdCents: 800, rate: 25655.85, rateSource: 'erapi',
-  priceVnd: 206000, creditVnd: 0, totalVnd: 206000, useBalance: true, expiresAt: far, basis: 'none', ...over,
+  priceVnd: 206000, creditVnd: 0, totalVnd: 206000, useBalance: true, expiresAt: far, basis: 'none|0', ...over,
 });
 const P0 = new Date('2026-11-01T00:00:00Z');
 const P1 = new Date('2026-12-01T00:00:00Z');
@@ -568,6 +568,133 @@ section('M1/M3: a slipped rate is not charged with; a cancelled plan is free onc
   const before = await subs.planInForce(u.id, { now: new Date(P1.getTime() - 1000) });
   const past = await subs.planInForce(u.id, { now: new Date(P1.getTime() + 1000) });
   check('cancel at the end: still the plan before the end, free from the end on', before.plan === 'plus' && past.plan === 'free');
+}
+
+/* ── fix round 2 (re-review of d35355f): one payment per basis, refunds, early renewals ── */
+const invariant = async (userId) => {
+  const rows = await query(`SELECT (SELECT COALESCE(SUM(delta_vnd), 0) FROM balance_entries WHERE user_id = $1) AS e, (SELECT COALESCE(SUM(vnd), 0) FROM balances WHERE user_id = $1) AS b`, [userId]);
+  return Number(rows[0].e) === Number(rows[0].b);
+};
+const upgradeOrder = (userId, over = {}) => direct(userId, { creditVnd: 64500, totalVnd: 141500, basis: plusBasis, ...over });
+
+section('C1 under concurrency: one payment per basis');
+{
+  await prime();
+  const a = await makeUser();
+  await store.saveSubscription(subRow(a.id, { periodStart: P0, periodEnd: P1 }));
+  await store.creditBalance(a.id, 1_000_000, { kind: 'topup', topup: true });
+  const o1 = await upgradeOrder(a.id);
+  const o2 = await upgradeOrder(a.id, { plan: 'max', usdCents: 1500, priceVnd: 385000, totalVnd: 320500 });
+  await Promise.allSettled([orders.tryApply(o1.id, { now: PMID }), orders.tryApply(o2.id, { now: PMID })]);
+  const st = [(await store.getOrder(o1.id)).status, (await store.getOrder(o2.id)).status];
+  const s = await store.getSubscription(a.id);
+  const spent = 1_000_000 - (await balanceOf(a.id));
+  const winner = st[0] === 'paid' ? o1 : o2;
+  check('two upgrades paid together: exactly one is paid, one payment is taken, the other is closed', st.filter((x) => x === 'paid').length === 1 && spent === winner.totalVnd && s.lastOrder === winner.id && s.plan === winner.plan, JSON.stringify([st, spent, s.plan]));
+
+  const dbl = await makeUser();
+  await store.saveSubscription(subRow(dbl.id, { periodStart: P0, periodEnd: P1 }));
+  await store.creditBalance(dbl.id, 1_000_000, { kind: 'topup', topup: true });
+  const clicks = await Promise.allSettled([1, 2].map(() => orders.createOrder(dbl.id, { kind: 'plan', plan: 'pro', period: 'month' }, { now: PMID })));
+  const paidPlan = (await store.listOrders({ userId: dbl.id })).filter((o) => o.kind === 'plan' && o.status === 'paid');
+  check('a double click on "upgrade to Pro" is one payment', paidPlan.length === 1 && 1_000_000 - (await balanceOf(dbl.id)) === 141500 && clicks.filter((x) => x.status === 'fulfilled' && x.value.paidNow).length === 1, JSON.stringify([paidPlan.length, await balanceOf(dbl.id), clicks.map((x) => x.status)]));
+  check('  and the ledger still adds up', await invariant(dbl.id));
+
+  const none = await makeUser();
+  await store.creditBalance(none.id, 500000, { kind: 'topup', topup: true });
+  const n1 = await direct(none.id, { plan: 'plus', usdCents: 500, priceVnd: 129000, totalVnd: 129000 });
+  const n2 = await direct(none.id, { plan: 'max', usdCents: 1500, priceVnd: 385000, totalVnd: 385000 });
+  await Promise.allSettled([orders.tryApply(n1.id, { now: PMID }), orders.tryApply(n2.id, { now: PMID })]);
+  check('two first purchases at once: one is paid', [n1, n2].filter(async () => true).length === 2 && 500000 - (await balanceOf(none.id)) <= 385000 && (await store.listOrders({ userId: none.id })).filter((o) => o.status === 'paid').length === 1);
+  const ended = await makeUser();
+  await store.saveSubscription(subRow(ended.id, { status: 'ended', periodStart: P0, periodEnd: P1 }));
+  await store.creditBalance(ended.id, 500000, { kind: 'topup', topup: true });
+  const back = await orders.createOrder(ended.id, { kind: 'plan', plan: 'plus', period: 'month' }, { now: new Date('2027-03-01T00:00:00Z') });
+  check('a returning customer\'s order is based on the lapse it follows', back.paidNow && back.order.basis === `none|${P1.getTime()}`, String(back.order.basis));
+}
+
+section('N1/N2: a renewal paid early; asking again; an upgrade on top');
+{
+  process.env.SEPAY_BANK_ACCOUNT ||= '0123456789';
+  process.env.SEPAY_BANK_CODE ||= 'MBBank';
+  const b = await makeUser();
+  await store.saveSubscription(subRow(b.id, { periodStart: P0, periodEnd: P1 }));
+  await store.creditBalance(b.id, 400000, { kind: 'topup', topup: true });
+  const ren = await orders.createOrder(b.id, { kind: 'renewal' }, { now: new Date(P1.getTime() - 2 * 86_400_000) });
+  const again = await caught(orders.createOrder(b.id, { kind: 'renewal' }, { now: new Date(P1.getTime() - 86_400_000) }));
+  check('asking to renew again after paying early is a 422, not a QR for a paid order', ren.paidNow && again?.status === 422, String(again));
+  const up = await caught(orders.createOrder(b.id, { kind: 'plan', plan: 'pro', period: 'month' }, { now: new Date(P1.getTime() - 86_400_000) }));
+  check('an upgrade on top of a paid renewal is refused up front', up?.status === 422 && (await balanceOf(b.id)) === 271000, String(up));
+  const s = await store.getSubscription(b.id);
+  const after = await subs.catchUp(b.id, { now: new Date(s.periodEnd.getTime() + 60_000) });
+  check('  and the renewal still starts at the end', after.plan === 'plus' && +after.periodStart === +P1 && (await balanceOf(b.id)) === 271000);
+  const hold = await makeUser();
+  await store.saveSubscription(subRow(hold.id, { periodStart: P0, periodEnd: P1 }));
+  await store.creditBalance(hold.id, 400000, { kind: 'topup', topup: true });
+  await orders.createOrder(hold.id, { kind: 'renewal' }, { now: new Date(P1.getTime() - 2 * 86_400_000) });
+  await subs.setCancelAtEnd(hold.id, true, { now: new Date(P1.getTime() - 86_400_000) });
+  const stillIn = await subs.planInForce(hold.id, { now: new Date(P1.getTime() + 3_600_000) });
+  check('cancel-at-end after paying the renewal: still in force until catchUp starts the paid period', stillIn.plan === 'plus');
+}
+
+section('I1: a crash between paying and activating is mended, never charged twice');
+{
+  const d = await makeUser();
+  await store.saveSubscription(subRow(d.id, { periodStart: P0, periodEnd: P1 }));
+  await store.creditBalance(d.id, 1_000_000, { kind: 'topup', topup: true });
+  const o1 = await upgradeOrder(d.id);
+  await store.payOrderFromBalance(o1.id, PMID);
+  for (let i = 0; i < 3; i += 1) await store.createOrder({ id: crypto.randomUUID(), userId: d.id, kind: 'topup', code: newPaymentCode(), priceVnd: 100000, totalVnd: 100000, useBalance: false, expiresAt: far });
+  const retry = await orders.createOrder(d.id, { kind: 'plan', plan: 'pro', period: 'month' }, { now: PMID });
+  const sub = await store.getSubscription(d.id);
+  check('the person asks again: the paid order is applied, not paid a second time', retry.paidNow && retry.order.id === o1.id && sub.plan === 'pro' && sub.lastOrder === o1.id && 1_000_000 - (await balanceOf(d.id)) === 141500, JSON.stringify([retry.order.id === o1.id, await balanceOf(d.id)]));
+  check('  an order that was applied is marked so', (await store.getOrder(o1.id)).appliedAt instanceof Date);
+}
+
+section('refunds: a paid order that can no longer be applied gives the money back');
+{
+  const r = await makeUser();
+  await store.saveSubscription(subRow(r.id, { periodStart: P0, periodEnd: P1 }));
+  await store.creditBalance(r.id, 500000, { kind: 'topup', topup: true });
+  const o = await upgradeOrder(r.id);
+  await store.payOrderFromBalance(o.id, PMID);
+  // The plan moves on before the activation happens (another device, a manual change).
+  await store.patchSubscription(r.id, {}, { plan: 'max', periodEnd: new Date('2027-01-01T00:00:00Z') });
+  check('paid and unapplied: the balance is down by the order', (await balanceOf(r.id)) === 358500);
+  await subs.catchUp(r.id, { now: PMID });
+  const o2 = await store.getOrder(o.id);
+  const entries = await store.listBalanceEntries(r.id, { kind: 'refund' });
+  check('catchUp refunds it: refunded, balance restored, one refund entry, ledger intact', o2.status === 'refunded' && (await balanceOf(r.id)) === 500000 && entries.length === 1 && entries[0].deltaVnd === 141500 && (await invariant(r.id)), JSON.stringify([o2.status, await balanceOf(r.id), entries.length]));
+  check('  and the refund is not new money (the 12-month clock is untouched)', (await store.billingState(r.id)).lastTopupAt instanceof Date);
+  await subs.catchUp(r.id, { now: PMID });
+  check('  a second pass refunds nothing more', (await balanceOf(r.id)) === 500000);
+}
+
+section('N3: an old renewal cannot give a free period again');
+{
+  const e = await makeUser();
+  await store.saveSubscription(subRow(e.id, { periodStart: P0, periodEnd: P1 }));
+  await store.creditBalance(e.id, 1_000_000, { kind: 'topup', topup: true });
+  const t = new Date(P1.getTime() + 3_600_000);
+  const ren = await orders.createOrder(e.id, { kind: 'renewal' }, { now: t });
+  await orders.createOrder(e.id, { kind: 'plan', plan: 'pro', period: 'month' }, { now: new Date(t.getTime() + 86_400_000) });
+  await store.patchSubscription(e.id, {}, { status: 'ended' });
+  const before = await store.getSubscription(e.id);
+  const balBefore = await balanceOf(e.id);
+  const res = await orders.tryApply(ren.order.id, { now: new Date('2027-03-01T00:00:00Z') });
+  const after = await store.getSubscription(e.id);
+  check('re-applying the old renewal on an ended plan changes nothing', res?.status !== 'active' && after.status === 'ended' && +after.periodEnd === +before.periodEnd && after.lastOrder === before.lastOrder && (await balanceOf(e.id)) === balBefore, JSON.stringify(after));
+}
+
+section('N5: the 20% band only holds against a recent rate');
+{
+  await forget();
+  allDown();
+  await store.setSetting('billing_fx', { rate: 20000, source: 'erapi', at: hours(-60).toISOString() });
+  erapiSays(25655.85);
+  const r = await fx.usdVnd({ now: NOW });
+  check('a stale stored rate does not lock a good one out', r.rate === 25655.85 && r.source === 'erapi', JSON.stringify(r));
+  await prime();
 }
 
 globalThis.fetch = realFetch;

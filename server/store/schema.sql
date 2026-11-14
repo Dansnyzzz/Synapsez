@@ -1501,7 +1501,7 @@ CREATE TABLE IF NOT EXISTS balances (
 CREATE TABLE IF NOT EXISTS balance_entries (
   id         BIGSERIAL PRIMARY KEY,
   user_id    TEXT REFERENCES users(id) ON DELETE SET NULL,
-  kind       TEXT NOT NULL CHECK (kind IN ('topup','plan','usage','promo','assign','expire','forfeit','adjust')),
+  kind       TEXT NOT NULL CHECK (kind IN ('topup','plan','usage','promo','assign','expire','forfeit','adjust','refund')),
   category   TEXT,
   day        DATE,
   units      BIGINT NOT NULL DEFAULT 0,
@@ -1529,16 +1529,22 @@ CREATE TABLE IF NOT EXISTS billing_orders (
   total_vnd    BIGINT NOT NULL CHECK (total_vnd >= 0),
   use_balance  BOOLEAN NOT NULL DEFAULT TRUE,
   received_vnd BIGINT NOT NULL DEFAULT 0,
-  status       TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','paid','expired','cancelled')),
+  status       TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','paid','expired','cancelled','refunded')),
   expires_at   TIMESTAMPTZ NOT NULL,
   paid_at      TIMESTAMPTZ,
   simulated    BOOLEAN NOT NULL DEFAULT FALSE,
   -- The subscription a plan order was quoted on ('none', or plan|period|period_end in ms): it is paid only while that is still true.
   basis        TEXT,
+  -- Set in the same statement that starts what the order bought. A paid order without it has not been applied yet: it is applied or refunded.
+  applied_at   TIMESTAMPTZ,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS billing_orders_user_idx ON billing_orders (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS billing_orders_pending_idx ON billing_orders (expires_at) WHERE status = 'pending';
+-- One payment per basis: two orders quoted on the same plan cannot both be paid, because the second payment's statement fails and rolls back, debit included.
+-- A renewal carries the basis of the period it continues, so an upgrade and a renewal of one period are exclusive too.
+CREATE UNIQUE INDEX IF NOT EXISTS billing_orders_paid_once_per_basis ON billing_orders (user_id, basis) WHERE status = 'paid' AND basis IS NOT NULL;
+CREATE INDEX IF NOT EXISTS billing_orders_unapplied_idx ON billing_orders (user_id) WHERE status = 'paid' AND applied_at IS NULL AND kind IN ('plan','renewal');
 -- One live renewal per account and period (a renewal expires when its grace ends): two callers that want it reach the same row.
 CREATE UNIQUE INDEX IF NOT EXISTS billing_orders_renewal_once ON billing_orders (user_id, expires_at) WHERE kind = 'renewal' AND status IN ('pending','paid');
 -- Every bank transfer SePay told us of, matched or not. `dedupe` is UNIQUE so a webhook
