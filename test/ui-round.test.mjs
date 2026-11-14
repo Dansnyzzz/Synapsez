@@ -764,7 +764,7 @@ section('the owner adds an administrator, who sees what they were given');
     disabled: document.getElementById('admin-add-go').disabled,
   }));
   check('the owner has the section, and is marked as the owner', form.section && form.owner === 'Owner', JSON.stringify(form));
-  check('  nothing is given by default, and it cannot be sent empty', form.powers === 7 && form.checked === 0 && form.disabled, JSON.stringify(form));
+  check('  nothing is given by default, and it cannot be sent empty', form.powers === 8 && form.checked === 0 && form.disabled, JSON.stringify(form));
 
   // Scrolled to, or typed for: one list does both.
   await page.locator('.picker:has(#admin-add-person) .picker__btn').click();
@@ -788,6 +788,21 @@ section('the owner adds an administrator, who sees what they were given');
   check('they are an administrator, with that and nothing else', after.role === 'admin' && JSON.stringify(after.admin_permissions) === '["feedback"]' && after.is_owner === false, JSON.stringify([after.role, after.admin_permissions]));
   check('  and listed for the owner', await page.evaluate((id) => !!document.querySelector(`[data-admin="${id}"]`), after.id));
 
+  // An administrator with no stored list was made before permissions existed: they hold what they held then, never billing.
+  const old = await store.createUser({ id: 'u-no-list-admin', email: 'nolist@test.local', name: 'No List', passwordHash: 'x', role: 'admin' });
+  await reload();
+  await openSettings('admin');
+  await page.waitForSelector('[data-admin="' + old.id + '"]');
+  const oldRow = await page.evaluate((id) => {
+    const row = document.querySelector('[data-admin="' + id + '"]');
+    return { billing: row.querySelector('[data-power="billing"]').checked, themes: row.querySelector('[data-power="themes"]').checked, held: row.querySelector('summary').textContent };
+  }, old.id);
+  check('the editor shows Billing unticked for an administrator with no list, and counts seven', oldRow.billing === false && oldRow.themes === true && /7/.test(oldRow.held), JSON.stringify(oldRow));
+  await page.click('[data-admin="' + old.id + '"] summary').catch(() => {});
+  await page.uncheck('[data-admin="' + old.id + '"] [data-power="themes"]', { force: true });
+  await page.waitForTimeout(400);
+  const savedOld = (await store.getUserByEmail('nolist@test.local')).admin_permissions;
+  check('unticking Themes saves the other six and does not grant Billing', Array.isArray(savedOld) && savedOld.length === 6 && !savedOld.includes('billing') && !savedOld.includes('themes'), JSON.stringify(savedOld));
   await reload(other);
   await other.click('#account-button');
   await other.waitForTimeout(150);

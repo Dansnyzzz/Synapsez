@@ -179,10 +179,14 @@ export async function takeTransfer(payload, { via = 'webhook', now = Date.now(),
   // What was still due when this transfer was credited is kept on the row by the claiming statement itself, so every run judges `over` the same way.
 
   let outcome;
-  if (!counted) {
+  // A top-up locks no price, so money that comes after its QR ran out is still the top-up it was meant to be: credited, a receipt,
+  // no "late" mail. (A plan or renewal order keeps `late`, and so does a second transfer to a top-up that is already paid.)
+  const staleTopup = order.kind === 'topup' && (order.status === 'expired' || order.status === 'cancelled' || (order.status === 'pending' && order.expiresAt <= at));
+  if (!counted && !staleTopup) {
     outcome = 'late';
   } else if (order.kind === 'topup') {
-    // A top-up order is only a code and an amount: whatever arrives closes it, and it stays in the balance.
+    // A top-up order is only a code and an amount: whatever arrives closes it, and it stays in the balance. An expired one is closed
+    // as paid; a cancelled one stays cancelled (markTopupPaid takes it from pending or expired only).
     await store.markTopupPaid(order.id, at);
     outcome = 'topup';
   } else {

@@ -7069,7 +7069,7 @@ function drawAdmins(users) {
   const person = (u) => `${u.name || u.email}${u.username ? ` (@${u.username})` : ''} · ${u.email}`;
   const admins = users.filter((u) => u.role === 'admin');
   const others = users.filter((u) => u.role !== 'admin' && !u.suspended_at);
-  const heldBy = (u) => (Array.isArray(u.admin_permissions) ? u.admin_permissions : ADMIN_POWERS);
+  const heldBy = (u) => (Array.isArray(u.permissions) ? u.permissions : []);
   host.innerHTML = `<div class="admins">
       ${admins
         .map((u) =>

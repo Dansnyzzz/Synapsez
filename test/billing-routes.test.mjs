@@ -163,6 +163,14 @@ section('the billing permission is only ever granted');
   check('and every administrator route of billing is a 403 for them', closed.every(([, st]) => st === 403), closed.filter(([, st]) => st !== 403).map((a) => a.join(' ')).join(' | '));
 }
 
+section('the people list says what each account may do, from the server');
+{
+  const list = (await owner.j.call('GET', '/api/admin/users')).json?.users || [];
+  const mine = list.find((u) => u.id === nolist.id);
+  check('an administrator with no stored list is listed with the permissions they really hold, billing not among them', Array.isArray(mine?.permissions) && mine.permissions.length === 7 && !mine.permissions.includes('billing'), JSON.stringify(mine?.permissions));
+  check('  an explicit grant is listed as it is, and a member holds none', list.find((u) => u.id === dan.id)?.permissions.join() === 'billing' && list.find((u) => u.id === bob.id)?.permissions.length === 0);
+}
+
 section('the plans, with and without a rate');
 {
   // First with no rate anywhere (nothing has been read yet, so nothing is kept), then with one.
@@ -288,6 +296,11 @@ let planOrderId;
   await owner.j.call('PUT', '/api/billing/subscription', { autoRenew: beforeFlag, nextPlan: null });
   const down = await owner.j.call('PUT', '/api/billing/subscription', { nextPlan: 'plus', nextPeriod: 'month' });
   check('a downgrade is scheduled for the period end', down.status === 200 && down.json?.plan?.plan === 'pro' && down.json.plan.nextPlan === 'plus' && down.json.plan.nextPeriod === 'month', JSON.stringify(down.json));
+  mails.length = 0;
+  const cancelling = await owner.j.call('PUT', '/api/billing/subscription', { nextPlan: 'plus', nextPeriod: 'year', cancelAtEnd: true });
+  check('a plan change asked together with cancelling at the end tells nobody about a change', cancelling.status === 200 && cancelling.json.plan.cancelAtEnd === true && !mails.some((m) => m.to === owner.email), mails.map((m) => m.subject).join());
+  const keeping = await owner.j.call('PUT', '/api/billing/subscription', { nextPlan: 'plus', nextPeriod: 'year', cancelAtEnd: false });
+  check('  and without cancelling the change is told, after it is in', keeping.status === 200 && mails.some((m) => m.to === owner.email && /Plus/.test(m.subject)), mails.map((m) => m.subject).join());
   const withdrawn = await owner.j.call('PUT', '/api/billing/subscription', { nextPlan: null });
   check('  and withdrawn with nextPlan null', withdrawn.status === 200 && withdrawn.json?.plan?.nextPlan === null && (await store.getSubscription(owner.id)).nextPlan === null);
   check('the subscription row is still there (a plan is ended, never deleted)', !!(await store.getSubscription(owner.id)));
@@ -343,10 +356,11 @@ section('promo codes');
 
 section('unmatched transfers: assign once, or dismiss');
 {
-  const unmatched = async (ref, amount) => {
+  globalThis.unmatchedFor = async (ref, amount) => {
     const r = await takeTransfer({ id: null, referenceCode: ref, gateway: 'Bank', transactionDate: '2026-11-13 10:00:00', accountNumber: '0123456789', code: null, content: 'no code in this', transferType: 'in', transferAmount: amount }, { via: 'webhook' });
     return r.transferId;
   };
+  const unmatched = globalThis.unmatchedFor;
   const t1 = await unmatched('REF-ASSIGN-1', 70_000);
   check('a transfer with no code is unmatched', (await store.getTransfer(t1)).outcome === 'unmatched' && (await store.getTransfer(t1)).creditedAt === null);
   const list = await owner.j.call('GET', '/api/admin/billing/transfers?outcome=unmatched');
@@ -401,10 +415,27 @@ section('unmatched transfers: assign once, or dismiss');
   check('after an assign the account is billable at once', (await isBillable(carol.id)) === true);
 }
 
+section('mail only goes to accounts that can see billing, and nothing is prepared for a mail that will not go');
+{
+  const tm = await globalThis.unmatchedFor('REF-MEMBER-1', 45_000);
+  mails.length = 0;
+  await owner.j.call('POST', '/api/admin/billing/transfers/' + tm + '/assign', { email: bob.email });
+  check('a member assigned money is not mailed about a Billing page they cannot open (the money is still theirs)', !mails.some((m) => m.to === bob.email) && (await store.billingState(bob.id)).balanceVnd === 70_000 + 45_000);
+  const mona = await account('mona', { role: 'admin' });
+  await getStore().creditBalance(mona.id, 10_000, { kind: 'adjust' });
+  await getStore().setLowBalance(mona.id, 50_000);
+  const savedHost = process.env.SMTP_HOST;
+  delete process.env.SMTP_HOST;
+  mails.length = 0;
+  await billingTick({ now: new Date(Date.now() + 9 * 86_400_000 + 45 * 60_000) });
+  process.env.SMTP_HOST = savedHost;
+  check('with no mail provider the low-balance tick makes no QR order and marks nothing', (await store.listOrders({ userId: mona.id })).length === 0 && (await getStore().getBillingProfile(mona.id)).lowAlertSentAt === null && mails.length === 0);
+}
+
 section('the admin card');
 {
   const card = await owner.j.call('GET', '/api/admin/billing');
-  check('the figures, the mode and the rate', card.status === 200 && card.json.mode === 'preview' && card.json.figures?.entries?.assign?.inVnd === 215_000 && card.json.rate?.rate === 25_500, JSON.stringify(card.json).slice(0, 300));
+  check('the figures, the mode and the rate', card.status === 200 && card.json.mode === 'preview' && card.json.figures?.entries?.assign?.inVnd === 260_000 && card.json.rate?.rate === 25_500, JSON.stringify(card.json).slice(0, 300));
   check('  an administrator without the permission gets a 403', (await carol.j.call('GET', '/api/admin/billing')).status === 403);
   check('  and a member a 403', (await bob.j.call('GET', '/api/admin/billing')).status === 403);
   check('  orders are listed', (await owner.j.call('GET', '/api/admin/billing/orders')).json?.orders?.some((o) => o.id === planOrderId));
@@ -438,12 +469,19 @@ section('the admin card');
   await pool.countPaid('exa', exaKey.id, 5000);
   await pool.countPaid('tavily', tavilyKey.id, 100);
   await pool.countPaid('e2b', e2bKey.id, 2000);
+  // A key removed during the month keeps its counter, and its cost.
+  await pool.countPaid('exa', 'removed-key-id', 500);
   await getStore().chargeUsage(carol.id, 'search', 3, 1200, new Date().toISOString().slice(0, 10));
   const costed = (await owner.j.call('GET', '/api/admin/billing')).json;
   const by = costed.cost?.byService;
-  check('the card has the real cost of the paid units this month, by service, at the rate', by?.exa?.units === 5000 && by.exa.usd === 5 && by.exa.vnd === 127_500 && by.tavily.units === 100 && Math.abs(by.tavily.usd - 0.8) < 1e-9 && by.tavily.vnd === 20_400 && by.e2b.vnd === 51_000, JSON.stringify(costed.cost));
+  check('the card has the real cost of the paid units this month, by service, at the rate', by?.exa?.units === 5500 && by.exa.usd === 5.5 && by.exa.vnd === 140_250 && by.tavily.units === 100 && Math.abs(by.tavily.usd - 0.8) < 1e-9 && by.tavily.vnd === 20_400 && by.e2b.vnd === 51_000, JSON.stringify(costed.cost));
   check('  a service with no paid use is 0 (brave, firecrawl)', by?.brave?.units === 0 && by.brave.vnd === 0 && by.firecrawl.vnd === 0);
-  check('  the total, the real money in this month and the margin', costed.cost.totalVnd === 127_500 + 20_400 + 51_000 && costed.moneyInMonthVnd === 1200 && costed.marginVnd === 1200 - costed.cost.totalVnd, JSON.stringify([costed.cost?.totalVnd, costed.moneyInMonthVnd, costed.marginVnd]));
+  check('  the total, the real money in this month and the margin', costed.cost.totalVnd === 140_250 + 20_400 + 51_000 && costed.revenueMonthVnd === 1200 && costed.promoMonthVnd >= 40_000 && costed.marginVnd === costed.revenueMonthVnd - costed.promoMonthVnd - costed.cost.totalVnd && !('moneyInMonthVnd' in costed), JSON.stringify([costed.cost?.totalVnd, costed.revenueMonthVnd, costed.promoMonthVnd, costed.marginVnd]));
+  const realSum = getStore().sumCountersLike;
+  getStore().sumCountersLike = async () => { throw new Error('read failed'); };
+  const broken = (await owner.j.call('GET', '/api/admin/billing')).json;
+  getStore().sumCountersLike = realSum;
+  check('  a failed read makes the cost unknown (null), not 0', broken.cost === null && broken.marginVnd === null && !!broken.figures);
   check('  and the 30-day figures are still there', !!costed.figures?.entries && costed.days === 30);
   delete process.env.EXA_API_KEY;
   delete process.env.E2B_API_KEY;
@@ -527,8 +565,8 @@ section('mail: every kind, both languages');
 section('late money is told, once');
 {
   const user = dan;
-  const topup = await dan.j.call('POST', '/api/billing/orders', { kind: 'topup', amountVnd: 60_000 });
-  const order = topup.json.order;
+  const planned = await dan.j.call('POST', '/api/billing/orders', { kind: 'plan', plan: 'plus', period: 'month' });
+  const order = planned.json.order;
   await getStore().cancelOrder(order.id, user.id);
   mails.length = 0;
   const payload = { id: null, referenceCode: 'REF-LATE-1', gateway: 'Bank', transactionDate: '2026-11-13 10:00:00', accountNumber: '0123456789', code: order.code, content: order.code, transferType: 'in', transferAmount: 60_000 };
@@ -538,6 +576,20 @@ section('late money is told, once');
   check('  and the account is told', lateMails.length === 1 && /60[.,]000/.test(lateMails[0].text), JSON.stringify(lateMails.map((m) => m.subject)));
   await takeTransfer(payload, { via: 'webhook' });
   check('  the same transfer delivered again tells nobody twice', mails.filter((m) => m.to === user.email).length === 1);
+
+  // A top-up locks no price: money after its QR ran out, or after it was cancelled, is still the top-up.
+  const before = (await store.billingState(user.id)).balanceVnd;
+  const t1 = await orders.createOrder(user.id, { kind: 'topup', amountVnd: 50_000 }, { now: new Date(Date.now() - 2 * 3_600_000) });
+  await getStore().expireOrders(new Date());
+  mails.length = 0;
+  const lateTop = await takeTransfer({ ...payload, referenceCode: 'REF-LATE-2', code: t1.order.code, content: t1.order.code, transferAmount: 50_000 }, { via: 'webhook' });
+  check('money for an expired top-up ends topup: credited, order closed as paid, a receipt, and no late mail', lateTop.outcome === 'topup' && (await store.billingState(user.id)).balanceVnd === before + 50_000 && (await store.getOrder(t1.order.id)).status === 'paid' && !!(await store.receiptForTransfer(lateTop.transferId)) && !mails.some((m) => /after the order had closed|sau khi đơn hàng đóng/.test(m.subject)), JSON.stringify([lateTop.outcome, mails.map((m) => m.subject)]));
+  const t2 = await orders.createOrder(user.id, { kind: 'topup', amountVnd: 50_000 });
+  await getStore().cancelOrder(t2.order.id, user.id);
+  const cancelledTop = await takeTransfer({ ...payload, referenceCode: 'REF-LATE-3', code: t2.order.code, content: t2.order.code, transferAmount: 50_000 }, { via: 'webhook' });
+  check('  a cancelled top-up too, and it stays cancelled', cancelledTop.outcome === 'topup' && (await store.getOrder(t2.order.id)).status === 'cancelled');
+  const again = await takeTransfer({ ...payload, referenceCode: 'REF-LATE-4', code: t1.order.code, content: t1.order.code, transferAmount: 50_000 }, { via: 'webhook' });
+  check('  but a second transfer to a top-up that is already paid stays late', again.outcome === 'late');
 }
 
 section('the day\'s work');
@@ -575,7 +627,7 @@ section('the day\'s work');
 
 section('low balance, once until it is topped up again; expiry warned 30 days ahead');
 {
-  const gina = await account('gina');
+  const gina = await account('gina', { role: 'admin' });
   await getStore().creditBalance(gina.id, 30_000, { kind: 'adjust' });
   await getStore().setLowBalance(gina.id, 50_000);
   const hers = () => mails.filter((m) => m.to === gina.email && /số dư|balance/i.test(m.subject));
@@ -584,7 +636,7 @@ section('low balance, once until it is topped up again; expiry warned 30 days ah
   await billingTick({ now: day(5) });
   check('below the threshold: one mail', hers().length === 1 && (await getStore().getBillingProfile(gina.id)).lowAlertSentAt !== null, String(hers().length));
   check('  it carries a QR for the smallest top-up, an order made for it, and the amount', /qr\.sepay\.vn/.test(hers()[0].html) && /SZ\d{10}/.test(hers()[0].text) && (await store.listOrders({ userId: gina.id })).some((o) => o.kind === 'topup' && o.totalVnd === TOPUP.minNoPlan) && /50[.,]000/.test(hers()[0].text), hers()[0].text.slice(0, 300));
-  const kim = await account('kim');
+  const kim = await account('kim', { role: 'admin' });
   await getStore().creditBalance(kim.id, 50_000, { kind: 'adjust' });
   await getStore().setLowBalance(kim.id, 50_000);
   await billingTick({ now: day(5) });
@@ -631,7 +683,7 @@ section('your data');
   const exp = await bob.j.call('GET', '/api/account/export');
   const body = JSON.parse(exp.text);
   check('the export carries the billing section', exp.status === 200 && body.billing && Array.isArray(body.billing.orders) && Array.isArray(body.billing.entries) && Array.isArray(body.billing.receipts) && 'profile' in body.billing, Object.keys(body.billing || {}).join());
-  check('  a receipt as a number, a date and an amount', body.billing.receipts.length === 1 && /^SZR-/.test(body.billing.receipts[0].number) && body.billing.receipts[0].amountVnd === 70_000 && !!body.billing.receipts[0].issuedAt, JSON.stringify(body.billing.receipts));
+  check('  a receipt as a number, a date and an amount', body.billing.receipts.length === 2 && body.billing.receipts.every((r) => /^SZR-/.test(r.number) && !!r.issuedAt) && body.billing.receipts.some((r) => r.amountVnd === 70_000), JSON.stringify(body.billing.receipts));
   check('  the ledger too', body.billing.entries.some((e) => e.kind === 'assign' && e.deltaVnd === 70_000));
   const danExport = JSON.parse((await dan.j.call('GET', '/api/account/export')).text);
   check('the billing information is in the owner\'s own export, in the clear', danExport.billing.profile?.email === 'tran.a@example.test' && danExport.billing.orders.length >= 1, JSON.stringify(danExport.billing.profile));

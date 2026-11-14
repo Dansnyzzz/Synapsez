@@ -18,7 +18,7 @@ import { catchUp, planInForce, remindersDue } from './subscriptions.js';
 import { createOrder, dueOf, qrFor } from './orders.js';
 import { chargeStorageDay, forgetBillable } from './meter.js';
 import { reconcile, takeTransfer } from './sepay.js';
-import { sendBillingMail } from './mail.js';
+import { mailable, sendBillingMail } from './mail.js';
 import { EXPIRY_WARNING_DAYS, GRACE_DAYS, TOPUP } from './plans.js';
 
 /** A transfer left `taking` this long is not a request still being served: it is finished from its stored row. */
@@ -163,6 +163,8 @@ async function lowBalance(now) {
     const person = await personFor(a.userId);
     if (!person) continue;
     /** @type {Record<string, any>} */
+    // Nothing is prepared for a mail that will not go: no provider (or an account that cannot see billing) makes no QR order.
+    if (!(await mailable(person))) continue;
     const data = { balanceVnd: a.balanceVnd, thresholdVnd: a.lowBalanceVnd };
     try {
       const withPlan = (await planInForce(a.userId, { now })).plan !== 'free';

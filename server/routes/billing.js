@@ -266,6 +266,7 @@ export function mountBillingRoutes(api, admin, { wrap }) {
     for (const k of ['autoRenew', 'cancelAtEnd']) if (k in b && typeof b[k] !== 'boolean') return res.status(400).json({ error: 'Auto-renew and cancelling are on or off.' });
     for (const k of ['nextPlan', 'nextPeriod']) if (k in b && b[k] !== null && typeof b[k] !== 'string') return res.status(400).json({ error: 'Choose a plan and a period from the list.' });
     const userId = req.user.id;
+    let scheduled = null;
     // All or nothing: the plan change is the part that can be refused for what it is, so it goes first; the two switches only need a plan.
     if ('nextPlan' in b || 'nextPeriod' in b) {
       const sub = await getStore().getSubscription(userId);
@@ -275,14 +276,17 @@ export function mountBillingRoutes(api, admin, { wrap }) {
         await scheduleChange(userId, { plan: sub.plan, period: sub.period });
       } else {
         const next = await scheduleChange(userId, { plan: b.nextPlan ?? sub.nextPlan ?? sub.plan, period: b.nextPeriod ?? (b.nextPlan ? sub.period : sub.nextPeriod ?? sub.period) });
-        if (next.nextPlan) {
-          await tellOnce(`sched:${userId}:${next.nextPlan}:${next.nextPeriod}:${next.periodEnd.getTime()}`, 'plan-changed', { id: userId, email: req.user.email, name: req.user.name }, { plan: next.nextPlan, period: next.nextPeriod, change: 'scheduled', effectiveAt: next.periodEnd });
-        }
+        if (next.nextPlan) scheduled = next;
       }
     }
     if ('autoRenew' in b) await setAutoRenew(userId, b.autoRenew);
     if ('cancelAtEnd' in b) await setCancelAtEnd(userId, b.cancelAtEnd);
-    res.json({ plan: await planView(userId, new Date()) });
+    const view = await planView(userId, new Date());
+    // Told once the switches are in: a plan that is being cancelled is not changing to anything.
+    if (scheduled && !view.cancelAtEnd) {
+      await tellOnce(`sched:${userId}:${scheduled.nextPlan}:${scheduled.nextPeriod}:${scheduled.periodEnd.getTime()}`, 'plan-changed', { id: userId, email: req.user.email, name: req.user.name }, { plan: scheduled.nextPlan, period: scheduled.nextPeriod, change: 'scheduled', effectiveAt: scheduled.periodEnd });
+    }
+    res.json({ plan: view });
   }));
 
   api.put('/billing/profile', settle, route(async (req, res) => {
@@ -342,9 +346,9 @@ export function mountBillingRoutes(api, admin, { wrap }) {
       mode: billingMode(), days, since, rate, figures,
       capacity: await capacityOf({ bytes: figures.databaseBytes }),
       // This UTC month: what the paid keys cost (spec A's paid counters at list prices), the real money taken in, and the difference.
-      ...(await costOfMonth({ now }).then((c) => ({ cost: { byService: c.byService, totalVnd: c.totalVnd }, moneyInMonthVnd: c.moneyInMonthVnd, marginVnd: c.marginVnd })).catch((err) => {
+      ...(await costOfMonth({ now }).then((c) => ({ cost: { byService: c.byService, totalVnd: c.totalVnd }, revenueMonthVnd: c.revenueMonthVnd, promoMonthVnd: c.promoMonthVnd, marginVnd: c.marginVnd })).catch((err) => {
         log.warn('billing: the cost of the month could not be worked out', { error: String(err?.message || err).slice(0, 160) });
-        return { cost: null, moneyInMonthVnd: null, marginVnd: null };
+        return { cost: null, revenueMonthVnd: null, promoMonthVnd: null, marginVnd: null };
       })),
       // Whether this administrator may simulate a transfer: the owner, in preview.
       simulate: billingMode() === 'preview' && isOwner(req.user),

@@ -15,6 +15,7 @@ import { getStore } from '../store/index.js';
 import { decryptSecret } from '../crypto.js';
 import { billingProfileContext } from '../secretContexts.js';
 import { GRACE_DAYS } from './plans.js';
+import { billingVisible } from './mode.js';
 
 export const BILLING_MAIL_KINDS = Object.freeze(['paid', 'plan-changed', 'renewal-soon', 'renewed', 'grace', 'ended', 'low-balance', 'expiring', 'late-money']);
 
@@ -225,10 +226,23 @@ export function buildBillingMail(kind, { language = 'en', data = {}, baseUrl = p
   return { subject: p.subject, html, text };
 }
 
-/** A step that is waited for at most `ms`: after that the caller goes on and the work finishes (or fails) by itself. */
+// A step that is waited for at most `ms`: after that the caller goes on and the work finishes (or fails) by itself.
 export function within(ms, work) {
   let timer;
   return Promise.race([work, new Promise((resolve) => { timer = setTimeout(resolve, ms); })]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Whether a billing mail to this account would really go: a mail provider is set up (else nothing is sent, and nothing should be
+ * prepared for it), and the account can see billing (in preview a member is not written to about a Billing page they cannot open).
+ *
+ * @param {{ id?: string } | null} user
+ * @param {string} [backend]
+ */
+export async function mailable(user, backend = emailBackend()) {
+  if (backend === 'console' || !user?.id) return false;
+  const row = await getStore().getUserById(String(user.id));
+  return !!row && !row.suspended_at && billingVisible(row);
 }
 
 /** The address a receipt goes to: the billing information's, when the account gave one, else the account's own. Never logged. */
@@ -256,7 +270,7 @@ export async function sendBillingMail(kind, user, data = {}, { send = sendEmail,
   try {
     if (!BILLING_MAIL_KINDS.includes(kind) || !user?.email) return { ok: false, skipped: true };
     // With no provider the mail would only be printed with the person's address and balance in it: nothing is sent, and nothing is marked as told.
-    if (backend === 'console') return { ok: false, skipped: true };
+    if (!(await mailable(user, backend))) return { ok: false, skipped: true };
     const language = await mailLanguage(/** @type {any} */ (user), undefined);
     const mail = buildBillingMail(kind, { language, data, baseUrl });
     const to = kind === 'paid' && user.id ? await receiptAddress(user) : user.email;

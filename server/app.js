@@ -2972,7 +2972,9 @@ export function createApp() {
     '/users',
     requirePermission('users', 'delete_users'),
     wrap(async (req, res) => {
-      res.json({ users: await getStore().listUsers() });
+      // `permissions` is the server's word for what each account may do (a list stored as text, or none stored, included): the
+      // Administration page draws its boxes from it and never from the raw column.
+      res.json({ users: (await getStore().listUsers()).map((u) => ({ ...u, permissions: permissionsOf(u) })) });
     }),
   );
 
