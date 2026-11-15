@@ -18,6 +18,7 @@ import { getStore } from '../store/index.js';
 import { RANK, isPaidPlan, isPeriod, GRACE_DAYS, REMIND_DAYS } from './plans.js';
 import { periodEnd, addDays, monthWindow, renewalEnd } from './period.js';
 import { BillingUnavailable } from './fx.js';
+import { billingVisible } from './mode.js';
 import { log } from '../util/trace.js';
 import { applyOrder, findRenewalOrder, paidRenewalFor, renewalOrderFor, renewalTerms, settleUnapplied } from './orders.js';
 
@@ -139,11 +140,14 @@ export async function setCancelAtEnd(userId, on, { now = new Date() } = {}) {
 
 /**
  * Renew from the balance if it covers the price: the renewed subscription, with `paid` the order when this call's own statement
- * took the money (null when a concurrent caller did), or null when it did not happen.
+ * took the money (null when a concurrent caller did), or null when it did not happen. Only for an account that can see billing:
+ * a demoted administrator's plan is hidden from them and meters nothing, so their balance must not keep paying for it (ruling,
+ * final review 2026-11-15); it goes into grace and ends.
  */
 async function renewFromBalance(sub, now) {
   const store = getStore();
   try {
+    if (!billingVisible(await store.getUserById(sub.userId))) return null;
     let order = await findRenewalOrder(sub);
     // A price already fixed by a reminder stays; otherwise today's rate prices it.
     const total = order ? order.totalVnd : (await renewalTerms(sub, { now })).priceVnd;

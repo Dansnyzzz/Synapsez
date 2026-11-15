@@ -57,7 +57,8 @@ const forget = async () => { __resetCache(); __resetHttp(); await query('DELETE 
 const NOW = new Date('2026-11-13T05:00:00Z');
 const hours = (h) => new Date(NOW.getTime() + h * 3_600_000);
 let n = 0;
-const makeUser = async (role = 'user') => {
+// Administrators: in preview only an account that sees billing renews from its balance (ruling, final review 2026-11-15).
+const makeUser = async (role = 'admin') => {
   n += 1;
   return store.createUser({ id: `bf${n}`, email: `bf${n}@example.test`, passwordHash: 'x', role });
 };
@@ -298,6 +299,11 @@ section('catchUp: renew from the balance, grace, end');
   const graced = await Promise.all([subs.catchUpChanges(short.id, { now: atEnd }), subs.catchUpChanges(short.id, { now: atEnd })]);
   const graceTold = graced.flatMap((r) => r.changes);
   check('  into grace, two at once: reported once, by the one whose statement moved it', graceTold.length === 1 && graceTold[0].kind === 'grace' && !graceTold[0].paid && +graceTold[0].from === +T1, JSON.stringify(graceTold.map((c) => c.kind)));
+  const member = await makeUser('user');
+  await store.saveSubscription(subRow(member.id, { periodStart: T0, periodEnd: T1 }));
+  await store.creditBalance(member.id, 300000, { kind: 'topup', topup: true });
+  const left = await subs.catchUpChanges(member.id, { now: atEnd });
+  check('an account that cannot see billing (a demoted administrator) is not renewed from its balance: grace, nothing taken', left.sub.status === 'grace' && (await balanceOf(member.id)) === 300000 && left.changes.length === 1 && left.changes[0].kind === 'grace' && !(await store.listOrders({ userId: member.id })).some((o) => o.status === 'paid'), JSON.stringify([left.sub.status, await balanceOf(member.id)]));
 
   const b = await mk(10000);
   const g = await subs.catchUp(b.id, { now: atEnd });

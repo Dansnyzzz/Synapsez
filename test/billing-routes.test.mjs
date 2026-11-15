@@ -753,6 +753,20 @@ section('a plan that renews, goes into grace or ends inside a metered call is to
   check('a mail provider that fails does not fail the metered call', during.billed === true && during.source === 'included' && (await store.getSubscription(ned.id)).status === 'active' && (await paidLines(ned)).length === 1, JSON.stringify({ billed: during.billed, source: during.source }));
 }
 
+// Controller ruling (final review): only an account that can see billing renews from its balance. A demoted administrator's plan is
+// hidden from them (and no longer meters anything), so the daily job must not keep paying for it out of their balance.
+section('a demoted administrator is not renewed from the balance');
+{
+  const dee = await account('dee', { role: 'user' });
+  const ago = (ms) => new Date(Date.now() - ms);
+  await getStore().createSubscription({ userId: dee.id, plan: 'plus', period: 'month', status: 'active', periodStart: addMonths(ago(60_000), -1), periodEnd: ago(60_000), paidVnd: 129_000, autoRenew: true, cancelAtEnd: false, anchorAt: addMonths(ago(60_000), -1) });
+  await getStore().creditBalance(dee.id, 300_000, { kind: 'topup', topup: true });
+  await billingTick({ now: new Date() });
+  const sub = await store.getSubscription(dee.id);
+  check('the daily job leaves the balance alone and the plan goes into grace', (await store.billingState(dee.id)).balanceVnd === 300_000 && sub.status === 'grace' && !(await store.listOrders({ userId: dee.id })).some((o) => o.status === 'paid'), JSON.stringify([sub.status, (await store.billingState(dee.id)).balanceVnd]));
+  check('  and nobody is mailed about a Billing page they cannot open', !mails.some((m) => m.to === dee.email));
+}
+
 section('your data');
 {
   const exp = await bob.j.call('GET', '/api/account/export');
