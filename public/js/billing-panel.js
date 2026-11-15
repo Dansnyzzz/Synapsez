@@ -93,6 +93,7 @@ export function createBillingPanel(host, { api, toast, plans }) {
   const head = (name, extra = '') => `<h4 id="bill-h-${name}" tabindex="-1">${esc(t(`billing.panel.${name}`))}</h4>${extra}`;
 
   /* ── the plan ─────────────────────────────────────────────────────── */
+
   /** What a renewal would buy: the change that is scheduled, else what ran. Renew now and the grace line both speak of this, not of the plan that ended. */
   const renewalOf = (p) => ({ plan: p.nextPlan ?? p.plan, period: p.nextPeriod ?? p.period });
 

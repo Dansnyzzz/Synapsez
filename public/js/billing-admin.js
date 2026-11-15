@@ -197,6 +197,7 @@ export function createBillingAdmin(host, { api, toast, armed }) {
   }
 
   /* ── actions ──────────────────────────────────────────────────────── */
+
   /** Says what went wrong beside the row it happened on, without redrawing the page under the person. */
   function rowError(li, text) {
     const err = /** @type {HTMLElement | null} */ (li.querySelector('[data-transfer-error]'));
