@@ -17,7 +17,7 @@ import { reconcile, simulateTransfer } from '../billing/sepay.js';
 import { capacityOf } from '../billing/capacity.js';
 import { costOfMonth } from '../billing/cost.js';
 import { createPromo, redeem } from '../billing/promo.js';
-import { catchUpAndTell, tellOnce } from '../billing/daily.js';
+import { catchUpAndTell, tellOnce } from '../billing/tell.js';
 import { sendBillingMail, within } from '../billing/mail.js';
 import { drawReceipt } from '../billing/receipt.js';
 import { einvoiceStatus, einvoicePdf } from '../billing/einvoice.js';

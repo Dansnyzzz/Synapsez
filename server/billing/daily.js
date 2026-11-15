@@ -14,19 +14,18 @@ import { getStore } from '../store/index.js';
 import { log } from '../util/trace.js';
 import { billingMode } from './mode.js';
 import { addDays, vnDay, vnDayEnd } from './period.js';
-import { catchUp, planInForce, remindersDue } from './subscriptions.js';
+import { planInForce, remindersDue } from './subscriptions.js';
 import { createOrder, dueOf, qrFor } from './orders.js';
 import { chargeStorageDay, forgetBillable } from './meter.js';
 import { reconcile, takeTransfer } from './sepay.js';
 import { mailable, sendBillingMail } from './mail.js';
 import { EXPIRY_WARNING_DAYS, GRACE_DAYS, TOPUP } from './plans.js';
 import { buyerFor, einvoiceEnabled, einvoiceStatus, issueEinvoice } from './einvoice.js';
+import { catchUpAndTell, personFor, tellOnce } from './tell.js';
 
 /** A transfer left `taking` this long is not a request still being served: it is finished from its stored row. */
 const TAKING_MS = 5 * 60_000;
 const RECONCILE_DAYS = 3;
-/** How long the "already told" mark of a one-off mail is kept: longer than any period it guards. */
-const TOLD_MS = 400 * 86_400_000;
 
 const fail = (step, err) => log.warn(`billing: ${step} failed`, { error: String(err?.message || err).slice(0, 160), code: err?.code });
 
@@ -43,52 +42,6 @@ async function step(name, fn, fallback = 0) {
     fail(name, err);
     return fallback;
   }
-}
-
-/**
- * Send a mail at most once for `key`, however many instances ask at once: the mark is claimed first (the first to bump the
- * counter to 1 sends, the rest stop), and given back when nothing was sent - no mail provider yet, or the provider refused - so
- * the mail still goes when one is set up or on the next try.
- */
-export async function tellOnce(key, kind, user, data, { now = new Date() } = {}) {
-  const store = getStore();
-  const bucket = `bill:told:${key}`;
-  const until = new Date(now.getTime() + TOLD_MS);
-  if ((await store.addToCounter(bucket, 1, until)) !== 1) return false;
-  const sent = await sendBillingMail(kind, user, data);
-  if (!sent.ok) await store.addToCounter(bucket, -1, until);
-  return sent.ok;
-}
-
-/** An account as the mails need it, or null. A suspended or deleted account is not written to. */
-async function personFor(userId) {
-  const u = await getStore().getUserById(userId);
-  return u && !u.suspended_at ? { id: u.id, email: u.email, name: u.name } : null;
-}
-
-/**
- * `catchUp`, and the account told of what it did: renewed from the balance, into grace, or ended. The mail is marked per
- * account and period, so two requests that both see the change send one.
- */
-export async function catchUpAndTell(userId, { now = new Date() } = {}) {
-  const store = getStore();
-  const before = await store.getSubscription(userId);
-  const after = await catchUp(userId, { now });
-  if (!before || !after) return after;
-  const id = `${userId}:${before.periodEnd.getTime()}`;
-  if (+after.periodEnd > +before.periodEnd && after.status === 'active') {
-    forgetBillable(userId);
-    const person = await personFor(userId);
-    if (person) await tellOnce(`renewed:${id}`, 'renewed', person, { plan: after.plan, period: after.period, amountVnd: after.paidVnd, endsAt: after.periodEnd }, { now });
-  } else if (before.status === 'active' && after.status === 'grace') {
-    const person = await personFor(userId);
-    if (person) await tellOnce(`grace:${id}`, 'grace', person, { plan: after.plan, endsAt: addDays(after.periodEnd, GRACE_DAYS) }, { now });
-  } else if (before.status !== 'ended' && after.status === 'ended') {
-    forgetBillable(userId);
-    const person = await personFor(userId);
-    if (person) await tellOnce(`ended:${id}`, 'ended', person, { plan: before.plan }, { now });
-  }
-  return after;
 }
 
 /** Invoices in one run, how long the run may take, and how long an unsettled invoice is chased (it is also how far back unpaid-for ones are issued: the date must be today). */

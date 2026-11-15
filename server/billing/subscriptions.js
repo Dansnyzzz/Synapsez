@@ -19,7 +19,7 @@ import { RANK, isPaidPlan, isPeriod, GRACE_DAYS, REMIND_DAYS } from './plans.js'
 import { periodEnd, addDays, monthWindow, renewalEnd } from './period.js';
 import { BillingUnavailable } from './fx.js';
 import { log } from '../util/trace.js';
-import { findRenewalOrder, paidRenewalFor, renewalOrderFor, renewalTerms, settleUnapplied, tryApply } from './orders.js';
+import { applyOrder, findRenewalOrder, paidRenewalFor, renewalOrderFor, renewalTerms, settleUnapplied } from './orders.js';
 
 /** Whether a stored subscription still counts at `now`: not ended, and not past its grace. */
 export const isLive = (sub, now) => !!sub && sub.status !== 'ended' && now < addDays(sub.periodEnd, GRACE_DAYS);
@@ -49,16 +49,25 @@ export const basisOf = (sub, now) => (isLive(sub, now) ? `${sub.plan}|${sub.peri
  * period, and the write is a compare-and-set on the row that was read (re-read and tried again if it moved).
  */
 export async function activate(order, { now = new Date() } = {}) {
+  return (await applyPaidOrder(order, { now })).sub;
+}
+
+/**
+ * `activate`, and `applied`: whether this call's own statement started it. The statement claims the order, so of two callers
+ * at once exactly one is told `true`; the other (and one that finds it started already) is told `false` and has nothing to tell.
+ */
+export async function applyPaidOrder(order, { now = new Date() } = {}) {
   const store = getStore();
+  const theirs = (sub) => ({ sub, applied: false });
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const old = await store.getSubscription(order.userId);
-    if (old?.lastOrder === order.id) return old;
+    if (old?.lastOrder === order.id) return theirs(old);
     let next;
     if (order.kind === 'renewal') {
       // A renewal continues the period it was made for, and only that one: it never starts a plan of its own.
-      if (!old || +addDays(old.periodEnd, GRACE_DAYS) !== +order.expiresAt) return null;
+      if (!old || +addDays(old.periodEnd, GRACE_DAYS) !== +order.expiresAt) return theirs(null);
       // Paid before the end: the money is taken and the order is recorded as paid, the plan changes at the end.
-      if (now < old.periodEnd) return old;
+      if (now < old.periodEnd) return theirs(old);
       const anchor = old.anchorAt ?? old.periodStart;
       next = await store.patchSubscription(order.userId, { seenEnd: old.periodEnd }, {
         plan: order.plan, period: order.period, status: 'active', periodStart: old.periodEnd, periodEnd: renewalEnd(anchor, old.periodEnd, order.period),
@@ -66,7 +75,7 @@ export async function activate(order, { now = new Date() } = {}) {
       }, { appliedOrder: order.id });
     } else {
       // Only the plan the order was quoted on is replaced; anything else is not overwritten.
-      if (order.basis && order.basis !== basisOf(old, now)) return null;
+      if (order.basis && order.basis !== basisOf(old, now)) return theirs(null);
       const fields = {
         plan: order.plan, period: order.period, status: 'active', periodStart: now, periodEnd: periodEnd(now, order.period), paidVnd: order.priceVnd,
         anchorAt: now, cancelAtEnd: false, nextPlan: null, nextPeriod: null, remindedAt: null, renewalOrder: null, lastOrder: order.id,
@@ -75,19 +84,20 @@ export async function activate(order, { now = new Date() } = {}) {
         ? await store.patchSubscription(order.userId, { seenEnd: old.periodEnd }, fields, { appliedOrder: order.id })
         : await store.createSubscription({ userId: order.userId, ...fields }, { appliedOrder: order.id });
     }
-    if (next) return next;
+    if (next) return { sub: next, applied: true };
     // The write did not happen: either the row moved (look again) or the order was settled meanwhile (stop).
     const fresh = await store.getOrder(order.id);
-    if (fresh?.status === 'refunded') return null;
-    if (fresh?.appliedAt) return store.getSubscription(order.userId);
+    if (fresh?.status === 'refunded') return theirs(null);
+    if (fresh?.appliedAt) return theirs(await store.getSubscription(order.userId));
   }
   throw Object.assign(new Error('Your plan could not be updated right now. Please try again.'), { status: 503 });
 }
 
-/** Change the row we read, unless somebody else moved it meanwhile (then theirs stands). */
+/** Change the row we read, unless somebody else moved it meanwhile (then theirs stands, and `mine` is false). */
 async function transition(before, patch) {
   const store = getStore();
-  return (await store.patchSubscription(before.userId, { seenEnd: before.periodEnd, seenStatus: before.status }, patch)) ?? store.getSubscription(before.userId);
+  const changed = await store.patchSubscription(before.userId, { seenEnd: before.periodEnd, seenStatus: before.status }, patch);
+  return changed ? { sub: changed, mine: true } : { sub: await store.getSubscription(before.userId), mine: false };
 }
 
 async function liveOrRefuse(userId, now) {
@@ -127,7 +137,10 @@ export async function setCancelAtEnd(userId, on, { now = new Date() } = {}) {
   return getStore().patchSubscription(userId, {}, { cancelAtEnd: !!on });
 }
 
-/** Renew from the balance if it covers the price; the renewed subscription, or null when it did not happen. */
+/**
+ * Renew from the balance if it covers the price: the renewed subscription, with `paid` the order when this call's own statement
+ * took the money (null when a concurrent caller did), or null when it did not happen.
+ */
 async function renewFromBalance(sub, now) {
   const store = getStore();
   try {
@@ -136,9 +149,9 @@ async function renewFromBalance(sub, now) {
     const total = order ? order.totalVnd : (await renewalTerms(sub, { now })).priceVnd;
     if ((await store.billingState(sub.userId)).balanceVnd < total) return null;
     order ??= (await renewalOrderFor(sub, { now })).order;
-    await tryApply(order.id, { now, autoRenew: true });
+    const { paid } = await applyOrder(order.id, { now, autoRenew: true });
     const cur = await store.getSubscription(sub.userId);
-    return cur && +cur.periodEnd !== +sub.periodEnd ? cur : null;
+    return cur && +cur.periodEnd !== +sub.periodEnd ? { sub: cur, paid } : null;
   } catch (err) {
     // No rate to price the renewal with: the plan stays in grace instead of ending early over a
     // rate source being down. It is retried on the next call.
@@ -154,16 +167,46 @@ async function renewFromBalance(sub, now) {
  * balance when it can be, else grace.
  */
 export async function catchUp(userId, { now = new Date() } = {}) {
+  return (await catchUpChanges(userId, { now })).sub;
+}
+
+/**
+ * @typedef {{ kind: 'renewed'|'grace'|'ended', from: Date, sub: any, paid: any }} PlanChange
+ *   `from` is the period end the plan moved on from (it names the mail); `paid` is the renewal order when this call took its money.
+ */
+
+/**
+ * `catchUp`, and what its own statements changed, for the account to be told (tell.js). Taken from the statements, not from a look
+ * before and after, so a caller that only saw somebody else's change reports nothing, and the one that made it reports it wherever it
+ * ran: the daily job, a billing page, or a metered call that met the period's end first.
+ *
+ * @returns {Promise<{ sub: any, changes: PlanChange[] }>}
+ */
+export async function catchUpChanges(userId, { now = new Date() } = {}) {
+  /** @type {PlanChange[]} */
+  const changes = [];
   // Paid orders that were never started are started now (or refunded) before anything else is decided.
-  await settleUnapplied(userId, { now });
+  for (const started of await settleUnapplied(userId, { now })) {
+    if (started.applied && started.order.kind === 'renewal') changes.push({ kind: 'renewed', from: started.sub.periodStart, sub: started.sub, paid: null });
+  }
   const sub = await getStore().getSubscription(userId);
-  if (!sub || sub.status === 'ended' || now < sub.periodEnd) return sub;
-  if (sub.cancelAtEnd || now >= addDays(sub.periodEnd, GRACE_DAYS)) return transition(sub, { status: 'ended' });
+  if (!sub || sub.status === 'ended' || now < sub.periodEnd) return { sub, changes };
+  if (sub.cancelAtEnd || now >= addDays(sub.periodEnd, GRACE_DAYS)) return moved(sub, 'ended', changes);
   if (sub.autoRenew) {
     const renewed = await renewFromBalance(sub, now);
-    if (renewed) return renewed;
+    if (renewed) {
+      // Two callers at once: only the one whose payment took the money has it to tell.
+      if (renewed.paid) changes.push({ kind: 'renewed', from: sub.periodEnd, sub: renewed.sub, paid: renewed.paid });
+      return { sub: renewed.sub, changes };
+    }
   }
-  return sub.status === 'grace' ? sub : transition(sub, { status: 'grace' });
+  return sub.status === 'grace' ? { sub, changes } : moved(sub, 'grace', changes);
+}
+
+async function moved(sub, status, changes) {
+  const { sub: after, mine } = await transition(sub, { status });
+  if (mine) changes.push({ kind: /** @type {'grace'|'ended'} */ (status), from: sub.periodEnd, sub: after, paid: null });
+  return { sub: after, changes };
 }
 
 /** The plan an account has right now, as the allowances and the page read it. Pure: it writes nothing. */

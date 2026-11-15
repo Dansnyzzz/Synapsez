@@ -16,8 +16,11 @@ import { billingMode } from './mode.js';
 import { PLANS, paygPrices } from './plans.js';
 import { vnDay, vnDayEnd, addDays, addMonths, daysInVnMonth } from './period.js';
 import { meteringRate } from './fx.js';
-import { catchUp, planInForce } from './subscriptions.js';
+import { catchUpChanges, planInForce } from './subscriptions.js';
 import { BILLABLE_MAX, BILLABLE_MS, billableCache, forgetBillable } from './billable.js';
+
+/** How long a metered call waits for the mail of a plan change it made; the mail then finishes by itself. */
+const TELL_MS = 8_000;
 
 /**
  * @typedef {{ billed: boolean, source: 'included'|'balance'|'none'|null, paid: boolean, refused: boolean, units: number,
@@ -50,12 +53,27 @@ export async function isBillable(userId, { now = new Date(), user } = {}) {
   let value = false;
   if (mode === 'live' || account.role === 'admin') {
     // Done before the plan is read, so an ended period is ended and a due renewal is made (at most once: the answer is kept).
-    await catchUp(id, { now });
+    const { changes } = await catchUpChanges(id, { now });
+    // A period's end is often met here first; the change is then this call's to tell, as the daily job would have.
+    if (changes.length) await tellFromHere(id, changes, now);
     value = (await planInForce(id, { now })).plan !== 'free' || (await getStore().billingState(id)).balanceVnd > 0;
   }
   if (billableCache.size >= BILLABLE_MAX) billableCache.clear();
   billableCache.set(id, { until: Date.now() + BILLABLE_MS, value, mode });
   return value;
+}
+
+/**
+ * Tell the account of a plan change this call made. tell.js is loaded only then: it brings the mail stack, which a metered call
+ * never needs otherwise, and nothing it imports leads back here. Never throws: the metered call goes on whatever the mail does.
+ */
+async function tellFromHere(userId, changes, now) {
+  try {
+    const { tellChanges } = await import('./tell.js');
+    await tellChanges(userId, changes, { now, waitMs: TELL_MS });
+  } catch (err) {
+    warn('a plan change could not be told', err);
+  }
 }
 
 /**

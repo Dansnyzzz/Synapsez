@@ -286,6 +286,19 @@ section('catchUp: renew from the balance, grace, end');
   const both = await Promise.all([subs.catchUp(a.id, { now: new Date(+periodEnd(T1, 'month') + 1000) }), subs.catchUp(a.id, { now: new Date(+periodEnd(T1, 'month') + 1000) })]);
   check('  two calls at once renew only once', (await balanceOf(a.id)) === 42000 && both.every((s) => +s.periodStart === +periodEnd(T1, 'month')), String(await balanceOf(a.id)));
 
+  // What a caller reports comes from its own statements (final review, 2026-11-15): of two at once, only the one whose payment took
+  // the money carries it (the paid line), and anything either reports is that one renewal of that one period.
+  const twin = await mk(300000);
+  const pair = await Promise.all([subs.catchUpChanges(twin.id, { now: atEnd }), subs.catchUpChanges(twin.id, { now: atEnd })]);
+  const told = pair.flatMap((r) => r.changes);
+  check('catchUpChanges, two callers at once: one renewal, reported with its payment by exactly one of them', (await balanceOf(twin.id)) === 171000 && told.filter((c) => c.paid).length === 1 && told.every((c) => c.kind === 'renewed' && +c.from === +T1 && +c.sub.periodStart === +T1) && told.find((c) => c.paid).paid.kind === 'renewal', JSON.stringify(told.map((c) => [c.kind, !!c.paid])));
+  const quiet = await subs.catchUpChanges(twin.id, { now: new Date(atEnd.getTime() + 3_600_000) });
+  check('  asked again afterwards it reports nothing', quiet.changes.length === 0 && +quiet.sub.periodStart === +T1);
+  const short = await mk(10000);
+  const graced = await Promise.all([subs.catchUpChanges(short.id, { now: atEnd }), subs.catchUpChanges(short.id, { now: atEnd })]);
+  const graceTold = graced.flatMap((r) => r.changes);
+  check('  into grace, two at once: reported once, by the one whose statement moved it', graceTold.length === 1 && graceTold[0].kind === 'grace' && !graceTold[0].paid && +graceTold[0].from === +T1, JSON.stringify(graceTold.map((c) => c.kind)));
+
   const b = await mk(10000);
   const g = await subs.catchUp(b.id, { now: atEnd });
   check('a short balance goes into grace, the dates unchanged', g.status === 'grace' && +g.periodStart === +T0 && +g.periodEnd === +T1 && (await balanceOf(b.id)) === 10000, JSON.stringify(g));
