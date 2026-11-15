@@ -1073,6 +1073,75 @@ section('keyboard, names and 360 px');
   await page.setViewportSize({ width: 1280, height: 900 });
 }
 
+// Safari before 17 knows no `:popover-open` (and has no Popover API), before 15.6 no `:modal`: a pseudo-class the engine does not
+// know makes matches() and querySelectorAll() throw a SyntaxError. toast() asked both on every call, so with Settings open the
+// second toast threw at its caller and the caller's own next line never ran (final review, 2026-11-15). Members see it.
+const olderEngine = ({ noPopoverApi, unknown }) => {
+  const pattern = new RegExp(unknown);
+  for (const proto of [Element.prototype, globalThis.Document.prototype, globalThis.DocumentFragment.prototype]) {
+    for (const name of ['matches', 'querySelector', 'querySelectorAll', 'closest']) {
+      const real = proto[name];
+      if (typeof real !== 'function') continue;
+      Object.defineProperty(proto, name, {
+        configurable: true,
+        writable: true,
+        value(selector, ...rest) {
+          if (pattern.test(String(selector))) throw new globalThis.DOMException(`'${selector}' is not a valid selector.`, 'SyntaxError');
+          return real.call(this, selector, ...rest);
+        },
+      });
+    }
+  }
+  if (noPopoverApi) for (const name of ['showPopover', 'hidePopover', 'togglePopover']) delete HTMLElement.prototype[name];
+};
+for (const [label, engine] of [
+  ['neither :popover-open nor :modal is known', { noPopoverApi: false, unknown: ':popover-open|:modal' }],
+  ['Safari 16: no Popover API, no :popover-open', { noPopoverApi: true, unknown: ':popover-open' }],
+]) {
+  section(`toasts with a modal open in an older engine (${label})`);
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await ctx.addInitScript(olderEngine, engine);
+  const old = await signIn(ctx, 'member@test.local');
+  await openMenu(old);
+  await old.click('.plusmenu--account [data-row="settings"]');
+  await old.waitForSelector('#settings[open]');
+  /** Raise each toast, then say whether the call returned and whether each one is drawn on top where it can be read. */
+  const raise = (messages) => old.evaluate(async (list) => {
+    const { toast } = await import('/js/render.js');
+    const ran = list.map(([message, kind]) => {
+      try {
+        toast(message, kind);
+        return true;
+      } catch (err) {
+        return String(err?.message || err);
+      }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const shown = list.map(([message]) => {
+      const node = [...document.getElementsByClassName('toast')].find((n) => n.textContent === message);
+      if (!node) return null;
+      const region = node.parentElement;
+      const was = [region.style.pointerEvents, node.style.pointerEvents];
+      region.style.pointerEvents = 'auto';
+      node.style.pointerEvents = 'auto';
+      const box = node.getBoundingClientRect();
+      const at = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      [region.style.pointerEvents, node.style.pointerEvents] = was;
+      return { onTop: at === node || node.contains(at), top: Math.round(box.top), parent: region.parentElement?.id || region.parentElement?.tagName };
+    });
+    return { ran, shown };
+  }, messages);
+  const inSettings = await raise([['Older engine, first', 'error'], ['Older engine, second', 'error'], ['Older engine, a notice', 'info']]);
+  check('every toast() call returns, so the code after it runs', inSettings.ran.every((r) => r === true), JSON.stringify(inSettings.ran));
+  check('  and every toast is drawn on top of Settings, near the top', inSettings.shown.every((s) => s?.onTop === true && s.top >= 0 && s.top < 200), JSON.stringify(inSettings.shown));
+  await old.evaluate(() => /** @type {HTMLDialogElement} */ (document.getElementById('settings')).close());
+  await old.waitForTimeout(200);
+  const after = await raise([['Older engine, after closing', 'info']]);
+  check('  closed, the next toast is in the page and on top', after.ran[0] === true && after.shown[0]?.onTop === true && after.shown[0].parent === 'BODY', JSON.stringify(after));
+  check('  and no page error was raised, the close included', old.errors.length === 0, old.errors.join(' | '));
+  await ctx.close();
+}
+
 section('an administrator without the billing permission sees the tab but no card, and asks nothing of the card');
 {
   await store.createUser({ id: 'u-bill-helper', email: 'helper@test.local', name: 'Helper', username: 'bill.helper', passwordHash: await hashPassword(password), role: 'admin' });

@@ -3993,23 +3993,64 @@ export function statusLine(text, { bar = false } = {}) {
  * containing block for `position: fixed` (its backdrop-filter) and clips (`overflow: hidden`), so
  * a plain fixed region inside it would sit at the sheet's top and be cut by its edge. They go
  * back to <body> as they were when it closes. Their role and aria-live stay as they are.
+ *
+ * Older engines are why nothing here may throw: a toast is often the last line of a failure path, and
+ * a SyntaxError from it would stop the caller (final review, 2026-11-15). Without the Popover API
+ * (Safari before 17) a region stays a plain child of the dialog: drawn at the sheet's top, above its
+ * content, and not inert. Whatever an engine refuses while seating, the region goes back to the page.
  */
 function seatToasts() {
-  const open = [...document.querySelectorAll('dialog:modal')];
+  const open = openModals();
   const home = open.length ? open[open.length - 1] : document.body;
   for (const id of ['toasts', 'toasts-alert']) {
     const region = regionOf(id);
-    const moved = region.parentElement !== home;
-    if (!moved && (home === document.body || region.matches(':popover-open'))) continue;
-    if (region.hasAttribute('popover')) {
-      if (region.matches(':popover-open')) region.hidePopover();
-      region.removeAttribute('popover');
+    try {
+      seat(region, home);
+    } catch {
+      unseat(region);
     }
-    if (moved) home.append(region);
-    if (home !== document.body && typeof region.showPopover === 'function') {
-      region.setAttribute('popover', 'manual');
-      region.showPopover();
-    }
+  }
+}
+
+function seat(region, home) {
+  const moved = region.parentElement !== home;
+  if (!moved && (home === document.body || popoverOpen(region))) return;
+  unpop(region);
+  if (moved) home.append(region);
+  if (home !== document.body && typeof region.showPopover === 'function') {
+    region.setAttribute('popover', 'manual');
+    region.showPopover();
+  }
+}
+
+/** Back in the page, out of any top layer: where index.html has it. */
+function unseat(region) {
+  unpop(region);
+  if (region.parentElement !== document.body) document.body.append(region);
+}
+
+function unpop(region) {
+  if (!region.hasAttribute('popover')) return;
+  if (popoverOpen(region)) region.hidePopover?.();
+  region.removeAttribute('popover');
+}
+
+// `:popover-open` needs Safari 17 / Chrome 114, `:modal` Safari 15.6 / Chrome 105; an engine that does not know a
+// pseudo-class throws from matches() and querySelectorAll() instead of answering no.
+function popoverOpen(node) {
+  try {
+    return node.matches(':popover-open');
+  } catch {
+    return false;
+  }
+}
+
+// `dialog[open]` also counts a dialog opened with show(), which is rare here and only means a toast drawn inside it.
+function openModals() {
+  try {
+    return [...document.querySelectorAll('dialog:modal')];
+  } catch {
+    return [...document.querySelectorAll('dialog[open]')];
   }
 }
 
@@ -4038,10 +4079,7 @@ if (typeof document !== 'undefined') document.addEventListener('close', (event) 
   if (dialog?.localName !== 'dialog') return;
   for (const id of ['toasts', 'toasts-alert']) {
     const region = document.getElementById(id);
-    if (!region || !dialog.contains(region)) continue;
-    if (region.matches(':popover-open')) region.hidePopover();
-    region.removeAttribute('popover');
-    document.body.append(region);
+    if (region && dialog.contains(region)) unseat(region);
   }
   seatToasts();
 }, true);
