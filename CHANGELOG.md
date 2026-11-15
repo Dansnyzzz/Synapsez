@@ -2,11 +2,13 @@
 
 ## 2026-11-15 — Billing, as an administrators' preview (1.30.0)
 
-**Billing is built and switched on for administrators only.** To everyone else every billing route answers `404`, nobody is charged, and no limit is enforced on users until the owner switches `BILLING_MODE` to `live` (unset or unknown means `preview`). An administrator is counted only once they hold a plan or a balance, and even then a call is never refused: when nothing could be held it goes ahead as before and a "would refuse" counter goes up.
+**Billing is built and switched on for administrators only.** To everyone else billing itself (plans, the balance, charges) stays hidden: every billing route answers `404` and nobody is charged until the owner switches `BILLING_MODE` to `live` (unset or unknown means `preview`). An administrator is counted only once they hold a plan or a balance, and even then a call is never refused: when nothing could be held it goes ahead as before and a "would refuse" counter goes up.
+
+**What does apply to every account from this release:** an account with no plan may keep 0.5 GB of files (administrators are exempt; nothing stored is deleted, a new file is refused past it). The Vercel stand-in cloud computer, used when E2B is unavailable, is not started past 4.5 CPU-hours a month for the whole deployment: each start counts 20 minutes of 2 vCPUs, so that is about 6 sessions a month for everyone together. And each person's free share of metered searches and cloud computer time is worked out monthly instead of daily; in this first month everyone's share is prorated from the day they first use it.
 
 **Plans** Plus, Pro and Max at 5, 8 and 15 USD a month (57, 91 and 171 a year), charged in đồng at the day's rate and paid by bank transfer through SePay. Allowances are a month's, usable on any day; there are no daily limits. Past them, or with no plan, a balance pays at prices anchored to 25,656 đ/USD that follow the rate: 400đ a search, 5,000đ an hour of cloud computer, 1,000đ per GB-month. The Billing tab, PDF receipts, promo codes and the administrators' Billing card come with it; SePay e-invoices are built and off.
 
-**Free shares worked out monthly** from the free keys' real capacity, with a fifth held back for people who start late, and 0.5 GB of files for an account with no plan.
+**Free shares worked out monthly** from the free keys' real capacity (divided by the people counted this UTC month or last), with a fifth held back for people who start late.
 
 **Not verified live:** the SePay webhook, its transaction list, a real QR and transfer, concurrency on real Postgres, and the new Vietnamese text. The README's Billing section lists them and the variables to set.
 

@@ -2833,6 +2833,15 @@ section('billing: the sheet, the menu row, the mode and the release notes agree 
   check("the changelog's newest entry is the package version", log[0].version === version, `${log[0].version} vs ${version}`);
   check("1.30.0 is released, in both languages, as an administrators' preview", version === '1.30.0' && log[0].new.vi.length > 0 && log[0].new.en.length === log[0].new.vi.length && /administrators/i.test(log[0].new.en.join(' ')));
   check('CHANGELOG.md carries the same version', read('CHANGELOG.md').includes('(1.30.0)'));
+  // What does apply to members from 1.30.0 is said where they read it (final review, 2026-11-15): the line the app shows
+  // first named no limit at all, and the 0.5 GB file limit (storageQuota.js) applies to every account with no plan.
+  const [headEn, headVi] = [log[0].new.en[0], log[0].new.vi[0]];
+  check("  the app's first line for 1.30.0 names the 0.5 GB file limit, in both languages", /0\.5 GB/.test(headEn) && /0,5 GB/.test(headVi), `${headEn} | ${headVi}`);
+  check('  and nowhere says no limit applies to members', !/no\s+limits?\s+(is\s+|are\s+)?enforced/i.test(log[0].new.en.join(' ')) && !/chưa có giới hạn nào/i.test(log[0].new.vi.join(' ')) && !/no\s+limit\s+is\s+enforced/i.test(billing) && !/no\s+limit\s+is\s+enforced/i.test(read('CHANGELOG.md').split('\n## ')[1] || ''));
+  check('  the README says what applies to members: the file limit, the stand-in cap, the monthly share', /0\.5 GB/.test(billing) && /4\.5 CPU-hours/.test(billing) && /prorated|from the day/i.test(billing));
+  check('  the README counts people as the code does (this month and last, UTC), not "the last 30 days"', !/last\s+30\s+days/.test(billing) && /this\s+(UTC\s+)?month\s+(and|or|plus)\s+(the\s+)?last/i.test(billing));
+  // acceptSepay parses JSON only and answers 400 to a form-encoded body, so the owner's step has to say so.
+  check("  the simulate button is on the administrators' card, and SePay must send JSON", !/simulated\s+transfer\s+\(Settings\s+→\s+Billing/.test(billing) && /application\/json/.test(billing));
   for (const name of ['BILLING_MODE', 'SEPAY_WEBHOOK_SECRET', 'SEPAY_API_TOKEN', 'SEPAY_EINVOICE_CLIENT_ID', 'SEPAY_EINVOICE_CLIENT_SECRET', 'SEPAY_BANK_ACCOUNT', 'SEPAY_BANK_CODE', 'SEPAY_ACCOUNT_NAME', 'BILLING_SELLER_NAME', 'BILLING_TAX_RATE', 'E2B_CONCURRENT_LIMIT', 'DATABASE_INCLUDED_GB', 'VERCEL_SANDBOX_MONTHLY_CPU_HOURS']) {
     check(`README documents ${name} in the Billing section`, billing.includes(name));
   }

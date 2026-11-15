@@ -2700,11 +2700,25 @@ Being explicit, so you do not assume protection that is not there:
 ## Billing
 
 Billing (1.30.0) is an **administrators' preview**. It is built to take real money by bank transfer
-through [SePay](https://sepay.vn), but nothing is switched on for members: to anyone who is not an
-administrator every billing route answers `404`, nobody is charged, and no limit is enforced on
-anybody. The preview exists so the owner can pay for a plan, top up, and read the ledger on their own
+through [SePay](https://sepay.vn), but billing itself (plans, the balance, charges) is not switched on
+for members: to anyone who is not an administrator every billing route answers `404`, and nobody is
+charged. The preview exists so the owner can pay for a plan, top up, and read the ledger on their own
 account before deciding to go live. Going live is a later release; it is not a setting that is safe to
 flip today (see "Not built yet" below).
+
+Three limits came with it, and they **do apply to every account from this release**:
+
+- **0.5 GB of files** for an account with no plan (`FREE_STORAGE_BYTES`, `server/storageQuota.js`
+  `assertRoom`); administrators are exempt. Nothing already stored is deleted: past the limit a new
+  file, or a new copy of one, is refused until some are deleted.
+- **The Vercel stand-in's monthly cap**: the cloud computer used when E2B is unavailable is not
+  started past 4.5 CPU-hours a month for the whole deployment (`VERCEL_SANDBOX_MONTHLY_CPU_HOURS`,
+  `server/sandbox.js`). Each start counts 20 minutes of 2 vCPUs, so that is about 6 sessions a month
+  for everyone together.
+- **A monthly free share**: each person's share of metered searches and cloud computer time is worked
+  out once a month instead of every day (see "Plans and pay as you go"). In this first month everyone's
+  share is prorated from the day they first use it, because nobody has a count from last month yet.
+  Past the share a search uses the free engines only, and cloud computer work moves to the stand-in.
 
 ### Modes
 
@@ -2758,11 +2772,12 @@ unused share of the old one as credit; a downgrade, a move from a year to a mont
 effect at the period's end. After a missed renewal there are 3 days of grace, reminded 3 days before
 the end, and unpaid days of grace are not charged.
 
-**The free shares are worked out each month from real capacity**, not set: on the 1st, the free keys'
-capacity in searches divided by the people who used metered searches in the last 30 days (at least
-10), between 30 and 900 a month; the cloud computer likewise (at least 3 people). 80% of the capacity
-is shared out and 20% held back for people who start later in the month. A share is held for the month,
-raised if a key is added and never lowered mid-month. Settings → Usage shows each person their figures
+**The free shares are worked out each month from real capacity**, not set: on the first call of a UTC
+month, the free keys' capacity in searches divided by the people who used metered searches this UTC
+month or last (at least 10), between 30 and 900 a month; the cloud computer likewise (at least 3
+people). 80% of the capacity is shared out and 20% held back for people who start later in the month:
+someone first counted after the 1st, with no count last month, gets the share for the days that are
+left. A share is held for the month, raised if a key is added and never lowered mid-month. Settings → Usage shows each person their figures
 and how they were worked out. An account with no plan may keep 0.5 GB of files, administrators
 excepted, while files live in the database.
 
@@ -2793,12 +2808,15 @@ message. The same rows are in the deploy table under "Deploy"; this is the list 
    `SEPAY_ACCOUNT_NAME`, and optionally `SEPAY_API_TOKEN`. `BILLING_MODE` may stay unset, which is
    preview.
 2. In SePay set the payment-code prefix to `SZ`, and add a webhook to
-   `https://<your deployment>/api/billing/sepay` signed with HMAC and the same secret, with "resend
-   automatically when the server returns an error" on. The webhook answers `{"success": true}` only
-   after the database work is done, so a failure is retried instead of lost.
+   `https://<your deployment>/api/billing/sepay` signed with HMAC and the same secret, sending its
+   body as JSON (`application/json`), with "resend automatically when the server returns an error" on.
+   The endpoint reads JSON only: a form-encoded body is answered `400` and credits nothing. The webhook
+   answers `{"success": true}` only after the database work is done, so a failure is retried instead of
+   lost.
 3. Give the `billing` permission to any administrator who should see the money.
-4. Test with a simulated transfer (Settings → Billing; offered to the owner only, and only in preview), then one small
-   real transfer: a 50,000đ top-up on your own account.
+4. Test with a simulated transfer (Settings → People → *Billing*, the administrators' card in the
+   Administration group; offered to the owner only, and only in preview), then one small real transfer:
+   a 50,000đ top-up on your own account.
 
 A payment code is `SZ` followed by ten digits, shown with the QR; a transfer is matched on SePay's
 `code` field, else on the transfer's content, and a transfer that matches nothing waits in the
@@ -2824,7 +2842,8 @@ seen to work against the real thing:
 
 ### Not built yet
 
-Refusing anybody (preview never does); a Free plan for everyone and its limits; seats and a Team plan;
+Billing refusing anybody (preview never does; the three limits above are not billing's); a Free plan
+for everyone and its limits; seats and a Team plan;
 the terms (credit expiry, no withdrawals) and the privacy policy's billing and SePay paragraphs; cards
 through SePay's gateway, which needs a registered business; moving files out of Postgres into object
 storage, which must come before going live; and switching `BILLING_MODE` to `live`.

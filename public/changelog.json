@@ -5,13 +5,13 @@
       "date": "2026-11-15",
       "new": {
         "vi": [
-          "Thanh toán đã có mặt, nhưng mới là bản xem trước dành cho quản trị viên: người khác không thấy gì, không ai bị tính tiền và chưa có giới hạn nào áp lên người dùng cho đến khi chủ triển khai bật chính thức.",
+          "Thanh toán đã có mặt, nhưng mới là bản xem trước dành cho quản trị viên: gói, số dư và các khoản phí bị ẩn với thành viên và không ai bị tính tiền. Từ bản này, mọi tài khoản đều chịu các giới hạn sau: tài khoản không có gói giữ được tối đa 0,5 GB tệp (quản trị viên không bị giới hạn), máy tính đám mây dự phòng chỉ chạy tối đa 4,5 giờ CPU mỗi tháng cho cả hệ thống, và hạn mức miễn phí nay tính theo tháng.",
           "Gói Plus, Pro và Max (5, 8 và 15 USD một tháng; 57, 91 và 171 USD một năm), trả bằng chuyển khoản qua SePay, tính bằng đồng theo tỷ giá trong ngày. Hạn mức của gói tính theo tháng, dùng ở bất kỳ ngày nào, không có giới hạn theo ngày.",
           "Nạp số dư để trả theo mức dùng vượt gói: tìm kiếm, máy tính đám mây và dung lượng lưu trữ, giá theo tỷ giá USD.",
           "Thẻ Thanh toán trong Cài đặt, phiếu thu PDF, mã khuyến mãi và thẻ Thanh toán của quản trị viên để xem dòng tiền và xử lý chuyển khoản chưa khớp."
         ],
         "en": [
-          "Billing has arrived as an administrators' preview: hidden from everyone else, nothing charged to members, and no limits enforced on users until the owner switches it live.",
+          "Billing has arrived as an administrators' preview: plans, the balance and charges are hidden from members and nobody is charged. These limits do apply to every account from this release: 0.5 GB of files for an account with no plan (administrators excepted), 4.5 CPU-hours a month of the stand-in cloud computer for the whole deployment, and free shares counted by the month.",
           "Plus, Pro and Max plans (5, 8 and 15 USD a month; 57, 91 and 171 USD a year), paid by bank transfer through SePay and charged in đồng at the day's rate. A plan's allowances are a month's, usable on any day, with no daily limits.",
           "A balance to pay for use beyond a plan: searches, cloud computer time and storage, priced to follow the USD rate.",
           "A Billing tab in Settings, PDF receipts, promo codes, and a Billing card for administrators to read the money and settle transfers that matched nobody."
@@ -19,12 +19,12 @@
       },
       "improved": {
         "vi": [
-          "Hạn mức miễn phí của mỗi người nay tính theo tháng từ dung lượng thật của các khoá miễn phí, và Cài đặt → Mức dùng cho biết cách tính.",
-          "Tài khoản không có gói giữ được 0,5 GB tệp (quản trị viên không bị giới hạn này)."
+          "Hạn mức miễn phí của mỗi người cho tìm kiếm tính phí và thời gian máy tính đám mây nay tính theo tháng thay vì theo ngày, từ dung lượng thật của các khoá miễn phí. Trong tháng đầu tiên này, hạn mức của mọi người được tính theo số ngày còn lại kể từ ngày họ dùng lần đầu; vượt hạn mức thì tìm kiếm chỉ dùng các công cụ miễn phí và việc trên máy tính đám mây chuyển sang máy dự phòng. Cài đặt → Mức dùng cho biết cách tính.",
+          "Máy tính đám mây dự phòng (dùng khi E2B không sẵn sàng) không khởi động quá 4,5 giờ CPU mỗi tháng cho cả hệ thống. Mỗi lần khởi động tính 20 phút với 2 vCPU, tức khoảng 6 phiên mỗi tháng cho tất cả mọi người cộng lại. Tài khoản không có gói giữ được 0,5 GB tệp; tệp đã lưu không bị xoá, chỉ tệp mới bị từ chối khi đã đầy."
         ],
         "en": [
-          "Each person's free share is now a month's, worked out from the real capacity of the free keys, and Settings → Usage says how.",
-          "An account with no plan may keep 0.5 GB of files (administrators excepted)."
+          "Each person's free share of metered searches and cloud computer time is now a month's instead of a day's, worked out from the real capacity of the free keys. In this first month everyone's share is prorated from the day they first use it; past it, searches use the free engines only and cloud computer work moves to the stand-in. Settings → Usage says how it was worked out.",
+          "The stand-in cloud computer, used when E2B is unavailable, is not started past 4.5 CPU-hours a month for the whole deployment. Each start counts 20 minutes of 2 vCPUs, so that is about 6 sessions a month for everyone together. An account with no plan may keep 0.5 GB of files; nothing stored is deleted, only a new file is refused once it is full."
         ]
       }
     },
