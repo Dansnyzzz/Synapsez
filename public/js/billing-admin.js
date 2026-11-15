@@ -254,7 +254,7 @@ export function createBillingAdmin(host, { api, toast, armed }) {
       said.promo = { ok: false, text: err.message };
     }
     await load();
-    host.querySelector('#adm-promo-code')?.focus();
+    /** @type {HTMLElement | null} */ (host.querySelector('#adm-promo-code'))?.focus();
   }
 
   async function simulate() {
@@ -262,7 +262,7 @@ export function createBillingAdmin(host, { api, toast, armed }) {
     if (!select.value) {
       said.sim = { ok: false, text: t('billing.admin.simulateNone') };
       paint();
-      host.querySelector('#adm-sim-order')?.focus();
+      /** @type {HTMLElement | null} */ (host.querySelector('#adm-sim-order'))?.focus();
       return;
     }
     try {
@@ -272,7 +272,7 @@ export function createBillingAdmin(host, { api, toast, armed }) {
       said.sim = { ok: false, text: err.message };
     }
     await load();
-    host.querySelector('#adm-sim-order')?.focus();
+    /** @type {HTMLElement | null} */ (host.querySelector('#adm-sim-order'))?.focus();
   }
 
   host.addEventListener('click', (event) => {

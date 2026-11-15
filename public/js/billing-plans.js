@@ -294,7 +294,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       const settled = await Promise.allSettled([api.billingQuote({ plan: wanted.plan, period: 'month' }), api.billingQuote({ plan: wanted.plan, period: 'year' })]);
       if (checkout !== wanted) return;
       const good = settled.find((r) => r.status === 'fulfilled');
-      if (!good) throw settled[0].reason;
+      // None came back, so the first is a rejection.
+      if (!good) throw /** @type {PromiseRejectedResult} */ (settled[0]).reason;
       // With the rate source down only a renewal whose price is already locked can be quoted: the other period is left out (shown
       // as unavailable and not chosen) instead of failing the whole checkout.
       const [month, year] = settled.map((r, i) => (r.status === 'fulfilled' ? r.value : { ...good.value, period: i ? 'year' : 'month', kind: 'later', priceVnd: 0, creditVnd: 0, totalVnd: 0, dueVnd: null, useBalance: null, unavailable: true }));

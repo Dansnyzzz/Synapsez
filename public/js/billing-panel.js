@@ -22,6 +22,7 @@ const LOW_MAX = 100_000_000;
 const SECTIONS = ['plan', 'credits', 'alerts', 'period', 'info', 'payment', 'tx', 'receipts'];
 const KIND_WORDS = { topup: 'topup', plan: 'plan', usage: 'usage', promo: 'promo', assign: 'assign', expire: 'expire', forfeit: 'forfeit', adjust: 'adjust', refund: 'refund' };
 
+/** @param {string | number | Date} value @param {'full' | 'long' | 'medium' | 'short'} [style] */
 const dateOf = (value, style = 'long') => new Intl.DateTimeFormat(localeTag(), { dateStyle: style }).format(new Date(value));
 const count = (n) => new Intl.NumberFormat(localeTag(), { maximumFractionDigits: 1 }).format(n);
 const signed = (n) => `${n < 0 ? '−' : '+'}${vnd(Math.abs(n))}`;
@@ -375,7 +376,7 @@ export function createBillingPanel(host, { api, toast, plans }) {
     // A read that lands while this is on its way must draw the card again, not be taken for the card as it was.
     drawn.delete('tx');
     const list = $('.bill__tx');
-    const button = $('[data-more]');
+    const button = /** @type {HTMLButtonElement | null} */ ($('[data-more]'));
     if (button) button.disabled = true;
     try {
       const page = await readFeed(feed.next, feed.chip);
