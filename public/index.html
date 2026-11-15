@@ -355,7 +355,11 @@
         <footer class="sidebar__foot">
           <button class="account" id="account-button" type="button" aria-haspopup="menu" aria-expanded="false">
             <span class="account__avatar" aria-hidden="true"></span>
-            <span class="account__name rail__label" data-i18n-js></span>
+            <!-- The plan line is for accounts the server says see billing (preview: administrators); hidden otherwise. -->
+            <span class="account__who rail__label">
+              <span class="account__name" data-i18n-js></span>
+              <span class="account__plan" hidden></span>
+            </span>
             <svg class="account__chev rail__label" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
               <path d="m6 8 4 4 4-4" />
             </svg>

@@ -415,7 +415,7 @@ section("the account at the foot of the sidebar, and its menu");
     };
   });
   check('pressed, it opens a menu above it, headed by the email', menu.email === 'ui@test.local' && menu.above && menu.expanded === 'true', JSON.stringify(menu));
-  check('  Settings, Usage, Theme, Ranking, Language, Get help, Give feedback, View changelog, Learn more and Log out — in that order', menu.rows.join() === 'settings,usage,theme,ranking,language,help,feedback,changelog,learn,logout', menu.rows.join());
+  check('  Settings, Usage, Theme, Ranking, Language, Get help, Give feedback, Upgrade plan (this account is an administrator, so it sees billing in preview), View changelog, Learn more and Log out — in that order', menu.rows.join() === 'settings,usage,theme,ranking,language,help,feedback,upgrade,changelog,learn,logout', menu.rows.join());
   check('  Settings names its shortcut', /^(Ctrl|⌘)\+Shift\+,$/.test(menu.settingsKeys), menu.settingsKeys);
 
   await page.hover('.plusmenu--account [data-row="learn"]');

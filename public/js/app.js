@@ -39,7 +39,9 @@ import { planWindow, samePlan } from './plan-window.js';
 import { createUploadsView } from './uploads-view.js';
 import { createAttachments } from './attachments.js';
 import { openPlusMenu, closePlus } from './plus-menu.js';
-import { openAccountMenu, paintAccount, shortcutFor, renderShortcuts } from './account-menu.js';
+import { openAccountMenu, paintAccount, paintPlan, shortcutFor, renderShortcuts } from './account-menu.js';
+import { createPlansSheet } from './billing-plans.js';
+import { planName } from './billing-format.js';
 import { createUsagePanel } from './usage-panel.js';
 import { createThemes } from './themes-panel.js';
 import { createThemePicker } from './theme-picker.js';
@@ -957,6 +959,7 @@ async function start() {
   usageAlert.refresh({ soon: true });
   if (state.boot.prefs.modelNotice) noteModelRetired(state.boot.prefs.modelNotice.from);
   fillSettings();
+  void refreshPlanLine();
   // Where scheduled work actually runs differs between a local run and a
   // deployment, and the shelf says which rather than implying either.
   pages.configure({ localMachine: !!state.boot.runtime?.localMachine });
@@ -5358,6 +5361,24 @@ const answerFeedback = createAnswerFeedback({
 });
 const changelog = createChangelog();
 
+/* Billing preview (2026-11-14): shown only when the server says this account sees it. */
+const billingVisible = () => !!state.boot?.user?.billing?.visible;
+let planLineId = null;
+const paintPlanLine = () => paintPlan($('account-button'), planLineId ? planName(planLineId) : '');
+async function refreshPlanLine() {
+  // A member asks nothing: the routes would only answer 404.
+  planLineId = null;
+  if (billingVisible()) {
+    try {
+      planLineId = (await api.billing()).plan?.plan || 'free';
+    } catch {
+      /* the line stays empty; the sheet says what went wrong when it is opened */
+    }
+  }
+  paintPlanLine();
+}
+const plansSheet = createPlansSheet({ api, toast, onChanged: refreshPlanLine });
+
 /* Privacy → Your data → Manage: what this account holds, kind by kind (owner, 2026-11-01). */
 const cloakPage = createCloakPage({ state });
 const yourData = createYourData({
@@ -5387,6 +5408,8 @@ $('account-button').addEventListener('click', () =>
     openShortcuts,
     openFeedback: () => feedback.open(),
     openChangelog: () => changelog.open(),
+    billingVisible,
+    openPlans: () => plansSheet.open(),
     logout: signOut,
   }),
 );
@@ -5471,6 +5494,7 @@ async function changeLanguage(language) {
   onboarding.refresh();
   // The account's own line carries a translated label for screen readers.
   paintAccount($('account-button'), state.boot.user);
+  paintPlanLine();
   try {
     state.boot.prefs = await api.savePrefs({ language });
   } catch (err) {

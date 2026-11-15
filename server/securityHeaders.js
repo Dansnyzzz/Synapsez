@@ -25,7 +25,7 @@ export const CONTENT_SECURITY_POLICY = [
   "style-src 'self' 'unsafe-inline'",
   // The cloud browser's live screen streams from the account's own machine, at
   // an address E2B gives it under e2b.app, or Vercel under vercel.run.
-  "img-src 'self' data: blob: https://*.e2b.app https://*.vercel.run",
+  "img-src 'self' data: blob: https://*.e2b.app https://*.vercel.run https://qr.sepay.vn",
   "font-src 'self'",
   // A YouTube link in a reply plays in place, from the no-cookie domain only.
   "frame-src 'self' https://www.youtube-nocookie.com",

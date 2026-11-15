@@ -120,6 +120,24 @@ export const api = {
   /** Agreeing to the documents as they are now — `versions` as bootstrap's `consent.current` says them. */
   agree: (versions) => request('POST', '/api/consent', versions),
 
+  /**
+   * Billing (preview: administrators only; a member's calls are 404s and are never made). The shapes
+   * are server/routes/billing.js's: the plan and balance, the plan list with the rate, a quote, an order
+   * and its status, the billing information, the alerts, promo codes and the ledger.
+   */
+  billing: () => request('GET', '/api/billing'),
+  billingPlans: () => request('GET', '/api/billing/plans'),
+  billingQuote: (body) => request('POST', '/api/billing/quote', body),
+  billingOrder: (body) => request('POST', '/api/billing/orders', body),
+  billingOrderStatus: (id) => request('GET', `/api/billing/orders/${encodeURIComponent(id)}`),
+  billingCancelOrder: (id) => request('POST', `/api/billing/orders/${encodeURIComponent(id)}/cancel`),
+  billingProfile: (body) => request('PUT', '/api/billing/profile', body),
+  billingSubscription: (body) => request('PUT', '/api/billing/subscription', body),
+  billingAlerts: (body) => request('PUT', '/api/billing/alerts', body),
+  billingPromo: (code) => request('POST', '/api/billing/promo', { code }),
+  billingTransactions: (query) => request('GET', `/api/billing/transactions?${new URLSearchParams(clean(query))}`),
+  billingReceipts: () => request('GET', '/api/billing/receipts'),
+
   /** Themes, the boards and titles (server/themes.js). */
   themes: () => request('GET', '/api/themes'),
   selectTheme: (id) => request('PUT', '/api/themes/selected', { id }),
