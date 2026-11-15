@@ -1319,6 +1319,16 @@ const planOf = (states) =>
 const SCRIPT = ['rppppp', 'dddrpp', 'ddddrp', 'dddddr', 'dddddd'];
 const arrived = [];
 const held = [];
+/**
+ * Lets the model's next answer go. The hook only exists once that request has
+ * reached the stand-in model, and on a loaded machine the page can draw the step
+ * before the run has sent it: calling `held[i]()` straight away threw
+ * "held[5] is not a function" in a full test:ui run (2026-11-15).
+ */
+const release = async (i) => {
+  await until(() => typeof held[i] === 'function');
+  held[i]?.();
+};
 const planner = http.createServer((req, res) => {
   let raw = '';
   req.on('data', (chunk) => (raw += chunk));
@@ -1411,7 +1421,7 @@ section('Progress: the step it is on, a line down the list, no blue band');
   check('nothing done yet: every step, no button', p.titles.length === 6 && p.fold === null, `${p.titles.length} ${p.fold}`);
   await progressShot('1-first-step');
 
-  held[1]();
+  await release(1);
   await until(async () => (await progress()).count === 'Step 4 of 6');
   p = await progress();
   check('"1 earlier step", singular, over the two before the current step (screenshot 2)', p.fold === '1 earlier step', String(p.fold));
@@ -1425,7 +1435,7 @@ section('Progress: the step it is on, a line down the list, no blue band');
   check('a line runs from the button down every step but the last', p.foldLine && p.lines.slice(0, -1).every(Boolean) && p.lines.at(-1) === false, `${p.foldLine} ${p.lines}`);
   await progressShot('2-one-earlier');
 
-  held[2]();
+  await release(2);
   await until(async () => (await progress()).count === 'Step 5 of 6');
   p = await progress();
   check('"2 earlier steps" as the run moves on', p.fold === '2 earlier steps' && p.states === 'ddrp' && p.titles[0] === 'Check the sources', `${p.fold} ${p.states} ${p.titles[0]}`);
@@ -1442,7 +1452,7 @@ section('Progress: the step it is on, a line down the list, no blue band');
     await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
   }
 
-  held[3]();
+  await release(3);
   await until(async () => (await progress()).count === 'Step 6 of 6');
   p = await progress();
   check('on the last step it stays open, as it was left', p.titles.length === 6 && p.fold === 'Hide earlier steps' && p.states === 'dddddr', `${p.fold} ${p.states}`);
@@ -1455,7 +1465,7 @@ section('Progress: the step it is on, a line down the list, no blue band');
   await page.keyboard.press('Enter');
   await page.waitForTimeout(120);
 
-  held[4]();
+  await release(4);
   await until(async () => (await progress()).states === 'dd');
   p = await progress();
   check('finished: only the last two, "4 earlier steps" (screenshot 6)', p.fold === '4 earlier steps' && p.titles.join() === 'Review the draft,Send it', `${p.fold} ${p.titles}`);
@@ -1463,7 +1473,7 @@ section('Progress: the step it is on, a line down the list, no blue band');
   check('  and no step is "current" any more', p.current.length === 0, p.current.join());
   check('  the heading at the end', p.count === 'Step 6 of 6', p.count);
 
-  held[5]();
+  await release(5);
   await until(async () => !(await progress()).live);
   p = await progress();
   check('the run ends and the plan stays as it was', !p.live && p.states === 'dd' && p.fold === '4 earlier steps', `${p.live} ${p.states}`);
