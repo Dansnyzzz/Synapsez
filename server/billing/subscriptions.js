@@ -136,7 +136,7 @@ async function renewFromBalance(sub, now) {
     const total = order ? order.totalVnd : (await renewalTerms(sub, { now })).priceVnd;
     if ((await store.billingState(sub.userId)).balanceVnd < total) return null;
     order ??= (await renewalOrderFor(sub, { now })).order;
-    await tryApply(order.id, { now });
+    await tryApply(order.id, { now, autoRenew: true });
     const cur = await store.getSubscription(sub.userId);
     return cur && +cur.periodEnd !== +sub.periodEnd ? cur : null;
   } catch (err) {

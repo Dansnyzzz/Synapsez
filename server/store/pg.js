@@ -5644,19 +5644,21 @@ export function createPgStore(connectionString) {
      * once received_vnd covers it: every bank transfer is credited to the balance first, so
      * paying the order takes that money back out. Any other way to mark such an order paid
      * would give the plan and keep the money.
+     * `consent` (auto-renew is on, asked by tryApply for a renewal that is its subscription's own) lets a renewal order be paid from the
+     * balance whatever its use_balance says; it is the same statement and the same checks, and it never applies to another kind of order.
      * The balance row is made first (harmless, no money moves) so that case has one to join.
      * An order carries the subscription it was quoted on (`basis`: plan|period|end, or none|<end of the lapse, 0 if never>);
      * it is paid only while that is still the plan in force, checked in this statement. What makes it hold when two orders are
      * paid at the same moment is the unique index on (user, basis) for paid orders: the second one's UPDATE raises 23505 and
      * the whole statement, debit included, rolls back (callers treat that as a stale order).
      */
-    async payOrderFromBalance(orderId, now) {
+    async payOrderFromBalance(orderId, now, { consent = false } = {}) {
       await q('INSERT INTO balances (user_id) SELECT user_id FROM billing_orders WHERE id = $1 AND user_id IS NOT NULL ON CONFLICT (user_id) DO NOTHING', [String(orderId)]);
       const rows = await q(
         `WITH o AS (
            SELECT id, user_id, total_vnd FROM billing_orders
             WHERE id = $1 AND status = 'pending' AND expires_at > $2::timestamptz
-              AND (use_balance OR received_vnd >= total_vnd)
+              AND (use_balance OR received_vnd >= total_vnd OR ($3::boolean AND kind = 'renewal'))
               AND (basis IS NULL
                 OR (basis LIKE 'none|%' AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.user_id = billing_orders.user_id AND s.status <> 'ended' AND s.period_end + INTERVAL '3 days' > $2::timestamptz)
                     AND split_part(basis, '|', 2) = COALESCE((SELECT (EXTRACT(EPOCH FROM s.period_end) * 1000)::bigint FROM subscriptions s WHERE s.user_id = billing_orders.user_id), 0)::text)
@@ -5676,7 +5678,7 @@ export function createPgStore(connectionString) {
            SELECT p.user_id, 'plan', -p.total_vnd, p.id FROM p
          )
          SELECT * FROM p`,
-        [String(orderId), now],
+        [String(orderId), now, !!consent],
       );
       return orderRow(rows[0]);
     },

@@ -183,10 +183,15 @@ section('a renewal that exists keeps its price, and a direct same-terms purchase
   await forget();
   allDown();
   erapiSays(30000);
-  const q =await orders.quote(u.id, { plan: 'plus', period: 'month' }, { now: inGrace });
+  const q = await orders.quote(u.id, { plan: 'plus', period: 'month' }, { now: inGrace });
   check('  at another rate, the quote is still the locked price and rate, and says the order does not use the balance', q.kind === 'renewal' && q.priceVnd === 129000 && q.totalVnd === 129000 && q.rate === 25655.85 && q.useBalance === false, JSON.stringify(q));
+  const none = await orders.quote(u.id, { plan: 'plus', period: 'month' }, { now: inGrace });
+  check('  the quote carries the amount still to transfer, which is what the QR will ask for', none.dueVnd === 129000, String(none.dueVnd));
+  await store.addOrderReceived(made.order.id, 50000);
+  const short = await orders.quote(u.id, { plan: 'plus', period: 'month' }, { now: inGrace });
+  check('  after a short transfer it is the rest (total less what arrived), not the total', short.totalVnd === 129000 && short.dueVnd === 79000, JSON.stringify([short.totalVnd, short.dueVnd]));
   const other = await orders.quote(u.id, { plan: 'pro', period: 'month' }, { now: inGrace });
-  check('  and a plan with no order made is priced at the rate of the day, with no say about the balance', other.rate === 30000 && other.useBalance === null, JSON.stringify(other));
+  check('  and a plan with no order made is priced at the rate of the day, with no say about the balance or the due amount', other.rate === 30000 && other.useBalance === null && other.dueVnd === null, JSON.stringify(other));
   await prime();
 }
 
@@ -299,6 +304,22 @@ section('catchUp: renew from the balance, grace, end');
   const cs = await store.getSubscription(c.id);
   check('  a renewal paid by hand in grace also starts at the old end', manual.paidNow && manual.order.kind === 'renewal' && cs.status === 'active' && +cs.periodStart === +T1 && +cs.periodEnd === +periodEnd(T1, 'month') && (await balanceOf(c.id)) === 71000, JSON.stringify(cs));
   check('  a renewal order lasts until grace ends', +manual.order.expiresAt === +addDays(T1, 3));
+
+  // Round 2 (review): auto-renew on is consent to pay the renewal from the balance, even when the order was made with "use my
+  // balance" unticked at a checkout (otherwise the plan ends in grace with the money sitting there).
+  const consenting = await mk(300000);
+  const unticked = await orders.createOrder(consenting.id, { kind: 'renewal', useBalance: false }, { now: addDays(T1, 1) });
+  check('a renewal order made without the balance is waiting for a transfer', unticked.order.useBalance === false && unticked.order.status === 'pending' && !unticked.paidNow, JSON.stringify(unticked.order));
+  const wentThrough = await subs.catchUp(consenting.id, { now: addDays(T1, 1) });
+  check('  auto-renew on, enough balance: it renews from the balance all the same, once', wentThrough.status === 'active' && +wentThrough.periodStart === +T1 && (await balanceOf(consenting.id)) === 171000 && (await store.getOrder(unticked.order.id)).status === 'paid', JSON.stringify(wentThrough));
+  const refusing = await mk(300000, { autoRenew: false });
+  const noConsent = await orders.createOrder(refusing.id, { kind: 'renewal', useBalance: false }, { now: addDays(T1, 1) });
+  const stayed = await subs.catchUp(refusing.id, { now: addDays(T1, 1) });
+  check('  auto-renew off: the same order is not paid from the balance', stayed.status === 'grace' && (await balanceOf(refusing.id)) === 300000 && (await store.getOrder(noConsent.order.id)).status === 'pending');
+  const topper = await mk(300000);
+  const tup = await orders.createOrder(topper.id, { kind: 'topup', amountVnd: 100000 }, { now: addDays(T1, 1) });
+  await subs.catchUp(topper.id, { now: addDays(T1, 1) });
+  check('  a top-up order is never paid from the balance by this (the transfer is what credits it)', (await store.getOrder(tup.order.id)).status === 'pending');
 
   const d = await mk(5000);
   await subs.catchUp(d.id, { now: atEnd });

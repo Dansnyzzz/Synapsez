@@ -3827,4 +3827,6 @@ export const en = {
   'billing.admin.outcome.late': 'Simulated: the order had closed, so the money went to the balance.',
   'billing.admin.outcome.topup': 'Simulated: the top-up was credited to the balance.',
   'billing.admin.outcome.other': 'Simulated: the transfer was taken.',
+  // Task 10 fix round 2.
+  'billing.panel.noneYet': 'Nothing to show in what has been looked at so far. Load more to look further back.',
 };

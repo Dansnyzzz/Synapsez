@@ -535,7 +535,7 @@ await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'd
 const OWNER = 'u-bill-owner';
 // A wait that can fail without throwing, so the check after it counts instead of aborting the run.
 const ok = (promise) => promise.then(() => true, () => false);
-// Orders are limited to 10 an hour per account (routes/billing.js) and this whole file is one hour: the sections above make about 6,
+// Orders are limited to 10 an hour per account (server/ratelimit.js) and this whole file is one hour: the sections above make about 6,
 // the ones below about 3 more. A new step that makes an order has to count against that, or reset the limiter first.
 const text = (selector) => page.evaluate((s) => (document.querySelector(s)?.textContent || '').replace(/\s+/g, ' ').trim(), selector);
 const gotoTab = async (p, tab) => {
@@ -783,6 +783,23 @@ section('a plan in grace: Renew now, the date instead of a clock, and no late ca
   check('a renewal good for days shows a date and time, not 4319:59', !/\d{3,}:\d\d/.test(timer) && !/^.*\b\d{2}:\d\d\b.*\b\d{2}:\d\d\b/.test(timer) && /until/i.test(timer) && /20\d\d/.test(timer), timer);
   await page.keyboard.press('Escape');
   await page.waitForSelector('#plans:not([open])', { state: 'attached' }).catch(() => {});
+
+  // The order is made and its price locked: reading it needs no exchange rate, so Renew stays on when the rate source is down.
+  await page.route('**/api/billing/plans', async (route) => {
+    const res = await route.fetch();
+    const body = await res.json();
+    await route.fulfill({ response: res, json: { ...body, rate: null, plans: body.plans.map((p) => ({ ...p, vnd: null })) } });
+  });
+  await page.click('[data-adjust]');
+  await page.waitForSelector('#plans [data-plan="plus"] [data-pick]');
+  check('with no rate but a locked renewal order, Renew is still on', await page.evaluate(() => !document.querySelector('#plans [data-plan="plus"] [data-pick]').disabled));
+  // The rate source being down also fails the quote for the period that has no locked order; the checkout must carry on with the one that has.
+  await page.route('**/api/billing/quote', (route) => (JSON.parse(route.request().postData() || '{}').period === 'year' ? route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"No exchange rate."}' }) : route.fallback()));
+  await page.click('#plans [data-plan="plus"] [data-pick]');
+  check('  and its checkout opens, ready to continue, with the locked price', (await ok(page.waitForSelector('#plans [data-continue]:not([disabled])', { timeout: 5000 }))) && /128,000/.test(await text('#plans .checkout__lines')), await text('#plans .checkout__lines'));
+  await page.unroute('**/api/billing/quote');
+  await page.unroute('**/api/billing/plans');
+  await page.keyboard.press('Escape');
 }
 
 section('a plan in grace with a downgrade scheduled: Renew now is the scheduled plan, never the one that ran');
@@ -801,8 +818,20 @@ section('a plan in grace with a downgrade scheduled: Renew now is the scheduled 
   await page.keyboard.press('Escape');
   await page.click('[data-adjust]');
   await page.waitForFunction(() => document.querySelector('#plans [data-plan="plus"] [data-pick]')?.textContent.trim() === 'Renew');
-  const cards = await page.evaluate(() => ({ plus: document.querySelector('#plans [data-plan="plus"] [data-pick]').textContent.trim(), pro: document.querySelector('#plans [data-plan="pro"] [data-pick]').textContent.trim(), proOff: document.querySelector('#plans [data-plan="pro"] [data-pick]').disabled }));
+  const cards = await page.evaluate(() => ({ plus: document.querySelector('#plans [data-plan="plus"] [data-pick]').textContent.trim(), pro: document.querySelector('#plans [data-plan="pro"] [data-pick]').textContent.trim(), proOff: document.querySelector('#plans [data-plan="pro"] [data-pick]').disabled, lit: [...document.querySelectorAll('#plans .plans__card.is-current')].map((c) => c.dataset.plan).join() }));
+  check('one card is highlighted: the renewal terms (Plus), not the plan that ran', cards.lit === 'plus', cards.lit);
   check('the sheet offers Renew on Plus, and the plan that ran is only the current one (not a way to renew it)', cards.plus === 'Renew' && cards.pro === 'Current plan' && cards.proOff, JSON.stringify(cards));
+  await page.keyboard.press('Escape');
+  // No exchange rate and no locked renewal order for these terms: nothing to renew at, so the button is off.
+  await page.route('**/api/billing/plans', async (route) => {
+    const res = await route.fetch();
+    const body = await res.json();
+    await route.fulfill({ response: res, json: { ...body, rate: null, plans: body.plans.map((p) => ({ ...p, vnd: null })) } });
+  });
+  await page.click('[data-adjust]');
+  await page.waitForSelector('#plans [data-plan="plus"] [data-pick]');
+  check('with no rate and no locked renewal order, Renew is off', await page.evaluate(() => document.querySelector('#plans [data-plan="plus"] [data-pick]').disabled));
+  await page.unroute('**/api/billing/plans');
   await page.keyboard.press('Escape');
   // Put it back as it was (auto-renew off, Plus): with auto-renew on, the next read would renew it from the balance the later sections count.
   await store.saveSubscription(sub);
@@ -838,6 +867,22 @@ section('Receipts and the PDF');
   await keep.click();
   check('the second press marks it returned', await ok(page.waitForFunction(() => document.querySelectorAll('#admin-billing [data-transfer]').length === 0, null, { timeout: 6000 })));
   check('  and focus lands on the list heading, not on the page behind', await page.evaluate(() => document.activeElement?.id === 'adm-h-transfers'), await page.evaluate(() => document.activeElement?.tagName));
+
+  // Someone who goes elsewhere while it is being done is not pulled back to the heading.
+  await store.recordTransfer({ dedupe: 'ref:UNM-RETURN-2', amountVnd: 12000, outcome: 'unmatched', via: 'webhook', content: 'chuyen nham 2', gateway: 'ACB', accountNumber: '0123456789' });
+  await page.click('#tab-usage');
+  await page.click('#tab-admin');
+  await page.waitForSelector('#admin-billing [data-transfer]');
+  await page.route(/\/api\/admin\/billing\/transfers\/\d+\/dismiss/, async (route) => {
+    await new Promise((r) => setTimeout(r, 700));
+    return route.continue();
+  });
+  const slow = page.locator('#admin-billing [data-transfer] [data-dismiss]').first();
+  await slow.click();
+  await slow.click();
+  await page.focus('#settings-search');
+  check('  a person who moved on while it was done keeps their place (focus is not taken back)', await ok(page.waitForFunction(() => document.querySelectorAll('#admin-billing [data-transfer]').length === 0, null, { timeout: 6000 })) && (await page.evaluate(() => document.activeElement?.id === 'settings-search')), await page.evaluate(() => document.activeElement?.id || document.activeElement?.tagName));
+  await page.unroute(/\/api\/admin\/billing\/transfers\/\d+\/dismiss/);
 
   await page.click('#tab-billing');
   await billingReady();
@@ -936,8 +981,54 @@ section('Recent transactions: a page of nothing but hidden rows does not leave L
   check('  and there is no Load more left with nothing behind it', (await page.locator('[data-more]').count()) === 0);
   await page.click('[data-chip="all"]');
 
+  // The guard on how many pages are read looking for a row: past it, Load more stays (there may be more), it does not say there is nothing.
+  const pages = [];
+  await page.route('**/api/billing/transactions*', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get('kind') !== 'usage') return route.fallback();
+    const before = Number(url.searchParams.get('before')) || 10_000;
+    pages.push(before);
+    const zero = { id: before - 1, kind: 'usage', category: 'search', day: '2026-11-14', units: 0, deltaVnd: 0, ref: null, note: null, createdAt: new Date().toISOString(), balanceAfterVnd: 1 };
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ entries: [zero], next: before - 1 }) });
+  });
+  await page.click('[data-chip="usage"]');
+  await page.waitForSelector('[data-more]:not([disabled])', { timeout: 8000 }).catch(() => {});
+  await page.unroute('**/api/billing/transactions*');
+  check('when 25 pages hold nothing worth showing, reading stops there and Load more is still offered', pages.length === 25 && (await page.locator('[data-more]').count()) === 1 && (await page.locator('[data-sec="tx"] .bill__tx').count()) === 0, String(pages.length));
+  await page.click('[data-chip="all"]');
+
   const levels = await page.evaluate(() => ({ panel: [...document.querySelectorAll('#billing-panel [data-sec] > h4')].length, h3: document.querySelectorAll('#billing-panel h3, #admin-billing h3').length, admin: document.querySelectorAll('#admin-billing h4').length }));
   check('the cards\' headings are one level (h4) under the section heading, here and in the card', levels.panel === 8 && levels.h3 === 0 && levels.admin >= 5, JSON.stringify(levels));
+}
+
+section('Load more: a read in between does not make the next Load more repeat rows');
+{
+  const row = (id) => ({ id, kind: 'topup', category: null, day: '2026-11-14', units: 0, deltaVnd: 1000, ref: null, note: null, createdAt: new Date().toISOString(), balanceAfterVnd: 1000 });
+  const ids = (from, n) => Array.from({ length: n }, (_, i) => row(from - i));
+  await page.route('**/api/billing/transactions*', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get('kind')) return route.fallback();
+    const before = Number(url.searchParams.get('before')) || 0;
+    const body = !before ? { entries: ids(300, 20), next: 281 } : before === 281 ? { entries: ids(280, 20), next: 261 } : { entries: ids(260, 20), next: null };
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+  });
+  await page.click('#tab-usage');
+  await page.click('#tab-billing');
+  await billingReady();
+  await page.waitForFunction(() => document.querySelectorAll('[data-sec="tx"] .bill__tx li').length === 20, null, { timeout: 6000 });
+  await page.click('[data-more]');
+  await page.waitForFunction(() => document.querySelectorAll('[data-sec="tx"] .bill__tx li').length === 40, null, { timeout: 6000 });
+  // Something that reads everything again (a promo code that does not work) puts the list back to its first page.
+  await page.fill('#bill-promo', 'nonsense2');
+  await page.click('[data-redeem]');
+  await page.waitForFunction(() => /did not work/.test(document.querySelector('#bill-promo-msg')?.textContent || ''), null, { timeout: 6000 });
+  await page.waitForFunction(() => document.querySelectorAll('[data-sec="tx"] .bill__tx li').length === 20, null, { timeout: 4000 }).catch(() => {});
+  check('after a read the list is the first page again, and Load more is on', (await page.locator('[data-sec="tx"] .bill__tx li').count()) === 20 && (await page.isEnabled('[data-more]')));
+  await page.click('[data-more]');
+  await page.waitForFunction(() => document.querySelectorAll('[data-sec="tx"] .bill__tx li').length >= 40, null, { timeout: 6000 }).catch(() => {});
+  const shown = await page.evaluate(() => [...document.querySelectorAll('[data-sec="tx"] .bill__tx li')].map((li) => li.dataset.tx));
+  check('Load more then, no row is drawn twice', shown.length === 40 && new Set(shown).size === shown.length, `${shown.length} rows, ${new Set(shown).size} different`);
+  await page.unroute('**/api/billing/transactions*');
 }
 
 section('keyboard, names and 360 px');

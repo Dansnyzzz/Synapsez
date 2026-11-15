@@ -182,7 +182,10 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   /** In grace the plan in force has ended and its renewal is the thing to pay for (spec: Renew now). */
   const inGrace = () => data?.account?.plan?.status === 'grace';
 
-  /** What a card's button does: 'current', 'renew' (the plan in grace), 'buy' (an order) or 'later' (at the end of the period). */
+  /**
+   * What a card's button does: 'current' (in force), 'renew' (the terms the plan in grace renews on: the scheduled change if there is one,
+   * else what ran), 'buy' (an order), 'later' (at the end of the period) or 'scheduled' (already chosen for then).
+   */
   function actionFor(id) {
     const cur = current();
     if (cur.plan === 'free') return id === 'free' ? 'current' : 'buy';
@@ -219,14 +222,17 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     else if (action === 'later') label = t('billing.plans.later');
     else if (id === cur.plan) label = t('billing.plans.switchYearly');
     else label = t(cur.plan === 'free' ? 'billing.plans.get' : 'billing.plans.switch', { plan: planName(id) });
-    const disabled = action === 'current' || action === 'scheduled' || (noRate && action === 'buy');
+    // A renewal whose price is already locked needs no exchange rate; any other purchase does.
+    const disabled = action === 'current' || action === 'scheduled' || (noRate && (action === 'buy' || (action === 'renew' && !data.account.plan.renewalLocked)));
+    // One card is lit: the plan in force, or in grace the renewal's terms (the plan that ran is then plain).
+    const lit = action === 'renew' || (action === 'current' && !ORDER.some((x) => actionFor(x) === 'renew'));
     const lines = [
       p.searches ? t('billing.plans.searches', { n: number(p.searches) }) : t('billing.plans.searchesNone'),
       p.sandboxMinutes ? t('billing.plans.computer', { time: minutes(p.sandboxMinutes * 60) }) : t('billing.plans.computerNone'),
       t('billing.plans.storage', { gb: number(p.storageGb) }),
       t('billing.plans.people'),
     ];
-    return `<article class="plans__card${action === 'current' || action === 'renew' ? ' is-current' : ''}" data-plan="${id}" aria-labelledby="plan-${id}-name">
+    return `<article class="plans__card${lit ? ' is-current' : ''}" data-plan="${id}" aria-labelledby="plan-${id}-name">
       <h3 id="plan-${id}-name">${esc(planName(id))}</h3>
       ${noRate ? '' : priceHtml(id)}
       <button type="button" class="btn${action === 'buy' || action === 'renew' ? ' btn--primary' : ''}" data-pick="${id}" data-action="${action}"${disabled ? ' disabled' : ''}>${esc(label)}</button>
@@ -285,8 +291,13 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   async function loadQuotes() {
     const wanted = checkout;
     try {
-      const [month, year] = await Promise.all([api.billingQuote({ plan: wanted.plan, period: 'month' }), api.billingQuote({ plan: wanted.plan, period: 'year' })]);
+      const settled = await Promise.allSettled([api.billingQuote({ plan: wanted.plan, period: 'month' }), api.billingQuote({ plan: wanted.plan, period: 'year' })]);
       if (checkout !== wanted) return;
+      const good = settled.find((r) => r.status === 'fulfilled');
+      if (!good) throw settled[0].reason;
+      // With the rate source down only a renewal whose price is already locked can be quoted: the other period is left out (shown
+      // as unavailable and not chosen) instead of failing the whole checkout.
+      const [month, year] = settled.map((r, i) => (r.status === 'fulfilled' ? r.value : { ...good.value, period: i ? 'year' : 'month', kind: 'later', priceVnd: 0, creditVnd: 0, totalVnd: 0, dueVnd: null, useBalance: null, unavailable: true }));
       wanted.quotes = { month, year };
       wanted.error = null;
       // A move the server only schedules (a year back to months, or the plan already in force) is not bought here:
@@ -309,6 +320,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
 
   function dueToday() {
     const q = checkout.quotes[period];
+    // An order that exists knows what its QR will ask for (a short transfer already counted); the server's figure is the one shown.
+    if (q.dueVnd != null) return q.dueVnd;
     return Math.max(0, q.totalVnd - (useBalanceFor(q) ? Math.min(q.balanceVnd, q.totalVnd) : 0));
   }
 
@@ -341,7 +354,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     if (!checkout.quotes) return `<p class="plans__muted">${esc(t('common.loading'))}</p>`;
     const q = checkout.quotes[period];
     const p = planById(checkout.plan);
-    const prices = Object.fromEntries(['month', 'year'].map((x) => [x, currentLanguage() === 'vi' || !p ? vnd(checkout.quotes[x].priceVnd) : `${usd(p.usdCents[x])} (${vnd(checkout.quotes[x].priceVnd)})`]));
+    const prices = Object.fromEntries(['month', 'year'].map((x) => [x, checkout.quotes[x].unavailable ? '—' : currentLanguage() === 'vi' || !p ? vnd(checkout.quotes[x].priceVnd) : `${usd(p.usdCents[x])} (${vnd(checkout.quotes[x].priceVnd)})`]));
     const balanceUsed = useBalanceFor(q) ? Math.min(q.balanceVnd, q.totalVnd) : 0;
     const row = (label, value, cls = '') => `<div class="${cls}"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`;
     const lines = [

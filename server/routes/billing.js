@@ -7,8 +7,8 @@ import { log } from '../util/trace.js';
 import { encryptSecret, decryptSecret } from '../crypto.js';
 import { billingProfileContext } from '../secretContexts.js';
 import { billingMode, billingVisible } from '../billing/mode.js';
-import { PLANS, PAID_PLANS, PAYG_ANCHOR_RATE, PAYG_BASE, TOPUP, paygPrices, planVnd } from '../billing/plans.js';
-import { addMonths } from '../billing/period.js';
+import { PLANS, PAID_PLANS, PAYG_ANCHOR_RATE, PAYG_BASE, TOPUP, GRACE_DAYS, paygPrices, planVnd } from '../billing/plans.js';
+import { addMonths, addDays } from '../billing/period.js';
 import { usdVnd, BillingUnavailable, RATE_ATTRIBUTION } from '../billing/fx.js';
 import { quote, createOrder, dueOf } from '../billing/orders.js';
 import { planInForce, scheduleChange, setAutoRenew, setCancelAtEnd } from '../billing/subscriptions.js';
@@ -63,6 +63,10 @@ function openProfile(userId, sealed) {
 async function planView(userId, now) {
   const [inForce, state] = await Promise.all([planInForce(userId, { now }), getStore().billingState(userId)]);
   const sub = inForce.plan !== 'free' ? state.subscription : null;
+  // In grace: whether this period's renewal is already an order with its price locked (read-only), so the sheet knows Renew can be
+  // offered even when the exchange rate cannot be read.
+  const renewalLocked = !!sub && inForce.status === 'grace'
+    && (await getStore().renewalOrdersFor(userId, addDays(sub.periodEnd, GRACE_DAYS))).some((o) => o.status === 'pending' && o.plan === (sub.nextPlan ?? sub.plan) && o.period === (sub.nextPeriod ?? sub.period));
   return {
     ...inForce,
     autoRenew: sub ? sub.autoRenew : false,
@@ -71,6 +75,7 @@ async function planView(userId, now) {
     nextPeriod: sub ? sub.nextPeriod : null,
     // What the period in force cost, in full.
     priceVnd: sub ? sub.paidVnd : 0,
+    renewalLocked,
   };
 }
 

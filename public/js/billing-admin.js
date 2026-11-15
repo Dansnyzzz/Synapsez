@@ -156,7 +156,7 @@ export function createBillingAdmin(host, { api, toast, armed }) {
     const keep = had ? (had.id ? `#${had.id}` : had.dataset.focus ? `[data-focus="${had.dataset.focus}"]` : '') : '';
     host.innerHTML = `<p class="plans__preview">${esc(t('billing.previewNote'))}</p>${modeHtml()}${moneyHtml()}<h4 class="adm__h">${esc(t('billing.admin.capacity'))}</h4>${capacityHtml()}${ordersHtml()}${transfersHtml()}${promosHtml()}${simulateHtml()}`;
     // The control that had focus if it is still there; if it was dealt with, the heading of its list, never the page behind.
-    const target = (keep && host.querySelector(keep)) || (fallback && host.querySelector(fallback)) || null;
+    const target = (keep && host.querySelector(keep)) || (fallback && (had || document.activeElement === document.body) && host.querySelector(fallback)) || null;
     fallback = '';
     /** @type {HTMLElement | null} */ (target)?.focus();
     // Two presses on a button, each in its own words (the app's own helper rebinds on every draw, so it is attached here).

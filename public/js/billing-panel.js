@@ -14,6 +14,7 @@ import { vnd, planName, minutes } from './billing-format.js';
 
 const CHIPS = ['all', 'topup', 'plan', 'usage'];
 const PAGE = 20;
+const MAX_PAGES = 25;
 /** The server's grace (server/billing/plans.js GRACE_DAYS), only to say the date a plan in grace ends. */
 const GRACE_MS = 3 * 86_400_000;
 const LOW_DEFAULT = 50_000;
@@ -251,7 +252,7 @@ export function createBillingPanel(host, { api, toast, plans }) {
 
   function txHtml() {
     const chips = CHIPS.map((c) => `<button type="button" class="btn btn--small bill__chip" data-chip="${c}" data-focus="chip-${c}" aria-pressed="${feed.chip === c}">${esc(t(`billing.panel.chip.${c}`))}</button>`).join(' ');
-    const list = feed.entries.length ? `<ul class="bill__tx">${feed.entries.map(txRow).join('')}</ul>` : `<p class="plans__muted">${esc(t(feed.loading ? 'common.loading' : 'billing.panel.noTx'))}</p>`;
+    const list = feed.entries.length ? `<ul class="bill__tx">${feed.entries.map(txRow).join('')}</ul>` : `<p class="plans__muted">${esc(t(feed.loading ? 'common.loading' : feed.next != null ? 'billing.panel.noneYet' : 'billing.panel.noTx'))}</p>`;
     const more = feed.next != null ? `<p><button type="button" class="btn" data-more data-focus="more"${feed.loading ? ' disabled' : ''}>${esc(t('billing.panel.more'))}</button></p>` : '';
     return `${head('tx')}<div class="bill__chips" role="group" aria-label="${esc(t('billing.panel.chips'))}">${chips}</div>${list}${more}`;
   }
@@ -271,14 +272,15 @@ export function createBillingPanel(host, { api, toast, plans }) {
    */
   async function readFeed(before = null, chip = feed.chip) {
     let cursor = before;
-    for (let guard = 0; guard < 25; guard += 1) {
+    // Bounded, so one press cannot read a whole ledger of hidden rows page by page. Past the bound there may still be more.
+    for (let guard = 0; guard < MAX_PAGES; guard += 1) {
       const page = await api.billingTransactions({ kind: chip === 'all' ? null : chip, limit: PAGE, before: cursor });
       const entries = visible(page.entries || []);
       const next = page.next ?? null;
       if (entries.length || next == null) return { entries, next };
       cursor = next;
     }
-    return { entries: [], next: null };
+    return { entries: [], next: cursor };
   }
 
   /** Everything the tab shows, read again. Typed text and an open form stay as they are. */
@@ -370,6 +372,8 @@ export function createBillingPanel(host, { api, toast, plans }) {
     if (feed.loading || feed.next == null) return;
     feed.loading = true;
     const gen = feed.gen;
+    // A read that lands while this is on its way must draw the card again, not be taken for the card as it was.
+    drawn.delete('tx');
     const list = $('.bill__tx');
     const button = $('[data-more]');
     if (button) button.disabled = true;
@@ -392,6 +396,9 @@ export function createBillingPanel(host, { api, toast, plans }) {
         paint(['tx']);
         $('.bill__tx li')?.focus();
       }
+      // What is on screen now is what the card would draw, so a later read that finds the same list leaves it alone (and one that finds
+      // a different list, the first page again, draws it).
+      drawn.set('tx', txHtml());
       say(t('billing.panel.shown', { n: feed.entries.length }));
     } catch (err) {
       if (gen === feed.gen) feed.loading = false;

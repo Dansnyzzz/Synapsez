@@ -3813,4 +3813,6 @@ export const vi = {
   'billing.admin.outcome.late': 'Đã mô phỏng: đơn đã đóng nên tiền được cộng vào số dư.',
   'billing.admin.outcome.topup': 'Đã mô phỏng: khoản nạp đã được cộng vào số dư.',
   'billing.admin.outcome.other': 'Đã mô phỏng: khoản chuyển khoản đã được ghi nhận.',
+  // Task 10 fix round 2.
+  'billing.panel.noneYet': 'Chưa có gì để hiển thị trong phần đã xem. Hãy xem thêm để tìm xa hơn.',
 };

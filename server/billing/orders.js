@@ -27,40 +27,50 @@ export function isRenewalTerms(sub, plan, period, now) {
 
 /**
  * What a plan would cost this account now, and what it changes. `later` is a downgrade or year to month:
- * nothing is charged, it waits for the period end.
+ * nothing is charged, it waits for the period end. `renewal` is what a plan in grace buys to carry on (see isRenewalTerms).
+ *
+ * A renewal order that already exists (a reminder makes one) has its price and rate locked, so for it the quote returns that order's
+ * own price, total and rate (no exchange rate is needed to read it), `useBalance` (what the order decided: the checkout's checkbox cannot
+ * change it) and `dueVnd`, the amount its QR will ask for (total less what already arrived). For anything else those last two are null.
+ * `rateAt` is when the rate used was read, or, for a locked order, when the order (and so its rate) was made.
  */
 export async function quote(userId, { plan, period }, { now = new Date() } = {}) {
   if (!isPaidPlan(plan)) throw Object.assign(new Error('That plan is not available.'), { status: 422 });
   if (!isPeriod(period)) throw Object.assign(new Error('Choose a monthly or a yearly plan.'), { status: 422 });
-  const [rate, state] = await Promise.all([usdVnd({ now }), getStore().billingState(userId)]);
-  const priceVnd = planVnd(plan, period, rate.rate);
+  const store = getStore();
+  const state = await store.billingState(userId);
   const sub = state.subscription;
-  let kind = 'new';
-  let creditVnd = 0;
-  let price = priceVnd;
-  let used = { rate: rate.rate, source: rate.source };
   /** The renewal order that already exists, whose price was locked when it was made: null when there is none (or it is not a renewal). */
   let open = null;
+  const renewing = isRenewalTerms(sub, plan, period, now);
+  if (renewing) {
+    // A reminder may have made the order already, at the rate of that day: the checkout must show what the QR will ask for.
+    open = (await store.renewalOrdersFor(userId, addDays(sub.periodEnd, GRACE_DAYS))).find((o) => o.status === 'pending' && o.plan === plan && o.period === period) ?? null;
+  }
+  let rate = null;
+  try {
+    rate = await usdVnd({ now });
+  } catch (err) {
+    // A locked order needs no rate to be read; everything else does.
+    if (!(err instanceof BillingUnavailable) || !open) throw err;
+  }
+  const priceVnd = open ? open.priceVnd : planVnd(plan, period, rate.rate);
+  let kind = 'new';
+  let creditVnd = 0;
   if (isLive(sub, now)) {
-    // In grace the plan just ended is paid for again, not "changed at renewal": the same terms are the renewal itself (createOrder
-    // makes it the period's one shared renewal order), which is what the Billing tab's Renew now buys.
-    kind = isRenewalTerms(sub, plan, period, now) ? 'renewal' : moveKind(sub, plan, period);
+    // In grace, the terms the plan would renew on (the scheduled change if there is one, else what ran) are the renewal itself, not
+    // "changed at renewal": createOrder makes it the period's one shared renewal order. Any other plan in grace is a change.
+    kind = renewing ? 'renewal' : moveKind(sub, plan, period);
     // Never more credit than the price: the unused part of a dearer plan is not paid out.
     if (kind === 'upgrade') creditVnd = Math.min(priceVnd, prorate(sub.paidVnd, sub.periodStart, sub.periodEnd, now));
-    if (kind === 'renewal') {
-      // A reminder may have made the order already, at the rate of that day: the checkout must show what the QR will ask for.
-      open = (await getStore().renewalOrdersFor(userId, addDays(sub.periodEnd, GRACE_DAYS))).find((o) => o.status === 'pending' && o.plan === plan && o.period === period) ?? null;
-      if (open) {
-        price = open.priceVnd;
-        used = { rate: open.rate, source: open.rateSource };
-      }
-    }
   }
+  const used = open ? { rate: open.rate, source: open.rateSource, at: open.createdAt.toISOString() } : { rate: rate.rate, source: rate.source, at: rate.at };
   return {
-    kind, plan, period, priceVnd: price, creditVnd, totalVnd: kind === 'later' ? 0 : price - creditVnd,
-    rate: used.rate, rateSource: used.source, rateAt: rate.at, balanceVnd: state.balanceVnd,
-    // Whether the order that exists already decided to use the balance (the checkbox cannot change an order that is made).
+    kind, plan, period, priceVnd, creditVnd, totalVnd: kind === 'later' ? 0 : priceVnd - creditVnd,
+    rate: used.rate, rateSource: used.source, rateAt: used.at, balanceVnd: state.balanceVnd,
+    // What the order that exists already decided (the checkbox cannot change an order that is made), and what its QR will ask for.
     useBalance: open ? open.useBalance : null,
+    dueVnd: open ? dueOf(open, state.balanceVnd) : null,
     startsAt: (kind === 'later' ? sub.periodEnd : now).toISOString(), basis: basisOf(sub, now),
   };
 }
@@ -193,7 +203,7 @@ async function mend(order, sub, now) {
  * are paid at once, the unique index on paid (user, basis) makes the second payment fail whole, nothing leaves the balance, and
  * that order is closed as stale. Returns the subscription it started or changed, or null (it never throws for a stale order).
  */
-export async function tryApply(orderId, { now = new Date() } = {}) {
+export async function tryApply(orderId, { now = new Date(), autoRenew = false } = {}) {
   const store = getStore();
   const order = await store.getOrder(orderId);
   if (!order || order.kind === 'topup') return null;
@@ -204,7 +214,10 @@ export async function tryApply(orderId, { now = new Date() } = {}) {
   if (order.basis && order.basis !== basisOf(sub, now)) return refuseStale(order);
   let paid;
   try {
-    paid = await store.payOrderFromBalance(order.id, now);
+    // Auto-renew on is consent to pay this subscription's own renewal from the balance, whatever the order's checkbox said when it was made
+    // (otherwise a plan with the money in the balance would end in grace). Only a renewal that is still wanted, for this subscription.
+    const consent = autoRenew && order.kind === 'renewal' && !!sub?.autoRenew;
+    paid = await store.payOrderFromBalance(order.id, now, { consent });
   } catch (err) {
     if (err?.code === '23505') return refuseStale(order);
     throw err;
