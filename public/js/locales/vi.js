@@ -3618,7 +3618,7 @@ export const vi = {
   'billing.pay.selected': 'Đã chọn. Nhấn Ctrl+C để sao chép.',
   'billing.pay.timeLeft': 'Mã này còn hiệu lực trong',
   'billing.pay.waiting': 'Đang chờ chuyển khoản của bạn…',
-  'billing.pay.short': 'Đã nhận {received} trên {total} — còn {left}. Hãy quét mã mới.',
+  'billing.pay.short': 'Đã nhận {received}. Còn {left} cần chuyển — hãy quét mã mới.',
   'billing.pay.expired': 'Đã hết hạn — tiền chuyển đến sau đó sẽ vào số dư của bạn',
   'billing.pay.cancelled': 'Đơn này đã được hủy.',
   'billing.pay.cancel': 'Hủy đơn này',
@@ -3627,4 +3627,8 @@ export const vi = {
   'billing.done.topup': 'Đã cộng {amount} vào số dư',
   'billing.done.receipt': 'Tải biên nhận',
   'billing.done.close': 'Xong',
+  'account.menuForPlan': 'Tài khoản: {name}, {plan}',
+  'billing.checkout.later': 'Thay đổi này có hiệu lực khi gia hạn nên không mua ngay. Hãy chọn nó trong danh sách gói.',
+  'billing.pay.refunded': 'Khoản thanh toán này không áp dụng được cho gói của bạn nên tiền đã được cộng vào số dư.',
+  'billing.pay.noDue': 'Đơn này không còn gì để chuyển. Hãy xem lại gói của bạn sau giây lát.',
 };

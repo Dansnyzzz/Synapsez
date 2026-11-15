@@ -3632,7 +3632,7 @@ export const en = {
   'billing.pay.selected': 'Selected. Press Ctrl+C to copy.',
   'billing.pay.timeLeft': 'This code is good for',
   'billing.pay.waiting': 'Waiting for your transfer…',
-  'billing.pay.short': 'Received {received} of {total} — {left} to go. Scan the new code.',
+  'billing.pay.short': 'Received {received}. {left} still to transfer — scan the new code.',
   'billing.pay.expired': 'Expired — any money that arrives goes to your balance',
   'billing.pay.cancelled': 'This order was cancelled.',
   'billing.pay.cancel': 'Cancel this order',
@@ -3641,4 +3641,8 @@ export const en = {
   'billing.done.topup': '{amount} added to your balance',
   'billing.done.receipt': 'Download receipt',
   'billing.done.close': 'Done',
+  'account.menuForPlan': 'Account: {name}, {plan}',
+  'billing.checkout.later': 'This change happens at renewal, so it is not bought now. Choose it from the plans.',
+  'billing.pay.refunded': 'This payment could not be applied to your plan, so the money was added to your balance.',
+  'billing.pay.noDue': 'This order has nothing left to transfer. Check your plan in a moment.',
 };

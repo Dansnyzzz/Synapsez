@@ -137,6 +137,16 @@ export const api = {
   billingPromo: (code) => request('POST', '/api/billing/promo', { code }),
   billingTransactions: (query) => request('GET', `/api/billing/transactions?${new URLSearchParams(clean(query))}`),
   billingReceipts: () => request('GET', '/api/billing/receipts'),
+  /** The administrator's side (the `billing` permission; simulate is the owner's, in preview only). */
+  adminBilling: (days) => request('GET', `/api/admin/billing?${new URLSearchParams(clean({ days }))}`),
+  adminBillingOrders: (query) => request('GET', `/api/admin/billing/orders?${new URLSearchParams(clean(query))}`),
+  adminBillingTransfers: (query) => request('GET', `/api/admin/billing/transfers?${new URLSearchParams(clean(query))}`),
+  adminAssignTransfer: (id, email) => request('POST', `/api/admin/billing/transfers/${encodeURIComponent(id)}/assign`, { email }),
+  adminDismissTransfer: (id) => request('POST', `/api/admin/billing/transfers/${encodeURIComponent(id)}/dismiss`),
+  adminBillingPromos: () => request('GET', '/api/admin/billing/promos'),
+  adminCreatePromo: (body) => request('POST', '/api/admin/billing/promos', body),
+  adminDisablePromo: (code) => request('DELETE', `/api/admin/billing/promos/${encodeURIComponent(code)}`),
+  adminSimulateTransfer: (orderId) => request('POST', '/api/admin/billing/simulate', { orderId }),
 
   /** Themes, the boards and titles (server/themes.js). */
   themes: () => request('GET', '/api/themes'),

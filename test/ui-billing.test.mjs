@@ -43,7 +43,7 @@ const store = await initStore();
 const { createApp } = await import('../server/app.js');
 const { hashPassword } = await import('../server/crypto.js');
 const { setPrefs } = await import('../server/settings.js');
-const PORT = 5241;
+const PORT = 5246; // 5241 is test/chat-limit.test.mjs's
 const server = createApp().listen(PORT);
 await new Promise((r) => server.once('listening', r));
 
@@ -130,6 +130,7 @@ section('the Upgrade plan row and the plan line');
 {
   await page.waitForFunction(() => document.querySelector('.account__plan')?.textContent.trim(), null, { timeout: 8000 }).catch(() => {});
   check('"Free plan" sits under the name', (await page.evaluate(() => document.querySelector('.account__plan')?.textContent.trim())) === 'Free plan');
+  check('  and the account button has the plan in its accessible name', /Free plan/.test(await page.getAttribute('#account-button', 'aria-label')));
   await openMenu(page);
   const rows = await menuRows(page);
   check('Upgrade plan is directly above View changelog', rows.indexOf('upgrade') >= 0 && rows.indexOf('upgrade') + 1 === rows.indexOf('changelog'), rows.join());
@@ -183,18 +184,22 @@ section('the plans sheet');
 section('keyboard');
 {
   // Everything the sheet offers is reached by Tab, and Tab stays inside it.
-  const wanted = await page.evaluate(() => [...document.querySelectorAll('#plans button, #plans a[href], #plans input, #plans [tabindex="0"]')].filter((el) => !el.disabled && el.getClientRects().length).length);
-  const seen = new Set();
-  for (let i = 0; i < wanted + 4; i += 1) {
+  // The tab stops are the visible, enabled controls that are not taken out of the order (a radio is one stop: the checked one).
+  const wanted = await page.evaluate(() => [...document.querySelectorAll('#plans button, #plans a[href], #plans input, #plans [tabindex]')].filter((el) => !el.disabled && el.tabIndex >= 0 && el.getClientRects().length).length);
+  let outside = 0;
+  for (let i = 0; i < wanted + 3; i += 1) {
     await page.keyboard.press('Tab');
-    seen.add(await page.evaluate(() => {
+    outside += await page.evaluate(() => {
       const el = document.activeElement;
-      if (!el || el === document.body) return 'BROWSER'; // focus left the page for the browser's own bar, as a modal dialog allows
-      return el.closest('#plans') ? `${el.tagName}:${el.dataset.pick ?? el.dataset.period ?? el.getAttribute('aria-label') ?? el.textContent.slice(0, 12)}:${el.closest('.plans__card')?.dataset.plan ?? ''}` : 'OUTSIDE';
-    }));
+      if (!el || el === document.body) return 0; // focus left the page for the browser's own bar, as a modal dialog allows
+      if (!el.closest('#plans')) return 1;
+      el.setAttribute('data-tabseen', '');
+      return 0;
+    });
   }
-  check('Tab never leaves the dialog', !seen.has('OUTSIDE'), [...seen].join(' | '));
-  check('  and reaches the periods, every enabled button and the link', seen.size >= wanted - 1, `${seen.size} of ${wanted}`);
+  const reached = await page.evaluate(() => document.querySelectorAll('#plans [data-tabseen]').length);
+  check('Tab never leaves the dialog', outside === 0, String(outside));
+  check('  and reaches every control in it, exactly once each', reached === wanted, `${reached} of ${wanted}`);
   // The radios are one tab stop; arrows move between them.
   await page.focus('#plans .plans__period [aria-checked="true"]');
   await page.keyboard.press('ArrowRight');
@@ -232,6 +237,10 @@ section('Get Plus: the first time asks who is buying');
   await page.click('#plans [data-save-profile]');
   await page.waitForSelector('#plans [role="alert"]');
   check('an empty form says what is missing and saves nothing', (await page.textContent('#plans [role="alert"]')).length > 5);
+  await page.fill('#bill-name', 'Typed Name');
+  await page.click('#plans .checkout__period [data-period="year"]');
+  check('what was typed in the form survives choosing Yearly', (await page.inputValue('#bill-name')) === 'Typed Name');
+  await page.click('#plans .checkout__period [data-period="month"]');
   await page.fill('#bill-name', 'Nguyen Van A');
   await page.fill('#bill-email', 'a@example.com');
   await page.fill('#bill-country', 'vn');
@@ -316,6 +325,70 @@ section('a transfer arrives');
   check('Done closes the dialog', !(await page.evaluate(() => document.getElementById('plans').open)));
 }
 
+section('what the server only schedules, a late answer, a typed form, a double click');
+{
+  const puts = [];
+  page.on('request', (req) => {
+    if (req.method() === 'PUT' && /\/api\/billing\/subscription/.test(req.url())) puts.push(req.postData());
+  });
+  await openMenu(page);
+  await page.click('.plusmenu--account [data-row="upgrade"]');
+  await page.waitForFunction(() => document.querySelector('#plans [data-plan="plus"] [data-pick]')?.textContent.trim() === 'Current plan');
+  await page.click('#plans .plans__period [data-period="year"]');
+  await page.click('#plans [data-plan="plus"] [data-pick]');
+  await page.waitForSelector('#plans .checkout__lines');
+  const sched = await page.evaluate(() => ({
+    month: document.querySelector('#plans .checkout__period [data-period="month"]').disabled,
+    year: document.querySelector('#plans .checkout__period [data-period="year"]').getAttribute('aria-checked'),
+    cont: document.querySelector('#plans [data-continue]').disabled,
+    total: document.querySelector('#plans .checkout__total dd').textContent,
+  }));
+  check('Plus monthly to yearly: the Monthly radio is off (the server only schedules it) and yearly is chosen', sched.month && sched.year === 'true', JSON.stringify(sched));
+  check('  Continue is live, for a total that is not 0', !sched.cont && !/^0\s/.test(sched.total), JSON.stringify(sched));
+  await page.click('#plans [data-back]');
+  await page.waitForSelector('#plans .plans__card [data-pick="pro"]');
+
+  // Closing, or going back, while the order is being made leaves no clock and no poll behind.
+  await page.click('#plans [data-plan="pro"] [data-pick]');
+  await page.waitForSelector('#plans [data-continue]:not([disabled])');
+  const calls = [];
+  const watch = (req) => calls.push(`${req.method()} ${new URL(req.url()).pathname}`);
+  await page.route('**/api/billing/orders', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    await new Promise((r) => setTimeout(r, 1500));
+    return route.continue();
+  });
+  page.on('request', watch);
+  await page.click('#plans [data-continue]');
+  const backBusy = await page.evaluate(() => document.querySelector('#plans [data-back]').disabled);
+  check('Back is off while the order is being made', backBusy);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(2200);
+  const left = await page.evaluate(() => ({ open: document.getElementById('plans').open, order: document.getElementById('plans').dataset.order || '', pay: !!document.querySelector('#plans .pay') }));
+  check('Esc during creation: it stays shut, nothing is drawn on it', !left.open && !left.order && !left.pay, JSON.stringify(left));
+  await page.waitForTimeout(6000);
+  page.off('request', watch);
+  await page.unroute('**/api/billing/orders');
+  check('  no status poll runs on the shut dialog, and the order made too late is closed', !calls.some((c) => /^GET \/api\/billing\/orders\/[^/]+$/.test(c)) && calls.filter((c) => /^POST \/api\/billing\/orders\/.+\/cancel$/.test(c)).length === 1, calls.join(' | '));
+
+  // A double click on Confirm changes the plan once, and Keep my plan is one request.
+  await openMenu(page);
+  await page.click('.plusmenu--account [data-row="upgrade"]');
+  await page.waitForFunction(() => document.querySelector('#plans [data-plan="free"] [data-pick]')?.textContent.trim() === 'Changes at renewal');
+  puts.length = 0;
+  await page.click('#plans [data-plan="free"] [data-pick]');
+  await page.waitForSelector('#plans [data-confirm]');
+  await page.dblclick('#plans [data-confirm]');
+  await page.waitForFunction(() => /ends on/i.test(document.querySelector('#plans .plans__scheduled')?.textContent || ''));
+  check('the lower plan is confirmed first, then one PUT /subscription', puts.length === 1 && JSON.parse(puts[0]).cancelAtEnd === true, puts.join(' | '));
+  check('  a double click raises no error', (await page.evaluate(() => document.querySelectorAll('.toast--error').length)) === 0 && page.errors.length === 0, page.errors.join(' | '));
+  puts.length = 0;
+  await page.click('#plans [data-withdraw]');
+  await page.waitForFunction(() => !document.querySelector('#plans .plans__scheduled'));
+  check('Keep my plan withdraws it in one request', puts.length === 1 && puts[0] === '{"cancelAtEnd":false}', puts.join(' | '));
+  await page.keyboard.press('Escape');
+}
+
 section('short payment, expiry, cancel');
 {
   // A lower plan is changed at renewal, after a confirm: the sheet says so and nothing is charged.
@@ -329,18 +402,34 @@ section('short payment, expiry, cancel');
   check('an upgrade shows the unused part of Plus as a credit', /credit/i.test(quoted), quoted.replace(/\s+/g, ' '));
 
   // The status answers are stood in for here: a short payment, then silence until the clock runs out.
+  // The status line is one node for the whole wait (a replaced node is often not announced), and focus is left alone.
   let answer = { status: 'pending', receivedVnd: 50000, dueVnd: 50000, plan: 'pro' };
   await page.route('**/api/billing/orders/*', (route) => (route.request().method() === 'GET' ? route.fulfill({ contentType: 'application/json', body: JSON.stringify(answer) }) : route.fallback()));
   await page.click('#plans [data-continue]');
   await page.waitForSelector('#plans .pay__qr img');
+  await page.evaluate(() => { window.__status = document.querySelector('#plans .pay__status'); document.querySelector('#plans [data-copy="content"]').focus(); });
   await page.waitForFunction(() => /Received/.test(document.querySelector('#plans .pay__status')?.textContent || ''), null, { timeout: 9000 }).catch(() => {});
   const short = await page.evaluate(() => ({ text: document.querySelector('#plans .pay__status').textContent.replace(/\s+/g, ' '), src: document.querySelector('#plans .pay__qr img').src }));
-  check('a short payment says what arrived and what is left', /Received 50,000/.test(short.text) && /to go/.test(short.text), short.text);
+  check('a short payment says what arrived and what is still to transfer', /Received 50,000/.test(short.text) && /50,000.*still to transfer/.test(short.text), short.text);
   check('  with a fresh QR for what is left', /amount=50000\b/.test(short.src), short.src);
   answer = { status: 'expired', receivedVnd: 0, dueVnd: 0, plan: 'pro' };
   await page.waitForFunction(() => /Expired/.test(document.querySelector('#plans .pay__status')?.textContent || ''), null, { timeout: 9000 }).catch(() => {});
   const expired = await page.evaluate(() => ({ text: document.querySelector('#plans .pay__status').textContent.replace(/\s+/g, ' '), timer: !!document.querySelector('#plans .pay__timer:not([hidden])') }));
   check('an expired order says any money that arrives goes to the balance', /Expired — any money that arrives goes to your balance/.test(expired.text), expired.text);
+  const kept = await page.evaluate(() => ({ same: window.__status === document.querySelector('#plans .pay__status') && window.__status.isConnected, focus: document.activeElement?.dataset?.copy || document.activeElement?.tagName }));
+  check('the status line is the same node through short payment and expiry, and focus did not move', kept.same && kept.focus === 'content', JSON.stringify(kept));
+  check('  the time left is gone and Back is offered', await page.evaluate(() => document.querySelector('#plans .pay__time').hidden && !!document.querySelector('#plans .pay__foot [data-back]')));
+
+  // Money taken and given back is its own ending, not "waiting" and not "expired".
+  answer = { status: 'refunded', receivedVnd: 0, dueVnd: 0, plan: 'pro' };
+  await page.click('#plans [data-back]');
+  await page.waitForSelector('#plans .plans__card [data-pick="pro"]:not([disabled])');
+  await page.click('#plans [data-plan="pro"] [data-pick]');
+  await page.waitForSelector('#plans [data-continue]:not([disabled])');
+  await page.click('#plans [data-continue]');
+  await page.waitForFunction(() => /balance/.test(document.querySelector('#plans .pay__status')?.textContent || ''), null, { timeout: 9000 }).catch(() => {});
+  const refunded = await page.evaluate(() => ({ text: document.querySelector('#plans .pay__status').textContent, timer: document.querySelector('#plans .pay__time').hidden }));
+  check('a refunded order ends the wait and says the money went to the balance', /added to your balance/.test(refunded.text) && !/Waiting|Expired/.test(refunded.text) && refunded.timer, refunded.text);
   await page.unroute('**/api/billing/orders/*');
   await page.click('#plans [data-back]');
   await page.waitForSelector('#plans .plans__card');
@@ -390,6 +479,26 @@ section('narrow screens');
   await page.waitForTimeout(200);
 }
 
+section('no exchange rate: nothing can be bought');
+{
+  await page.route('**/api/billing/plans', async (route) => {
+    const res = await route.fetch();
+    const body = await res.json();
+    await route.fulfill({ response: res, json: { ...body, rate: null, plans: body.plans.map((p) => ({ ...p, vnd: null })) } });
+  });
+  await openMenu(page);
+  await page.click('.plusmenu--account [data-row="upgrade"]');
+  await page.waitForSelector('#plans .plans__card');
+  const down = await page.evaluate(() => ({
+    note: document.querySelector('#plans .plans__rate')?.textContent,
+    buy: [...document.querySelectorAll('#plans [data-action="buy"]')].map((b) => b.disabled),
+    prices: document.querySelectorAll('#plans .plans__price').length,
+  }));
+  check('the prices give way to the "rates are down" line, and no buy button works', /exchange rate could not be read/.test(down.note || '') && down.buy.length > 0 && down.buy.every(Boolean) && down.prices === 0, JSON.stringify(down));
+  await page.unroute('**/api/billing/plans');
+  await page.keyboard.press('Escape');
+}
+
 section('light theme');
 {
   await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
@@ -409,14 +518,14 @@ section('light theme');
       }
       return [255, 255, 255];
     };
-    return [...document.querySelectorAll('#plans .plans__preview, #plans .plans__price, #plans .plans__rate, #plans [data-pick]:not(:disabled):not(.btn--primary)')].map((el) => {
+    return [...document.querySelectorAll('#plans .plans__preview, #plans .plans__price, #plans .plans__per, #plans .plans__billed, #plans .plans__lines li, #plans .plans__rate, #plans .plans__payg, #plans [data-pick]:not(:disabled):not(.btn--primary)')].map((el) => {
       const a = lum(parse(getComputedStyle(el).color).slice(0, 3));
       const b = lum(backdrop(el));
       return ((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05));
     });
   });
   // The primary buttons are white on the house gradient (see .btn--primary), which one measurement cannot describe, so they are left out.
-  check('text on the sheet reads at 4.5:1 or better in the light theme', contrast.length > 3 && Math.min(...contrast) >= 4.5, contrast.map((c) => c.toFixed(1)).join());
+  check('text on the sheet reads at 4.5:1 or better in the light theme', contrast.length > 8 && Math.min(...contrast) >= 4.5, contrast.map((c) => c.toFixed(1)).join());
   await shot('light');
   await page.keyboard.press('Escape');
 }

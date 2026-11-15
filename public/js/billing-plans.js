@@ -41,6 +41,9 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   let clockTimer = 0;
   let polling = false;
   let busy = false;
+  // Bumped whenever the person leaves what an order was being made for (Esc, Back, a new open): an answer that comes
+  // back afterwards is for a screen that is gone and must not start a clock or a poll on it (review, 2026-11-15).
+  let flow = 0;
 
   /* ── timers: at most one poll, and none once the dialog is shut ───── */
   function stopTimers() {
@@ -62,6 +65,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     dialog.setAttribute('aria-labelledby', 'plans-title');
     document.body.append(dialog);
     dialog.addEventListener('close', () => {
+      flow += 1;
+      busy = false;
       stopTimers();
       pay = null;
       checkout = null;
@@ -84,12 +89,21 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   /** Draws the whole dialog for the current view; the caller says where focus goes. */
   function paint(focus = 'title') {
     const d = ensure();
+    keepTyped();
     d.dataset.view = view;
     const body = { sheet: sheetHtml, checkout: checkoutHtml, pay: payHtml, done: doneHtml }[view]();
     d.innerHTML = `<div class="sheet__head"><h2 id="plans-title" tabindex="-1">${esc(titleOf())}</h2><button type="button" class="icon-btn" data-close aria-label="${esc(t('action.close'))}">✕</button></div><div class="sheet__body plans__body" data-view="${view}"><p class="plans__preview">${esc(t('billing.previewNote'))}</p>${body}</div>`;
     if (pay?.order) d.dataset.order = pay.order.id;
     if (focus === 'title') $('#plans-title')?.focus();
     else if (focus) $(focus)?.focus();
+  }
+
+  /** What is typed in the billing form survives any repaint (a period chosen, the balance ticked). */
+  function keepTyped() {
+    const form = /** @type {HTMLFormElement | null} */ (dialog?.querySelector('form[data-profile]'));
+    if (!form || !checkout) return;
+    const value = (name) => /** @type {HTMLInputElement} */ (form.elements.namedItem(name))?.value ?? '';
+    checkout.draft = { name: value('name'), email: value('email'), country: value('country'), address: value('address'), taxCode: value('tax') };
   }
 
   /* ── loading ──────────────────────────────────────────────────────── */
@@ -107,13 +121,21 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   async function open() {
     ensure();
     stopTimers();
+    flow += 1;
     view = 'sheet';
     period = 'month';
     confirming = null;
+    checkout = null;
+    pay = null;
+    // Nothing from last time is offered while this time's answer is on its way: a card pressed on stale data
+    // could buy what the account no longer is.
+    data = null;
     paint('title');
     if (!dialog.open) dialog.showModal();
     await load();
     if (!dialog.open) return;
+    // A plan paid while the sheet was shut is on the line under the name at once.
+    void onChanged();
     view = 'sheet';
     // The period the account is on is the one shown first, so "Current plan" is not hiding one click away.
     if (data?.plans?.current?.period === 'year') period = 'year';
@@ -223,7 +245,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   /** Monthly | Yearly, a radio group with one tab stop (arrow keys move inside it). */
   function periodHtml(className, label, withSave, prices) {
     return `<div class="${className}" role="radiogroup" aria-label="${esc(label)}">${['month', 'year']
-      .map((p) => `<button type="button" role="radio" data-period="${p}" aria-checked="${p === period}" tabindex="${p === period ? 0 : -1}"><span>${esc(t(`billing.period.${p}`))}</span>${prices ? `<span class="plans__periodprice">${esc(prices[p])}</span>` : ''}${withSave && p === 'year' ? `<span class="plans__save">${esc(t('billing.plans.save'))}</span>` : ''}</button>`)
+      .map((p) => `<button type="button" role="radio" data-period="${p}" aria-checked="${p === period}" tabindex="${p === period ? 0 : -1}"${prices && laterQuote(p) ? ' disabled' : ''}><span>${esc(t(`billing.period.${p}`))}</span>${prices ? `<span class="plans__periodprice">${esc(prices[p])}</span>` : ''}${withSave && p === 'year' ? `<span class="plans__save">${esc(t('billing.plans.save'))}</span>` : ''}</button>`)
       .join('')}</div>`;
   }
 
@@ -243,6 +265,10 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       if (checkout !== wanted) return;
       wanted.quotes = { month, year };
       wanted.error = null;
+      // A move the server only schedules (a year back to months, or the plan already in force) is not bought here:
+      // start on the other period, and keep the radio off (the plans sheet offers it as "Changes at renewal").
+      if (month.kind === 'later' && year.kind !== 'later') period = 'year';
+      else if (year.kind === 'later' && month.kind !== 'later') period = 'month';
     } catch (err) {
       if (checkout !== wanted) return;
       wanted.error = err.message;
@@ -251,6 +277,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     if (wanted.error) $('[data-back]')?.focus();
   }
 
+  const laterQuote = (x) => checkout?.quotes?.[x]?.kind === 'later';
   const profileOf = () => data?.account?.profile || null;
 
   function dueToday() {
@@ -301,6 +328,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       <section class="checkout__main" aria-labelledby="co-plan">
         <h3 id="co-plan">${esc(planName(checkout.plan))}</h3>
         ${periodHtml('checkout__period', t('billing.plans.period'), false, prices)}
+        ${q.kind === 'later' ? `<p class="plans__muted" role="status">${esc(t('billing.checkout.later'))}</p>` : ''}
         <dl class="checkout__lines">${lines}</dl>
         ${rateLine}
         ${q.balanceVnd > 0 ? `<label class="checkout__balance"><input type="checkbox" data-use-balance${checkout.useBalance ? ' checked' : ''}> ${esc(t('billing.checkout.useBalance', { balance: vnd(q.balanceVnd) }))}</label>` : ''}
@@ -308,8 +336,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       </section>
       ${profileHtml()}
     </div>
-    <div class="plans__foot"><button type="button" class="btn" data-back>${esc(t('billing.back'))}</button>
-      <button type="button" class="btn btn--primary" data-continue${checkout.editing || busy ? ' disabled' : ''}>${esc(t('billing.checkout.continue'))}</button></div>`;
+    <div class="plans__foot"><button type="button" class="btn" data-back${busy ? ' disabled' : ''}>${esc(t('billing.back'))}</button>
+      <button type="button" class="btn btn--primary" data-continue${checkout.editing || busy || q.kind === 'later' ? ' disabled' : ''}>${esc(t('billing.checkout.continue'))}</button></div>`;
   }
 
   async function saveProfile() {
@@ -343,6 +371,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   async function makeOrder(body, kind) {
     if (busy) return;
     busy = true;
+    const mine = checkout;
+    const token = flow;
     if (checkout) {
       checkout.orderError = null;
       paint(null);
@@ -350,18 +380,26 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     try {
       const made = await api.billingOrder(body);
       busy = false;
+      if (!dialog.open || flow !== token || checkout !== mine) {
+        // The person left while it was being made: the order is real, so close it rather than leave it open for 30 minutes.
+        if (!made.paidNow && made.order?.id) api.billingCancelOrder(made.order.id).catch(() => {});
+        return;
+      }
       if (made.paidNow) {
         pay = { order: made.order, kind, received: 0, total: made.order.totalVnd };
         await finish();
         return;
       }
       const due = made.due;
+      // Neither paid nor owing: nothing to show a QR for. Said in words, not left to a TypeError.
+      if (!due?.qr) throw new Error(t('billing.pay.noDue'));
       pay = { order: made.order, kind, qr: due.qr, dueVnd: due.vnd, received: 0, total: made.order.totalVnd, expiresAt: Date.parse(made.order.expiresAt), state: 'waiting' };
       view = 'pay';
       paint('title');
       startTimers();
     } catch (err) {
       busy = false;
+      if (!dialog.open || flow !== token || checkout !== mine) return;
       if (checkout) {
         checkout.orderError = err.message;
         // A price that moved under the person: ask again so the lines are today's.
@@ -405,8 +443,9 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       clockTimer = 0;
       document.removeEventListener('visibilitychange', onVisible);
     }
-    paint(null);
-    if (state === 'expired' || state === 'cancelled') $('[data-back]')?.focus();
+    // In place: the status line is a live region, and a node that is replaced is often not read. Focus stays where it
+    // is, so nothing talks over the announcement either.
+    updatePay();
   }
 
   async function poll() {
@@ -418,13 +457,14 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       if (pay !== mine || view !== 'pay') return;
       if (s.status === 'paid') {
         await finish();
-      } else if (s.status === 'expired' || s.status === 'cancelled') {
+      } else if (s.status !== 'pending') {
+        // Expired, cancelled, refunded: the wait is over whatever it is called (refunded is money taken and given back).
         setState(s.status);
-      } else if (s.receivedVnd > 0 && s.dueVnd > 0 && (s.receivedVnd !== mine.received || s.dueVnd !== mine.dueVnd)) {
+      } else if (s.dueVnd > 0 && (s.receivedVnd !== mine.received || s.dueVnd !== mine.dueVnd)) {
         mine.received = s.receivedVnd;
         mine.dueVnd = s.dueVnd;
         mine.qr = { ...mine.qr, amount: s.dueVnd, image: freshImage(mine.qr.image, s.dueVnd) };
-        paintPay();
+        updatePay();
       }
     } catch {
       /* a refused or failed poll is only asked again in 5 s */
@@ -466,16 +506,25 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     void onChanged();
   }
 
+  function statusText() {
+    if (pay.state === 'expired') return t('billing.pay.expired');
+    if (pay.state === 'cancelled') return t('billing.pay.cancelled');
+    if (pay.state === 'refunded') return t('billing.pay.refunded');
+    // In terms of what is left to transfer: with the balance used the order's total is not what the bank sees.
+    if (pay.received > 0) return t('billing.pay.short', { received: vnd(pay.received), left: vnd(pay.dueVnd) });
+    return t('billing.pay.waiting');
+  }
+
+  function footHtml() {
+    return pay.state === 'waiting' ? `<button type="button" class="btn" data-cancel>${esc(t('billing.pay.cancel'))}</button>` : `<button type="button" class="btn btn--primary" data-back>${esc(t('billing.back'))}</button>`;
+  }
+
   function payHtml() {
     const q = pay.qr;
     const labels = { bank: t('billing.pay.bank'), account: t('billing.pay.account'), holder: t('billing.pay.holder'), amount: t('billing.pay.amount'), content: t('billing.pay.content') };
     const values = { bank: q.bank, account: q.account, holder: q.holder, amount: vnd(q.amount), content: q.content };
     const waiting = pay.state === 'waiting';
-    let status;
-    if (pay.state === 'expired') status = t('billing.pay.expired');
-    else if (pay.state === 'cancelled') status = t('billing.pay.cancelled');
-    else if (pay.received > 0) status = t('billing.pay.short', { received: vnd(pay.received), total: vnd(pay.total), left: vnd(pay.dueVnd) });
-    else status = t('billing.pay.waiting');
+    const status = statusText();
     return `<div class="pay">
       <p class="pay__lead">${esc(t('billing.pay.lead'))}</p>
       <div class="pay__grid">
@@ -484,18 +533,29 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       </div>
       <p class="pay__time"${waiting ? '' : ' hidden'}>${esc(t('billing.pay.timeLeft'))} <span class="pay__timer" role="timer" aria-live="off">${esc(clock(pay.expiresAt - Date.now()))}</span></p>
       <p class="pay__status" role="status" tabindex="-1">${esc(status)}</p>
-      <div class="plans__foot">${waiting ? `<button type="button" class="btn" data-cancel>${esc(t('billing.pay.cancel'))}</button>` : `<button type="button" class="btn btn--primary" data-back>${esc(t('billing.back'))}</button>`}</div>
+      <div class="plans__foot pay__foot">${footHtml()}</div>
     </div>`;
   }
 
-  /** Redraws the QR view in place without losing the countdown or taking focus. */
-  function paintPay() {
-    const active = document.activeElement;
-    const focusKey = /** @type {HTMLElement | null} */ (active)?.dataset?.copy;
-    const body = $('.sheet__body');
-    if (!body) return;
-    body.innerHTML = `<p class="plans__preview">${esc(t('billing.previewNote'))}</p>${payHtml()}`;
-    if (focusKey) $(`[data-copy="${focusKey}"]`)?.focus();
+  /**
+   * Changes the QR view where it stands: the status line keeps its node (so it is announced), the picture its element
+   * (a new address, no flash), the amount its row; focus is never moved.
+   */
+  function updatePay() {
+    if (view !== 'pay' || !pay) return;
+    const status = $('.pay__status');
+    if (status) status.textContent = statusText();
+    const img = /** @type {HTMLImageElement | null} */ ($('.pay__qr img'));
+    if (img) {
+      if (img.getAttribute('src') !== pay.qr.image) img.setAttribute('src', pay.qr.image);
+      img.alt = t('billing.pay.qrAlt', { amount: vnd(pay.qr.amount), content: pay.qr.content });
+    }
+    const amount = $('#pay-amount');
+    if (amount) amount.textContent = vnd(pay.qr.amount);
+    const time = $('.pay__time');
+    if (time) time.hidden = pay.state !== 'waiting';
+    const foot = $('.pay__foot');
+    if (foot && !!foot.querySelector('[data-cancel]') !== (pay.state === 'waiting')) foot.innerHTML = footHtml();
   }
 
   function doneHtml() {
@@ -523,7 +583,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
 
   /* ── events ───────────────────────────────────────────────────────── */
   function choosePeriod(next, focus = true) {
-    if (next === period) return;
+    if (next === period || (view === 'checkout' && laterQuote(next))) return;
     period = next;
     if (view === 'checkout') paint(null);
     else {
@@ -554,6 +614,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     if (el.hasAttribute('data-confirm')) return void change();
     if (el.hasAttribute('data-withdraw')) return void withdraw();
     if (el.hasAttribute('data-back')) {
+      if (busy) return;
+      flow += 1;
       stopTimers();
       view = 'sheet';
       checkout = null;
@@ -602,6 +664,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   }
 
   function pick(id) {
+    if (!data) return;
     const action = actionFor(id);
     if (action === 'buy') {
       void startCheckout(id, period);
@@ -613,6 +676,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
 
   async function change() {
     const asked = confirming;
+    // A second press (a double click) finds nothing to confirm: one change, not two and a TypeError.
+    if (!asked) return;
     confirming = null;
     try {
       const body = asked.id === 'free' ? { cancelAtEnd: true } : { nextPlan: asked.id, nextPeriod: asked.period };
@@ -629,8 +694,11 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   async function withdraw() {
     try {
       const p = data.account.plan;
-      if (p.cancelAtEnd) await api.billingSubscription({ cancelAtEnd: false });
-      if (p.nextPlan) await api.billingSubscription({ nextPlan: null });
+      // One request, so a refusal leaves everything as it was (the route applies the plan change first, then the switches).
+      const body = {};
+      if (p.cancelAtEnd) body.cancelAtEnd = false;
+      if (p.nextPlan) body.nextPlan = null;
+      if (Object.keys(body).length) await api.billingSubscription(body);
       await load();
       void onChanged();
     } catch (err) {
@@ -654,6 +722,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       toast(err.message, 'error');
       return;
     }
+    flow += 1;
     stopTimers();
     pay = null;
     checkout = null;

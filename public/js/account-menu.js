@@ -112,7 +112,9 @@ export function paintAccount(button, user) {
   if (name) name.textContent = label;
   // Collapsed to a rail, the circle is all there is: the name is on its tooltip.
   button.title = label;
-  button.setAttribute('aria-label', t('account.menuFor', { name: label }));
+  const plan = /** @type {HTMLElement | null} */ (button.querySelector('.account__plan'));
+  // The plan line is visible text under the name; the accessible name has to say it too, or a screen reader never hears it.
+  button.setAttribute('aria-label', plan && !plan.hidden && plan.textContent ? t('account.menuForPlan', { name: label, plan: plan.textContent }) : t('account.menuFor', { name: label }));
 }
 
 /**
@@ -125,6 +127,8 @@ export function paintPlan(button, text) {
   if (!line) return;
   line.textContent = text;
   line.hidden = !text;
+  const name = button.title;
+  button.setAttribute('aria-label', text ? t('account.menuForPlan', { name, plan: text }) : t('account.menuFor', { name }));
 }
 
 /** @param {HTMLElement} anchor @param {Deps} deps */

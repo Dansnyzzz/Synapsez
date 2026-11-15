@@ -11181,11 +11181,11 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 .usage__mday { display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; height: 100%; }
 .usage__mday span { display: block; border-radius: 2px; }
 .usage__mday .is-ok { background: var(--bar); }
-.usage__mday .is-bad { background: var(--danger); }
+.usage__mday .is-bad { background: var(--danger, #e5484d); }
 .usage__axis { display: flex; justify-content: space-between; color: var(--text-faint); font-size: 12px; }
 .usage__key { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0 0; color: var(--text-dim); font-size: 12.5px; }
 .usage__key i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 2px; background: var(--bar); }
-.usage__key i.is-bad { background: var(--danger); }
+.usage__key i.is-bad { background: var(--danger, #e5484d); }
 .usage__device { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
 /* As far below the last device's line as the next section's line is below it. */
 .usage__device-hint { padding-top: 22px; }
@@ -12781,12 +12781,12 @@ html[data-scene] .gate { background: var(--bg); }
 .tgin__code code { padding: 2px 6px; border-radius: 6px; background: var(--tint); }
 .tgin__others { display: grid; gap: 6px; max-width: 520px; }
 
-/* The plans sheet and the checkout (billing preview, 2026-11-14). Cards stack under 700 px, so 360 px never scrolls sideways. */
+/* The plans sheet and the checkout (billing preview, 2026-11-14). The cards are an auto-fit grid (190 px minimum), so they fall to one column on a phone and 360 px never scrolls sideways; the checkout and the QR rows stack under 700 px. */
 .plans { width: min(980px, 100%); }
 .plans__body { display: grid; gap: 14px; align-content: start; }
 .plans__preview { margin: 0; padding: 6px 12px; border: 1px dashed var(--line); border-radius: 10px; color: var(--text-dim); font-size: 12.5px; }
 .plans__muted { margin: 0; color: var(--text-dim); font-size: 13px; }
-.plans__error { margin: 0; color: var(--danger); }
+.plans__error { margin: 0; color: var(--danger, #e5484d); }
 .plans__period, .checkout__period { display: inline-flex; flex-wrap: wrap; gap: 4px; justify-self: center; padding: 4px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); max-width: 100%; }
 .checkout__period { border-radius: 14px; justify-self: stretch; }
 .plans__period [role='radio'], .checkout__period [role='radio'] { display: flex; flex-direction: column; align-items: center; gap: 1px; min-height: 40px; padding: 6px 16px; border: 0; border-radius: 999px; background: none; color: var(--text); font: inherit; cursor: pointer; }
@@ -12821,6 +12821,7 @@ html[data-scene] .gate { background: var(--bg); }
 .pay__lead, .pay__status, .pay__time { margin: 0; }
 .pay__status { font-weight: 600; }
 .pay__grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 20px; align-items: start; }
+/* White in both themes on purpose: a QR code needs a light quiet zone around it, or a dark page makes it unreadable to a scanner. */
 .pay__qr { padding: 8px; border-radius: 12px; background: #fff; }
 .pay__qr img { display: block; width: 220px; height: 220px; max-width: 100%; }
 .pay__rows { margin: 0; display: grid; gap: 8px; }
