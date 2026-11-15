@@ -32,7 +32,7 @@ const signed = (n) => `${n < 0 ? '−' : '+'}${vnd(Math.abs(n))}`;
 export function createBillingPanel(host, { api, toast, plans }) {
   /** @type {any} */ let account = null;
   /** @type {any[]} */ let receipts = [];
-  const feed = { chip: 'all', entries: [], next: null, loading: false };
+  const feed = { chip: 'all', entries: [], next: null, loading: false, gen: 0 };
   // What is typed or open, kept across a redraw of its card.
   const ui = { topupOpen: false, amount: '', amountError: '', promo: '', promoMessage: null, low: '', lowError: '', editInfo: false, infoDraft: null, infoError: '', busy: false };
   let active = false;
@@ -88,14 +88,20 @@ export function createBillingPanel(host, { api, toast, plans }) {
   }
 
   /** @param {string} name */
-  const head = (name, extra = '') => `<h3 id="bill-h-${name}" tabindex="-1">${esc(t(`billing.panel.${name}`))}</h3>${extra}`;
+  const head = (name, extra = '') => `<h4 id="bill-h-${name}" tabindex="-1">${esc(t(`billing.panel.${name}`))}</h4>${extra}`;
 
   /* ── the plan ─────────────────────────────────────────────────────── */
+  /** What a renewal would buy: the change that is scheduled, else what ran. Renew now and the grace line both speak of this, not of the plan that ended. */
+  const renewalOf = (p) => ({ plan: p.nextPlan ?? p.plan, period: p.nextPeriod ?? p.period });
+
   function planLine(p) {
     const end = p.end ? dateOf(p.end) : '';
     if (p.plan === 'free') return t('billing.panel.freeLine');
-    if (p.status === 'grace') return t('billing.panel.grace', { date: dateOf(new Date(p.end).getTime() + GRACE_MS), plan: planName(p.plan) });
     if (p.cancelAtEnd) return t('billing.panel.ends', { date: end });
+    if (p.status === 'grace') {
+      // Only an account that renews by itself is topped up by credit alone; without that the person has to press Renew now.
+      return t(p.autoRenew ? 'billing.panel.grace' : 'billing.panel.graceNow', { date: dateOf(new Date(p.end).getTime() + GRACE_MS), plan: planName(renewalOf(p).plan) });
+    }
     if (p.nextPlan && (p.nextPlan !== p.plan || p.nextPeriod !== p.period)) return t('billing.plans.changesOn', { plan: planName(p.nextPlan), date: end });
     return p.autoRenew ? t('billing.panel.renews', { date: end }) : t('billing.panel.noRenew', { date: end });
   }
@@ -106,10 +112,10 @@ export function createBillingPanel(host, { api, toast, plans }) {
     const grace = p.status === 'grace';
     const price = free ? '' : ` · ${vnd(p.priceVnd)} ${t(`billing.per.${p.period}`)}`;
     const buttons = [
-      grace ? `<button type="button" class="btn btn--primary" data-renew data-focus="renew">${esc(t('billing.panel.renew'))}</button>` : '',
+      grace && !p.cancelAtEnd ? `<button type="button" class="btn btn--primary" data-renew data-focus="renew">${esc(t('billing.panel.renew'))}</button>` : '',
       `<button type="button" class="btn${grace || free ? '' : ' btn--primary'}" data-adjust data-focus="adjust">${esc(t(free ? 'billing.panel.choose' : 'billing.panel.adjust'))}</button>`,
-      !free && !p.cancelAtEnd && !grace ? `<button type="button" class="btn" data-cancel-plan data-focus="cancel">${esc(t('billing.panel.cancel'))}</button>` : '',
-      !free && p.cancelAtEnd ? `<button type="button" class="btn" data-keep-plan data-focus="keep">${esc(t('billing.panel.keep'))}</button>` : '',
+      !free && !p.cancelAtEnd && !grace ? `<button type="button" class="btn" data-cancel-plan data-focus="plan-toggle">${esc(t('billing.panel.cancel'))}</button>` : '',
+      !free && p.cancelAtEnd ? `<button type="button" class="btn" data-keep-plan data-focus="plan-toggle">${esc(t('billing.panel.keep'))}</button>` : '',
     ].join('');
     const renew = free ? '' : `<label class="bill__switch"><input type="checkbox" role="switch" id="bill-autorenew"${p.autoRenew ? ' checked' : ''}${ui.busy ? ' disabled' : ''}> <span>${esc(t('billing.panel.autoRenew'))}</span></label>`;
     return `${head('plan')}<p class="bill__name">${esc(planName(p.plan))}${esc(price)}</p><p class="bill__line">${esc(planLine(p))}</p><div class="bill__actions">${buttons}</div>${renew}`;
@@ -219,7 +225,7 @@ export function createBillingPanel(host, { api, toast, plans }) {
         ${field('country', 'country', f.country, 'autocomplete="country" maxlength="2" size="3" required')}
         ${field('address', 'address', f.address, 'autocomplete="street-address" maxlength="300"')}
         ${field('tax', 'tax', f.taxCode, 'inputmode="numeric" maxlength="20" autocomplete="off"')}
-        ${ui.infoError ? `<p class="plans__error" role="alert">${esc(ui.infoError)}</p>` : ''}
+        ${ui.infoError ? `<p class="plans__error" id="bp-err" role="alert" tabindex="-1">${esc(ui.infoError)}</p>` : ''}
         <p class="bill__actions"><button type="submit" class="btn btn--primary" data-save-info>${esc(t('billing.profile.save'))}</button> <button type="button" class="btn" data-cancel-info>${esc(t('billing.profile.cancel'))}</button></p>
       </form>`;
     }
@@ -259,24 +265,42 @@ export function createBillingPanel(host, { api, toast, plans }) {
   /* ── reading ──────────────────────────────────────────────────────── */
   const visible = (entries) => entries.filter((e) => !(e.kind === 'usage' && !e.units));
 
-  async function readFeed(before = null) {
-    const page = await api.billingTransactions({ kind: feed.chip === 'all' ? null : feed.chip, limit: PAGE, before });
-    return { entries: visible(page.entries || []), next: page.next ?? null };
+  /**
+   * One page of what is worth showing. A page that is all hidden rows (a charge and its refund on a free back-end) would leave Load
+   * more with nothing to draw, so the next page is read until a row arrives or there are no more.
+   */
+  async function readFeed(before = null, chip = feed.chip) {
+    let cursor = before;
+    for (let guard = 0; guard < 25; guard += 1) {
+      const page = await api.billingTransactions({ kind: chip === 'all' ? null : chip, limit: PAGE, before: cursor });
+      const entries = visible(page.entries || []);
+      const next = page.next ?? null;
+      if (entries.length || next == null) return { entries, next };
+      cursor = next;
+    }
+    return { entries: [], next: null };
   }
 
   /** Everything the tab shows, read again. Typed text and an open form stay as they are. */
   async function read() {
     const mine = ++latest;
+    // The list is for the chip that was chosen when this began, and replaces whatever a Load more has in flight.
+    const chip = feed.chip;
+    const gen = ++feed.gen;
     try {
-      const [acc, first, list] = await Promise.all([api.billing(), readFeed(), api.billingReceipts()]);
+      const [acc, first, list] = await Promise.all([api.billing(), readFeed(null, chip), api.billingReceipts()]);
       if (mine !== latest) return;
       account = acc;
-      feed.entries = first.entries;
-      feed.next = first.next;
+      if (feed.chip === chip && feed.gen === gen) {
+        feed.entries = first.entries;
+        feed.next = first.next;
+        feed.loading = false;
+      }
       receipts = list.receipts || [];
       failure = '';
     } catch (err) {
       if (mine !== latest) return;
+      feed.loading = false;
       failure = err.message;
     }
     paint();
@@ -326,16 +350,17 @@ export function createBillingPanel(host, { api, toast, plans }) {
     feed.loading = true;
     feed.entries = [];
     feed.next = null;
+    const gen = ++feed.gen;
     paint(['tx']);
     try {
-      const first = await readFeed();
-      if (feed.chip !== chip) return;
+      const first = await readFeed(null, chip);
+      if (gen !== feed.gen) return;
       feed.entries = first.entries;
       feed.next = first.next;
     } catch (err) {
-      toast(err.message, 'error');
+      if (gen === feed.gen) toast(err.message, 'error');
     } finally {
-      feed.loading = false;
+      if (gen === feed.gen) feed.loading = false;
     }
     paint(['tx']);
     say(t('billing.panel.shown', { n: feed.entries.length }));
@@ -344,23 +369,32 @@ export function createBillingPanel(host, { api, toast, plans }) {
   async function more() {
     if (feed.loading || feed.next == null) return;
     feed.loading = true;
+    const gen = feed.gen;
     const list = $('.bill__tx');
     const button = $('[data-more]');
     if (button) button.disabled = true;
     try {
-      const page = await readFeed(feed.next);
+      const page = await readFeed(feed.next, feed.chip);
+      // A read (or another chip) replaced the list while this was on its way: these rows belong to a list that is gone.
+      if (gen !== feed.gen) return;
       const first = feed.entries.length;
       feed.entries = feed.entries.concat(page.entries);
       feed.next = page.next;
       feed.loading = false;
       // Appended in place so the rows already read stay where they are; focus goes to the first new one.
-      if (list) list.insertAdjacentHTML('beforeend', page.entries.map(txRow).join(''));
-      if (!feed.next) button?.closest('p')?.remove();
-      else if (button) button.disabled = false;
-      (list?.querySelectorAll('li')[first] ?? null)?.focus();
+      if (list) {
+        list.insertAdjacentHTML('beforeend', page.entries.map(txRow).join(''));
+        if (!feed.next) button?.closest('p')?.remove();
+        else if (button) button.disabled = false;
+        (list.querySelectorAll('li')[first] ?? null)?.focus();
+      } else {
+        // Nothing was drawn yet, so there is no list to add to: draw the card.
+        paint(['tx']);
+        $('.bill__tx li')?.focus();
+      }
       say(t('billing.panel.shown', { n: feed.entries.length }));
     } catch (err) {
-      feed.loading = false;
+      if (gen === feed.gen) feed.loading = false;
       if (button) button.disabled = false;
       toast(err.message, 'error');
     }
@@ -426,7 +460,7 @@ export function createBillingPanel(host, { api, toast, plans }) {
     } catch (err) {
       ui.infoError = err.message;
       paint(['info']);
-      $('[data-info-form] [role="alert"]')?.setAttribute('tabindex', '-1');
+      $('#bp-err')?.focus();
       return;
     }
     await read();
@@ -456,7 +490,10 @@ export function createBillingPanel(host, { api, toast, plans }) {
     if (!el) return;
     if (el.hasAttribute('data-retry')) return void read();
     if (el.hasAttribute('data-adjust')) return void plans.open();
-    if (el.hasAttribute('data-renew')) return void plans.openCheckout(account.plan.plan, account.plan.period);
+    if (el.hasAttribute('data-renew')) {
+      const next = renewalOf(account.plan);
+      return void plans.openCheckout(next.plan, next.period);
+    }
     if (el.hasAttribute('data-cancel-plan')) return void act(() => api.billingSubscription({ cancelAtEnd: true }), t('billing.panel.cancelled', { date: dateOf(account.plan.end) }));
     if (el.hasAttribute('data-keep-plan')) return void act(() => api.billingSubscription({ cancelAtEnd: false }), t('billing.panel.kept'));
     if (el.hasAttribute('data-add-credits')) {

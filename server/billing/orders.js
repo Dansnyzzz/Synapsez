@@ -18,6 +18,14 @@ import { forgetBillable } from './billable.js';
 const dong = (n) => Number(n).toLocaleString('en-US');
 
 /**
+ * Whether buying these terms now is the renewal of the plan in grace: the plan has ended, is not being cancelled, and these are the
+ * terms its renewal would be made on (the scheduled change if there is one, else what ran). Anything else in grace is a change.
+ */
+export function isRenewalTerms(sub, plan, period, now) {
+  return isLive(sub, now) && now >= sub.periodEnd && !sub.cancelAtEnd && plan === (sub.nextPlan ?? sub.plan) && period === (sub.nextPeriod ?? sub.period);
+}
+
+/**
  * What a plan would cost this account now, and what it changes. `later` is a downgrade or year to month:
  * nothing is charged, it waits for the period end.
  */
@@ -29,17 +37,30 @@ export async function quote(userId, { plan, period }, { now = new Date() } = {})
   const sub = state.subscription;
   let kind = 'new';
   let creditVnd = 0;
+  let price = priceVnd;
+  let used = { rate: rate.rate, source: rate.source };
+  /** The renewal order that already exists, whose price was locked when it was made: null when there is none (or it is not a renewal). */
+  let open = null;
   if (isLive(sub, now)) {
     // In grace the plan just ended is paid for again, not "changed at renewal": the same terms are the renewal itself (createOrder
     // makes it the period's one shared renewal order), which is what the Billing tab's Renew now buys.
-    const renewing = now >= sub.periodEnd && plan === (sub.nextPlan ?? sub.plan) && period === (sub.nextPeriod ?? sub.period);
-    kind = renewing ? 'renewal' : moveKind(sub, plan, period);
+    kind = isRenewalTerms(sub, plan, period, now) ? 'renewal' : moveKind(sub, plan, period);
     // Never more credit than the price: the unused part of a dearer plan is not paid out.
     if (kind === 'upgrade') creditVnd = Math.min(priceVnd, prorate(sub.paidVnd, sub.periodStart, sub.periodEnd, now));
+    if (kind === 'renewal') {
+      // A reminder may have made the order already, at the rate of that day: the checkout must show what the QR will ask for.
+      open = (await getStore().renewalOrdersFor(userId, addDays(sub.periodEnd, GRACE_DAYS))).find((o) => o.status === 'pending' && o.plan === plan && o.period === period) ?? null;
+      if (open) {
+        price = open.priceVnd;
+        used = { rate: open.rate, source: open.rateSource };
+      }
+    }
   }
   return {
-    kind, plan, period, priceVnd, creditVnd, totalVnd: kind === 'later' ? 0 : priceVnd - creditVnd,
-    rate: rate.rate, rateSource: rate.source, rateAt: rate.at, balanceVnd: state.balanceVnd,
+    kind, plan, period, priceVnd: price, creditVnd, totalVnd: kind === 'later' ? 0 : price - creditVnd,
+    rate: used.rate, rateSource: used.source, rateAt: rate.at, balanceVnd: state.balanceVnd,
+    // Whether the order that exists already decided to use the balance (the checkbox cannot change an order that is made).
+    useBalance: open ? open.useBalance : null,
     startsAt: (kind === 'later' ? sub.periodEnd : now).toISOString(), basis: basisOf(sub, now),
   };
 }
@@ -251,7 +272,10 @@ async function draftOf(userId, kind, input, now) {
  */
 export async function createOrder(userId, input, { now = new Date(), simulated = false, env = process.env } = {}) {
   const store = getStore();
-  const { kind } = input;
+  let { kind } = input;
+  // In grace, buying the same terms again is the renewal (it continues from the old end and shares the period's one renewal order),
+  // not a new plan from today: decided here, once, for every caller.
+  if (kind === 'plan' && isRenewalTerms(await store.getSubscription(userId), input.plan, input.period, now)) kind = 'renewal';
   if (kind !== 'plan' && kind !== 'topup' && kind !== 'renewal') throw Object.assign(new Error('Choose what to pay for.'), { status: 422 });
   let order;
   let created = true;

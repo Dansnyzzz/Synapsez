@@ -3802,5 +3802,15 @@ export const vi = {
   'billing.admin.simulateChoose': 'Chọn một đơn…',
   'billing.admin.simulateGo': 'Mô phỏng',
   'billing.admin.simulateNone': 'Hãy chọn một đơn trước.',
-  'billing.admin.simulated.done': 'Đã mô phỏng: {outcome}.',
+  // Task 10 fix round 1 (2026-11-15).
+  'billing.panel.graceNow': 'Đang trong thời gian gia hạn đến {date} — hãy gia hạn ngay để giữ gói {plan}',
+  'billing.checkout.fixedUse': 'Lần gia hạn này đã được chuẩn bị trước và dùng số dư của bạn.',
+  'billing.checkout.fixedNot': 'Lần gia hạn này đã được chuẩn bị trước và chỉ thanh toán bằng chuyển khoản; số dư của bạn không được dùng.',
+  'billing.admin.promo.sure': 'Chắc chắn tắt mã này? Không thể bật lại.',
+  'billing.admin.outcome.applied': 'Đã mô phỏng: đơn được thanh toán và gói đã bắt đầu.',
+  'billing.admin.outcome.over': 'Đã mô phỏng: đơn được thanh toán, phần tiền dư được cộng vào số dư.',
+  'billing.admin.outcome.short': 'Đã mô phỏng: chưa đủ để thanh toán đơn; phần còn lại vẫn phải chuyển.',
+  'billing.admin.outcome.late': 'Đã mô phỏng: đơn đã đóng nên tiền được cộng vào số dư.',
+  'billing.admin.outcome.topup': 'Đã mô phỏng: khoản nạp đã được cộng vào số dư.',
+  'billing.admin.outcome.other': 'Đã mô phỏng: khoản chuyển khoản đã được ghi nhận.',
 };

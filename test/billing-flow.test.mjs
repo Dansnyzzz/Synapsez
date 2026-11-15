@@ -152,7 +152,42 @@ section('quotes');
   const renew = await orders.quote(u.id, { plan: 'plus', period: 'month' }, { now: inGrace });
   check('in grace, the same plan and period is a renewal at full price', renew.kind === 'renewal' && renew.creditVnd === 0 && renew.totalVnd === 129000, JSON.stringify(renew));
   const dearer = await orders.quote(u.id, { plan: 'pro', period: 'month' }, { now: inGrace });
-  check('  another plan in grace is still an upgrade', dearer.kind === 'upgrade', JSON.stringify(dearer));
+  check('  another plan in grace is still an upgrade, and the credit is 0 (nothing of the ended period is left)', dearer.kind === 'upgrade' && dearer.creditVnd === 0, JSON.stringify(dearer));
+
+  // Round 1 (review): with a downgrade scheduled, the renewal is the scheduled plan, and the plan that ran is only a change.
+  const proRow = (over = {}) => subRow(u.id, { plan: 'pro', paidVnd: 206000, periodStart: new Date('2026-10-01T12:00:00Z'), periodEnd: new Date('2026-11-01T12:00:00Z'), nextPlan: 'plus', nextPeriod: 'month', ...over });
+  await store.saveSubscription(proRow());
+  const sched = await orders.quote(u.id, { plan: 'plus', period: 'month' }, { now: inGrace });
+  const ran = await orders.quote(u.id, { plan: 'pro', period: 'month' }, { now: inGrace });
+  check('pro in grace with plus scheduled: plus is the renewal, pro is later (not a renewal)', sched.kind === 'renewal' && sched.totalVnd === 129000 && ran.kind === 'later', JSON.stringify({ sched: sched.kind, ran: ran.kind }));
+  await store.saveSubscription(proRow({ period: 'year', paidVnd: 2000000, nextPeriod: 'year', periodEnd: new Date('2026-11-01T12:00:00Z'), periodStart: new Date('2025-11-01T12:00:00Z') }));
+  const yearSched = await orders.quote(u.id, { plan: 'plus', period: 'year' }, { now: inGrace });
+  const yearRan = await orders.quote(u.id, { plan: 'pro', period: 'year' }, { now: inGrace });
+  const yearMonth = await orders.quote(u.id, { plan: 'plus', period: 'month' }, { now: inGrace });
+  check('pro yearly with plus yearly scheduled: plus yearly is the renewal, pro yearly and plus monthly are later', yearSched.kind === 'renewal' && yearRan.kind === 'later' && yearMonth.kind === 'later', JSON.stringify([yearSched.kind, yearRan.kind, yearMonth.kind]));
+}
+
+section('a renewal that exists keeps its price, and a direct same-terms purchase in grace is that renewal');
+{
+  const u = await makeUser();
+  const lapsed = new Date('2026-11-01T12:00:00Z');
+  const inGrace = new Date('2026-11-02T12:00:00Z');
+  await store.saveSubscription(subRow(u.id, { periodStart: new Date('2026-10-01T12:00:00Z'), periodEnd: lapsed, status: 'grace' }));
+  process.env.SEPAY_BANK_ACCOUNT = '0123456789';
+  process.env.SEPAY_BANK_CODE = 'MBBank';
+  const made = await orders.createOrder(u.id, { kind: 'plan', plan: 'plus', period: 'month', useBalance: false }, { now: inGrace });
+  check('a plan purchase of the same terms in grace becomes the renewal order (createOrder, not the route)', made.order.kind === 'renewal' && made.order.priceVnd === 129000 && +made.order.expiresAt === +addDays(lapsed, 3), JSON.stringify([made.order.kind, made.order.priceVnd]));
+  const again = await orders.createOrder(u.id, { kind: 'plan', plan: 'plus', period: 'month' }, { now: inGrace });
+  check('  asking again returns the same order, not a second one', again.order.id === made.order.id);
+  await query(`DELETE FROM settings WHERE key = 'billing_fx'`);
+  await forget();
+  allDown();
+  erapiSays(30000);
+  const q =await orders.quote(u.id, { plan: 'plus', period: 'month' }, { now: inGrace });
+  check('  at another rate, the quote is still the locked price and rate, and says the order does not use the balance', q.kind === 'renewal' && q.priceVnd === 129000 && q.totalVnd === 129000 && q.rate === 25655.85 && q.useBalance === false, JSON.stringify(q));
+  const other = await orders.quote(u.id, { plan: 'pro', period: 'month' }, { now: inGrace });
+  check('  and a plan with no order made is priced at the rate of the day, with no say about the balance', other.rate === 30000 && other.useBalance === null, JSON.stringify(other));
+  await prime();
 }
 
 section('orders: paid from the balance, or a QR for the rest');

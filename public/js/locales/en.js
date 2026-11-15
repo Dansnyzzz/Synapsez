@@ -3816,5 +3816,15 @@ export const en = {
   'billing.admin.simulateChoose': 'Choose an order…',
   'billing.admin.simulateGo': 'Simulate',
   'billing.admin.simulateNone': 'Choose an order first.',
-  'billing.admin.simulated.done': 'Simulated: {outcome}.',
+  // Task 10 fix round 1 (2026-11-15).
+  'billing.panel.graceNow': 'In grace until {date} — renew now to keep {plan}',
+  'billing.checkout.fixedUse': 'This renewal was prepared earlier and uses your balance.',
+  'billing.checkout.fixedNot': 'This renewal was prepared earlier and is paid by transfer only; your balance is not used.',
+  'billing.admin.promo.sure': 'Really switch this code off? It cannot be switched back on.',
+  'billing.admin.outcome.applied': 'Simulated: the order was paid and its plan started.',
+  'billing.admin.outcome.over': 'Simulated: the order was paid, with some money over that went to the balance.',
+  'billing.admin.outcome.short': 'Simulated: not enough to pay the order yet; the rest is still due.',
+  'billing.admin.outcome.late': 'Simulated: the order had closed, so the money went to the balance.',
+  'billing.admin.outcome.topup': 'Simulated: the top-up was credited to the balance.',
+  'billing.admin.outcome.other': 'Simulated: the transfer was taken.',
 };

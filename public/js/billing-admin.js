@@ -12,7 +12,8 @@ import { vnd, planName } from './billing-format.js';
  */
 
 const DAYS = 30;
-const ARMED_MS = 5000;
+/** What came of a simulated transfer, in words (sepay.js takeTransfer's outcomes); anything else is said plainly. */
+const OUTCOMES = new Set(['applied', 'over', 'short', 'late', 'topup']);
 const WARN = 0.75;
 const BAD = 0.9;
 const SOURCES = { erapi: 'Exchange Rate API', vietcombank: 'Vietcombank', frankfurter: 'Frankfurter' };
@@ -30,9 +31,10 @@ function levelOf(used, total) {
 
 /**
  * @param {HTMLElement} host
- * @param {{ api: any, toast: (message: string, kind?: string) => void }} deps
+ * @param {{ api: any, toast: (message: string, kind?: string) => void, armed: (button: HTMLElement, warning: string, run: () => Promise<void> | void) => void }} deps
+ *   `armed` is the app's two-press button (it asks, in words that fit what the button does, before it acts).
  */
-export function createBillingAdmin(host, { api, toast }) {
+export function createBillingAdmin(host, { api, toast, armed }) {
   /** @type {any} */ let figures = null;
   /** @type {any[]} */ let orders = [];
   /** @type {any[]} */ let pending = [];
@@ -40,6 +42,8 @@ export function createBillingAdmin(host, { api, toast }) {
   /** @type {any[]} */ let promos = [];
   let failure = '';
   let latest = 0;
+  /** Where focus goes when the control that had it is gone after a redraw (a row that was dealt with). */
+  let fallback = '';
   /** What was said beside the promo form and the simulate button, kept across a redraw. */
   const said = { promo: null, sim: null };
   const typed = { code: '', credit: '', uses: '', exp: '' };
@@ -97,7 +101,7 @@ export function createBillingAdmin(host, { api, toast }) {
   function ordersHtml() {
     const what = (o) => (o.plan ? `${planName(o.plan)} ${t(`billing.admin.kind.${o.kind}`)}` : t(`billing.admin.kind.${o.kind}`));
     const list = orders.map((o) => `<li data-order-row><span class="adm__main">${esc(o.email || t('billing.admin.noAccount'))}</span> <span>${esc(what(o))}</span> <span>${esc(vnd(o.totalVnd))}</span> <span class="adm__status is-${esc(o.status)}">${esc(t(`billing.admin.status.${o.status}`))}${o.simulated ? ` · ${esc(t('billing.admin.simulated'))}` : ''}</span> <span class="plans__muted">${esc(when(o.createdAt))}</span></li>`).join('');
-    return `<h4 class="adm__h" id="adm-h-orders">${esc(t('billing.admin.orders'))}</h4>${list ? `<ul class="adm__list" aria-labelledby="adm-h-orders">${list}</ul>` : `<p class="plans__muted">${esc(t('billing.admin.noOrders'))}</p>`}`;
+    return `<h4 class="adm__h" id="adm-h-orders" tabindex="-1">${esc(t('billing.admin.orders'))}</h4>${list ? `<ul class="adm__list" aria-labelledby="adm-h-orders">${list}</ul>` : `<p class="plans__muted">${esc(t('billing.admin.noOrders'))}</p>`}`;
   }
 
   function transfersHtml() {
@@ -106,11 +110,11 @@ export function createBillingAdmin(host, { api, toast }) {
         <p class="adm__content">${esc(x.content || '—')}</p>
         <div class="adm__assign"><label for="adm-as-${x.id}">${esc(t('billing.admin.assignTo'))}</label>
           <input id="adm-as-${x.id}" type="email" autocomplete="off" data-assign-email${x.via === 'simulated' ? ' disabled' : ''}>
-          <button type="button" class="btn btn--small btn--primary" data-assign${x.via === 'simulated' ? ' disabled' : ''}>${esc(t('billing.admin.assign'))}</button>
-          <button type="button" class="btn btn--small" data-dismiss>${esc(t('billing.admin.markReturned'))}</button></div>
+          <button type="button" class="btn btn--small btn--primary" data-assign data-focus="assign-${x.id}"${x.via === 'simulated' ? ' disabled' : ''}>${esc(t('billing.admin.assign'))}</button>
+          <button type="button" class="btn btn--small" data-dismiss data-focus="dismiss-${x.id}">${esc(t('billing.admin.markReturned'))}</button></div>
         <p class="plans__error" role="alert" data-transfer-error hidden></p>
       </li>`).join('');
-    return `<h4 class="adm__h" id="adm-h-transfers">${esc(t('billing.admin.transfers'))}</h4><p class="plans__muted">${esc(t('billing.admin.transfersHint'))}</p>${list ? `<ul class="adm__list" aria-labelledby="adm-h-transfers">${list}</ul>` : `<p class="plans__muted">${esc(t('billing.admin.noTransfers'))}</p>`}`;
+    return `<h4 class="adm__h" id="adm-h-transfers" tabindex="-1">${esc(t('billing.admin.transfers'))}</h4><p class="plans__muted">${esc(t('billing.admin.transfersHint'))}</p>${list ? `<ul class="adm__list" aria-labelledby="adm-h-transfers">${list}</ul>` : `<p class="plans__muted">${esc(t('billing.admin.noTransfers'))}</p>`}`;
   }
 
   function promosHtml() {
@@ -118,10 +122,10 @@ export function createBillingAdmin(host, { api, toast }) {
     const list = promos.map((p) => {
       const expired = p.expiresAt && new Date(p.expiresAt).getTime() <= now;
       const state = !p.active ? t('billing.admin.promo.off') : expired ? t('billing.admin.promo.expired') : t('billing.admin.promo.on');
-      return `<li data-promo-row="${esc(p.code)}"><code>${esc(p.code)}</code> <span>${esc(vnd(p.creditVnd))}</span> <span>${esc(t('billing.admin.promo.used', { used: p.used, max: p.maxUses }))}</span> <span class="plans__muted">${esc(p.expiresAt ? t('billing.admin.promo.until', { date: day(p.expiresAt) }) : t('billing.admin.promo.never'))}</span> <span class="adm__status">${esc(state)}</span>${p.active && !expired ? ` <button type="button" class="btn btn--small" data-promo-disable>${esc(t('billing.admin.promo.disable'))}</button>` : ''}</li>`;
+      return `<li data-promo-row="${esc(p.code)}"><code>${esc(p.code)}</code> <span>${esc(vnd(p.creditVnd))}</span> <span>${esc(t('billing.admin.promo.used', { used: p.used, max: p.maxUses }))}</span> <span class="plans__muted">${esc(p.expiresAt ? t('billing.admin.promo.until', { date: day(p.expiresAt) }) : t('billing.admin.promo.never'))}</span> <span class="adm__status">${esc(state)}</span>${p.active && !expired ? ` <button type="button" class="btn btn--small" data-promo-disable data-focus="disable-${esc(p.code)}">${esc(t('billing.admin.promo.disable'))}</button>` : ''}</li>`;
     }).join('');
     const msg = said.promo ? `<p id="adm-promo-msg" class="${said.promo.ok ? 'plans__muted' : 'plans__error'}" role="${said.promo.ok ? 'status' : 'alert'}">${esc(said.promo.text)}</p>` : '<p id="adm-promo-msg" class="plans__muted"></p>';
-    return `<h4 class="adm__h" id="adm-h-promos">${esc(t('billing.admin.promos'))}</h4>
+    return `<h4 class="adm__h" id="adm-h-promos" tabindex="-1">${esc(t('billing.admin.promos'))}</h4>
       ${list ? `<ul class="adm__list" aria-labelledby="adm-h-promos">${list}</ul>` : `<p class="plans__muted">${esc(t('billing.admin.noPromos'))}</p>`}
       <form class="adm__form" data-promo-form novalidate>
         <div class="field"><label for="adm-promo-code">${esc(t('billing.admin.promo.code'))}</label><input id="adm-promo-code" autocomplete="off" spellcheck="false" maxlength="32" value="${esc(typed.code)}"></div>
@@ -148,23 +152,36 @@ export function createBillingAdmin(host, { api, toast }) {
       return;
     }
     if (!figures) return;
-    const keep = document.activeElement instanceof HTMLElement && host.contains(document.activeElement) ? document.activeElement.id : '';
+    const had = document.activeElement instanceof HTMLElement && host.contains(document.activeElement) ? document.activeElement : null;
+    const keep = had ? (had.id ? `#${had.id}` : had.dataset.focus ? `[data-focus="${had.dataset.focus}"]` : '') : '';
     host.innerHTML = `<p class="plans__preview">${esc(t('billing.previewNote'))}</p>${modeHtml()}${moneyHtml()}<h4 class="adm__h">${esc(t('billing.admin.capacity'))}</h4>${capacityHtml()}${ordersHtml()}${transfersHtml()}${promosHtml()}${simulateHtml()}`;
-    if (keep) /** @type {HTMLElement | null} */ (host.querySelector(`#${keep}`))?.focus();
+    // The control that had focus if it is still there; if it was dealt with, the heading of its list, never the page behind.
+    const target = (keep && host.querySelector(keep)) || (fallback && host.querySelector(fallback)) || null;
+    fallback = '';
+    /** @type {HTMLElement | null} */ (target)?.focus();
+    // Two presses on a button, each in its own words (the app's own helper rebinds on every draw, so it is attached here).
+    for (const li of host.querySelectorAll('[data-transfer]')) {
+      const button = /** @type {HTMLButtonElement} */ (li.querySelector('[data-dismiss]'));
+      armed(button, t('billing.admin.sure'), () => dismiss(/** @type {HTMLElement} */ (li), button));
+    }
+    for (const button of host.querySelectorAll('[data-promo-disable]')) {
+      const code = /** @type {HTMLElement} */ (button.closest('[data-promo-row]')).dataset.promoRow;
+      armed(/** @type {HTMLElement} */ (button), t('billing.admin.promo.sure'), () => disablePromo(code));
+    }
   }
 
   /* ── reading ──────────────────────────────────────────────────────── */
   async function load() {
     const mine = ++latest;
     try {
-      const [fig, recent, open, promo, waiting] = await Promise.all([
+      const [fig, recent, open, promo] = await Promise.all([
         api.adminBilling(DAYS),
         api.adminBillingOrders({ limit: 20 }),
         api.adminBillingTransfers({ outcome: 'unmatched', limit: 50 }),
         api.adminBillingPromos(),
-        // Only for whoever may play the bank; the figures say whether that is this account.
-        api.adminBillingOrders({ status: 'pending', limit: 50 }).catch(() => ({ orders: [] })),
       ]);
+      // Orders that are waiting are only listed for whoever may play the bank, which the figures say; a failure to read them is shown.
+      const waiting = fig.simulate ? await api.adminBillingOrders({ status: 'pending', limit: 50 }) : { orders: [] };
       if (mine !== latest) return;
       figures = { ...fig, entries: fig.figures.entries, balancesHeldVnd: fig.figures.balancesHeldVnd, accounts: fig.figures.accounts };
       orders = recent.orders;
@@ -180,24 +197,6 @@ export function createBillingAdmin(host, { api, toast }) {
   }
 
   /* ── actions ──────────────────────────────────────────────────────── */
-  /** Two presses: the first says what the second does, and it goes back by itself. */
-  function twoPress(button, run) {
-    if (button.dataset.armed !== '1') {
-      button.dataset.armed = '1';
-      const was = button.textContent;
-      button.textContent = t('billing.admin.sure');
-      button.setAttribute('aria-live', 'polite');
-      setTimeout(() => {
-        if (!button.isConnected) return;
-        button.dataset.armed = '';
-        button.textContent = was;
-        button.removeAttribute('aria-live');
-      }, ARMED_MS);
-      return;
-    }
-    run();
-  }
-
   /** Says what went wrong beside the row it happened on, without redrawing the page under the person. */
   function rowError(li, text) {
     const err = /** @type {HTMLElement | null} */ (li.querySelector('[data-transfer-error]'));
@@ -217,6 +216,7 @@ export function createBillingAdmin(host, { api, toast }) {
     try {
       const done = await api.adminAssignTransfer(li.dataset.transfer, email);
       toast(t('billing.admin.assigned', { balance: vnd(done.balanceVnd) }), 'ok');
+      fallback = '#adm-h-transfers';
       await load();
     } catch (err) {
       rowError(li, err.message);
@@ -229,11 +229,18 @@ export function createBillingAdmin(host, { api, toast }) {
     try {
       await api.adminDismissTransfer(li.dataset.transfer);
       toast(t('billing.admin.returned'), 'ok');
+      fallback = '#adm-h-transfers';
       await load();
     } catch (err) {
       rowError(li, err.message);
       button.disabled = false;
     }
+  }
+
+  async function disablePromo(code) {
+    await api.adminDisablePromo(code);
+    fallback = '#adm-h-promos';
+    await load();
   }
 
   async function createPromo() {
@@ -260,7 +267,7 @@ export function createBillingAdmin(host, { api, toast }) {
     }
     try {
       const done = await api.adminSimulateTransfer(select.value);
-      said.sim = { ok: true, text: t('billing.admin.simulated.done', { outcome: done.outcome }) };
+      said.sim = { ok: true, text: t(`billing.admin.outcome.${OUTCOMES.has(done.outcome) ? done.outcome : 'other'}`) };
     } catch (err) {
       said.sim = { ok: false, text: err.message };
     }
@@ -274,13 +281,6 @@ export function createBillingAdmin(host, { api, toast }) {
     const li = /** @type {HTMLElement | null} */ (el.closest('[data-transfer]'));
     if (el.hasAttribute('data-retry')) return void load();
     if (li && el.hasAttribute('data-assign')) return void assign(li, /** @type {HTMLButtonElement} */ (el));
-    if (li && el.hasAttribute('data-dismiss')) return twoPress(el, () => void dismiss(li, /** @type {HTMLButtonElement} */ (el)));
-    if (el.hasAttribute('data-promo-disable')) {
-      const code = /** @type {HTMLElement} */ (el.closest('[data-promo-row]')).dataset.promoRow;
-      return twoPress(el, () => {
-        api.adminDisablePromo(code).then(() => load()).catch((err) => toast(err.message, 'error'));
-      });
-    }
     if (el.hasAttribute('data-simulate')) void simulate();
   });
 

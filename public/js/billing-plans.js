@@ -187,11 +187,15 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     const cur = current();
     if (cur.plan === 'free') return id === 'free' ? 'current' : 'buy';
     if (id === 'free') return data.account.plan.cancelAtEnd ? 'scheduled' : 'later';
+    // The renewal is of what comes next (a scheduled change, else what ran): that card is "Renew", and the plan that ran is only current.
+    if (inGrace() && !data.account.plan.cancelAtEnd) {
+      const next = data.account.plan;
+      if (id === (next.nextPlan ?? next.plan) && period === (next.nextPeriod ?? next.period)) return 'renew';
+    }
     if ((period === 'month' && cur.period === 'year') || RANK[id] < RANK[cur.plan]) {
       return id === cur.plan && period === cur.period ? 'current' : data.account.plan.nextPlan === id && data.account.plan.nextPeriod === period ? 'scheduled' : 'later';
     }
-    if (id === cur.plan && period === cur.period) return inGrace() ? 'renew' : 'current';
-    return 'buy';
+    return id === cur.plan && period === cur.period ? 'current' : 'buy';
   }
 
   function priceHtml(id) {
@@ -300,9 +304,12 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   const laterQuote = (x) => checkout?.quotes?.[x]?.kind === 'later';
   const profileOf = () => data?.account?.profile || null;
 
+  /** A renewal order that already exists decided for itself whether the balance pays; the checkbox only speaks for an order not yet made. */
+  const useBalanceFor = (q) => (q.useBalance == null ? checkout.useBalance : q.useBalance);
+
   function dueToday() {
     const q = checkout.quotes[period];
-    return Math.max(0, q.totalVnd - (checkout.useBalance ? Math.min(q.balanceVnd, q.totalVnd) : 0));
+    return Math.max(0, q.totalVnd - (useBalanceFor(q) ? Math.min(q.balanceVnd, q.totalVnd) : 0));
   }
 
   function profileHtml() {
@@ -335,7 +342,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     const q = checkout.quotes[period];
     const p = planById(checkout.plan);
     const prices = Object.fromEntries(['month', 'year'].map((x) => [x, currentLanguage() === 'vi' || !p ? vnd(checkout.quotes[x].priceVnd) : `${usd(p.usdCents[x])} (${vnd(checkout.quotes[x].priceVnd)})`]));
-    const balanceUsed = checkout.useBalance ? Math.min(q.balanceVnd, q.totalVnd) : 0;
+    const balanceUsed = useBalanceFor(q) ? Math.min(q.balanceVnd, q.totalVnd) : 0;
     const row = (label, value, cls = '') => `<div class="${cls}"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`;
     const lines = [
       row(t('billing.checkout.line', { plan: planName(checkout.plan), period: t(`billing.period.${period}`) }), vnd(q.priceVnd)),
@@ -351,7 +358,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
         ${q.kind === 'later' ? `<p class="plans__muted" role="status">${esc(t('billing.checkout.later'))}</p>` : ''}
         <dl class="checkout__lines">${lines}</dl>
         ${rateLine}
-        ${q.balanceVnd > 0 ? `<label class="checkout__balance"><input type="checkbox" data-use-balance${checkout.useBalance ? ' checked' : ''}> ${esc(t('billing.checkout.useBalance', { balance: vnd(q.balanceVnd) }))}</label>` : ''}
+        ${q.balanceVnd > 0 && q.useBalance != null ? `<p class="plans__muted" data-fixed-balance>${esc(t(q.useBalance ? 'billing.checkout.fixedUse' : 'billing.checkout.fixedNot'))}</p>` : ''}
+        ${q.balanceVnd > 0 && q.useBalance == null ? `<label class="checkout__balance"><input type="checkbox" data-use-balance${checkout.useBalance ? ' checked' : ''}> ${esc(t('billing.checkout.useBalance', { balance: vnd(q.balanceVnd) }))}</label>` : ''}
         ${checkout.orderError ? `<p class="plans__error" role="alert">${esc(checkout.orderError)}</p>` : ''}
       </section>
       ${profileHtml()}
@@ -681,7 +689,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       return;
     }
     if (el.hasAttribute('data-save-profile')) return void saveProfile();
-    if (el.hasAttribute('data-continue')) return void makeOrder({ kind: 'plan', plan: checkout.plan, period, useBalance: checkout.useBalance }, 'plan');
+    if (el.hasAttribute('data-continue')) return void makeOrder({ kind: 'plan', plan: checkout.plan, period, useBalance: useBalanceFor(checkout.quotes[period]) }, 'plan');
     if (el.dataset.copy) return void copy(el.dataset.copy);
     if (el.hasAttribute('data-cancel')) return void cancelOrder();
   }

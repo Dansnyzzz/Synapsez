@@ -7026,7 +7026,7 @@ $('admin-feedback').addEventListener(
  * one row per service, shared by every account, and the owner's controls on the keys.
  */
 const freeAllowances = createFreeAllowances($('admin-free-tier'), { api, toast });
-const billingAdmin = createBillingAdmin($('admin-billing'), { api, toast });
+const billingAdmin = createBillingAdmin($('admin-billing'), { api, toast, armed });
 const loadFreeTier = () => freeAllowances.load();
 
 /**

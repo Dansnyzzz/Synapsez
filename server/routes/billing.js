@@ -11,7 +11,7 @@ import { PLANS, PAID_PLANS, PAYG_ANCHOR_RATE, PAYG_BASE, TOPUP, paygPrices, plan
 import { addMonths } from '../billing/period.js';
 import { usdVnd, BillingUnavailable, RATE_ATTRIBUTION } from '../billing/fx.js';
 import { quote, createOrder, dueOf } from '../billing/orders.js';
-import { isLive, planInForce, scheduleChange, setAutoRenew, setCancelAtEnd } from '../billing/subscriptions.js';
+import { planInForce, scheduleChange, setAutoRenew, setCancelAtEnd } from '../billing/subscriptions.js';
 import { periodUsage, forgetBillable } from '../billing/meter.js';
 import { reconcile, simulateTransfer } from '../billing/sepay.js';
 import { capacityOf } from '../billing/capacity.js';
@@ -205,13 +205,6 @@ export function mountBillingRoutes(api, admin, { wrap }) {
       kind: b.kind, plan: typeof b.plan === 'string' ? b.plan : undefined, period: typeof b.period === 'string' ? b.period : undefined,
       amountVnd: b.amountVnd, useBalance: typeof b.useBalance === 'boolean' ? b.useBalance : undefined,
     };
-    // In grace the plan is the one just ended: buying the same plan and period again is its renewal (continues from the old end,
-    // and shares the one renewal order of the period), not a new plan from today.
-    if (input.kind === 'plan') {
-      const now = new Date();
-      const sub = await getStore().getSubscription(req.user.id);
-      if (isLive(sub, now) && now >= sub.periodEnd && input.plan === (sub.nextPlan ?? sub.plan) && input.period === (sub.nextPeriod ?? sub.period)) input.kind = 'renewal';
-    }
     const made = await createOrder(req.user.id, input);
     if (made.paidNow) {
       forgetBillable(req.user.id);

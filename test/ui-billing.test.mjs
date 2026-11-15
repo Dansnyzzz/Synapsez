@@ -533,6 +533,10 @@ section('light theme');
 /* ── Task 10: Settings → Billing and the administrators' card ─────────── */
 await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
 const OWNER = 'u-bill-owner';
+// A wait that can fail without throwing, so the check after it counts instead of aborting the run.
+const ok = (promise) => promise.then(() => true, () => false);
+// Orders are limited to 10 an hour per account (routes/billing.js) and this whole file is one hour: the sections above make about 6,
+// the ones below about 3 more. A new step that makes an order has to count against that, or reset the limiter first.
 const text = (selector) => page.evaluate((s) => (document.querySelector(s)?.textContent || '').replace(/\s+/g, ' ').trim(), selector);
 const gotoTab = async (p, tab) => {
   if (!(await p.evaluate(() => document.getElementById('settings').open))) {
@@ -542,7 +546,7 @@ const gotoTab = async (p, tab) => {
   }
   await p.click(`#tab-${tab}`);
 };
-const billingReady = () => page.waitForFunction(() => !!document.querySelector('#billing-panel [data-sec="plan"] h3') && !document.querySelector('#billing-panel [data-loading]'), null, { timeout: 8000 });
+const billingReady = () => page.waitForFunction(() => !!document.querySelector('#billing-panel [data-sec="plan"] h4') && !document.querySelector('#billing-panel [data-loading]'), null, { timeout: 8000 });
 const reopenBilling = async () => {
   await page.click('#tab-usage');
   await page.click('#tab-billing');
@@ -681,8 +685,7 @@ section('Redeem a promo code');
 section('Plan: adjust, auto-renew, cancel and keep, the low-balance email');
 {
   await page.click('[data-adjust]');
-  await page.waitForSelector('#plans[open] .plans__card');
-  check('Adjust plan opens the plans sheet', true);
+  check('Adjust plan opens the plans sheet', await ok(page.waitForSelector('#plans[open] .plans__card', { timeout: 5000 })));
   await page.keyboard.press('Escape');
   check('Esc puts focus back on the button that opened it', await page.evaluate(() => document.activeElement?.hasAttribute('data-adjust')));
 
@@ -699,6 +702,7 @@ section('Plan: adjust, auto-renew, cancel and keep, the low-balance email');
   await page.waitForFunction(() => /from your balance/.test(document.querySelector('[data-sec="plan"]')?.textContent || ''));
   await page.click('[data-cancel-plan]');
   await page.waitForFunction(() => /Ends /.test(document.querySelector('[data-sec="plan"]')?.textContent || '') && !!document.querySelector('[data-keep-plan]'));
+  check('Cancel plan hands focus to Keep plan, which took its place', await page.evaluate(() => document.activeElement?.hasAttribute('data-keep-plan')));
   check('Cancel plan says when the plan ends and offers Keep plan', /Ends \d|Ends [A-Z]/.test(await text('[data-sec="plan"]')) && (await page.locator('[data-keep-plan]').count()) === 1, await text('[data-sec="plan"]'));
   await page.click('[data-keep-plan]');
   await page.waitForFunction(() => !document.querySelector('[data-keep-plan]'));
@@ -707,9 +711,10 @@ section('Plan: adjust, auto-renew, cancel and keep, the low-balance email');
   await page.click('#bill-low-on');
   await page.waitForFunction(() => !document.getElementById('bill-low-amount').disabled);
   check('turning the low-balance email on asks for 50,000 by default', puts.length === 1 && puts[0] === '/api/billing/alerts {"lowBalanceVnd":50000}', puts.join(' | '));
+  const thresholdSaved = page.waitForResponse((r) => r.request().method() === 'PUT' && /billing\/alerts/.test(r.url()));
   await page.fill('#bill-low-amount', '80000');
   await page.dispatchEvent('#bill-low-amount', 'change');
-  await page.waitForTimeout(400);
+  await thresholdSaved;
   check('a new threshold is saved', puts.length === 2 && puts[1] === '/api/billing/alerts {"lowBalanceVnd":80000}', puts.join(' | '));
   check('the sentence that a transfer cannot be charged automatically is there', /cannot be charged automatically/i.test(await text('[data-sec="alerts"]')));
   page.off('request', watchPuts);
@@ -727,6 +732,7 @@ section('Billing information');
   await page.click('[data-sec="info"] [data-save-info]');
   await page.waitForFunction(() => !!document.querySelector('[data-sec="info"] [role="alert"]')?.textContent.trim());
   check('what the server refuses is shown beside the form', /valid email/i.test(await text('[data-sec="info"] [role="alert"]')), await text('[data-sec="info"] [role="alert"]'));
+  check('  and focus lands on those words, not on the page behind', await page.evaluate(() => document.activeElement?.id === 'bp-err'));
   await page.fill('#bp-email', 'b@example.com');
   await page.click('[data-sec="info"] [data-save-info]');
   await page.waitForFunction(() => /b@example\.com/.test(document.querySelector('[data-sec="info"]')?.textContent || '') && !document.querySelector('#bp-name'));
@@ -740,7 +746,7 @@ section('a plan in grace: Renew now, the date instead of a clock, and no late ca
   await store.saveSubscription({ ...sub, status: 'active', autoRenew: false, cancelAtEnd: false, nextPlan: null, nextPeriod: null, periodStart: new Date(Date.now() - 31 * day), periodEnd: new Date(Date.now() - day) });
   await reopenBilling();
   const grace = await text('[data-sec="plan"]');
-  check('the Plan card says "In grace until … add credit to keep Plus"', /In grace until .+ — add credit to keep Plus/.test(grace), grace);
+  check('with auto-renew off, the Plan card says "renew now to keep Plus" (credit alone would not renew it)', /In grace until .+ — renew now to keep Plus/.test(grace) && !/add credit/.test(grace), grace);
   check('  and offers Renew now', (await page.locator('[data-renew]').count()) === 1);
   await page.click('[data-adjust]');
   await page.waitForFunction(() => document.querySelector('#plans [data-plan="plus"] [data-pick]')?.textContent.trim() === 'Renew');
@@ -758,6 +764,7 @@ section('a plan in grace: Renew now, the date instead of a clock, and no late ca
   page.on('request', watch);
   await page.click('[data-renew]');
   await page.waitForSelector('#plans [data-continue]:not([disabled])');
+  check('before any renewal order exists, the checkout offers the choice of using the balance', (await page.locator('#plans [data-use-balance]').count()) === 1 && (await page.locator('#plans [data-fixed-balance]').count()) === 0);
   await page.click('#plans [data-continue]');
   await page.keyboard.press('Escape');
   await page.waitForTimeout(2200);
@@ -767,12 +774,38 @@ section('a plan in grace: Renew now, the date instead of a clock, and no late ca
 
   await page.click('[data-renew]');
   await page.waitForSelector('#plans [data-continue]:not([disabled])');
+  const fixed = await page.evaluate(() => ({ box: document.querySelectorAll('#plans [data-use-balance]').length, note: document.querySelector('#plans [data-fixed-balance]')?.textContent.trim() || '', total: document.querySelector('#plans .checkout__total dd')?.textContent.trim() || '' }));
+  check('once the renewal order exists, the checkout does not offer a choice the order ignores, and says what it does', fixed.box === 0 && /uses your balance/.test(fixed.note), JSON.stringify(fixed));
   await page.click('#plans [data-continue]');
   await page.waitForSelector('#plans .pay__qr img');
+  check('the total the checkout showed is the amount the QR asks for', fixed.total.replace(/\s/g, '') === (await text('#plans #pay-amount')).replace(/\s/g, ''), `${fixed.total} / ${await text('#plans #pay-amount')}`);
   const timer = await text('#plans .pay__time');
   check('a renewal good for days shows a date and time, not 4319:59', !/\d{3,}:\d\d/.test(timer) && !/^.*\b\d{2}:\d\d\b.*\b\d{2}:\d\d\b/.test(timer) && /until/i.test(timer) && /20\d\d/.test(timer), timer);
   await page.keyboard.press('Escape');
   await page.waitForSelector('#plans:not([open])', { state: 'attached' }).catch(() => {});
+}
+
+section('a plan in grace with a downgrade scheduled: Renew now is the scheduled plan, never the one that ran');
+{
+  const sub = await store.getSubscription(OWNER);
+  const day = 86_400_000;
+  await store.saveSubscription({ ...sub, plan: 'pro', period: 'month', status: 'active', autoRenew: true, cancelAtEnd: false, nextPlan: 'plus', nextPeriod: 'month', paidVnd: 206000, periodStart: new Date(Date.now() - 31 * day), periodEnd: new Date(Date.now() - day) });
+  await reopenBilling();
+  const line = await text('[data-sec="plan"]');
+  check('with auto-renew on the line says add credit, and names Plus (what renews), not Pro', /In grace until .+ — add credit to keep Plus/.test(line) && !/keep Pro/.test(line), line);
+  await page.click('[data-renew]');
+  await page.waitForSelector('#plans [data-view="checkout"] .checkout__lines');
+  await page.waitForSelector('#plans [data-continue]:not([disabled])');
+  const co = await page.evaluate(() => ({ title: document.querySelector('#plans #co-plan')?.textContent.trim(), period: document.querySelector('#plans .checkout__period [aria-checked="true"]')?.dataset.period, lines: document.querySelector('#plans .checkout__lines')?.textContent.replace(/\s+/g, ' ') }));
+  check('Renew now opens the checkout for Plus, monthly, at the full price', co.title === 'Plus' && co.period === 'month' && /128,000/.test(co.lines), JSON.stringify(co));
+  await page.keyboard.press('Escape');
+  await page.click('[data-adjust]');
+  await page.waitForFunction(() => document.querySelector('#plans [data-plan="plus"] [data-pick]')?.textContent.trim() === 'Renew');
+  const cards = await page.evaluate(() => ({ plus: document.querySelector('#plans [data-plan="plus"] [data-pick]').textContent.trim(), pro: document.querySelector('#plans [data-plan="pro"] [data-pick]').textContent.trim(), proOff: document.querySelector('#plans [data-plan="pro"] [data-pick]').disabled }));
+  check('the sheet offers Renew on Plus, and the plan that ran is only the current one (not a way to renew it)', cards.plus === 'Renew' && cards.pro === 'Current plan' && cards.proOff, JSON.stringify(cards));
+  await page.keyboard.press('Escape');
+  // Put it back as it was (auto-renew off, Plus): with auto-renew on, the next read would renew it from the balance the later sections count.
+  await store.saveSubscription(sub);
 }
 
 section('Receipts and the PDF');
@@ -792,8 +825,7 @@ section('Receipts and the PDF');
   const toAssign = page.locator('#admin-billing [data-transfer]', { hasText: '75,000' });
   await toAssign.locator('[data-assign-email]').fill('nobody@test.local');
   await toAssign.locator('[data-assign]').click();
-  await page.waitForFunction(() => [...document.querySelectorAll('#admin-billing [data-transfer] [role="alert"]')].some((a) => /No account has that email/.test(a.textContent || '')));
-  check('an email that matches no account is said, next to the row', true);
+  check('an email that matches no account is said, next to the row', await ok(page.waitForFunction(() => [...document.querySelectorAll('#admin-billing [data-transfer] [role="alert"]')].some((a) => /No account has that email/.test(a.textContent || '')), null, { timeout: 5000 })));
   await page.locator('#admin-billing [data-transfer]', { hasText: '75,000' }).locator('[data-assign-email]').fill('owner@test.local');
   await page.locator('#admin-billing [data-transfer]', { hasText: '75,000' }).locator('[data-assign]').click();
   await page.waitForFunction(() => document.querySelectorAll('#admin-billing [data-transfer]').length === 1, null, { timeout: 6000 });
@@ -804,8 +836,8 @@ section('Receipts and the PDF');
   await keep.click();
   check('Mark returned asks again on the first press and has not acted', (await page.locator('#admin-billing [data-transfer]').count()) === 1 && /sure|really/i.test((await keep.textContent()) || ''), (await keep.textContent()) || '');
   await keep.click();
-  await page.waitForFunction(() => document.querySelectorAll('#admin-billing [data-transfer]').length === 0, null, { timeout: 6000 });
-  check('the second press marks it returned', true);
+  check('the second press marks it returned', await ok(page.waitForFunction(() => document.querySelectorAll('#admin-billing [data-transfer]').length === 0, null, { timeout: 6000 })));
+  check('  and focus lands on the list heading, not on the page behind', await page.evaluate(() => document.activeElement?.id === 'adm-h-transfers'), await page.evaluate(() => document.activeElement?.tagName));
 
   await page.click('#tab-billing');
   await billingReady();
@@ -858,13 +890,15 @@ section('the administrators\' card: capacity, orders, promo codes, simulate');
   check('a promo code is made from the form and listed', /10,000/.test(await text('[data-promo-row="SPRING2026"]')));
   await page.fill('#adm-promo-code', 'short');
   await page.click('[data-promo-create]');
-  await page.waitForFunction(() => /8 to 32/.test(document.querySelector('#adm-promo-msg')?.textContent || ''));
-  check('a code the server refuses says why', true);
+  check('a code the server refuses says why', await ok(page.waitForFunction(() => /8 to 32/.test(document.querySelector('#adm-promo-msg')?.textContent || ''), null, { timeout: 5000 })));
   const off = page.locator('[data-promo-row="SPRING2026"] [data-promo-disable]');
   await off.click();
+  const asked = ((await off.textContent()) || '').trim();
+  const stillOn = await page.evaluate(async () => (await (await fetch('/api/admin/billing/promos')).json()).promos.find((p) => p.code === 'SPRING2026')?.active);
+  check('the first press on Switch off asks in its own words (not "mark returned") and has switched nothing off', /Really switch this code off/.test(asked) && !/returned/i.test(asked) && stillOn === true, `${asked} / active=${stillOn}`);
   await off.click();
-  await page.waitForFunction(() => /Switched off|Off/i.test(document.querySelector('[data-promo-row="SPRING2026"]')?.textContent || ''));
-  check('Disable is two presses and then the code reads as switched off', true);
+  check('the second press switches it off, and the row reads Switched off', await ok(page.waitForFunction(() => /Switched off/.test(document.querySelector('[data-promo-row="SPRING2026"]')?.textContent || ''), null, { timeout: 5000 })));
+  check('  and focus lands on the Promo codes heading', await page.evaluate(() => document.activeElement?.id === 'adm-h-promos'), await page.evaluate(() => document.activeElement?.tagName));
 
   // The renewal order made earlier is covered by the balance by now (the server says "nothing left to pay"), so a fresh top-up is played.
   const topup = await page.evaluate(async () => (await (await fetch('/api/billing/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'topup', amountVnd: 100000 }) })).json()).order.id);
@@ -875,9 +909,35 @@ section('the administrators\' card: capacity, orders, promo codes, simulate');
   await page.selectOption('#adm-sim-order', topup);
   await page.click('[data-simulate]');
   await page.waitForFunction(() => !!document.querySelector('#adm-sim-msg')?.textContent.trim(), null, { timeout: 6000 });
-  check('the simulation says what came of it', /Simulated: /.test(await text('#adm-sim-msg')), await text('#adm-sim-msg'));
+  check('the simulation says what came of it in a sentence, not a raw word', /Simulated: the top-up was credited/.test(await text('#adm-sim-msg')), await text('#adm-sim-msg'));
   const after = await page.evaluate(async () => (await (await fetch('/api/billing')).json()).balance.vnd);
   check('Simulate a transfer plays the bank for a pending order: the top-up is credited', after === before + 100000, `${before} -> ${after}`);
+}
+
+section('Recent transactions: a page of nothing but hidden rows does not leave Load more with nothing to draw');
+{
+  await page.click('#tab-billing');
+  await billingReady();
+  const asked = [];
+  await page.route('**/api/billing/transactions*', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get('kind') !== 'usage') return route.fallback();
+    asked.push(url.searchParams.get('before') || '-');
+    const day = '2026-11-14';
+    const zero = (id) => ({ id, kind: 'usage', category: 'search', day, units: 0, deltaVnd: 0, ref: null, note: null, createdAt: new Date().toISOString(), balanceAfterVnd: 1 });
+    const real = { id: 40, kind: 'usage', category: 'search', day, units: 3, deltaVnd: -1200, ref: null, note: null, createdAt: new Date().toISOString(), balanceAfterVnd: 2 };
+    const body = !url.searchParams.get('before') ? { entries: [zero(90), zero(89)], next: 89 } : { entries: [real], next: null };
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+  });
+  await page.click('[data-chip="usage"]');
+  await page.waitForFunction(() => document.querySelectorAll('[data-sec="tx"] .bill__tx li').length === 1, null, { timeout: 6000 }).catch(() => {});
+  await page.unroute('**/api/billing/transactions*');
+  check('the next page is read until a row worth showing arrives, so the list is drawn', (await page.locator('[data-sec="tx"] .bill__tx li').count()) === 1 && asked.join() === '-,89', asked.join());
+  check('  and there is no Load more left with nothing behind it', (await page.locator('[data-more]').count()) === 0);
+  await page.click('[data-chip="all"]');
+
+  const levels = await page.evaluate(() => ({ panel: [...document.querySelectorAll('#billing-panel [data-sec] > h4')].length, h3: document.querySelectorAll('#billing-panel h3, #admin-billing h3').length, admin: document.querySelectorAll('#admin-billing h4').length }));
+  check('the cards\' headings are one level (h4) under the section heading, here and in the card', levels.panel === 8 && levels.h3 === 0 && levels.admin >= 5, JSON.stringify(levels));
 }
 
 section('keyboard, names and 360 px');

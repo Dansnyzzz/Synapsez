@@ -12842,9 +12842,9 @@ html[data-scene] .gate { background: var(--bg); }
 /* Settings → Billing and Administration → Billing (billing preview, 2026-11-15). Cards are plain blocks that stack, rows are grids that fall to one column under 560 px, so 360 px never scrolls sideways. */
 .bill__card { margin: 14px 0; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-2); }
 .bill__card[hidden] { display: none; }
-.bill__card h3, .adm__h { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
-.bill__card h3:focus, .adm__h:focus { outline: none; }
-.bill__card h3:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+.bill__card h4, .adm__h { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+.bill__card h4:focus, .adm__h:focus { outline: none; }
+.bill__card h4:focus-visible, .adm__h:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
 .bill__card p { margin: 0 0 8px; }
 .bill__card .field { display: grid; gap: 4px; margin: 0 0 8px; }
 .bill__card .field input { width: 100%; max-width: 360px; box-sizing: border-box; }
