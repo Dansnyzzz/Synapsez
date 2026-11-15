@@ -1179,7 +1179,7 @@ Four engines, tried in order, and the first one that answers wins:
 | | | |
 |---|---|---|
 | **Exa** | `EXA_API_KEY` | Neural search — returns the passage that answers the question rather than a page that mentions the words. First for that reason. |
-| **Firecrawl** | `FIRECRAWL_API_KEY` | Web search with the search engines' own ranking, 2 credits for ten results, on Firecrawl's Free (1,000 credits a month) or Hobby (5,000) plan, each key kept to 95% of its own plan; past that only the owner's paid key answers, only for a charged call and under its monthly cap, so nothing is billed until a call is charged. Second, and the engine fused in beside Exa from Extra high up. See "Firecrawl" below. |
+| **Firecrawl** | `FIRECRAWL_API_KEY` | Web search with the search engines' own ranking, 2 credits for ten results, on Firecrawl's Free (1,000 credits a month) or Hobby (5,000) plan (this deployment's owner is on Hobby), each key kept to 95% of its own plan; past that only the owner's paid key answers, and only for a call billing has charged (an administrator's call that a plan or a balance covered) and under its monthly cap. With the ceilings on (the default), everyone else's calls never reach the paid key, so a member cannot run up the owner's Firecrawl bill. Second, and the engine fused in beside Exa from Extra high up. See "Firecrawl" below. |
 | **DuckDuckGo** | no key | Free, so it sits ahead of the paid fallbacks: an outage on the good engine should not start spending credits. |
 | **Tavily** | `TAVILY_API_KEY` | Paid safety net. |
 | **Brave** | `BRAVE_API_KEY` | Paid safety net. |
@@ -2119,7 +2119,7 @@ step, with the optional certificate and how to bring data over from another data
 | `QUALITY_GATE_ROUNDS` | optional | How many times a finished answer citing an address no source holds is sent back to correct that sentence, before the link is dropped (1–3, default `2`). Each round is one short call, made only while something is still flagged. See "The quality gate". |
 | `PROVIDER_REQUEST_BUDGET_MS` | optional | How long one call to a model may take, every key and retry together (default `240000`, under the 300 s a Vercel function lives). Waits and first-word timeouts are cut to what is left, and a stumble's Retry-After is waited a minute at most, so a provider that will not answer ends the turn with a reason rather than a cut-off stream. This budget starts again with each call, so a turn also has a deadline, 270 s after it began on this function, that bounds what a call waits for — a stumble's retry, a rate-limited key's rest, the wait for a first word — on the turn's steps and when it folds the conversation. It does not cut a reply that is already streaming, and a call still gets 20 s to start (the least worth trying), so a long turn can outlive the function; a turn cut off that way is picked up again (`server/resume.js`) rather than ended early.
 | `EXA_FREE_MILLS`, `TAVILY_FREE_CREDITS`, `BRAVE_FREE_REQUESTS`, `GOOGLE_FREE_DAILY`, `STACKEXCHANGE_FREE_DAILY` | optional | Exa's, Tavily's and Brave's are each key's default ceiling — a service's allowance is the sum over its keys, and a ceiling the owner sets on a key, or Tavily's own report of the key's plan, comes first; Google's and Stack Exchange's are the service's ceiling. Set one if its free tier is not the default: Exa in thousandths of a dollar a month (9500), Tavily credits a month (950), Brave requests a month (950), Google grounded searches a day on the deployment's Gemini key (450), Stack Exchange requests a day (280, or 9500 with a key). |
-| `FIRECRAWL_API_KEY` | optional | Firecrawl (firecrawl.dev, Free or Hobby plan; one key is the environment's, the owner may add more and choose one as the paid key in Settings → Free allowances): a search engine, pages that refuse this server, a site's pages, code discussions and the free paper and law indexes. See "Searching the web". |
+| `FIRECRAWL_API_KEY` | optional | Firecrawl (firecrawl.dev, Free or Hobby plan, the owner's being Hobby; one key is the environment's, the owner may add more and choose one as the paid key in Settings → Free allowances): a search engine, pages that refuse this server, a site's pages, code discussions and the free paper and law indexes. See "Searching the web". |
 | `FIRECRAWL_FREE_CREDITS`, `FIRECRAWL_SEARCH_FREE`, `FIRECRAWL_SCRAPE_FREE`, `FIRECRAWL_MORE_FREE`, `FIRECRAWL_INDEX_FREE_DAILY` | optional | `FIRECRAWL_FREE_CREDITS` is each key's fallback month (950), used until Firecrawl reports the key's plan — the live plan wins (95% of it; Hobby's 5,000 → 4,750). `FIRECRAWL_INDEX_FREE_DAILY` is each key's free-index calls a day (950). `FIRECRAWL_SEARCH_FREE`, `FIRECRAWL_SCRAPE_FREE` and `FIRECRAWL_MORE_FREE` fix the searches, pages read, and site maps, crawls and code shares outright; unset, they are 60% / 35% / 5% of the summed capacity of all Firecrawl keys. |
 | more keys for `EXA_API_KEY`, `TAVILY_API_KEY`, `FIRECRAWL_API_KEY` | in the app | The variable is key 1; up to 10 per service, key 1 among them, are added by the owner in Settings → People → Free allowances (in the Administration group), with one optional paid key each. |
 | `SEC_USER_AGENT` | recommended | Market data: how SEC EDGAR is asked, as SEC requires — `Synapsez <contact email>`, the owner's real contact. Without it SEC is never asked, and US statements, filings and the US screen fall back to Yahoo or say so. See `docs/vercel-config.md`. |
@@ -2694,6 +2694,140 @@ Being explicit, so you do not assume protection that is not there:
 - **Scheduled runs are unattended, so `ask` and `guarded` policies will stall them** if the work
   needs approval. Nobody is there to answer. Schedule work that reads and reports, or set the policy
   to auto-run and understand what that means.
+
+---
+
+## Billing
+
+Billing (1.30.0) is an **administrators' preview**. It is built to take real money by bank transfer
+through [SePay](https://sepay.vn), but nothing is switched on for members: to anyone who is not an
+administrator every billing route answers `404`, nobody is charged, and no limit is enforced on
+anybody. The preview exists so the owner can pay for a plan, top up, and read the ledger on their own
+account before deciding to go live. Going live is a later release; it is not a setting that is safe to
+flip today (see "Not built yet" below).
+
+### Modes
+
+`BILLING_MODE` is read by the server on every request; the browser is only told the answer.
+
+| Mode | Who sees billing | Who is counted and charged | Does a call get refused? |
+|---|---|---|---|
+| `off` | nobody; every billing route and the webhook answer `404` | nobody | no |
+| `preview` (the default) | administrators; everyone else gets `404`, not `403`, so the routes do not announce themselves | administrators who hold a plan (active or in grace) or a balance above zero | never. When nothing could be held the call goes ahead as it always did, and a `would refuse` counter goes up |
+| `live` | everyone signed in | decided by the next release | yes, but only where this release wired it (`hold.refused`) |
+
+Unset or unrecognised means `preview`, so a typo can never turn billing on for customers; a test pins
+it. An administrator with no plan and no balance is metered by nothing: their behaviour is the same
+as before billing existed.
+
+### Plans and pay as you go
+
+Prices are set in US dollars and charged in đồng at the day's rate, rounded up to the next 1,000đ. The
+rate is read from open.er-api, then Vietcombank's transfer rate, then Frankfurter, and kept for an
+hour; a rate older than 48 hours is not used, and a purchase is refused with a message rather than
+priced on a stale rate. An order locks its rate and price for the 30 minutes its QR is good.
+
+| Plan | Monthly | Yearly | Included each month |
+|---|---|---|---|
+| Free | 0 | - | no metered allowance, 0.5 GB of files |
+| Plus | 5 USD | 57 USD | 150 searches, 4 h, 3 GB |
+| Pro | 8 USD | 91 USD | 250 searches, 6 h, 5 GB |
+| Max | 15 USD | 171 USD | 450 searches, 12 h, 10 GB |
+
+(The hours are of cloud computer; the gigabytes are of files.) Each plan is one person. The allowances are **a month's, usable on any day**: there is no daily limit,
+counter or display anywhere in billing. A Free account has none of the metered allowances.
+
+Past an allowance, or with no plan, a charge comes from the balance, at these prices at the anchor
+rate of 25,656 đ/USD, which move with the rate like the plans do:
+
+| Unit | At the anchor rate |
+|---|---|
+| A search | 400đ |
+| Cloud computer | 5,000đ an hour, charged by the started minute (84đ) |
+| Storage | 1,000đ per GB-month, charged daily |
+
+A search that reads several pages through Firecrawl is one unit per three pages. DuckDuckGo, Google,
+Stack Exchange, Firecrawl's free indexes and the ten-minute search cache are free engines and cost no
+units. Top-ups start at 50,000đ (100,000đ with a plan), the balance may not pass 200,000đ (1,000,000đ
+with a plan) through the form, and unused balance expires 12 months after the last top-up, with an
+email 30 days before. Transfers past the bound are still credited: money that arrived is never
+turned back by a limit on a form.
+
+A plan lasts a month or a year in Vietnamese time. An upgrade starts a new period at once with the
+unused share of the old one as credit; a downgrade, a move from a year to a month, or a cancel takes
+effect at the period's end. After a missed renewal there are 3 days of grace, reminded 3 days before
+the end, and unpaid days of grace are not charged.
+
+**The free shares are worked out each month from real capacity**, not set: on the 1st, the free keys'
+capacity in searches divided by the people who used metered searches in the last 30 days (at least
+10), between 30 and 900 a month; the cloud computer likewise (at least 3 people). 80% of the capacity
+is shared out and 20% held back for people who start later in the month. A share is held for the month,
+raised if a key is added and never lowered mid-month. Settings → Usage shows each person their figures
+and how they were worked out. An account with no plan may keep 0.5 GB of files, administrators
+excepted, while files live in the database.
+
+### What it needs
+
+None of these is required: with none set, preview still runs and checkout says what is missing. Every
+secret is read only from the environment and never appears in a response, a log line or an error
+message. The same rows are in the deploy table under "Deploy"; this is the list by what each is for.
+
+| Variable | For |
+|---|---|
+| `BILLING_MODE` | `off`, `preview` or `live`; see Modes. |
+| `SEPAY_WEBHOOK_SECRET` | The webhook's HMAC secret. While it is unset `POST /api/billing/sepay` answers `404`. |
+| `SEPAY_API_TOKEN` | A SePay API key for the backup poll of transfers the webhook missed. Without it nothing is polled. |
+| `SEPAY_BANK_ACCOUNT` | The receiving account number SePay watches. A transfer into any other account is ignored. Without it checkout cannot show a QR. |
+| `SEPAY_BANK_CODE` | The bank's short code as SePay's QR image expects it. |
+| `SEPAY_ACCOUNT_NAME` | The account holder's name shown beside the QR. |
+| `SEPAY_EINVOICE_CLIENT_ID`, `SEPAY_EINVOICE_CLIENT_SECRET` | The e-invoice API's credentials. E-invoices are built and stay **off** until these and `SEPAY_EINVOICE_TEMPLATE` are all set; they also need a tax code and a digital signature registered with SePay. `SEPAY_EINVOICE_SANDBOX=1` points them at SePay's sandbox. |
+| `BILLING_SELLER_NAME` | The seller's name on receipts (default `Synapsez`). |
+| `BILLING_TAX_RATE` | A VAT percentage. Unset means receipts carry no tax line. A receipt is not a VAT invoice either way. |
+| `E2B_CONCURRENT_LIMIT` | How many cloud-computer machines E2B lets this deployment run at once (default 20); the administrators' Billing card shows how many are running against it. |
+| `DATABASE_INCLUDED_GB` | The database size the hosting plan includes (default 8); the card shows the database against it, amber at 75% and red at 90%. |
+| `VERCEL_SANDBOX_MONTHLY_CPU_HOURS` | The Vercel stand-in machine is counted by the app and not started past this many CPU-hours a month (default 4.5 of Hobby's 5), so it cannot turn into a bill. |
+
+### The owner's steps, outside the code
+
+1. In Vercel set `SEPAY_WEBHOOK_SECRET`, `SEPAY_BANK_ACCOUNT`, `SEPAY_BANK_CODE` (for example `MBBank`),
+   `SEPAY_ACCOUNT_NAME`, and optionally `SEPAY_API_TOKEN`. `BILLING_MODE` may stay unset, which is
+   preview.
+2. In SePay set the payment-code prefix to `SZ`, and add a webhook to
+   `https://<your deployment>/api/billing/sepay` signed with HMAC and the same secret, with "resend
+   automatically when the server returns an error" on. The webhook answers `{"success": true}` only
+   after the database work is done, so a failure is retried instead of lost.
+3. Give the `billing` permission to any administrator who should see the money.
+4. Test with a simulated transfer (Settings → Billing; offered to the owner only, and only in preview), then one small
+   real transfer: a 50,000đ top-up on your own account.
+
+A payment code is `SZ` followed by ten digits, shown with the QR; a transfer is matched on SePay's
+`code` field, else on the transfer's content, and a transfer that matches nothing waits in the
+administrators' Billing card to be assigned or dismissed by hand. Rate limits: 10 orders an hour and 10
+promo-code tries an hour per account.
+
+### Not verified live
+
+Everything above is tested against recorded answers, PGlite and the test suites. These have not been
+seen to work against the real thing:
+
+- the SePay webhook against the real service: the signature headers, and that the raw body reaches the
+  check unchanged on Vercel (it is verified before the JSON parser, on the raw bytes);
+- the shape of SePay's transaction list (userapi v2) used by the backup poll;
+- a real QR image from `qr.sepay.vn` and a real bank transfer end to end;
+- SePay's e-invoice API, which is built and switched off;
+- E2B's list of running machines, used for the capacity line on the administrators' card;
+- a real Exa key check (the pooled keys' plan and use);
+- concurrency on real Postgres: the tests run on PGlite, which executes one statement at a time, so
+  two charges at the same instant have been argued from the SQL, not observed;
+- the copy fallback in a browser that refuses the clipboard;
+- the new Vietnamese text, which needs a native reader.
+
+### Not built yet
+
+Refusing anybody (preview never does); a Free plan for everyone and its limits; seats and a Team plan;
+the terms (credit expiry, no withdrawals) and the privacy policy's billing and SePay paragraphs; cards
+through SePay's gateway, which needs a registered business; moving files out of Postgres into object
+storage, which must come before going live; and switching `BILLING_MODE` to `live`.
 
 ---
 

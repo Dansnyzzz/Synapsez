@@ -36,7 +36,9 @@ export { periodOf, freeTierOnly, e2bMonthCap } from './freeTierPeriod.js';
  *   - Firecrawl (checked 2026-11-11, server/firecrawl.js): 1,000 credits a month on its
  *     Free plan, 5,000 on Hobby, a 402 at zero. Kept to 950 a key (FIRECRAWL_FREE_CREDITS) until Firecrawl says the
  *     key's plan, then to 95% of it; past that only the owner's paid
- *     key answers, for a charged call and under its monthly cap (keyPool.js). Shared as the owner chose: searches 60%
+ *     key answers, for a call billing has charged (`paid: true`, so in preview only an
+ *     administrator whom a plan or balance covered) and under its monthly cap (keyPool.js).
+ *     The owner's key is on Hobby; Free is still what an unknown key is taken for. Shared as the owner chose: searches 60%
  *     (570 of one Free key; FIRECRAWL_SEARCH_FREE sets a figure outright), pages read 35%
  *     (FIRECRAWL_SCRAPE_FREE), site maps, crawls and code 5% (FIRECRAWL_MORE_FREE) — each
  *     share and the whole counted. Its Research and Government Indexes cost no credits

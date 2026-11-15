@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-11-15 — Billing, as an administrators' preview (1.30.0)
+
+**Billing is built and switched on for administrators only.** To everyone else every billing route answers `404`, nobody is charged, and no limit is enforced on users until the owner switches `BILLING_MODE` to `live` (unset or unknown means `preview`). An administrator is counted only once they hold a plan or a balance, and even then a call is never refused: when nothing could be held it goes ahead as before and a "would refuse" counter goes up.
+
+**Plans** Plus, Pro and Max at 5, 8 and 15 USD a month (57, 91 and 171 a year), charged in đồng at the day's rate and paid by bank transfer through SePay. Allowances are a month's, usable on any day; there are no daily limits. Past them, or with no plan, a balance pays at prices anchored to 25,656 đ/USD that follow the rate: 400đ a search, 5,000đ an hour of cloud computer, 1,000đ per GB-month. The Billing tab, PDF receipts, promo codes and the administrators' Billing card come with it; SePay e-invoices are built and off.
+
+**Free shares worked out monthly** from the free keys' real capacity, with a fifth held back for people who start late, and 0.5 GB of files for an account with no plan.
+
+**Not verified live:** the SePay webhook, its transaction list, a real QR and transfer, concurrency on real Postgres, and the new Vietnamese text. The README's Billing section lists them and the variables to set.
+
 ## 2026-11-13 — Every search service keeps spare keys (1.29.0)
 
 **Exa, Tavily and Firecrawl take up to 10 keys each**, added by the deployment's owner in Settings → People → Free allowances, in the Administration group (the `*_API_KEY` variable stays key 1, and is one of the 10). A service's allowance is the sum of its keys, counted at once when one is added or removed. A key that is spent, refused or rate-limited hands over to the next; a slow provider (a timeout) is not retried on another key — the search moves to the next engine. Tavily and Firecrawl show each key's plan and use as the provider reports it. Brave and E2B still hold one key.

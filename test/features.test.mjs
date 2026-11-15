@@ -2806,5 +2806,38 @@ section('what Google counts');
   check('one on tokens is not taken for it', readGeminiQuota(refusal('GenerateContentInputTokensPerDay-FreeTier'))?.perDay === null);
 }
 
+section('billing: the sheet, the menu row, the mode and the release notes agree with the code');
+{
+  const { PLANS, PLAN_IDS } = await import('../server/billing/plans.js');
+  const { billingMode } = await import('../server/billing/mode.js');
+  const read = (p) => fs.readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
+  const sheet = read('public/js/billing-plans.js');
+  const free = /const FREE = \{ searches: (\d+), sandboxMinutes: (\d+), storageGb: ([\d.]+) \}/.exec(sheet);
+  check("the browser sheet's Free card is the Free plan in plans.js", !!free && +free[1] === PLANS.free.searches && +free[2] === PLANS.free.sandboxMinutes && +free[3] === PLANS.free.storageGb, free?.[0]);
+  check('the sheet lists the plans in plans.js, in order', /const ORDER = \['free', 'plus', 'pro', 'max'\]/.test(sheet) && PLAN_IDS.join() === 'free,plus,pro,max');
+  const readme = read('README.md');
+  const billing = /\n## Billing\r?\n[\s\S]*?(?=\r?\n## )/.exec(readme)?.[0] || '';
+  check('the README has a Billing section', billing.length > 500);
+  for (const id of ['plus', 'pro', 'max']) {
+    const row = `${PLANS[id].searches} searches, ${PLANS[id].sandboxMinutes / 60} h, ${PLANS[id].storageGb} GB`;
+    check(`the README states ${id}'s allowances as plans.js has them`, billing.includes(row), row);
+    check(`the README states ${id}'s prices in USD`, billing.includes(`${PLANS[id].usdCents.month / 100} USD`) && billing.includes(`${PLANS[id].usdCents.year / 100} USD`));
+  }
+  const menu = read('public/js/account-menu.js');
+  check('the Upgrade row sits before View changelog', menu.indexOf("id: 'upgrade'") > 0 && menu.indexOf("id: 'upgrade'") < menu.indexOf("id: 'changelog'"));
+  check('BILLING_MODE unset is preview', billingMode({}) === 'preview');
+  check('BILLING_MODE unknown is preview, so a typo never turns billing on for customers', billingMode({ BILLING_MODE: 'lvie' }) === 'preview');
+  check('off and live are taken as written', billingMode({ BILLING_MODE: 'off' }) === 'off' && billingMode({ BILLING_MODE: 'LIVE' }) === 'live');
+  const version = JSON.parse(read('package.json')).version;
+  const log = JSON.parse(read('public/changelog.json')).entries;
+  check("the changelog's newest entry is the package version", log[0].version === version, `${log[0].version} vs ${version}`);
+  check("1.30.0 is released, in both languages, as an administrators' preview", version === '1.30.0' && log[0].new.vi.length > 0 && log[0].new.en.length === log[0].new.vi.length && /administrators/i.test(log[0].new.en.join(' ')));
+  check('CHANGELOG.md carries the same version', read('CHANGELOG.md').includes('(1.30.0)'));
+  for (const name of ['BILLING_MODE', 'SEPAY_WEBHOOK_SECRET', 'SEPAY_API_TOKEN', 'SEPAY_EINVOICE_CLIENT_ID', 'SEPAY_EINVOICE_CLIENT_SECRET', 'SEPAY_BANK_ACCOUNT', 'SEPAY_BANK_CODE', 'SEPAY_ACCOUNT_NAME', 'BILLING_SELLER_NAME', 'BILLING_TAX_RATE', 'E2B_CONCURRENT_LIMIT', 'DATABASE_INCLUDED_GB', 'VERCEL_SANDBOX_MONTHLY_CPU_HOURS']) {
+    check(`README documents ${name} in the Billing section`, billing.includes(name));
+  }
+  check('the README says what is unverified live', billing.includes('Not verified live'));
+}
+
 console.log(failures === 0 ? '\n\x1b[32mAll feature checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

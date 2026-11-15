@@ -1,6 +1,34 @@
 {
   "entries": [
     {
+      "version": "1.30.0",
+      "date": "2026-11-15",
+      "new": {
+        "vi": [
+          "Thanh toán đã có mặt, nhưng mới là bản xem trước dành cho quản trị viên: người khác không thấy gì, không ai bị tính tiền và chưa có giới hạn nào áp lên người dùng cho đến khi chủ triển khai bật chính thức.",
+          "Gói Plus, Pro và Max (5, 8 và 15 USD một tháng; 57, 91 và 171 USD một năm), trả bằng chuyển khoản qua SePay, tính bằng đồng theo tỷ giá trong ngày. Hạn mức của gói tính theo tháng, dùng ở bất kỳ ngày nào, không có giới hạn theo ngày.",
+          "Nạp số dư để trả theo mức dùng vượt gói: tìm kiếm, máy tính đám mây và dung lượng lưu trữ, giá theo tỷ giá USD.",
+          "Thẻ Thanh toán trong Cài đặt, phiếu thu PDF, mã khuyến mãi và thẻ Thanh toán của quản trị viên để xem dòng tiền và xử lý chuyển khoản chưa khớp."
+        ],
+        "en": [
+          "Billing has arrived as an administrators' preview: hidden from everyone else, nothing charged to members, and no limits enforced on users until the owner switches it live.",
+          "Plus, Pro and Max plans (5, 8 and 15 USD a month; 57, 91 and 171 USD a year), paid by bank transfer through SePay and charged in đồng at the day's rate. A plan's allowances are a month's, usable on any day, with no daily limits.",
+          "A balance to pay for use beyond a plan: searches, cloud computer time and storage, priced to follow the USD rate.",
+          "A Billing tab in Settings, PDF receipts, promo codes, and a Billing card for administrators to read the money and settle transfers that matched nobody."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Hạn mức miễn phí của mỗi người nay tính theo tháng từ dung lượng thật của các khoá miễn phí, và Cài đặt → Mức dùng cho biết cách tính.",
+          "Tài khoản không có gói giữ được 0,5 GB tệp (quản trị viên không bị giới hạn này)."
+        ],
+        "en": [
+          "Each person's free share is now a month's, worked out from the real capacity of the free keys, and Settings → Usage says how.",
+          "An account with no plan may keep 0.5 GB of files (administrators excepted)."
+        ]
+      }
+    },
+    {
       "version": "1.29.0",
       "date": "2026-11-13",
       "new": {
