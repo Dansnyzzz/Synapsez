@@ -20,7 +20,8 @@ const FREE = { searches: 0, sandboxMinutes: 0, storageGb: 0.5 };
 const POLL_MS = 5000;
 const ATTRIBUTION = 'https://www.exchangerate-api.com';
 const SOURCES = { erapi: 'Exchange Rate API', vietcombank: 'Vietcombank', frankfurter: 'Frankfurter' };
-const COPY = ['bank', 'account', 'holder', 'amount', 'content'];
+/** The rows of the QR view a person can copy, in order, and the words each is called by. */
+const COPY = { bank: 'billing.pay.bank', account: 'billing.pay.account', holder: 'billing.pay.holder', amount: 'billing.pay.amount', content: 'billing.pay.content' };
 /** A renewal order stays good until grace ends, days away: past this the deadline is a date and time, not a clock. */
 const CLOCK_MAX_MS = 3_600_000;
 
@@ -80,6 +81,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     dialog.addEventListener('click', onClick);
     dialog.addEventListener('change', onChange);
     dialog.addEventListener('keydown', onKey);
+    // Save is the billing form's submit button, so a click and Enter in a field both arrive here, once.
     dialog.addEventListener('submit', (event) => {
       event.preventDefault();
       if (/** @type {HTMLElement} */ (event.target).matches?.('form[data-profile]')) void saveProfile();
@@ -116,7 +118,6 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     try {
       const [plans, account] = await Promise.all([api.billingPlans(), api.billing()]);
       data = { plans, account };
-      if (!['month', 'year'].includes(period)) period = 'month';
     } catch (err) {
       failure = err.message;
     }
@@ -548,7 +549,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     pay.receipt = null;
     paint('title');
     // Only a real transfer has a receipt (a simulated one has none), so a missing one is not an error.
-    api.billingReceipts?.()
+    api.billingReceipts()
       .then((r) => {
         const mine = r.receipts?.find((x) => x.orderId === order.id);
         if (mine && pay?.order === order) {
@@ -576,7 +577,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
 
   function payHtml() {
     const q = pay.qr;
-    const labels = { bank: t('billing.pay.bank'), account: t('billing.pay.account'), holder: t('billing.pay.holder'), amount: t('billing.pay.amount'), content: t('billing.pay.content') };
+    const labels = Object.fromEntries(Object.entries(COPY).map(([k, key]) => [k, t(key)]));
     const values = { bank: q.bank, account: q.account, holder: q.holder, amount: vnd(q.amount), content: q.content };
     const waiting = pay.state === 'waiting';
     const status = statusText();
@@ -585,7 +586,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       <p class="pay__lead">${esc(t('billing.pay.lead'))}</p>
       <div class="pay__grid">
         <div class="pay__qr"><img src="${esc(q.image)}" alt="${esc(t('billing.pay.qrAlt', { amount: vnd(q.amount), content: q.content }))}" width="220" height="220"></div>
-        <dl class="pay__rows">${COPY.map((k) => `<div><dt>${esc(labels[k])}</dt><dd id="pay-${k}">${esc(values[k])}</dd><button type="button" class="btn btn--small" data-copy="${k}" aria-label="${esc(t('billing.pay.copy', { what: labels[k] }))}">${esc(t('billing.pay.copyShort'))}</button></div>`).join('')}</dl>
+        <dl class="pay__rows">${Object.keys(COPY).map((k) => `<div><dt>${esc(labels[k])}</dt><dd id="pay-${k}">${esc(values[k])}</dd><button type="button" class="btn btn--small" data-copy="${k}" aria-label="${esc(t('billing.pay.copy', { what: labels[k] }))}">${esc(t('billing.pay.copyShort'))}</button></div>`).join('')}</dl>
       </div>
       <p class="pay__time"${waiting ? '' : ' hidden'}><span class="pay__timelabel">${esc(shown.label)}</span> <span class="pay__timer" role="timer" aria-live="off">${esc(shown.text)}</span></p>
       <p class="pay__status" role="status" tabindex="-1">${esc(status)}</p>
@@ -624,11 +625,10 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
 
   /* ── copy ─────────────────────────────────────────────────────────── */
   async function copy(key) {
-    const labels = { bank: 'billing.pay.bank', account: 'billing.pay.account', holder: 'billing.pay.holder', amount: 'billing.pay.amount', content: 'billing.pay.content' };
     const value = key === 'amount' ? String(pay.qr.amount) : String(pay.qr[key]);
     try {
       await navigator.clipboard.writeText(value);
-      toast(t('billing.pay.copied', { what: t(labels[key]) }), 'ok');
+      toast(t('billing.pay.copied', { what: t(COPY[key]) }), 'ok');
     } catch {
       // The clipboard was refused (an insecure origin, a policy): select the text so Ctrl+C finishes it.
       const el = $(`#pay-${key}`);
@@ -702,7 +702,6 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       paint('[data-continue]');
       return;
     }
-    if (el.hasAttribute('data-save-profile')) return void saveProfile();
     if (el.hasAttribute('data-continue')) return void makeOrder({ kind: 'plan', plan: checkout.plan, period, useBalance: useBalanceFor(checkout.quotes[period]) }, 'plan');
     if (el.dataset.copy) return void copy(el.dataset.copy);
     if (el.hasAttribute('data-cancel')) return void cancelOrder();
