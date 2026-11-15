@@ -3286,7 +3286,8 @@ section("Settings is Claude's list: sections down the left, in groups, each its 
   });
   check(
     'the sections, in Claude\'s order: Preferences, This computer, Customize — and Administration for an administrator',
-    nav.order === 'providers,general,theme,ranking,account,privacy,usage,capabilities,memory,system,extensions,developer,skills,connectors,plugins,admin,feedback' && nav.groups === 'preferences,computer,customize,admin',
+    // Billing sits after Usage: this account is an administrator, so it sees billing in preview.
+    nav.order === 'providers,general,theme,ranking,account,privacy,usage,billing,capabilities,memory,system,extensions,developer,skills,connectors,plugins,admin,feedback' && nav.groups === 'preferences,computer,customize,admin',
     JSON.stringify(nav),
   );
   check('  down the left, with a search above them', nav.downward && nav.search, JSON.stringify(nav));

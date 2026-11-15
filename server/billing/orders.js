@@ -30,7 +30,10 @@ export async function quote(userId, { plan, period }, { now = new Date() } = {})
   let kind = 'new';
   let creditVnd = 0;
   if (isLive(sub, now)) {
-    kind = moveKind(sub, plan, period);
+    // In grace the plan just ended is paid for again, not "changed at renewal": the same terms are the renewal itself (createOrder
+    // makes it the period's one shared renewal order), which is what the Billing tab's Renew now buys.
+    const renewing = now >= sub.periodEnd && plan === (sub.nextPlan ?? sub.plan) && period === (sub.nextPeriod ?? sub.period);
+    kind = renewing ? 'renewal' : moveKind(sub, plan, period);
     // Never more credit than the price: the unused part of a dearer plan is not paid out.
     if (kind === 'upgrade') creditVnd = Math.min(priceVnd, prorate(sub.paidVnd, sub.periodStart, sub.periodEnd, now));
   }

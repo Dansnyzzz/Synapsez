@@ -21,6 +21,8 @@ const POLL_MS = 5000;
 const ATTRIBUTION = 'https://www.exchangerate-api.com';
 const SOURCES = { erapi: 'Exchange Rate API', vietcombank: 'Vietcombank', frankfurter: 'Frankfurter' };
 const COPY = ['bank', 'account', 'holder', 'amount', 'content'];
+/** A renewal order stays good until grace ends, days away: past this the deadline is a date and time, not a clock. */
+const CLOCK_MAX_MS = 3_600_000;
 
 const number = (n) => new Intl.NumberFormat(localeTag(), { maximumFractionDigits: 1 }).format(n);
 
@@ -41,6 +43,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   let clockTimer = 0;
   let polling = false;
   let busy = false;
+  /** The amount of a top-up that failed, so "Try again" makes that top-up again and not the plans sheet. */
+  let retryTopUp = null;
   // Bumped whenever the person leaves what an order was being made for (Esc, Back, a new open): an answer that comes
   // back afterwards is for a screen that is gone and must not start a clock or a poll on it (review, 2026-11-15).
   let flow = 0;
@@ -122,6 +126,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     ensure();
     stopTimers();
     flow += 1;
+    retryTopUp = null;
     view = 'sheet';
     period = 'month';
     confirming = null;
@@ -146,7 +151,10 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     ensure();
     stopTimers();
     if (!dialog.open) dialog.showModal();
-    if (!data) await load();
+    // Read again each time: the account may have changed since (a plan in grace, the billing information) and the
+    // Billing tab opens the checkout straight from its own copy.
+    retryTopUp = null;
+    await load();
     if (!dialog.open) return;
     await startCheckout(plan, chosen);
   }
@@ -155,8 +163,15 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   async function openTopUp(amountVnd) {
     ensure();
     stopTimers();
-    if (!dialog.open) dialog.showModal();
     checkout = null;
+    pay = null;
+    view = 'sheet';
+    failure = null;
+    retryTopUp = null;
+    // Nothing from an earlier screen is shown while the order is being made.
+    data = null;
+    paint('title');
+    if (!dialog.open) dialog.showModal();
     await makeOrder({ kind: 'topup', amountVnd }, 'topup');
   }
 
@@ -164,7 +179,10 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   const planById = (id) => data?.plans?.plans?.find((p) => p.id === id);
   const current = () => data?.plans?.current || { plan: 'free', period: null };
 
-  /** What a card's button does: 'current', 'buy' (an order) or 'later' (at the end of the period). */
+  /** In grace the plan in force has ended and its renewal is the thing to pay for (spec: Renew now). */
+  const inGrace = () => data?.account?.plan?.status === 'grace';
+
+  /** What a card's button does: 'current', 'renew' (the plan in grace), 'buy' (an order) or 'later' (at the end of the period). */
   function actionFor(id) {
     const cur = current();
     if (cur.plan === 'free') return id === 'free' ? 'current' : 'buy';
@@ -172,7 +190,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     if ((period === 'month' && cur.period === 'year') || RANK[id] < RANK[cur.plan]) {
       return id === cur.plan && period === cur.period ? 'current' : data.account.plan.nextPlan === id && data.account.plan.nextPeriod === period ? 'scheduled' : 'later';
     }
-    return id === cur.plan && period === cur.period ? 'current' : 'buy';
+    if (id === cur.plan && period === cur.period) return inGrace() ? 'renew' : 'current';
+    return 'buy';
   }
 
   function priceHtml(id) {
@@ -191,6 +210,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     const noRate = !data.plans.rate;
     let label;
     if (action === 'current') label = t('billing.plans.current');
+    else if (action === 'renew') label = t('billing.plans.renew');
     else if (action === 'scheduled') label = t('billing.plans.scheduled');
     else if (action === 'later') label = t('billing.plans.later');
     else if (id === cur.plan) label = t('billing.plans.switchYearly');
@@ -202,10 +222,10 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       t('billing.plans.storage', { gb: number(p.storageGb) }),
       t('billing.plans.people'),
     ];
-    return `<article class="plans__card${action === 'current' ? ' is-current' : ''}" data-plan="${id}" aria-labelledby="plan-${id}-name">
+    return `<article class="plans__card${action === 'current' || action === 'renew' ? ' is-current' : ''}" data-plan="${id}" aria-labelledby="plan-${id}-name">
       <h3 id="plan-${id}-name">${esc(planName(id))}</h3>
       ${noRate ? '' : priceHtml(id)}
-      <button type="button" class="btn${action === 'buy' ? ' btn--primary' : ''}" data-pick="${id}" data-action="${action}"${disabled ? ' disabled' : ''}>${esc(label)}</button>
+      <button type="button" class="btn${action === 'buy' || action === 'renew' ? ' btn--primary' : ''}" data-pick="${id}" data-action="${action}"${disabled ? ' disabled' : ''}>${esc(label)}</button>
       <ul class="plans__lines">${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>
     </article>`;
   }
@@ -382,7 +402,9 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       busy = false;
       if (!dialog.open || flow !== token || checkout !== mine) {
         // The person left while it was being made: the order is real, so close it rather than leave it open for 30 minutes.
-        if (!made.paidNow && made.order?.id) api.billingCancelOrder(made.order.id).catch(() => {});
+        // A renewal is the one order the whole period shares (the server will not cancel it either): cancelling it here could
+        // cancel the order a sheet opened again is showing.
+        if (!made.paidNow && made.order?.id && made.order.kind !== 'renewal') api.billingCancelOrder(made.order.id).catch(() => {});
         return;
       }
       if (made.paidNow) {
@@ -407,6 +429,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
         else paint('[data-continue]');
       } else {
         failure = err.message;
+        if (body.kind === 'topup') retryTopUp = body.amountVnd;
         view = 'sheet';
         paint('[data-retry]');
         toast(err.message, 'error');
@@ -422,11 +445,21 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     document.addEventListener('visibilitychange', onVisible);
   }
 
+  /** What the time left reads as: a clock for the last hour, the date and time of the deadline when it is days away. */
+  function deadline() {
+    const left = pay.expiresAt - Date.now();
+    if (left > CLOCK_MAX_MS) return { label: t('billing.pay.goodUntil'), text: new Intl.DateTimeFormat(localeTag(), { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(pay.expiresAt)) };
+    return { label: t('billing.pay.timeLeft'), text: clock(left) };
+  }
+
   function tickClock() {
     if (!pay || view !== 'pay') return;
     const left = pay.expiresAt - Date.now();
+    const shown = deadline();
+    const label = $('.pay__timelabel');
+    if (label && label.textContent !== shown.label) label.textContent = shown.label;
     const timer = $('.pay__timer');
-    if (timer) timer.textContent = clock(left);
+    if (timer && timer.textContent !== shown.text) timer.textContent = shown.text;
     if (left <= 0 && pay.state === 'waiting' && !pay.lastLook) {
       pay.lastLook = true;
       // One last look - the money may have landed in the final seconds - then it is over.
@@ -525,13 +558,14 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     const values = { bank: q.bank, account: q.account, holder: q.holder, amount: vnd(q.amount), content: q.content };
     const waiting = pay.state === 'waiting';
     const status = statusText();
+    const shown = deadline();
     return `<div class="pay">
       <p class="pay__lead">${esc(t('billing.pay.lead'))}</p>
       <div class="pay__grid">
         <div class="pay__qr"><img src="${esc(q.image)}" alt="${esc(t('billing.pay.qrAlt', { amount: vnd(q.amount), content: q.content }))}" width="220" height="220"></div>
         <dl class="pay__rows">${COPY.map((k) => `<div><dt>${esc(labels[k])}</dt><dd id="pay-${k}">${esc(values[k])}</dd><button type="button" class="btn btn--small" data-copy="${k}" aria-label="${esc(t('billing.pay.copy', { what: labels[k] }))}">${esc(t('billing.pay.copyShort'))}</button></div>`).join('')}</dl>
       </div>
-      <p class="pay__time"${waiting ? '' : ' hidden'}>${esc(t('billing.pay.timeLeft'))} <span class="pay__timer" role="timer" aria-live="off">${esc(clock(pay.expiresAt - Date.now()))}</span></p>
+      <p class="pay__time"${waiting ? '' : ' hidden'}><span class="pay__timelabel">${esc(shown.label)}</span> <span class="pay__timer" role="timer" aria-live="off">${esc(shown.text)}</span></p>
       <p class="pay__status" role="status" tabindex="-1">${esc(status)}</p>
       <div class="plans__foot pay__foot">${footHtml()}</div>
     </div>`;
@@ -600,6 +634,14 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     if (el.hasAttribute('data-close') || el.hasAttribute('data-done')) return void dialog.close();
     if (el.dataset.period) return choosePeriod(el.dataset.period);
     if (el.hasAttribute('data-retry')) {
+      if (retryTopUp != null) {
+        const amount = retryTopUp;
+        retryTopUp = null;
+        failure = null;
+        paint('title');
+        await makeOrder({ kind: 'topup', amountVnd: amount }, 'topup');
+        return;
+      }
       await load();
       paint(failure ? '[data-retry]' : 'title');
       return;
@@ -666,7 +708,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   function pick(id) {
     if (!data) return;
     const action = actionFor(id);
-    if (action === 'buy') {
+    if (action === 'buy' || action === 'renew') {
       void startCheckout(id, period);
     } else if (action === 'later') {
       confirming = { id, period };

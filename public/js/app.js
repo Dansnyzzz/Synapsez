@@ -41,6 +41,8 @@ import { createAttachments } from './attachments.js';
 import { openPlusMenu, closePlus } from './plus-menu.js';
 import { openAccountMenu, paintAccount, paintPlan, shortcutFor, renderShortcuts } from './account-menu.js';
 import { createPlansSheet } from './billing-plans.js';
+import { createBillingPanel } from './billing-panel.js';
+import { createBillingAdmin } from './billing-admin.js';
 import { planName } from './billing-format.js';
 import { createUsagePanel } from './usage-panel.js';
 import { createThemes } from './themes-panel.js';
@@ -5377,7 +5379,9 @@ async function refreshPlanLine() {
   }
   paintPlanLine();
 }
-const plansSheet = createPlansSheet({ api, toast, onChanged: refreshPlanLine });
+// A plan paid, a top-up arrived: the line under the name, and the Billing tab if it is the one on screen.
+const plansSheet = createPlansSheet({ api, toast, onChanged: () => Promise.all([refreshPlanLine(), billingPanel.changed()]) });
+const billingPanel = createBillingPanel($('billing-panel'), { api, toast, plans: plansSheet });
 
 /* Privacy → Your data → Manage: what this account holds, kind by kind (owner, 2026-11-01). */
 const cloakPage = createCloakPage({ state });
@@ -6180,6 +6184,8 @@ const SECTION_OF = { data: 'privacy', cloak: 'privacy', extadvanced: 'extensions
 
 function selectTab(asked) {
   const name = SETTINGS_MOVED[asked] || asked;
+  // A link or a remembered tab that this account does not have lands on the first page instead of an empty one.
+  if (name === 'billing' && $('tab-billing').hidden) return selectTab('providers');
   const lit = SECTION_OF[name] || name;
   for (const tab of settingsTabs()) {
     const active = tab.dataset.tab === lit;
@@ -6223,6 +6229,8 @@ function selectTab(asked) {
   }
   // The providers are asked what is left only when somebody looks (2026-10-31).
   if (name === 'usage') usagePanel.load();
+  if (name === 'billing') billingPanel.load();
+  else billingPanel.leave();
   // A scene on a tile costs a moment to paint, so only while that page is open.
   if (name === 'theme') themesPanel.load();
   else themesPanel.leave();
@@ -6569,6 +6577,8 @@ function fillSettings() {
   for (const node of /** @type {NodeListOf<HTMLElement>} */ ($('settings').querySelectorAll('[data-group="admin"]'))) node.hidden = !admin;
   $('tab-admin').hidden = !admin || !([...perms].some((p) => p !== 'feedback') || me.isOwner);
   $('tab-feedback').hidden = !admin || !perms.has('feedback');
+  // Billing is the server's call (preview: administrators); a member never sees the tab and the page never asks.
+  $('tab-billing').hidden = !billingVisible();
   for (const node of /** @type {NodeListOf<HTMLElement>} */ ($('panel-admin').querySelectorAll('[data-needs]'))) {
     const needs = /** @type {string} */ (node.dataset.needs).split(' ');
     node.hidden = !needs.some((need) => (need === 'owner' ? me.isOwner : perms.has(need)));
@@ -7016,6 +7026,7 @@ $('admin-feedback').addEventListener(
  * one row per service, shared by every account, and the owner's controls on the keys.
  */
 const freeAllowances = createFreeAllowances($('admin-free-tier'), { api, toast });
+const billingAdmin = createBillingAdmin($('admin-billing'), { api, toast });
 const loadFreeTier = () => freeAllowances.load();
 
 /**
@@ -7175,6 +7186,7 @@ async function loadAdmin() {
   if (perms.has('activity')) privacy.loadAdminActivity();
   if (perms.has('feedback')) loadAdminFeedback();
   if (perms.has('free_tier')) loadFreeTier();
+  if (perms.has('billing')) billingAdmin.load();
   if (perms.has('models')) loadRecommended();
   if (!perms.has('users') && !perms.has('delete_users')) return;
   try {

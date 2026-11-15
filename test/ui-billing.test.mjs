@@ -15,7 +15,7 @@ process.env.SESSION_SECRET ||= 'ui-billing-test-session-secret';
 process.env.KEY_CHECKS = 'off';
 process.env.DATA_DIR = path.join(os.tmpdir(), 'ai-remote-ui-billing-test');
 fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });
-for (const name of ['DATABASE_URL', 'POSTGRES_URL', 'VERCEL', 'BILLING_MODE', 'SEPAY_API_TOKEN']) delete process.env[name];
+for (const name of ['DATABASE_URL', 'POSTGRES_URL', 'VERCEL', 'BILLING_MODE', 'SEPAY_API_TOKEN', 'E2B_API_KEY']) delete process.env[name];
 process.env.SEPAY_BANK_ACCOUNT = '0123456789';
 process.env.SEPAY_BANK_CODE = 'MBBank';
 process.env.SEPAY_ACCOUNT_NAME = 'SYNAPSEZ TEST';
@@ -530,6 +530,459 @@ section('light theme');
   await page.keyboard.press('Escape');
 }
 
+/* ── Task 10: Settings → Billing and the administrators' card ─────────── */
+await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+const OWNER = 'u-bill-owner';
+const text = (selector) => page.evaluate((s) => (document.querySelector(s)?.textContent || '').replace(/\s+/g, ' ').trim(), selector);
+const gotoTab = async (p, tab) => {
+  if (!(await p.evaluate(() => document.getElementById('settings').open))) {
+    await openMenu(p);
+    await p.click('.plusmenu--account [data-row="settings"]');
+    await p.waitForSelector('#settings[open]');
+  }
+  await p.click(`#tab-${tab}`);
+};
+const billingReady = () => page.waitForFunction(() => !!document.querySelector('#billing-panel [data-sec="plan"] h3') && !document.querySelector('#billing-panel [data-loading]'), null, { timeout: 8000 });
+const reopenBilling = async () => {
+  await page.click('#tab-usage');
+  await page.click('#tab-billing');
+  await billingReady();
+};
+
+section('a member has no Billing tab, and a link to it lands elsewhere');
+{
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const calls = [];
+  ctx.on('request', (req) => {
+    if (/\/api\/(admin\/)?billing/.test(req.url())) calls.push(req.url());
+  });
+  const member = await signIn(ctx, 'member@test.local');
+  await openMenu(member);
+  await member.click('.plusmenu--account [data-row="settings"]');
+  await member.waitForSelector('#settings[open]');
+  check('the tab is hidden for a member', await member.evaluate(() => document.getElementById('tab-billing')?.hidden === true));
+  await member.evaluate(() => document.getElementById('settings').close());
+  await member.goto(`http://127.0.0.1:${PORT}/#settings/billing`, { waitUntil: 'domcontentloaded' });
+  await member.reload({ waitUntil: 'domcontentloaded' });
+  await member.waitForSelector('#model-chip');
+  await member.waitForTimeout(800);
+  const landed = await member.evaluate(() => ({ open: document.getElementById('settings').open, panel: document.getElementById('panel-billing')?.classList.contains('is-active') === true }));
+  check('#settings/billing does not show the Billing panel', !landed.panel, JSON.stringify(landed));
+  await member.evaluate(() => document.getElementById('settings')?.close?.());
+  check('a member makes no billing request at all, not even from the link', calls.length === 0, calls.join());
+  await ctx.close();
+}
+
+section('the Billing tab: after Usage, with the plan and the balance');
+await gotoTab(page, 'usage');
+{
+  const order = await page.evaluate(() => [...document.querySelectorAll('#settings .sheet__tabs .tab')].filter((t) => !t.hidden).map((t) => t.dataset.tab));
+  check('Billing sits right after Usage', order.indexOf('billing') === order.indexOf('usage') + 1 && order.includes('billing'), order.join());
+  await page.click('#tab-billing');
+  await billingReady();
+  const plan = await text('#billing-panel [data-sec="plan"]');
+  check('the preview note is at the top', /Preview — only administrators see this/.test(await text('#billing-panel')));
+  check('the Plan card names the plan and when it renews, from the balance', /Plus/.test(plan) && /Renews .+ from your balance/.test(plan), plan);
+  check('Total available starts at 0', /Total available/.test(await text('[data-sec="credits"]')) && /^0\s/.test(await text('[data-sec="credits"] .bill__total-amount')), await text('[data-sec="credits"] .bill__total-amount'));
+  check('the Payment method says bank transfer by QR and that nothing is charged automatically', /bank transfer/i.test(await text('[data-sec="payment"]')) && /nothing is charged automatically/i.test(await text('[data-sec="payment"]')), await text('[data-sec="payment"]'));
+  check('This period has a row for searches, cloud computer and storage', (await page.locator('[data-sec="period"] [data-kind]').count()) === 3 && /free/i.test(await text('[data-sec="period"]')));
+  check('no daily figure anywhere on the tab', !/a day|per day|daily/i.test(await text('#billing-panel')));
+  await shot('billing-tab');
+}
+
+section('Add credits: a failed order can be tried again, and the same amount is asked');
+{
+  await page.click('[data-add-credits]');
+  check('the form opens with three presets and focus in the amount box', (await page.locator('[data-preset]').count()) === 3 && (await page.evaluate(() => document.activeElement?.id)) === 'bill-amount');
+  await page.fill('#bill-amount', '10');
+  await page.click('[data-topup-go]');
+  check('an amount under the smallest is refused in words, on the box', /100,000/.test(await text('#bill-amount-err')) && (await page.getAttribute('#bill-amount', 'aria-invalid')) === 'true', await text('#bill-amount-err'));
+  await page.fill('#bill-amount', '');
+  await page.focus('#bill-amount');
+  await page.keyboard.type('e');
+  await page.click('[data-topup-go]');
+  check('letters in the amount box say so (badInput)', /number/i.test(await text('#bill-amount-err')), await text('#bill-amount-err'));
+  await page.fill('#bill-amount', '5000000');
+  await page.click('[data-topup-go]');
+  check('an amount that would take the balance past the ceiling is refused', /1,000,000/.test(await text('#bill-amount-err')), await text('#bill-amount-err'));
+  await page.click('[data-preset="100000"]');
+  check('a preset fills the box', (await page.inputValue('#bill-amount')) === '100000');
+
+  const bodies = [];
+  let failNext = true;
+  await page.route('**/api/billing/orders', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    bodies.push(route.request().postData());
+    if (failNext) {
+      failNext = false;
+      return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Bank transfer is busy.' }) });
+    }
+    return route.fallback();
+  });
+  await page.click('[data-topup-go]');
+  await page.waitForSelector('#plans[open] [data-retry]');
+  check('the failure is said inside the sheet', /busy/.test(await text('#plans .plans__error')), await text('#plans .plans__error'));
+  await page.click('#plans [data-retry]');
+  await page.waitForSelector('#plans .pay__qr img');
+  await page.unroute('**/api/billing/orders');
+  check('Try again made the top-up again, for the same amount', bodies.length === 2 && bodies.every((b) => JSON.parse(b).kind === 'topup' && JSON.parse(b).amountVnd === 100000), bodies.join(' | '));
+  const topupOrder = await page.evaluate(() => document.getElementById('plans').dataset.order);
+  const sim = await page.evaluate(async (id) => (await fetch('/api/admin/billing/simulate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderId: id }) })).status, topupOrder);
+  check('the owner plays the bank', sim === 200);
+  await page.waitForFunction(() => /added to your balance/.test(document.querySelector('#plans .pay__done')?.textContent || ''), null, { timeout: 9000 });
+  await page.click('#plans [data-done]');
+  await page.waitForFunction(() => /^100,000\s/.test(document.querySelector('[data-sec="credits"] .bill__total-amount')?.textContent.trim() || ''), null, { timeout: 5000 }).catch(() => {});
+  check('with the tab still open, the Total available shows the top-up (the sheet told the tab)', /^100,000\s/.test(await text('[data-sec="credits"] .bill__total-amount')), await text('[data-sec="credits"] .bill__total-amount'));
+  const tx = await text('[data-sec="tx"]');
+  check('Recent transactions lists it, with the balance after', /Top-up/.test(tx) && /\+100,000/.test(tx) && /Balance 100,000/.test(tx), tx);
+}
+
+section('Recent transactions: chips, paging, and a charge that nets to nothing');
+{
+  await page.route('**/api/billing/transactions*', async (route) => {
+    const res = await route.fetch();
+    const body = await res.json();
+    const url = new URL(route.request().url());
+    if (url.searchParams.get('kind') !== 'usage') return route.fulfill({ response: res, json: body });
+    const day = '2026-11-14';
+    const entries = [
+      { id: 9001, kind: 'usage', category: 'search', day, units: 0, deltaVnd: 0, ref: null, note: null, createdAt: new Date().toISOString(), balanceAfterVnd: 100000 },
+      { id: 9000, kind: 'usage', category: 'search', day, units: 2, deltaVnd: -800, ref: null, note: null, createdAt: new Date().toISOString(), balanceAfterVnd: 99200 },
+    ];
+    return route.fulfill({ response: res, json: { entries, next: null } });
+  });
+  await page.click('[data-chip="usage"]');
+  await page.waitForFunction(() => document.querySelector('[data-chip="usage"]')?.getAttribute('aria-pressed') === 'true' && document.querySelectorAll('[data-sec="tx"] .bill__tx li').length > 0);
+  check('a usage row of 0 units is not listed, the one that charged is', (await page.locator('[data-sec="tx"] .bill__tx li').count()) === 1 && /−800/.test(await text('[data-sec="tx"] .bill__tx')), await text('[data-sec="tx"] .bill__tx'));
+  await page.unroute('**/api/billing/transactions*');
+  await page.click('[data-chip="topup"]');
+  await page.waitForFunction(() => document.querySelector('[data-chip="topup"]')?.getAttribute('aria-pressed') === 'true');
+  check('the Top-ups chip lists top-ups only', (await page.locator('[data-sec="tx"] .bill__tx li').count()) >= 1 && !/Plan/.test(await text('[data-sec="tx"] .bill__tx')));
+  check('the chips are a labelled group of toggle buttons', (await page.getAttribute('[data-sec="tx"] [role="group"]', 'aria-label')) !== null && (await page.locator('[data-chip]').count()) === 4);
+  await page.click('[data-chip="all"]');
+}
+
+section('Redeem a promo code');
+{
+  const made = await page.evaluate(async () => (await fetch('/api/admin/billing/promos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: 'WELCOME2026', creditVnd: 20000, maxUses: 5 }) })).status);
+  check('the owner made a code', made === 201);
+  await page.fill('#bill-promo', 'nonsense1');
+  await page.click('[data-redeem]');
+  await page.waitForFunction(() => /did not work/.test(document.querySelector('#bill-promo-msg')?.textContent || ''));
+  check('a code that does not work says so, in an alert', (await page.getAttribute('#bill-promo-msg', 'role')) === 'alert');
+  await page.fill('#bill-promo', 'welcome2026');
+  await page.click('[data-redeem]');
+  await page.waitForFunction(() => /^120,000\s/.test(document.querySelector('[data-sec="credits"] .bill__total-amount')?.textContent.trim() || ''), null, { timeout: 5000 }).catch(() => {});
+  check('a good code adds its credit to the Total available', /^120,000\s/.test(await text('[data-sec="credits"] .bill__total-amount')), await text('[data-sec="credits"] .bill__total-amount'));
+  check('  and says how much', /20,000/.test(await text('#bill-promo-msg')), await text('#bill-promo-msg'));
+  check('  and the box is empty again', (await page.inputValue('#bill-promo')) === '');
+}
+
+section('Plan: adjust, auto-renew, cancel and keep, the low-balance email');
+{
+  await page.click('[data-adjust]');
+  await page.waitForSelector('#plans[open] .plans__card');
+  check('Adjust plan opens the plans sheet', true);
+  await page.keyboard.press('Escape');
+  check('Esc puts focus back on the button that opened it', await page.evaluate(() => document.activeElement?.hasAttribute('data-adjust')));
+
+  const puts = [];
+  const watchPuts = (req) => {
+    if (req.method() === 'PUT' && /\/api\/billing\//.test(req.url())) puts.push(`${new URL(req.url()).pathname} ${req.postData()}`);
+  };
+  page.on('request', watchPuts);
+  await page.click('#bill-autorenew');
+  await page.waitForFunction(() => /Auto-renew is off/.test(document.querySelector('[data-sec="plan"]')?.textContent || ''));
+  check('the Auto-renew switch is one PUT, and the line says it is off', puts.length === 1 && puts[0] === '/api/billing/subscription {"autoRenew":false}', puts.join(' | '));
+  check('  the switch kept focus through the redraw', await page.evaluate(() => document.activeElement?.id === 'bill-autorenew'));
+  await page.click('#bill-autorenew');
+  await page.waitForFunction(() => /from your balance/.test(document.querySelector('[data-sec="plan"]')?.textContent || ''));
+  await page.click('[data-cancel-plan]');
+  await page.waitForFunction(() => /Ends /.test(document.querySelector('[data-sec="plan"]')?.textContent || '') && !!document.querySelector('[data-keep-plan]'));
+  check('Cancel plan says when the plan ends and offers Keep plan', /Ends \d|Ends [A-Z]/.test(await text('[data-sec="plan"]')) && (await page.locator('[data-keep-plan]').count()) === 1, await text('[data-sec="plan"]'));
+  await page.click('[data-keep-plan]');
+  await page.waitForFunction(() => !document.querySelector('[data-keep-plan]'));
+
+  puts.length = 0;
+  await page.click('#bill-low-on');
+  await page.waitForFunction(() => !document.getElementById('bill-low-amount').disabled);
+  check('turning the low-balance email on asks for 50,000 by default', puts.length === 1 && puts[0] === '/api/billing/alerts {"lowBalanceVnd":50000}', puts.join(' | '));
+  await page.fill('#bill-low-amount', '80000');
+  await page.dispatchEvent('#bill-low-amount', 'change');
+  await page.waitForTimeout(400);
+  check('a new threshold is saved', puts.length === 2 && puts[1] === '/api/billing/alerts {"lowBalanceVnd":80000}', puts.join(' | '));
+  check('the sentence that a transfer cannot be charged automatically is there', /cannot be charged automatically/i.test(await text('[data-sec="alerts"]')));
+  page.off('request', watchPuts);
+  await reopenBilling();
+  check('the choice is still there when the tab is reopened', (await page.isChecked('#bill-low-on')) && (await page.inputValue('#bill-low-amount')) === '80000');
+}
+
+section('Billing information');
+{
+  const info = await text('[data-sec="info"]');
+  check('the information saved at checkout is shown', /Nguyen Van A/.test(info) && /a@example\.com/.test(info), info);
+  await page.click('[data-sec="info"] [data-edit-info]');
+  check('Update opens a labelled form, filled in', (await page.inputValue('#bp-name')) === 'Nguyen Van A' && !!(await page.textContent('label[for="bp-name"]')));
+  await page.fill('#bp-email', 'not-an-email');
+  await page.click('[data-sec="info"] [data-save-info]');
+  await page.waitForFunction(() => !!document.querySelector('[data-sec="info"] [role="alert"]')?.textContent.trim());
+  check('what the server refuses is shown beside the form', /valid email/i.test(await text('[data-sec="info"] [role="alert"]')), await text('[data-sec="info"] [role="alert"]'));
+  await page.fill('#bp-email', 'b@example.com');
+  await page.click('[data-sec="info"] [data-save-info]');
+  await page.waitForFunction(() => /b@example\.com/.test(document.querySelector('[data-sec="info"]')?.textContent || '') && !document.querySelector('#bp-name'));
+  check('a good save shows the new information and puts focus on Update', await page.evaluate(() => document.activeElement?.hasAttribute('data-edit-info')));
+}
+
+section('a plan in grace: Renew now, the date instead of a clock, and no late cancel of a shared renewal order');
+{
+  const sub = await store.getSubscription(OWNER);
+  const day = 86_400_000;
+  await store.saveSubscription({ ...sub, status: 'active', autoRenew: false, cancelAtEnd: false, nextPlan: null, nextPeriod: null, periodStart: new Date(Date.now() - 31 * day), periodEnd: new Date(Date.now() - day) });
+  await reopenBilling();
+  const grace = await text('[data-sec="plan"]');
+  check('the Plan card says "In grace until … add credit to keep Plus"', /In grace until .+ — add credit to keep Plus/.test(grace), grace);
+  check('  and offers Renew now', (await page.locator('[data-renew]').count()) === 1);
+  await page.click('[data-adjust]');
+  await page.waitForFunction(() => document.querySelector('#plans [data-plan="plus"] [data-pick]')?.textContent.trim() === 'Renew');
+  check('the sheet\'s button for the plan in force reads Renew, and is on', await page.evaluate(() => !document.querySelector('#plans [data-plan="plus"] [data-pick]').disabled));
+  await page.keyboard.press('Escape');
+
+  // Esc while a renewal order is being made must not cancel it: it is the one the period shares.
+  const calls = [];
+  const watch = (req) => calls.push(`${req.method()} ${new URL(req.url()).pathname}`);
+  await page.route('**/api/billing/orders', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    await new Promise((r) => setTimeout(r, 1200));
+    return route.continue();
+  });
+  page.on('request', watch);
+  await page.click('[data-renew]');
+  await page.waitForSelector('#plans [data-continue]:not([disabled])');
+  await page.click('#plans [data-continue]');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(2200);
+  page.off('request', watch);
+  await page.unroute('**/api/billing/orders');
+  check('the renewal order made after Esc is left open for the period', !calls.some((c) => /\/cancel$/.test(c)) && calls.some((c) => c === 'POST /api/billing/orders'), calls.join(' | '));
+
+  await page.click('[data-renew]');
+  await page.waitForSelector('#plans [data-continue]:not([disabled])');
+  await page.click('#plans [data-continue]');
+  await page.waitForSelector('#plans .pay__qr img');
+  const timer = await text('#plans .pay__time');
+  check('a renewal good for days shows a date and time, not 4319:59', !/\d{3,}:\d\d/.test(timer) && !/^.*\b\d{2}:\d\d\b.*\b\d{2}:\d\d\b/.test(timer) && /until/i.test(timer) && /20\d\d/.test(timer), timer);
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('#plans:not([open])', { state: 'attached' }).catch(() => {});
+}
+
+section('Receipts and the PDF');
+{
+  // A real transfer has a receipt; one assigned by an administrator is made here the way the card does it.
+  const row = await store.recordTransfer({ dedupe: 'ref:UNM-ASSIGN', amountVnd: 75000, outcome: 'unmatched', via: 'webhook', content: 'CK tien <b>nha</b>', gateway: 'MBBank', accountNumber: '0123456789' });
+  await store.recordTransfer({ dedupe: 'ref:UNM-RETURN', amountVnd: 33000, outcome: 'unmatched', via: 'webhook', content: 'chuyen nham', gateway: 'ACB', accountNumber: '0123456789' });
+  check('two unmatched transfers are waiting', !!row);
+  await page.click('#tab-admin');
+  await page.waitForFunction(() => document.querySelectorAll('#admin-billing [data-transfer]').length === 2, null, { timeout: 8000 });
+  const card = await text('#admin-billing');
+  check('the card shows the mode and the rate', /preview/i.test(await text('#admin-billing [data-adm="mode"]')) && /25,500/.test(await text('#admin-billing [data-adm="rate"]')), await text('#admin-billing [data-adm="rate"]'));
+  check('the money in the last 30 days, the month\'s cost and margin are drawn', /Plans/.test(card) && /Pay as you go/.test(card) && /Top-ups/.test(card) && /Real cost/.test(card) && /Margin/.test(card) && /Balances held/.test(card), card.slice(0, 300));
+  check('the unmatched content is shown as text, not as markup', (await page.locator('#admin-billing [data-transfer] b').count()) === 0 && /<b>nha<\/b>/.test(card));
+  check('failed e-invoices are not mentioned while there are none', !/e-invoices/i.test(card));
+
+  const toAssign = page.locator('#admin-billing [data-transfer]', { hasText: '75,000' });
+  await toAssign.locator('[data-assign-email]').fill('nobody@test.local');
+  await toAssign.locator('[data-assign]').click();
+  await page.waitForFunction(() => [...document.querySelectorAll('#admin-billing [data-transfer] [role="alert"]')].some((a) => /No account has that email/.test(a.textContent || '')));
+  check('an email that matches no account is said, next to the row', true);
+  await page.locator('#admin-billing [data-transfer]', { hasText: '75,000' }).locator('[data-assign-email]').fill('owner@test.local');
+  await page.locator('#admin-billing [data-transfer]', { hasText: '75,000' }).locator('[data-assign]').click();
+  await page.waitForFunction(() => document.querySelectorAll('#admin-billing [data-transfer]').length === 1, null, { timeout: 6000 });
+  const balance = await page.evaluate(async () => (await (await fetch('/api/billing')).json()).balance.vnd);
+  check('Assign credits the named account', balance >= 195000, String(balance));
+
+  const keep = page.locator('#admin-billing [data-transfer]').first().locator('[data-dismiss]');
+  await keep.click();
+  check('Mark returned asks again on the first press and has not acted', (await page.locator('#admin-billing [data-transfer]').count()) === 1 && /sure|really/i.test((await keep.textContent()) || ''), (await keep.textContent()) || '');
+  await keep.click();
+  await page.waitForFunction(() => document.querySelectorAll('#admin-billing [data-transfer]').length === 0, null, { timeout: 6000 });
+  check('the second press marks it returned', true);
+
+  await page.click('#tab-billing');
+  await billingReady();
+  check('money assigned by hand starts the 12 months: the balance has an expiry date', /Expires/.test(await text('[data-sec="credits"]')), await text('[data-sec="credits"]'));
+  const links = await page.evaluate(() => [...document.querySelectorAll('[data-sec="receipts"] a')].map((a) => ({ href: a.getAttribute('href'), text: a.textContent.trim() })));
+  check('the receipt for the assigned money is listed with Download PDF', links.length >= 1 && /Download PDF/.test(links[0].text), JSON.stringify(links));
+  const type = await page.evaluate(async (href) => { const r = await fetch(href); return `${r.status} ${r.headers.get('content-type')}`; }, links[0]?.href);
+  check('the link answers application/pdf', /^200 application\/pdf/.test(type), type);
+}
+
+section('the administrators\' card: capacity, orders, promo codes, simulate');
+{
+  await page.click('#tab-admin');
+  await page.waitForSelector('#admin-billing [data-adm="mode"]');
+  const real = await page.evaluate(() => document.querySelector('#admin-billing [data-cap="machines"]')?.dataset.level);
+  check('with no E2B key the machines are "unknown", not zero', real === 'unknown', real);
+
+  // The four states, from figures the server could give: green, 75% amber, 90% red, unknown.
+  const CARD_FIGURES = /\/api\/admin\/billing(\?|$)/;
+  const cases = [
+    { machines: { running: 3, limit: 20 }, database: { bytes: 1e9, includedBytes: 8e9 }, level: ['ok', 'ok'] },
+    { machines: { running: 15, limit: 20 }, database: { bytes: 6e9, includedBytes: 8e9 }, level: ['warn', 'warn'] },
+    { machines: { running: 18, limit: 20 }, database: { bytes: 7.5e9, includedBytes: 8e9 }, level: ['bad', 'bad'] },
+    { machines: { running: null, limit: 20 }, database: { bytes: null, includedBytes: 8e9 }, level: ['unknown', 'unknown'] },
+  ];
+  for (const c of cases) {
+    await page.route(CARD_FIGURES, async (route) => {
+      const res = await route.fetch();
+      const body = await res.json();
+      await route.fulfill({ response: res, json: { ...body, capacity: { machines: c.machines, database: c.database } } });
+    });
+    await page.click('#tab-usage');
+    await page.click('#tab-admin');
+    await page.waitForFunction((lv) => document.querySelector('#admin-billing [data-cap="machines"]')?.dataset.level === lv, c.level[0], { timeout: 6000 });
+    const got = await page.evaluate(() => ({ m: document.querySelector('#admin-billing [data-cap="machines"]').dataset.level, d: document.querySelector('#admin-billing [data-cap="database"]').dataset.level, said: document.querySelector('#admin-billing [data-adm="capacity"]').textContent.replace(/\s+/g, ' ') }));
+    const sentence = c.level[0] === 'ok' || c.level[0] === 'unknown' ? true : /E2B Pro/.test(got.said) && /disk|storage/i.test(got.said);
+    check(`capacity ${c.level[0]}: machines and database levels${c.level[0] === 'ok' || c.level[0] === 'unknown' ? '' : ', with what to buy'}`, got.m === c.level[0] && got.d === c.level[1] && sentence, JSON.stringify(got));
+    await page.unroute(CARD_FIGURES);
+  }
+  await page.click('#tab-usage');
+  await page.click('#tab-admin');
+  await page.waitForSelector('#admin-billing [data-order-row]');
+  check('recent orders are listed, with the account', (await page.locator('#admin-billing [data-order-row]').count()) >= 1 && /owner@test\.local/.test(await text('#admin-billing [data-order-row]')));
+
+  await page.fill('#adm-promo-code', 'SPRING2026');
+  await page.fill('#adm-promo-credit', '10000');
+  await page.fill('#adm-promo-uses', '3');
+  await page.click('[data-promo-create]');
+  await page.waitForSelector('#admin-billing [data-promo-row="SPRING2026"]');
+  check('a promo code is made from the form and listed', /10,000/.test(await text('[data-promo-row="SPRING2026"]')));
+  await page.fill('#adm-promo-code', 'short');
+  await page.click('[data-promo-create]');
+  await page.waitForFunction(() => /8 to 32/.test(document.querySelector('#adm-promo-msg')?.textContent || ''));
+  check('a code the server refuses says why', true);
+  const off = page.locator('[data-promo-row="SPRING2026"] [data-promo-disable]');
+  await off.click();
+  await off.click();
+  await page.waitForFunction(() => /Switched off|Off/i.test(document.querySelector('[data-promo-row="SPRING2026"]')?.textContent || ''));
+  check('Disable is two presses and then the code reads as switched off', true);
+
+  // The renewal order made earlier is covered by the balance by now (the server says "nothing left to pay"), so a fresh top-up is played.
+  const topup = await page.evaluate(async () => (await (await fetch('/api/billing/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'topup', amountVnd: 100000 }) })).json()).order.id);
+  await page.click('#tab-usage');
+  await page.click('#tab-admin');
+  await page.waitForSelector('#adm-sim-order option[value]:not([value=""])', { state: 'attached' });
+  const before = await page.evaluate(async () => (await (await fetch('/api/billing')).json()).balance.vnd);
+  await page.selectOption('#adm-sim-order', topup);
+  await page.click('[data-simulate]');
+  await page.waitForFunction(() => !!document.querySelector('#adm-sim-msg')?.textContent.trim(), null, { timeout: 6000 });
+  check('the simulation says what came of it', /Simulated: /.test(await text('#adm-sim-msg')), await text('#adm-sim-msg'));
+  const after = await page.evaluate(async () => (await (await fetch('/api/billing')).json()).balance.vnd);
+  check('Simulate a transfer plays the bank for a pending order: the top-up is credited', after === before + 100000, `${before} -> ${after}`);
+}
+
+section('keyboard, names and 360 px');
+{
+  await page.click('#tab-billing');
+  await billingReady();
+  const unnamed = await page.evaluate(() => {
+    const name = (el) => (el.getAttribute('aria-label') || el.labels?.[0]?.textContent || el.textContent || '').trim();
+    return [...document.querySelectorAll('#billing-panel input, #billing-panel button, #billing-panel select, #billing-panel a[href]')].filter((el) => !name(el)).map((el) => el.outerHTML.slice(0, 80));
+  });
+  check('every control on the tab has a name', unnamed.length === 0, unnamed.join(' | '));
+  const tabs = await page.evaluate(() => [...document.querySelectorAll('#billing-panel button, #billing-panel input, #billing-panel a[href]')].filter((e) => !e.disabled && e.getClientRects().length && e.tabIndex < 0).length);
+  check('nothing on the tab is taken out of the keyboard order', tabs === 0, String(tabs));
+  await page.focus('[data-add-credits]');
+  await page.keyboard.press('Enter');
+  check('Enter on Add credits opens the form and moves focus to the amount', (await page.evaluate(() => document.activeElement?.id)) === 'bill-amount');
+  await page.focus('[data-view-usage]');
+  await page.keyboard.press('Enter');
+  check('View usage moves focus to the This period heading', await page.evaluate(() => document.activeElement?.closest('[data-sec="period"]') !== null));
+
+  await page.setViewportSize({ width: 360, height: 740 });
+  await page.waitForTimeout(200);
+  const narrow = async () => page.evaluate(() => {
+    const body = document.querySelector('#settings .settings__body');
+    const edge = body.getBoundingClientRect().right;
+    const wide = [...body.querySelectorAll('*')].filter((el) => el.getClientRects().length && el.getBoundingClientRect().right > edge + 1).slice(0, 3).map((el) => el.tagName + '.' + el.className);
+    return { page: document.documentElement.scrollWidth <= window.innerWidth, body: body.scrollWidth <= body.clientWidth + 1, wide };
+  });
+  const tab = await narrow();
+  check('the Billing tab does not scroll sideways at 360 px', tab.page && tab.body, JSON.stringify(tab));
+  await page.click('#tab-admin');
+  await page.waitForSelector('#admin-billing [data-adm="mode"]');
+  // The People list above the card (user rows) is older and is not this card's to answer for: only what the card draws is measured.
+  const adm = await page.evaluate(() => {
+    const card = document.getElementById('admin-billing');
+    const edge = card.closest('.settings__body').getBoundingClientRect().right;
+    const wide = [...card.querySelectorAll('*')].filter((el) => el.getClientRects().length && el.getBoundingClientRect().right > edge + 1).slice(0, 3).map((el) => el.tagName + '.' + el.className);
+    return { card: card.scrollWidth <= card.clientWidth + 1, wide };
+  });
+  check('nor does the administrators\' card', adm.card && adm.wide.length === 0, JSON.stringify(adm));
+  await shot('billing-admin-narrow');
+  await page.setViewportSize({ width: 1280, height: 900 });
+}
+
+section('an administrator without the billing permission sees the tab but no card, and asks nothing of the card');
+{
+  await store.createUser({ id: 'u-bill-helper', email: 'helper@test.local', name: 'Helper', username: 'bill.helper', passwordHash: await hashPassword(password), role: 'admin' });
+  await store.setAdminPermissions('u-bill-helper', ['users']);
+  await setPrefs('u-bill-helper', { language: 'en', onboarded: true });
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const calls = [];
+  ctx.on('request', (req) => {
+    if (/\/api\/admin\/billing/.test(req.url())) calls.push(req.url());
+  });
+  const helper = await signIn(ctx, 'helper@test.local');
+  await openMenu(helper);
+  await helper.click('.plusmenu--account [data-row="settings"]');
+  await helper.waitForSelector('#settings[open]');
+  check('the Billing tab is there for any administrator', await helper.evaluate(() => document.getElementById('tab-billing').hidden === false));
+  await helper.click('#tab-admin');
+  await helper.waitForTimeout(600);
+  const hidden = await helper.evaluate(() => { const el = document.querySelector('#panel-admin [data-needs="billing"]'); return !!el && el.hidden; });
+  check('the Billing card is hidden', hidden);
+  check('and its figures were never asked for', calls.length === 0, calls.join());
+  await ctx.close();
+}
+
+section('light theme: the tab and the card read at 4.5:1');
+{
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
+  const measure = (root) => page.evaluate((rootSelector) => {
+    const parse = (c) => c.match(/[\d.]+/g).map(Number);
+    const lum = ([r, g, b]) => {
+      const f = (v) => ((v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+    };
+    const backdrop = (el) => {
+      for (let n = el; n; n = n.parentElement) {
+        const c = parse(getComputedStyle(n).backgroundColor);
+        if (c.length === 3 || c[3] > 0.9) return c.slice(0, 3);
+      }
+      return [255, 255, 255];
+    };
+    const panel = document.querySelector(rootSelector);
+    return [...panel.querySelectorAll('.plans__muted, .bill__total-label, .bill__total-amount, .bill__name, .bill__line, .bill__tx-amt, .bill__kindhead, .bill__receipts a, .adm__facts dt, .adm__facts dd, .adm__hint, .adm__caphead, .adm__status, .btn:not(:disabled):not(.btn--primary), .plans__error')]
+      .filter((el) => el.getClientRects().length && el.textContent.trim())
+      .map((el) => {
+        const a = lum(parse(getComputedStyle(el).color).slice(0, 3));
+        const b = lum(backdrop(el));
+        return [(Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05), el.className];
+      });
+  }, root);
+  await page.click('#tab-billing');
+  await billingReady();
+  const tab = await measure('#billing-panel');
+  check('the Billing tab reads at 4.5:1 or better', tab.length > 8 && tab.every(([c]) => c >= 4.5), tab.filter(([c]) => c < 4.5).map(([c, n]) => `${c.toFixed(1)} ${n}`).join(' | '));
+  await shot('billing-light');
+  await page.click('#tab-admin');
+  await page.waitForSelector('#admin-billing [data-adm="mode"]');
+  const card = await measure('#admin-billing');
+  check('the administrators\' card reads at 4.5:1 or better', card.length > 8 && card.every(([c]) => c >= 4.5), card.filter(([c]) => c < 4.5).map(([c, n]) => `${c.toFixed(1)} ${n}`).join(' | '));
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+}
+
+await page.evaluate(() => document.getElementById('settings').close());
 check('no uncaught page errors', page.errors.length === 0, page.errors.join(' | '));
 await browser.close();
 server.close();

@@ -1,0 +1,531 @@
+import { t, localeTag } from './i18n.js';
+import { escapeHtml as esc } from './markdown.js';
+import { vnd, planName, minutes } from './billing-format.js';
+
+/**
+ * Settings → Billing (billing preview, 2026-11-15): the plan, the credits, the low-balance email, what this month used, the
+ * billing information, the payment method, the ledger and the receipts. Claude's tab with OpenRouter's Credits card, drawn
+ * for bank transfer: nothing here charges anything, money goes to the balance by a QR the plans sheet shows.
+ *
+ * Nothing polls. The tab is read when it is opened, after each thing done on it, and when the plans sheet says something
+ * changed while this tab is on screen. Each card is drawn on its own, so a switch pressed redraws its card and not the page,
+ * and what is typed in another card is not lost. A card that is redrawn gives focus back to the control that had it.
+ */
+
+const CHIPS = ['all', 'topup', 'plan', 'usage'];
+const PAGE = 20;
+/** The server's grace (server/billing/plans.js GRACE_DAYS), only to say the date a plan in grace ends. */
+const GRACE_MS = 3 * 86_400_000;
+const LOW_DEFAULT = 50_000;
+const LOW_MAX = 100_000_000;
+const SECTIONS = ['plan', 'credits', 'alerts', 'period', 'info', 'payment', 'tx', 'receipts'];
+const KIND_WORDS = { topup: 'topup', plan: 'plan', usage: 'usage', promo: 'promo', assign: 'assign', expire: 'expire', forfeit: 'forfeit', adjust: 'adjust', refund: 'refund' };
+
+const dateOf = (value, style = 'long') => new Intl.DateTimeFormat(localeTag(), { dateStyle: style }).format(new Date(value));
+const count = (n) => new Intl.NumberFormat(localeTag(), { maximumFractionDigits: 1 }).format(n);
+const signed = (n) => `${n < 0 ? '−' : '+'}${vnd(Math.abs(n))}`;
+
+/**
+ * @param {HTMLElement} host
+ * @param {{ api: any, toast: (message: string, kind?: string) => void, plans: { open: () => any, openCheckout: (plan: string, period: string) => any, openTopUp: (amount: number) => any } }} deps
+ */
+export function createBillingPanel(host, { api, toast, plans }) {
+  /** @type {any} */ let account = null;
+  /** @type {any[]} */ let receipts = [];
+  const feed = { chip: 'all', entries: [], next: null, loading: false };
+  // What is typed or open, kept across a redraw of its card.
+  const ui = { topupOpen: false, amount: '', amountError: '', promo: '', promoMessage: null, low: '', lowError: '', editInfo: false, infoDraft: null, infoError: '', busy: false };
+  let active = false;
+  let built = false;
+  let failure = '';
+  // What each card last drew: an identical card is left alone, so a read that found nothing new does not replace the button the
+  // plans sheet will hand focus back to when it closes.
+  const drawn = new Map();
+  // The newest read wins: an answer that comes back after a newer one was asked for is for a screen that has moved on.
+  let latest = 0;
+
+  const $ = (selector) => /** @type {HTMLElement | null} */ (host.querySelector(selector));
+  const section = (name) => $(`[data-sec="${name}"]`);
+
+  /** Words said in the one status line the page keeps, so a screen reader hears what changed without focus moving. */
+  function say(text) {
+    const live = $('#bill-live');
+    if (live) live.textContent = text;
+  }
+
+  /* ── drawing ──────────────────────────────────────────────────────── */
+  function build() {
+    host.innerHTML = `<p class="plans__preview">${esc(t('billing.previewNote'))}</p>
+      <p id="bill-live" class="sr-only" role="status" aria-live="polite"></p>
+      <div data-fail></div>
+      ${SECTIONS.map((name) => `<section class="bill__card" data-sec="${name}" aria-labelledby="bill-h-${name}" hidden></section>`).join('')}`;
+    built = true;
+  }
+
+  /** The control that has focus inside a card, as something that can be found again after the card is redrawn. */
+  function focusKey(node) {
+    const el = document.activeElement;
+    if (!(el instanceof HTMLElement) || !node.contains(el)) return null;
+    return el.id ? `#${el.id}` : el.dataset.focus ? `[data-focus="${el.dataset.focus}"]` : null;
+  }
+
+  function paint(names = SECTIONS) {
+    if (!built) build();
+    const fail = $('[data-fail]');
+    if (fail) fail.innerHTML = failure ? `<p class="plans__error" role="alert">${esc(failure)}</p><p><button type="button" class="btn" data-retry>${esc(t('billing.retry'))}</button></p>` : '';
+    for (const name of names) {
+      const node = section(name);
+      if (!node) continue;
+      node.hidden = !account;
+      if (!account) continue;
+      const key = focusKey(node);
+      const html = { plan: planHtml, credits: creditsHtml, alerts: alertsHtml, period: periodHtml, info: infoHtml, payment: paymentHtml, tx: txHtml, receipts: receiptsHtml }[name]();
+      if (drawn.get(name) === html) continue;
+      drawn.set(name, html);
+      node.innerHTML = html;
+      if (key) /** @type {HTMLElement | null} */ (node.querySelector(key))?.focus();
+    }
+  }
+
+  /** @param {string} name */
+  const head = (name, extra = '') => `<h3 id="bill-h-${name}" tabindex="-1">${esc(t(`billing.panel.${name}`))}</h3>${extra}`;
+
+  /* ── the plan ─────────────────────────────────────────────────────── */
+  function planLine(p) {
+    const end = p.end ? dateOf(p.end) : '';
+    if (p.plan === 'free') return t('billing.panel.freeLine');
+    if (p.status === 'grace') return t('billing.panel.grace', { date: dateOf(new Date(p.end).getTime() + GRACE_MS), plan: planName(p.plan) });
+    if (p.cancelAtEnd) return t('billing.panel.ends', { date: end });
+    if (p.nextPlan && (p.nextPlan !== p.plan || p.nextPeriod !== p.period)) return t('billing.plans.changesOn', { plan: planName(p.nextPlan), date: end });
+    return p.autoRenew ? t('billing.panel.renews', { date: end }) : t('billing.panel.noRenew', { date: end });
+  }
+
+  function planHtml() {
+    const p = account.plan;
+    const free = p.plan === 'free';
+    const grace = p.status === 'grace';
+    const price = free ? '' : ` · ${vnd(p.priceVnd)} ${t(`billing.per.${p.period}`)}`;
+    const buttons = [
+      grace ? `<button type="button" class="btn btn--primary" data-renew data-focus="renew">${esc(t('billing.panel.renew'))}</button>` : '',
+      `<button type="button" class="btn${grace || free ? '' : ' btn--primary'}" data-adjust data-focus="adjust">${esc(t(free ? 'billing.panel.choose' : 'billing.panel.adjust'))}</button>`,
+      !free && !p.cancelAtEnd && !grace ? `<button type="button" class="btn" data-cancel-plan data-focus="cancel">${esc(t('billing.panel.cancel'))}</button>` : '',
+      !free && p.cancelAtEnd ? `<button type="button" class="btn" data-keep-plan data-focus="keep">${esc(t('billing.panel.keep'))}</button>` : '',
+    ].join('');
+    const renew = free ? '' : `<label class="bill__switch"><input type="checkbox" role="switch" id="bill-autorenew"${p.autoRenew ? ' checked' : ''}${ui.busy ? ' disabled' : ''}> <span>${esc(t('billing.panel.autoRenew'))}</span></label>`;
+    return `${head('plan')}<p class="bill__name">${esc(planName(p.plan))}${esc(price)}</p><p class="bill__line">${esc(planLine(p))}</p><div class="bill__actions">${buttons}</div>${renew}`;
+  }
+
+  /* ── the credits ──────────────────────────────────────────────────── */
+  function creditsHtml() {
+    const { balance, bounds } = account;
+    const presets = bounds.presets.map((n) => `<button type="button" class="btn btn--small" data-preset="${n}"${String(n) === ui.amount ? ' aria-pressed="true"' : ' aria-pressed="false"'}>${esc(vnd(n))}</button>`).join(' ');
+    const form = ui.topupOpen
+      ? `<form class="bill__form" data-topup-form novalidate>
+          <div class="bill__presets" role="group" aria-label="${esc(t('billing.panel.presets'))}">${presets}</div>
+          <div class="field"><label for="bill-amount">${esc(t('billing.panel.amount'))}</label>
+            <input id="bill-amount" type="number" inputmode="numeric" min="${minTopup()}" step="1000" value="${esc(ui.amount)}" aria-describedby="bill-amount-hint bill-amount-err"${ui.amountError ? ' aria-invalid="true"' : ''}></div>
+          <p id="bill-amount-hint" class="plans__muted">${esc(t('billing.panel.amountHint', { min: vnd(minTopup()), max: vnd(maxBalance()) }))}</p>
+          <p id="bill-amount-err" class="plans__error" role="alert">${esc(ui.amountError)}</p>
+          <p class="bill__actions"><button type="submit" class="btn btn--primary" data-topup-go>${esc(t('billing.panel.toQr'))}</button> <button type="button" class="btn" data-topup-cancel>${esc(t('action.cancel'))}</button></p>
+        </form>`
+      : '';
+    const promoMessage = ui.promoMessage ? `<p id="bill-promo-msg" class="${ui.promoMessage.ok ? 'plans__muted' : 'plans__error'}" role="${ui.promoMessage.ok ? 'status' : 'alert'}">${esc(ui.promoMessage.text)}</p>` : '<p id="bill-promo-msg" class="plans__muted"></p>';
+    return `${head('credits')}
+      <p class="bill__total"><span class="bill__total-label">${esc(t('billing.panel.total'))}</span> <span class="bill__total-amount">${esc(vnd(balance.vnd))}</span></p>
+      ${balance.expiresAt ? `<p class="plans__muted bill__expiry">${esc(t('billing.panel.expires', { date: dateOf(balance.expiresAt) }))}</p>` : ''}
+      <div class="bill__actions"><button type="button" class="btn btn--primary" data-add-credits data-focus="add" aria-expanded="${ui.topupOpen}">${esc(t('billing.panel.addCredits'))}</button> <button type="button" class="btn" data-view-usage data-focus="usage">${esc(t('billing.panel.viewUsage'))}</button></div>
+      ${form}
+      <form class="bill__promo" data-promo-form novalidate>
+        <div class="field"><label for="bill-promo">${esc(t('billing.panel.promoLabel'))}</label>
+          <input id="bill-promo" autocomplete="off" spellcheck="false" autocapitalize="characters" maxlength="40" value="${esc(ui.promo)}" aria-describedby="bill-promo-msg"></div>
+        <button type="submit" class="btn" data-redeem>${esc(t('billing.panel.redeem'))}</button>
+      </form>${promoMessage}`;
+  }
+
+  const withPlan = () => account.plan.plan !== 'free';
+  const minTopup = () => (withPlan() ? account.bounds.minWithPlan : account.bounds.minNoPlan);
+  const maxBalance = () => (withPlan() ? account.bounds.maxBalanceWithPlan : account.bounds.maxBalanceNoPlan);
+
+  /** The sentence that says what is wrong with an amount, or '' when it can go to a QR. */
+  function amountProblem(input) {
+    if (input.validity.badInput) return t('billing.panel.amountBad');
+    const text = input.value.trim();
+    if (!text) return t('billing.panel.amountEmpty');
+    const n = Number(text);
+    if (!Number.isSafeInteger(n)) return t('billing.panel.amountWhole');
+    if (n < minTopup()) return t('billing.panel.amountMin', { min: vnd(minTopup()) });
+    if (account.balance.vnd + n > maxBalance()) return t('billing.panel.amountMax', { max: vnd(maxBalance()) });
+    return '';
+  }
+
+  /* ── the low-balance email ────────────────────────────────────────── */
+  function alertsHtml() {
+    const on = account.alerts.lowBalanceVnd != null;
+    const value = ui.low || String(on ? account.alerts.lowBalanceVnd : LOW_DEFAULT);
+    return `${head('alerts')}
+      <label class="bill__switch"><input type="checkbox" role="switch" id="bill-low-on"${on ? ' checked' : ''}> <span>${esc(t('billing.panel.lowOn'))}</span></label>
+      <div class="field"><label for="bill-low-amount">${esc(t('billing.panel.lowAmount'))}</label>
+        <input id="bill-low-amount" type="number" inputmode="numeric" min="1000" step="1000" value="${esc(value)}"${on ? '' : ' disabled'} aria-describedby="bill-low-hint bill-low-err"${ui.lowError ? ' aria-invalid="true"' : ''}></div>
+      <p id="bill-low-err" class="plans__error" role="alert">${esc(ui.lowError)}</p>
+      <p id="bill-low-hint" class="plans__muted">${esc(t('billing.panel.lowHint'))}</p>`;
+  }
+
+  /* ── what this month used ─────────────────────────────────────────── */
+  function bar(used, total, label) {
+    if (!total) return '';
+    const share = Math.min(1, used / total);
+    return `<div class="usage__bar${share >= 1 ? ' is-out' : share >= 0.9 ? ' is-close' : ''}" role="progressbar" aria-label="${esc(label)}" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${Math.min(used, total)}"><span style="width:${Math.round(share * 100)}%"></span></div>`;
+  }
+
+  function periodHtml() {
+    const u = account.usage;
+    const would = u.would || {};
+    const searchLeft = Math.max(0, u.search.included - u.search.used);
+    const sandboxLeft = Math.max(0, u.sandbox.includedSeconds - u.sandbox.usedSeconds);
+    const gb = u.storage.bytes / 1e9;
+    const row = (kind, title, summary, barHtml, lines) => `<div class="bill__kind" data-kind="${kind}"><p class="bill__kindhead"><span>${esc(title)}</span> <span>${esc(summary)}</span></p>${barHtml}${lines.filter(Boolean).map((l) => `<p class="plans__muted">${esc(l)}</p>`).join('')}</div>`;
+    const search = row(
+      'search', t('billing.panel.kind.search'),
+      u.search.included ? t('billing.panel.left', { n: count(searchLeft), total: count(u.search.included) }) : t('billing.panel.notIncluded'),
+      bar(u.search.used, u.search.included, t('billing.panel.kind.search')),
+      [u.search.paidUnits ? t('billing.panel.paidSearch', { n: count(u.search.paidUnits), vnd: vnd(u.search.paidVnd) }) : '', would.search ? t('billing.panel.wouldSearch', { n: count(would.search) }) : ''],
+    );
+    const sandbox = row(
+      'sandbox', t('billing.panel.kind.sandbox'),
+      u.sandbox.includedSeconds ? t('billing.panel.leftTime', { time: minutes(sandboxLeft), total: minutes(u.sandbox.includedSeconds) }) : t('billing.panel.notIncluded'),
+      bar(u.sandbox.usedSeconds, u.sandbox.includedSeconds, t('billing.panel.kind.sandbox')),
+      [u.sandbox.paidMinutes ? t('billing.panel.paidSandbox', { time: minutes(u.sandbox.paidMinutes * 60), vnd: vnd(u.sandbox.paidVnd) }) : '', would.sandbox ? t('billing.panel.wouldSandbox', { time: minutes(would.sandbox) }) : ''],
+    );
+    const storage = row(
+      'storage', t('billing.panel.kind.storage'),
+      t('billing.panel.usedGb', { used: count(gb), total: count(u.storage.includedGb) }),
+      bar(gb, u.storage.includedGb, t('billing.panel.kind.storage')),
+      [u.storage.paidVnd ? t('billing.panel.paidStorage', { vnd: vnd(u.storage.paidVnd) }) : ''],
+    );
+    const finance = `<p class="bill__kindhead" data-finance><span>${esc(t('billing.panel.kind.finance'))}</span> <span>${esc(t('billing.panel.free'))}</span></p>`;
+    const until = u.month?.end ? `<p class="plans__muted">${esc(t('billing.panel.resets', { date: dateOf(u.month.end) }))}</p>` : '';
+    return `${head('period')}${until}${search}${sandbox}${storage}${finance}`;
+  }
+
+  /* ── billing information, payment method ──────────────────────────── */
+  function infoHtml() {
+    const p = account.profile;
+    if (ui.editInfo) {
+      const f = ui.infoDraft || p || {};
+      const field = (id, key, value, extra = '') => `<div class="field"><label for="bp-${id}">${esc(t(`billing.profile.${key}`))}</label><input id="bp-${id}" name="${id}" value="${esc(value ?? '')}" ${extra}></div>`;
+      return `${head('info')}<form data-info-form novalidate>
+        ${field('name', 'name', f.name, 'autocomplete="name" maxlength="120" required')}
+        ${field('email', 'email', f.email, 'type="email" autocomplete="email" maxlength="254" required')}
+        ${field('country', 'country', f.country, 'autocomplete="country" maxlength="2" size="3" required')}
+        ${field('address', 'address', f.address, 'autocomplete="street-address" maxlength="300"')}
+        ${field('tax', 'tax', f.taxCode, 'inputmode="numeric" maxlength="20" autocomplete="off"')}
+        ${ui.infoError ? `<p class="plans__error" role="alert">${esc(ui.infoError)}</p>` : ''}
+        <p class="bill__actions"><button type="submit" class="btn btn--primary" data-save-info>${esc(t('billing.profile.save'))}</button> <button type="button" class="btn" data-cancel-info>${esc(t('billing.profile.cancel'))}</button></p>
+      </form>`;
+    }
+    const rows = p ? [p.name, p.email, p.country, p.address, p.taxCode ? t('billing.profile.taxLine', { code: p.taxCode }) : ''].filter(Boolean) : [];
+    const body = rows.length ? rows.map((r) => `<p class="bill__info">${esc(r)}</p>`).join('') : `<p class="plans__muted">${esc(t('billing.panel.noInfo'))}</p>`;
+    return `${head('info')}${body}<p><button type="button" class="btn btn--small" data-edit-info data-focus="edit-info">${esc(t(rows.length ? 'billing.profile.update' : 'billing.panel.addInfo'))}</button></p>`;
+  }
+
+  function paymentHtml() {
+    return `${head('payment')}<p>${esc(t('billing.panel.paymentBody'))}</p>`;
+  }
+
+  /* ── transactions and receipts ────────────────────────────────────── */
+  function whatOf(e) {
+    if (e.kind === 'usage') return t(`billing.panel.tx.usage.${['search', 'sandbox', 'storage'].includes(e.category) ? e.category : 'other'}`);
+    return t(`billing.panel.tx.${KIND_WORDS[e.kind] || 'other'}`);
+  }
+
+  function txRow(e) {
+    return `<li data-tx="${e.id}" tabindex="-1"><span class="bill__tx-what"><span>${esc(whatOf(e))}</span> <span class="plans__muted">${esc(dateOf(e.createdAt, 'medium'))}</span></span>
+      <span class="bill__tx-amt${e.deltaVnd < 0 ? ' is-out' : ''}">${esc(signed(e.deltaVnd))}</span>${e.balanceAfterVnd == null ? '' : `<span class="bill__tx-bal plans__muted">${esc(t('billing.panel.balanceAfter', { vnd: vnd(e.balanceAfterVnd) }))}</span>`}</li>`;
+  }
+
+  function txHtml() {
+    const chips = CHIPS.map((c) => `<button type="button" class="btn btn--small bill__chip" data-chip="${c}" data-focus="chip-${c}" aria-pressed="${feed.chip === c}">${esc(t(`billing.panel.chip.${c}`))}</button>`).join(' ');
+    const list = feed.entries.length ? `<ul class="bill__tx">${feed.entries.map(txRow).join('')}</ul>` : `<p class="plans__muted">${esc(t(feed.loading ? 'common.loading' : 'billing.panel.noTx'))}</p>`;
+    const more = feed.next != null ? `<p><button type="button" class="btn" data-more data-focus="more"${feed.loading ? ' disabled' : ''}>${esc(t('billing.panel.more'))}</button></p>` : '';
+    return `${head('tx')}<div class="bill__chips" role="group" aria-label="${esc(t('billing.panel.chips'))}">${chips}</div>${list}${more}`;
+  }
+
+  function receiptsHtml() {
+    const rows = receipts.map((r) => `<li><span>${esc(dateOf(r.issuedAt, 'medium'))}</span> <span class="bill__num">${esc(r.number)}</span> <span>${esc(vnd(r.amountVnd))}</span>
+      <a href="/api/billing/receipts/${encodeURIComponent(r.number)}.pdf" target="_blank" rel="noopener" aria-label="${esc(t('billing.panel.downloadFor', { number: r.number }))}">${esc(t('billing.panel.download'))}</a></li>`).join('');
+    return `${head('receipts')}${rows ? `<ul class="bill__receipts">${rows}</ul>` : `<p class="plans__muted">${esc(t('billing.panel.noReceipts'))}</p>`}`;
+  }
+
+  /* ── reading ──────────────────────────────────────────────────────── */
+  const visible = (entries) => entries.filter((e) => !(e.kind === 'usage' && !e.units));
+
+  async function readFeed(before = null) {
+    const page = await api.billingTransactions({ kind: feed.chip === 'all' ? null : feed.chip, limit: PAGE, before });
+    return { entries: visible(page.entries || []), next: page.next ?? null };
+  }
+
+  /** Everything the tab shows, read again. Typed text and an open form stay as they are. */
+  async function read() {
+    const mine = ++latest;
+    try {
+      const [acc, first, list] = await Promise.all([api.billing(), readFeed(), api.billingReceipts()]);
+      if (mine !== latest) return;
+      account = acc;
+      feed.entries = first.entries;
+      feed.next = first.next;
+      receipts = list.receipts || [];
+      failure = '';
+    } catch (err) {
+      if (mine !== latest) return;
+      failure = err.message;
+    }
+    paint();
+  }
+
+  async function load() {
+    active = true;
+    if (!built) build();
+    // Said every time, so a tab opened again is not taken for the old figures before the new ones arrive.
+    const fail = $('[data-fail]');
+    if (fail) fail.innerHTML = `<p class="plans__muted" data-loading>${esc(t('common.loading'))}</p>`;
+    await read();
+  }
+
+  function leave() {
+    active = false;
+    latest += 1;
+  }
+
+  /** The plans sheet says something changed: read again, but only for a tab that is on screen. */
+  async function changed() {
+    if (!active || !host.closest('dialog')?.open) return;
+    await read();
+  }
+
+  /** Does something to the account, then reads again; a refusal is said where the person is looking. */
+  async function act(run, done) {
+    if (ui.busy) return;
+    ui.busy = true;
+    try {
+      await run();
+      if (done) say(done);
+    } catch (err) {
+      toast(err.message, 'error');
+      // A switch the person turned is not what the card says any more: draw it again.
+      drawn.clear();
+    } finally {
+      ui.busy = false;
+    }
+    await read();
+  }
+
+  /* ── events ───────────────────────────────────────────────────────── */
+  async function chooseChip(chip) {
+    if (feed.loading || chip === feed.chip) return;
+    feed.chip = chip;
+    feed.loading = true;
+    feed.entries = [];
+    feed.next = null;
+    paint(['tx']);
+    try {
+      const first = await readFeed();
+      if (feed.chip !== chip) return;
+      feed.entries = first.entries;
+      feed.next = first.next;
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      feed.loading = false;
+    }
+    paint(['tx']);
+    say(t('billing.panel.shown', { n: feed.entries.length }));
+  }
+
+  async function more() {
+    if (feed.loading || feed.next == null) return;
+    feed.loading = true;
+    const list = $('.bill__tx');
+    const button = $('[data-more]');
+    if (button) button.disabled = true;
+    try {
+      const page = await readFeed(feed.next);
+      const first = feed.entries.length;
+      feed.entries = feed.entries.concat(page.entries);
+      feed.next = page.next;
+      feed.loading = false;
+      // Appended in place so the rows already read stay where they are; focus goes to the first new one.
+      if (list) list.insertAdjacentHTML('beforeend', page.entries.map(txRow).join(''));
+      if (!feed.next) button?.closest('p')?.remove();
+      else if (button) button.disabled = false;
+      (list?.querySelectorAll('li')[first] ?? null)?.focus();
+      say(t('billing.panel.shown', { n: feed.entries.length }));
+    } catch (err) {
+      feed.loading = false;
+      if (button) button.disabled = false;
+      toast(err.message, 'error');
+    }
+  }
+
+  function submitTopup() {
+    const input = /** @type {HTMLInputElement} */ ($('#bill-amount'));
+    ui.amount = input.value.trim();
+    ui.amountError = amountProblem(input);
+    if (ui.amountError) {
+      paint(['credits']);
+      $('#bill-amount')?.focus();
+      return;
+    }
+    const amount = Number(ui.amount);
+    ui.topupOpen = false;
+    ui.amount = '';
+    paint(['credits']);
+    void plans.openTopUp(amount);
+  }
+
+  async function redeem() {
+    const input = /** @type {HTMLInputElement} */ ($('#bill-promo'));
+    ui.promo = input.value.trim();
+    if (!ui.promo || ui.busy) {
+      ui.promoMessage = ui.promo ? ui.promoMessage : { ok: false, text: t('billing.panel.promoEmpty') };
+      paint(['credits']);
+      $('#bill-promo')?.focus();
+      return;
+    }
+    ui.busy = true;
+    try {
+      const done = await api.billingPromo(ui.promo);
+      ui.promo = '';
+      ui.promoMessage = { ok: true, text: t('billing.panel.promoDone', { vnd: vnd(done.creditedVnd) }) };
+      say(ui.promoMessage.text);
+    } catch (err) {
+      ui.promoMessage = { ok: false, text: err.message };
+    } finally {
+      ui.busy = false;
+    }
+    await read();
+    $('#bill-promo')?.focus();
+  }
+
+  async function saveInfo() {
+    const form = /** @type {HTMLFormElement} */ ($('form[data-info-form]'));
+    const value = (name) => /** @type {HTMLInputElement} */ (form.elements.namedItem(name)).value.trim();
+    const body = { name: value('name'), email: value('email'), country: value('country'), address: value('address'), taxCode: value('tax') };
+    ui.infoDraft = body;
+    if (!body.name || !body.email || !body.country) {
+      ui.infoError = t('billing.profile.required');
+      paint(['info']);
+      $(`#bp-${!body.name ? 'name' : !body.email ? 'email' : 'country'}`)?.focus();
+      return;
+    }
+    try {
+      await api.billingProfile(body);
+      ui.editInfo = false;
+      ui.infoDraft = null;
+      ui.infoError = '';
+      say(t('billing.panel.infoSaved'));
+    } catch (err) {
+      ui.infoError = err.message;
+      paint(['info']);
+      $('[data-info-form] [role="alert"]')?.setAttribute('tabindex', '-1');
+      return;
+    }
+    await read();
+    $('[data-edit-info]')?.focus();
+  }
+
+  async function saveLow(on) {
+    const input = /** @type {HTMLInputElement} */ ($('#bill-low-amount'));
+    ui.low = input.value.trim();
+    const amount = Number(ui.low || LOW_DEFAULT);
+    if (on && (!Number.isSafeInteger(amount) || amount < 1000 || amount > LOW_MAX)) {
+      ui.lowError = t('billing.panel.lowBad', { max: vnd(LOW_MAX) });
+      paint(['alerts']);
+      $('#bill-low-amount')?.focus();
+      return;
+    }
+    ui.lowError = '';
+    // A change event that finds the saved figure already there (blur after a typed save) asks for nothing.
+    if (on && account.alerts.lowBalanceVnd === amount) return;
+    await act(() => api.billingAlerts({ lowBalanceVnd: on ? amount : null }), t(on ? 'billing.panel.lowSaved' : 'billing.panel.lowOff'));
+    ui.low = '';
+    paint(['alerts']);
+  }
+
+  host.addEventListener('click', (event) => {
+    const el = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('button'));
+    if (!el) return;
+    if (el.hasAttribute('data-retry')) return void read();
+    if (el.hasAttribute('data-adjust')) return void plans.open();
+    if (el.hasAttribute('data-renew')) return void plans.openCheckout(account.plan.plan, account.plan.period);
+    if (el.hasAttribute('data-cancel-plan')) return void act(() => api.billingSubscription({ cancelAtEnd: true }), t('billing.panel.cancelled', { date: dateOf(account.plan.end) }));
+    if (el.hasAttribute('data-keep-plan')) return void act(() => api.billingSubscription({ cancelAtEnd: false }), t('billing.panel.kept'));
+    if (el.hasAttribute('data-add-credits')) {
+      ui.topupOpen = !ui.topupOpen;
+      paint(['credits']);
+      if (ui.topupOpen) $('#bill-amount')?.focus();
+      else $('[data-add-credits]')?.focus();
+      return;
+    }
+    if (el.hasAttribute('data-topup-cancel')) {
+      ui.topupOpen = false;
+      ui.amountError = '';
+      paint(['credits']);
+      $('[data-add-credits]')?.focus();
+      return;
+    }
+    if (el.dataset.preset) {
+      ui.amount = el.dataset.preset;
+      ui.amountError = '';
+      paint(['credits']);
+      $(`[data-preset="${el.dataset.preset}"]`)?.focus();
+      return;
+    }
+    if (el.hasAttribute('data-view-usage')) {
+      const heading = $('#bill-h-period');
+      heading?.scrollIntoView({ block: 'start' });
+      heading?.focus();
+      return;
+    }
+    if (el.dataset.chip) return void chooseChip(el.dataset.chip);
+    if (el.hasAttribute('data-more')) return void more();
+    if (el.hasAttribute('data-edit-info')) {
+      ui.editInfo = true;
+      ui.infoDraft = null;
+      ui.infoError = '';
+      paint(['info']);
+      $('#bp-name')?.focus();
+      return;
+    }
+    if (el.hasAttribute('data-cancel-info')) {
+      ui.editInfo = false;
+      ui.infoError = '';
+      paint(['info']);
+      $('[data-edit-info]')?.focus();
+    }
+  });
+
+  host.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const form = /** @type {HTMLElement} */ (event.target);
+    if (form.matches('[data-topup-form]')) submitTopup();
+    else if (form.matches('[data-promo-form]')) void redeem();
+    else if (form.matches('[data-info-form]')) void saveInfo();
+  });
+
+  host.addEventListener('change', (event) => {
+    const el = /** @type {HTMLInputElement} */ (event.target);
+    if (el.id === 'bill-autorenew') void act(() => api.billingSubscription({ autoRenew: el.checked }), t(el.checked ? 'billing.panel.autoOn' : 'billing.panel.autoOff'));
+    else if (el.id === 'bill-low-on') void saveLow(el.checked);
+    else if (el.id === 'bill-low-amount' && $('#bill-low-on') && /** @type {HTMLInputElement} */ ($('#bill-low-on')).checked) void saveLow(true);
+  });
+
+  // What is typed survives a redraw of its card (a switch pressed elsewhere on the tab, the sheet telling us something changed).
+  host.addEventListener('input', (event) => {
+    const el = /** @type {HTMLInputElement} */ (event.target);
+    if (el.id === 'bill-amount') ui.amount = el.value;
+    else if (el.id === 'bill-promo') ui.promo = el.value;
+    else if (el.id === 'bill-low-amount') ui.low = el.value;
+  });
+
+  return { load, leave, changed };
+}

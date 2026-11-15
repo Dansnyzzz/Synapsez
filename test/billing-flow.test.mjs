@@ -146,6 +146,13 @@ section('quotes');
   check('year to month is later', back.kind === 'later' && back.totalVnd === 0, JSON.stringify(back));
   const bad = await caught(orders.quote(u.id, { plan: 'gold', period: 'month' }, { now: NOW }));
   check('a plan that does not exist is a 422', bad?.status === 422, String(bad));
+  // In grace the same terms are the renewal itself (Renew now), not "later": Task 10 found the checkout offered nothing to pay.
+  await store.saveSubscription(subRow(u.id, { periodStart: new Date('2026-10-01T12:00:00Z'), periodEnd: new Date('2026-11-01T12:00:00Z') }));
+  const inGrace = new Date('2026-11-02T12:00:00Z');
+  const renew = await orders.quote(u.id, { plan: 'plus', period: 'month' }, { now: inGrace });
+  check('in grace, the same plan and period is a renewal at full price', renew.kind === 'renewal' && renew.creditVnd === 0 && renew.totalVnd === 129000, JSON.stringify(renew));
+  const dearer = await orders.quote(u.id, { plan: 'pro', period: 'month' }, { now: inGrace });
+  check('  another plan in grace is still an upgrade', dearer.kind === 'upgrade', JSON.stringify(dearer));
 }
 
 section('orders: paid from the balance, or a QR for the rest');
