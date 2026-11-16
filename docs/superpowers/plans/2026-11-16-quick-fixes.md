@@ -71,6 +71,11 @@ Spec: `docs/superpowers/specs/2026-11-16-quick-fixes-design.md` (approved by the
 - Modify: `public/js/onboarding.js`, `public/css/app.css`, locales (`onb.*`), `scripts/record-onboarding.mjs` (the new step's clip), `public/onboarding/{vi,en}/` (the clip and poster it writes), `test/features.test.mjs` (pins)
 - Test: `test/ui-usage-guide.test.mjs` (the guide's browser suite)
 
+**Found while recording the provider videos (2026-11-16): the key steps no longer match the providers' pages.** Correct them in both locales and their features pins:
+- **OpenRouter.** "Create key" now has required **Expiration** (choose "No expiration") and **Credit limit** (choose a limit, or "No limit"). The step currently says the limit can be left empty. OpenRouter also warns that a never-expiring, unlimited key can spend the whole balance if it leaks, so say: set a limit if you have paid credit. OpenRouter may ask for a code sent to your email the first time.
+- **Google.** In Vietnamese the button is **"Tạo khóa API"**, then **"Tạo khóa"** in the small form (name and the default project are pre-filled). The new key starts with `AQ.`, so drop any mention of `AIza` from the copy text.
+- **OrcaRouter.** The free plan has a limit on the number of keys, and the owner's account showed "3 / 3"; at the limit, "Tạo khóa" opens the upgrade window. Say: if you are at the limit, delete a key you no longer use, or reuse one you have.
+
 - [ ] **Step 1: Read** how Automations and the Bot page actually work today (`public/js/` automations and bot page, `server/` scheduler) — every sentence of the new step must be true and pinnable.
 - [ ] **Step 2: Failing checks:** features pins for each new sentence; the guide has 7 steps with Automations & Bot sixth; at 360px and 768px the tab row scrolls horizontally, its track is transparent, the current tab is fully visible after Next/Back, the page itself never scrolls sideways.
 - [ ] **Step 3: Run** — fails.
@@ -86,6 +91,10 @@ Spec: `docs/superpowers/specs/2026-11-16-quick-fixes-design.md` (approved by the
 
 **Interfaces:**
 - Consumes: `addKey(provider, key)` → the existing `api.intakeKey` (moves a key to its provider by shape; OpenRouter one-account-one-key) — read `server/routes/account.js` intake to learn exactly what it answers for good / moved / refused / same account.
+
+**Found while recording the provider videos (2026-11-16), part of this task:**
+- **Google's new key format.** AI Studio now issues only "Authentication Keys" starting `AQ.` (e.g. `AQ.Ab8…`, ~50 characters after the dot), not `AIza…`. `server/keyIntake.js:33` recognises Google only by `/^AIza…/` and Google is in `STRICT`, so a key made today is **refused** in the Google box. Accept both shapes (`/^(AIza[0-9A-Za-z_-]{30,}|AQ\.[0-9A-Za-z_-]{30,})$/`). Mask both in `server/redact.js:45` and `server/deidentify.js:136`. Hints `AIza… or AQ.…` in `public/js/onboarding-keys.js:24` and `server/providers/catalog.js:220`.
+- **The Google key check must make a real call.** Forum reports (Google AI Developers Forum, June 2026) say some `AQ.` keys pass `models.list` but get 401 on `generateContent`. Read how the Google key is checked today, and make the check a cheap `generateContent` (or `countTokens`) so a key that cannot chat is refused at paste time with Google's reason. Add tests for both shapes, the 401 case and masking.
 
 - [ ] **Step 1: Failing checks (stub the intake route):** pasting a good key checks at once (no Add press), shows "Checking the key…" then ✓ "Added", locks the box and shows a new empty box; a key of another provider says it was added there; a refused key turns the box red with the reason and no new box appears; a second key from the same OpenRouter account is refused with the one-key-per-account sentence; typed (not pasted) checks after a pause and on Enter; the one-key-per-account line is under the box; keyboard and screen reader: the result is announced, focus moves to the new box.
 - [ ] **Step 2: Run** — fails.
