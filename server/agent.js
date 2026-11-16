@@ -26,8 +26,8 @@ import { priceTurn, isFreeEntry } from './providers/catalog.js';
 import { loadForTranscript, pdfTextsOf, toParts } from './attachments.js';
 import { projectPrompt } from './projects.js';
 import { freeFallbackFor } from './recommend.js';
-import { compact, shouldCompact, measure, activeTranscript, transcriptTokens, clearOldResults } from './compact.js';
-import { promptParts, contextBreakdown } from './contextParts.js';
+import { compact, shouldCompact, measure, activeTranscript, transcriptTokens, viewToSend } from './compact.js';
+import { promptParts, contextBreakdown, fixedPart } from './contextParts.js';
 import { log, annotate, currentTrace, withTrace } from './util/trace.js';
 import { mapWithLimit, MAX_PARALLEL_TOOLS } from './util/parallel.js';
 import { validZone } from './util/zone.js';
@@ -2404,11 +2404,18 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
     // Something plugged in (or taken out) since the turn began is in this step's tools.
     if (step > 0) await refreshConnections();
 
+    // This step's prompt and catalogue, measured before anything is decided on them: with
+    // no provider figure behind the gauge (after a fold, before the first reply) their
+    // estimate is the part of the request the transcript leaves out (`fixed`, compact.js).
+    const offered = buildTools();
+    const parts = promptParts({ system, skills, memory, project: project?.briefing, tools: offered, deferred: deferredTools(offered) });
+    const sizing = { fixed: fixedPart(parts) };
+
     // Old tool results are cleared from what is sent before anything is folded
     // (clearOldResults): the fold, the gauge and the request all read this view, so a
     // conversation that clearing brings back under the line is not summarised.
-    // `messages` stays what is stored, which the gate and the checks read.
-    let view = clearOldResults(messages, entry);
+    // `messages` stays what is stored, which the gate, the checks and the summary read.
+    let view = viewToSend(messages, entry, prefs, sizing);
 
     /**
      * Fold the older turns up before they stop fitting.
@@ -2418,7 +2425,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
      * *before* the request is what makes it work at all. Waiting until the
      * provider refuses means the compaction call has no room either.
      */
-    if (prefs.autoCompact !== false && shouldCompact(view.messages, entry)) {
+    if (prefs.autoCompact !== false && shouldCompact(view.messages, entry, sizing)) {
       emit('status', { phase: 'compacting' });
       try {
         const summary = await compact({
@@ -2427,6 +2434,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
           entry,
           prefs,
           messages: view.messages,
+          stored: messages,
           clearedTo: view.line,
           signal,
           // Said as soon as the count is known, which is before the request
@@ -2437,7 +2445,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
         });
         if (summary) {
           messages.push(summary);
-          view = clearOldResults(messages, entry);
+          view = viewToSend(messages, entry, prefs, sizing);
           emit('compacted', { replaced: summary.replaced, text: summary.text });
         }
       } catch (err) {
@@ -2451,12 +2459,10 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
     {
       /*
        * How full the window is, and with what (contextParts.js): this step's
-       * prompt and catalogue, measured where both are known, and kept on the
-       * conversation for when it is opened again — only when they changed.
+       * prompt and catalogue, measured above, and kept on the conversation for
+       * when it is opened again — only when they changed.
        */
-      const offered = buildTools();
-      const parts = promptParts({ system, skills, memory, project: project?.briefing, tools: offered, deferred: deferredTools(offered) });
-      const info = measure(view.messages, entry);
+      const info = measure(view.messages, entry, sizing);
       const breakdown = contextBreakdown(info, parts, transcriptTokens(view.messages));
       stepInput = Number(breakdown?.used ?? info.used) || 0;
       emit('context', { ...info, breakdown, cleared: view.cleared });

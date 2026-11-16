@@ -3570,6 +3570,53 @@ section('old tool results are cleared before a summary is needed, through the lo
     check('  so it is not folded', !events.some((e) => e.type === 'status' && e.p.phase === 'compacting') && !(await store.listMessages(owner.id, chatId)).some((m) => m.role === 'summary'));
     check('  and the request carries the three old results as the stub', !!first && resultsIn(first).filter((r) => r.content === STUB).length === 3 && paired(first));
   }
+
+  // Review, 2026-11-16 (controller): turning automatic compaction off turns clearing off too.
+  {
+    const off = await store.createUser({ id: 'u-clear-off', email: 'clear-off@example.com', name: 'Off', passwordHash: 'x', role: 'admin' });
+    await setPrefs(off.id, { autoCompact: false });
+    const chatId = 'c-clear-off';
+    await store.createChat(off.id, { id: chatId, title: chatId });
+    const put = (message) => store.appendMessage(off.id, chatId, message);
+    await put({ id: `${chatId}-q`, role: 'user', text: 'Read every file and report.' });
+    for (let i = 0; i < 12; i += 1) {
+      await put({ id: `${chatId}-a${i}`, role: 'assistant', text: '', toolCalls: [{ id: `${chatId}-k${i}`, name: 'read_file', input: { path: `f${i}.txt` } }], ...(i === 11 ? { usage: { input: 95_000, output: 5 } } : {}) });
+      await put({ id: `${chatId}-t${i}`, role: 'tool', results: [{ toolCallId: `${chatId}-k${i}`, name: 'read_file', content: `file ${i}\n${'r'.repeat(24_000)}` }] });
+    }
+    await put({ id: `${chatId}-go`, role: 'user', text: 'carry on' });
+    let first = null;
+    const gauges = [];
+    const stream = async function* (opts) {
+      first ??= JSON.parse(JSON.stringify(opts.messages));
+      yield { type: 'text', delta: 'Report.' };
+      yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 96_000, output: 5 } };
+    };
+    await runAgent({ userId: off.id, user: off, chatId, modelId: MODEL, emit: (type, p) => type === 'context' && gauges.push(p), stream });
+    const reply = (await store.listMessages(off.id, chatId)).findLast((m) => m.role === 'assistant');
+    check('with automatic compaction off, every result is sent whole', !!first && resultsIn(first).length === 12 && resultsIn(first).every((r) => r.content !== STUB && r.content.length > 24_000));
+    check('  the gauge says none were cleared', gauges[0]?.cleared === 0, String(gauges[0]?.cleared));
+    check('  and the reply keeps no line', !!reply && reply.clearedTo === undefined, JSON.stringify(reply?.clearedTo));
+  }
+
+  // Review, 2026-11-16 (pre-existing): after a fold, before any reply, the loop's gauge counted the transcript alone.
+  {
+    const chatId = 'c-clear-after-fold';
+    await store.createChat(owner.id, { id: chatId, title: chatId });
+    const put = (message) => store.appendMessage(owner.id, chatId, message);
+    await put({ id: `${chatId}-u1`, role: 'user', text: 'first' });
+    const answered = await put({ id: `${chatId}-a1`, role: 'assistant', text: 'an answer', usage: { input: 150_000, output: 5 } });
+    await put({ id: `${chatId}-u2`, role: 'user', text: 'and then?' });
+    // The fold landed and the request after it never came back: no figure since.
+    await put({ id: `${chatId}-s`, role: 'summary', text: 'The user asked a first question and got an answer.', replaced: 2, covers: answered.seq });
+    const gauges = [];
+    const stream = async function* () {
+      yield { type: 'text', delta: 'Then this.' };
+      yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 30_000, output: 5 } };
+    };
+    await runAgent({ userId: owner.id, user: owner, chatId, modelId: MODEL, emit: (type, p) => type === 'context' && gauges.push(p), stream });
+    const g = gauges[0];
+    check('the fold line is read with the prompt and tools counted, as the gauge shows them', !!g && !g.provided && g.used >= g.breakdown.used - 2 && g.used > 1_000, JSON.stringify({ used: g?.used, shown: g?.breakdown?.used }));
+  }
 }
 
 // Last, after every section that uses the database: it was removed midway, and

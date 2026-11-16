@@ -930,6 +930,64 @@ section('Compact now answers with JSON refusals, then a stream that ends in comp
   await store.releaseChatRun?.(aliceId, thrown, 'other-tab');
 }
 
+section('opening a chat and Compact now both say how many old tool results were cleared (6b)');
+{
+  const { createServer } = await import('node:http');
+  const { setApiKey, setPrefs } = await import('../server/settings.js');
+  // An OpenAI-shaped provider on this machine that writes a one-line summary.
+  const provider = createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'The user asked for a report on every file.' } }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 9 } })}\n\n`);
+      res.end('data: [DONE]\n\n');
+    });
+  });
+  await new Promise((r) => provider.listen(0, '127.0.0.1', r));
+  const savedBase = process.env.OPENAI_BASE_URL;
+  process.env.OPENAI_BASE_URL = `http://127.0.0.1:${/** @type {any} */ (provider.address()).port}/v1`;
+  try {
+    // Made in the store and signed in, not registered: sign-ups are five an hour from one address, and a later section needs its own.
+    const { hashPassword } = await import('../server/crypto.js');
+    const id = (await store.createUser({ id: 'u-cleared', email: 'cleared@example.com', name: 'Cleared', passwordHash: await hashPassword('cleared-long-enough-password'), role: 'user' })).id;
+    const owner = jar();
+    await owner.call('POST', '/api/login', { email: 'cleared@example.com', password: 'cleared-long-enough-password' });
+    await setApiKey(id, 'openai', 'sk-test-cleared-key');
+    // A 400K window with 32K kept for a reply: a 368,000 budget.
+    await setPrefs(id, { defaultModel: 'openai/gpt-5-mini' });
+    const chatId = (await owner.call('POST', '/api/chats', { model: 'openai/gpt-5-mini' })).json.chat.id;
+    const put = (message) => store.appendMessage(id, chatId, message);
+    // An earlier turn big enough that the kept tail stops at the question after it.
+    await put({ id: 'cl-u0', role: 'user', text: 'x'.repeat(60_000) });
+    await put({ id: 'cl-a0', role: 'assistant', text: 'y'.repeat(60_000) });
+    await put({ id: 'cl-q', role: 'user', text: `Read every file and report. ${'q'.repeat(2_000)}` });
+    for (let i = 0; i < 14; i += 1) {
+      await put({ id: `cl-a${i + 1}`, role: 'assistant', text: '', toolCalls: [{ id: `cl-k${i}`, name: 'read_file', input: { path: `f${i}.txt` } }], ...(i === 13 ? { usage: { input: 257_600, output: 5 } } : {}) });
+      await put({ id: `cl-t${i}`, role: 'tool', results: [{ toolCallId: `cl-k${i}`, name: 'read_file', content: `file ${i}\n${'r'.repeat(24_000)}` }] });
+    }
+    await put({ id: 'cl-go', role: 'user', text: 'carry on' });
+
+    const opened = await owner.call('GET', `/api/chats/${chatId}`);
+    check('opening a chat over 60% says how many old results its next request leaves out', opened.json?.context?.cleared === 11, JSON.stringify({ cleared: opened.json?.context?.cleared, ratio: opened.json?.context?.ratio }));
+    check('  and the messages it sends the page are the stored ones, whole', (opened.json?.messages || []).filter((m) => m.role === 'tool').every((m) => m.results[0].content.length > 24_000));
+
+    const res = await fetch(`${base}/api/chats/${chatId}/compact`, { method: 'POST', headers: { Cookie: owner.value } });
+    const text = await res.text();
+    const frames = text.split('\n\n').filter(Boolean).map((frame) => ({ event: /^event: (\w+)/.exec(frame)?.[1], data: JSON.parse(/\ndata: (.*)$/.exec(frame)?.[1] || '{}') }));
+    const folded = frames.find((f) => f.event === 'compacted');
+    check('Compact now folds it, and its compacted frame says how many are still cleared', folded?.data?.context?.cleared === 11, `${res.status} ${frames.map((f) => f.event).join(',')} ${JSON.stringify(folded?.data?.context?.cleared ?? text.slice(0, 160))}`);
+
+    await setPrefs(id, { autoCompact: false });
+    const offline = await owner.call('GET', `/api/chats/${chatId}`);
+    check('with automatic compaction off, opening it leaves nothing out', offline.json?.context?.cleared === 0, String(offline.json?.context?.cleared));
+  } finally {
+    if (savedBase === undefined) delete process.env.OPENAI_BASE_URL;
+    else process.env.OPENAI_BASE_URL = savedBase;
+    await new Promise((r) => provider.close(r));
+  }
+}
+
 // ── one run per conversation ────────────────────────────────────────
 section('a conversation runs in one place at a time');
 {

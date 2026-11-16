@@ -658,7 +658,7 @@ section('old tool results are cleared from what is sent, before a summary is nee
     const view = clear(m, entry);
     const at = (i) => toolsIn(view.messages).find((x) => x.id === tools[i].id);
     check('over 60% of the budget', measure(m, entry).ratio >= 0.6, measure(m, entry).ratio.toFixed(2));
-    check('results older than the newest three become the stub', [0, 1, 3, 5, 6, 7, 8, 9, 10].every((i) => stubbed(at(i))), toolsIn(view.messages).map((x) => (stubbed(x) ? 'S' : '.')).join(''));
+    check('results older than the newest three become the stub', [0, 1, 3, 5, 6, 7, 8, 9, 10].every((i) => stubbed(at(i))), toolsIn(view.messages).map((x) => (stubbed(x) ? 'S' : x.results[0].pictures ? 'P' : '.')).join(''));
     check(
       '  in their own place, with their call id and tool name',
       [0, 1, 3].every((i) => at(i)?.results[0].toolCallId === tools[i].results[0].toolCallId && at(i).results[0].name === 'read_file') &&
@@ -667,8 +667,8 @@ section('old tool results are cleared from what is sent, before a summary is nee
     check('  and the calls themselves are sent as they were', view.messages.filter((x) => x.role === 'assistant').every((x) => m.includes(x)));
     check('the newest three stay word for word', [11, 12, 13].every((i) => JSON.stringify(at(i)) === JSON.stringify(tools[i])));
     check('a result under 1,000 tokens stays', JSON.stringify(at(2)) === JSON.stringify(tools[2]));
-    check('a picture result is cleared, its pictures with it', stubbed(at(4)) && !at(4).results[0].pictures && !at(4).results[0].shot);
-    check('the count says how many were cleared', view.cleared === 10, String(view.cleared));
+    check('a picture result loses its pictures and keeps its 200 words', at(4).results[0].content === tools[4].results[0].content && !at(4).results[0].pictures && !at(4).results[0].shot);
+    check('the count says how many were cleared, not counting a picture dropped', view.cleared === 9, String(view.cleared));
     check('what is sent is measured after clearing', measure(view.messages, entry).used < measure(m, entry).used - 50_000, `${measure(view.messages, entry).used} vs ${measure(m, entry).used}`);
     check('no tool result is sent without its call', paired(sentOf(view.messages)));
     check('the stored messages are unchanged', JSON.stringify(m) === before && m.find((x) => x.id === tools[0].id).results[0].content.length === 24_000);
@@ -768,6 +768,88 @@ section('old tool results are cleared from what is sent, before a summary is nee
     check('a fold after clearing keeps cleared results in its tail', !!summary && kept.length === 11, `${kept.length}`);
     check('  and they are still cleared after it', kept.length > 0 && kept.every(stubbed));
     check('  every call still answered', paired(sentOf(after.messages)));
+  }
+
+  // Review, 2026-11-16: "call the tool again" must never be said of a step that changed something.
+  const RAN = '[Output cleared to save room. This step already ran — do not run it again just to see its output.]';
+  const use = async (chatId, m, name, tokens, extra = {}) => {
+    const call = await add(chatId, m, 'assistant', 100, { toolCalls: [{ id: `c${ids}`, name, input: { step: ids } }] });
+    return add(chatId, m, 'tool', 0, { results: [{ toolCallId: call.toolCalls[0].id, name, content: 'w'.repeat(tokens * 4), ...extra }] });
+  };
+  {
+    const chat = 'c-clear-kinds';
+    await store.createChat(user.id, { id: chat, title: 'Kinds of step', model: 'm' });
+    const m = [];
+    await add(chat, m, 'user', 500);
+    const page = await use(chat, m, 'cloud_browser', 300, { shot: { id: 'shot-1' } });
+    const ran = await use(chat, m, 'run_command', 6_000);
+    const read1 = await use(chat, m, 'read_file', 6_000);
+    const bigPage = await use(chat, m, 'cloud_browser', 6_000, { shot: { id: 'shot-2' } });
+    for (let i = 0; i < 9; i += 1) await use(chat, m, 'read_file', 6_000);
+    const view = clear(m, entry);
+    const at = (x) => toolsIn(view.messages).find((y) => y.id === x.id)?.results[0];
+    check('a cloud_browser step with a screenshot keeps its words and loses its picture', at(page)?.content === page.results[0].content && !at(page).shot && !at(page).pictures, JSON.stringify(at(page))?.slice(0, 120));
+    check('a big run_command result says the step already ran', at(ran)?.content === RAN, at(ran)?.content);
+    check('a big read-only result keeps the stub that offers a second read', at(read1)?.content === STUB, at(read1)?.content);
+    check('a big cloud_browser step says it already ran, and its picture is gone', at(bigPage)?.content === RAN && !at(bigPage).shot);
+    check('  each keeps its call id and tool name', [ran, read1, bigPage].every((x) => at(x)?.toolCallId === x.results[0].toolCallId && at(x).name === x.results[0].name));
+    check('  and every call is still answered', paired(sentOf(view.messages)));
+  }
+
+  // Review, 2026-11-16: a fold over cleared results gave the summariser the stubs, so their facts were lost.
+  {
+    const chat = 'c-clear-summary';
+    await store.createChat(user.id, { id: chat, title: 'Summary reads what is stored', model: 'm' });
+    const m = [];
+    await add(chat, m, 'user', 500);
+    for (let i = 0; i < 8; i += 1) {
+      const call = await add(chat, m, 'assistant', 100, { toolCalls: [{ id: `fact${i}`, name: 'read_file', input: { path: `f${i}` } }] });
+      await add(chat, m, 'tool', 0, { results: [{ toolCallId: call.toolCalls[0].id, name: 'read_file', content: `FACT-${i}: order 88${i}21 ships from eu-${i}\n${'r'.repeat(20_000)}` }] });
+    }
+    await add(chat, m, 'assistant', 9_000);
+    await add(chat, m, 'user', 500);
+    for (let i = 0; i < 6; i += 1) await read(chat, m, 5_000);
+    const view = clear(m, entry);
+    const live = activeTranscript(view.messages);
+    const cut = foldPoint(live, { window: entry.context, budget });
+    let seen = '';
+    const spy = async function* (opts) {
+      seen = opts.messages[0].text;
+      yield* quiet();
+    };
+    const summary = await compact({ userId: user.id, chatId: chat, entry, prefs: {}, messages: view.messages, stored: m, clearedTo: view.line, stream: spy });
+    const facts = [...seen.matchAll(/FACT-(\d+)/g)].map((x) => x[1]).join(',');
+    check('the fold takes in eight results that are sent as the stub', toolsIn(live.slice(0, cut?.start ?? 0)).filter(stubbed).length === 8);
+    check('the summariser reads their stored words', facts === '0,1,2,3,4,5,6,7' && !seen.includes('Output cleared'), facts);
+    check('  still cut at 2,000 characters each', !seen.includes('r'.repeat(2_001)));
+    const folded = live.slice(0, cut?.start ?? 0).filter((x) => !x.summary).map((x) => Number(x.seq));
+    check('  and the fold is cut where the cleared view says', !!summary && summary.covers === Math.max(...folded), `${summary?.covers} vs ${Math.max(...folded)}`);
+  }
+
+  // Review, 2026-11-16 (pre-existing): with no provider figure behind it, the gauge left out the prompt and tools.
+  {
+    const small = { context: 32_000, maxOutput: 8_000 };
+    const fixed = 11_000;
+    const chat = 'c-post-fold';
+    await store.createChat(user.id, { id: chat, title: 'After a fold', model: 'm' });
+    const m = [];
+    await add(chat, m, 'user', 9_000);
+    for (let i = 0; i < 6; i += 1) await read(chat, m, 900);
+    usage(m, fixed + transcriptTokens(m));
+    const summary = await compact({ userId: user.id, chatId: chat, entry: small, prefs: {}, messages: m, stream: written(1_500) });
+    if (summary) m.push(summary);
+    const after = measure(m, small, { fixed });
+    const real = fixed + transcriptTokens(m);
+    check('after a fold, before a reply, the prompt and tools are counted', !!summary && after.used === real, `${after.used} vs ${real} (${(after.ratio * 100).toFixed(0)}%)`);
+    // The request after the fold failed, so no figure came back; the person writes again.
+    await add(chat, m, 'user', 2_500);
+    const next = measure(m, small, { fixed });
+    check('  and when that reply never came, the next turn reads the request as it is, and folds', next.used === fixed + transcriptTokens(m) && next.ratio >= 0.82 && shouldCompact(m, small, { fixed }) === true, `${next.used}, ${(next.ratio * 100).toFixed(0)}%`);
+    const first = measure([{ id: 'only', seq: 0, role: 'user', text: 'x'.repeat(9_000 * 4) }], small, { fixed });
+    check('  and before the first reply too', first.used === 9_000 + fixed, String(first.used));
+    // Before the fold the provider's figure covers the prompt and tools already: nothing is added to it.
+    const unfolded = m.slice(0, -2);
+    check('  while a provider figure is taken as it is', measure(unfolded, small, { fixed }).used === measure(unfolded, small).used, `${measure(unfolded, small, { fixed }).used} vs ${measure(unfolded, small).used}`);
   }
 }
 

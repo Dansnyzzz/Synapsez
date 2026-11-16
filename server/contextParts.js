@@ -90,6 +90,10 @@ export function promptParts(pieces = {}) {
 /** The parts of a request, in the order the gauge lists them. */
 export const PART_KEYS = ['messages', 'mcp', 'tools', 'system', 'skills', 'memory', 'project'];
 
+// Everything in a request but the conversation: what `contextBreakdown` adds to the
+// transcript when no provider figure covers it, and what `measure` is given as `fixed`.
+export const fixedPart = (parts) => (parts && typeof parts === 'object' ? PART_KEYS.filter((key) => key !== 'messages').reduce((sum, key) => sum + (Number(parts[key]) || 0), 0) : 0);
+
 /**
  * The window shared out among the parts.
  *

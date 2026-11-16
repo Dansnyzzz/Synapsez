@@ -189,6 +189,7 @@ model call: **replace old tool results with a short stub before a summary is eve
   and are cleared too.
 - **How:** the call stays (tool name and arguments), so the model knows what it did; its result becomes
   `[Output cleared to save room — call the tool again if you need it.]`. Call/result pairs stay intact.
+- **A step that changed something** (controller, 2026-11-16, after review): a tool that is not read-only gets `[Output cleared to save room. This step already ran — do not run it again just to see its output.]` instead, and a picture result loses only its pictures, keeping words under about 1,000 tokens.
 - **Cache-friendly:** clearing breaks the prompt cache from the first changed message, so it happens in
   batches — only when it frees at least **10% of the budget** — and a result once cleared stays cleared on later
   steps, so the cached prefix is stable between batches.

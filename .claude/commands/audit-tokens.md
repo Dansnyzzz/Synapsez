@@ -52,14 +52,18 @@ flat however long the conversation runs. Verify:
   Vietnamese, and the design already accounts for that by keeping its blast
   radius to a few messages. Do not widen it.
 
-Before any fold, `clearOldResults` sends old tool results as a fixed stub once the
+Before any fold, `clearOldResults` sends old tool results as a stub once the
 request passes `CLEAR_AT` (60% of the budget): everything but the 3 newest results
-and the step being answered, results under `CLEAR_MIN` (1,000 tokens) kept unless
-they carry pictures. It clears in batches of at least `CLEAR_BATCH` (10% of the
+and the step being answered. A read-only tool's stub offers a second read; any other
+tool's says the step already ran. Words under `CLEAR_MIN` (1,000 tokens) stay; old
+pictures always go. It clears in batches of at least `CLEAR_BATCH` (10% of the
 budget) up to a seq line that only moves forward and is kept on the reply
-(`clearedTo`) and on a summary. Verify:
+(`clearedTo`) and on a summary. Turning automatic compaction off turns it off. Verify:
 
-- the stored transcript is never changed, and every call is still sent with its result;
+- the stored transcript is never changed, every call is still sent with its result,
+  and a summary is written from the stored results, not the stubs;
+- with no provider figure behind it (before the first reply, after a fold) `measure`
+  is given the prompt and tools as `fixed`, so its ratio matches the gauge;
 - between batches a request is the previous one plus the new step, byte for byte;
 - the gauge, `shouldCompact` and the request all read the same cleared view, and a
   provider figure counted before a batch has the batch's estimate taken off it once,

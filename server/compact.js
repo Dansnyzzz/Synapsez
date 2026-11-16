@@ -5,6 +5,7 @@ import { priceTurn } from './providers/catalog.js';
 import { record as recordUsage } from './usage.js';
 import { modelForRole } from './roleModel.js';
 import { carriesGoogleData } from './googleData.js';
+import { TOOLS_BY_NAME } from './tools/definitions.js';
 
 /**
  * Keeping a long conversation inside the model's window.
@@ -104,7 +105,12 @@ function estimateTokens(message) {
 /** The most the context gauge keeps back for one reply — see measure. */
 export const REPLY_ROOM = 64_000;
 
-export function measure(messages, entry, { maxOutput } = {}) {
+/**
+ * @param {any[]} messages
+ * @param {any} entry
+ * @param {{ maxOutput?: number, fixed?: number }} [options]  `fixed`: the prompt and tools, estimated (see below)
+ */
+export function measure(messages, entry, { maxOutput, fixed = 0 } = {}) {
   const context = Number(entry?.context) || ASSUMED_CONTEXT;
 
   // The last turn the provider gave us a real figure for.
@@ -150,6 +156,21 @@ export function measure(messages, entry, { maxOutput } = {}) {
   }
   const folded = lastSummary > lastCounted;
   if (folded) used = activeTranscript(messages).reduce((sum, m) => sum + estimateTokens(m), 0);
+  const provided = !folded && lastCounted >= 0;
+
+  /*
+   * With no provider figure behind it (before the first reply, or after a fold) `used`
+   * is the transcript alone, and the system prompt and tools are not in it: at 32K
+   * with 11K of them it read 48% while the request was at 94%, and when the reply
+   * after a fold never came, `shouldCompact` said no at 104% (review, 2026-11-16).
+   * `fixed` is the caller's estimate of that part, from the step's `promptParts` or
+   * the parts kept on the chat, the same figures the gauge's breakdown adds in this
+   * case (contextParts.js), so the ratio and the gauge agree. It is not taken from the
+   * last figure instead: that request carried whatever the fold took away (pages of a
+   * PDF, pictures, the four-characters error of the whole older transcript), and
+   * calling it fixed would keep it after it is gone.
+   */
+  if (!provided) used += Math.max(0, Number(fixed) || 0);
 
   /**
    * What is left once the reply has its room.
@@ -186,7 +207,7 @@ export function measure(messages, entry, { maxOutput } = {}) {
     exact: !folded && lastCounted === messages.length - 1 && !since,
     // Whether `used` rests on a provider's figure at all — which, unlike the
     // estimate, includes the system prompt and the tools. See contextParts.js.
-    provided: !folded && lastCounted >= 0,
+    provided,
     // The window is our assumption, not the model's published figure. Said on the
     // gauge: "42K / 128K" read as a fact about a model OrcaRouter gives 1M.
     assumed: !(Number(entry?.context) > 0),
@@ -428,15 +449,22 @@ export function activeTranscript(messages) {
  * Old tool output, cleared from what is sent before a summary is ever needed (owner,
  * 2026-11-16). Most of a long run is results the model has already read and acted on;
  * a stub in their place is what providers' own context editing does, costs no model
- * call, and was found about as good as summarising. A result under CLEAR_MIN is not
- * worth the cache it breaks. One that carried pictures goes whatever its words weigh,
- * and its pictures with it, so `withLookedPictures` (fileLook.js) cannot show them again.
+ * call, and was found about as good as summarising. Words under CLEAR_MIN are not
+ * worth the cache they break and stay. Pictures go whatever the words weigh: an old
+ * result loses them, so `withLookedPictures` (fileLook.js) cannot show them again, and
+ * keeps words under CLEAR_MIN (review, 2026-11-16).
+ *
+ * Two stubs, because "call the tool again" is only safe to say of a read. A click, a
+ * submit, a command or a send is not repeated just to see what it printed, the same
+ * line `resumableCalls` holds (AUTO-007): only a tool the catalogue marks read-only is
+ * offered again, and one outside it (MCP) counts as able to change something.
  */
 const CLEAR_AT = 0.6;
 const CLEAR_BATCH = 0.1;
 const CLEAR_KEEP = 3;
 const CLEAR_MIN = 1_000;
 export const CLEARED = '[Output cleared to save room — call the tool again if you need it.]';
+export const CLEARED_RAN = '[Output cleared to save room. This step already ran — do not run it again just to see its output.]';
 
 // How far the request that wrote this message had cleared, or nothing. Only a number
 // counts: a null read through Number() would be seq 0 and clear the first result.
@@ -446,10 +474,12 @@ const lineOf = (m) => (typeof m?.clearedTo === 'number' && Number.isFinite(m.cle
  * The transcript with old tool results cleared, as the next request should send it.
  *
  * Once what would be sent passes 60% of the gauge's budget, results older than the
- * three newest, and none of the step being answered, are sent as `CLEARED`. The call
- * stays, and the result keeps its place, its call id and its tool name, so the model
- * knows what it did and no call is ever without its result. Only copies change: what
- * is stored, and so the page, keeps every result whole.
+ * three newest, and none of the step being answered, are sent as a stub: `CLEARED` for
+ * a read-only tool, `CLEARED_RAN` for one that changes something. An old result's
+ * pictures go too; its words stay when they are under CLEAR_MIN. The call stays, and
+ * the result keeps its place, its call id and its tool name, so the model knows what
+ * it did and no call is ever without its result. Only copies change: what is stored,
+ * and so the page, keeps every result whole.
  *
  * Why batches, and why the line is kept on the reply. A prompt cache is a prefix
  * match, so clearing breaks it from the first changed message on; one result per
@@ -467,10 +497,10 @@ const lineOf = (m) => (typeof m?.clearedTo === 'number' && Number.isFinite(m.cle
  *
  * @param {any[]} messages  as stored, in request order
  * @param {any} entry  the model, for the budget
- * @param {{ maxOutput?: number }} [options]  as `measure`
+ * @param {{ maxOutput?: number, fixed?: number }} [options]  as `measure`
  * @returns {{ messages: any[], cleared: number, freed: number, line: number | null }}
  *   `messages` is the same array when nothing is cleared; `cleared` counts the results
- *   sent as the stub, `freed` the tokens that saves, `line` is what to keep on the reply.
+ *   sent as a stub, `freed` the tokens that saves, `line` is what to keep on the reply.
  */
 export function clearOldResults(messages, entry, options = {}) {
   const live = activeTranscript(messages);
@@ -488,7 +518,16 @@ export function clearOldResults(messages, entry, options = {}) {
   // Older than all of those, and stored: only a seq can be held against a line.
   const old = live.slice(0, open).filter((m) => m.role === 'tool' && Number.isFinite(Number(m.seq)));
   const floor = messages.reduce((line, m) => Math.max(line, lineOf(m)), -Infinity);
-  const worth = (r) => estimateTokens({ results: [r] }) >= CLEAR_MIN || !!r?.shot || (Array.isArray(r?.pictures) && r.pictures.length > 0);
+  const wordy = (r) => estimateTokens({ results: [r] }) >= CLEAR_MIN;
+  const pictured = (r) => !!r?.shot || (Array.isArray(r?.pictures) && r.pictures.length > 0);
+  const clearResult = (r) => {
+    // `shot` is the screen's thumbnail and `pictures` what may be put in front of the model; both go.
+    const { pictures: _pictures, shot: _shot, ...words } = r;
+    if (!wordy(r)) return words;
+    // Only what a provider reads of a result: the call it answers, the tool, whether it failed.
+    const stub = TOOLS_BY_NAME[r.name]?.readOnly === true ? CLEARED : CLEARED_RAN;
+    return { toolCallId: r.toolCallId, ...(r.name ? { name: r.name } : {}), content: stub, ...(r.isError ? { isError: true } : {}) };
+  };
 
   const upTo = (line) => {
     const swap = new Map();
@@ -496,14 +535,13 @@ export function clearOldResults(messages, entry, options = {}) {
     let freed = 0;
     for (const m of old) {
       if (!(Number(m.seq) <= line)) continue;
-      const hits = (m.results || []).filter(worth).length;
-      if (!hits) continue;
-      // Only what a provider reads of a result: the call it answers, the tool, whether it failed.
-      const copy = { ...m, results: m.results.map((r) => (worth(r) ? { toolCallId: r.toolCallId, ...(r.name ? { name: r.name } : {}), content: CLEARED, ...(r.isError ? { isError: true } : {}) } : r)) };
+      if (!(m.results || []).some((r) => wordy(r) || pictured(r))) continue;
+      const copy = { ...m, results: m.results.map((r) => (wordy(r) || pictured(r) ? clearResult(r) : r)) };
       // What it took out, in measure's own unit, so a figure counted before it can be read.
       copy.clearedTokens = estimateTokens(m) - estimateTokens(copy);
       swap.set(m, copy);
-      cleared += hits;
+      // Counted as cleared when its words went; a picture dropped beside kept words is not.
+      cleared += m.results.filter(wordy).length;
       freed += copy.clearedTokens;
     }
     return { messages: swap.size ? messages.map((m) => swap.get(m) || m) : messages, cleared, freed, line: Number.isFinite(line) ? line : null };
@@ -518,6 +556,12 @@ export function clearOldResults(messages, entry, options = {}) {
   const next = upTo(reach);
   return next.freed - kept.freed >= budget * CLEAR_BATCH ? next : kept;
 }
+
+// What a step sends, and what the gauge and the fold read. Clearing is part of the
+// automatic compaction the person can turn off, so with it off everything goes as
+// stored and no line is kept (controller, 2026-11-16).
+export const viewToSend = (messages, entry, prefs, options = {}) =>
+  prefs?.autoCompact === false ? { messages, cleared: 0, freed: 0, line: null } : clearOldResults(messages, entry, options);
 
 /**
  * Every way a line can end: CRLF, LF, a lone CR, and the Unicode line and
@@ -596,13 +640,17 @@ const SYSTEM = [
  *   progressEveryMs?: number,
  *   deadline?: number,
  *   clearedTo?: number | null,
+ *   stored?: any[],
  * }} args
  *
  * `signal` is optional and was not marked so: the agent loop passes one because
  * a turn can be stopped, and the chat route does not because a compaction the
  * user asked for by pressing a button has nothing to cancel it.
+ *
+ * `messages` is what is sent (clearOldResults' view), which is where the fold is cut;
+ * `stored` is the transcript as stored, which is what the summary is written from.
  */
-export async function compact({ userId, chatId, entry, prefs, messages, signal, stream = streamCompletion, onProgress, progressEveryMs = 300, deadline, clearedTo = null }) {
+export async function compact({ userId, chatId, entry, prefs, messages, signal, stream = streamCompletion, onProgress, progressEveryMs = 300, deadline, clearedTo = null, stored = messages }) {
   const store = getStore();
   const live = activeTranscript(messages);
   const fold = foldPoint(live, { window: Number(entry?.context) || ASSUMED_CONTEXT, budget: measure(messages, entry).budget });
@@ -625,8 +673,13 @@ export async function compact({ userId, chatId, entry, prefs, messages, signal, 
    * summary is saved, because a guess can be too low but a save cannot be early.
    */
   onProgress?.({ folding: folded.length });
+  // A result cleared from what is sent is folded from its stored words: the summary is
+  // the only place they still go, and a fold over stubs lost every fact in them
+  // (review, 2026-11-16: 24 of 76 results at one fold). Cut at 2,000 characters as ever.
+  const storedById = new Map((stored || []).map((m) => [m.id, m]));
   const transcript = folded
-    .map((m) => {
+    .map((sent) => {
+      const m = (sent.role === 'tool' && storedById.get(sent.id)) || sent;
       /*
        * An earlier summary is the app's own text, written by a model from pages and
        * files. Quoted line by line like tool output, so none of its lines can pose
@@ -664,7 +717,7 @@ export async function compact({ userId, chatId, entry, prefs, messages, signal, 
    */
   // What was read from Google is folded only where it may go (googleData.js) —
   // the whole conversation decides, since an earlier fold carries it too.
-  const googleData = carriesGoogleData(messages);
+  const googleData = carriesGoogleData(stored || messages);
   const writer = await modelForRole(userId, 'compaction', entry, prefs, { googleData });
 
   const foldedTokens = Math.ceil(transcript.length / 4);
