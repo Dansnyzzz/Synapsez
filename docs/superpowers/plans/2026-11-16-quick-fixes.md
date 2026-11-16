@@ -143,6 +143,7 @@ Rules (spec §6):
 - Source order: `frankfurter` → `vietcombank` (bank-transfer row) → `erapi`.
 - Fetched once a day by the 23:00 UTC cron (06:00 Vietnam). Between runs the stored rate (setting `billing_fx`) is used; the one-hour in-memory freshness becomes "fresh until the next 06:00 Vietnam time". A cold start with no stored rate, or one older than 48 h, fetches on demand as today; older than 48 h with every source down stays `BillingUnavailable`.
 - Yearly: plus 5000, pro 8000, max 15000 USD cents (ten months' price). Monthly unchanged.
+- Payment codes never start with 0 (owner set SePay's code structure to SZ + 10 characters, "Số nguyên", and the webhook to send only transfers carrying a code; a leading zero may not count as an integer there): `newPaymentCode` draws from 1,000,000,000 to 9,999,999,999 in server/billing/codes.js, with a test.
 
 - [ ] **Step 1: Failing tests:** the chain asks Frankfurter first and uses Vietcombank only when Frankfurter fails, Exchange Rate API last; `refreshRate` stores the rate with its source and time; a second `usdVnd()` the same day does not fetch; after the next 06:00 VN boundary it is stale for the cron but still usable; the cron route calls `refreshRate`; yearly prices are 50/80/150 USD everywhere they are pinned; `/plans` gives `rate.source`.
 - [ ] **Step 2: Run** — fails.
