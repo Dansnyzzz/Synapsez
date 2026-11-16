@@ -197,6 +197,20 @@ Exactly as spec §6 "Checkout": back arrow and "Thiết lập gói của bạn";
 - [ ] **Step 4: Run** `node test/ui-billing.test.mjs`, i18n, features, lint, typecheck — pass.
 - [ ] **Step 5: Commit** `feat(billing): checkout as Configure your plan — consent before paying`.
 
+### Task 9b: The QR sheet keeps its order; the free-share card gets bars
+
+**Files:**
+- Modify: `server/routes/billing.js` (`GET /api/billing` includes `pending`: the newest pending, unexpired order of this account with its QR facts, or null), `public/js/billing-plans.js` (resume, close note, cancel confirm, no waiting line, no locked-rate line), `public/js/billing-panel.js` (the pending-order card), `public/js/usage-panel.js` / `public/js/free-share.js` (bars; explanation removed), `public/css/app.css`, locales
+- Test: `test/billing-routes.test.mjs` (`pending`), `test/ui-billing.test.mjs`, the Usage browser check (wherever the free-share card is tested today)
+
+Exactly as spec §6.1: closing keeps the order; reopening anywhere goes back to the same QR until paid/cancelled/expired; the Billing card "Đơn đang chờ thanh toán" with "Xem mã QR"; the one quiet note on close; no "Đang chờ chuyển khoản…" line (status line empty while waiting, speaks on change); "Huỷ đơn này" bottom right, red outline, in-app confirmation with the given sentence; no locked-rate line in checkout; the free-share card has a bar per line and no "Tính vào ngày 1" text.
+
+- [ ] **Step 1: Failing tests:** `/api/billing` returns `pending` for a pending unexpired order and null after expiry/cancel/paid, never another account's; close the QR sheet and reopen from the menu, the plans sheet and Billing → the same code, amount and a clock that kept running; the Billing card appears and its button opens the QR; the close note once; no waiting sentence; cancel asks and only the confirmation cancels (Esc / No keeps the order); the cancel button is bottom right with a red outline (computed style); no locked-rate line; three bars on the free-share card, no "Tính vào ngày 1"; keyboard and screen reader (confirmation is a labelled dialog, focus returns).
+- [ ] **Step 2: Run** — fails. Never `git stash`; prove red with a scratch copy from `git show HEAD:<path>`.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** billing-routes, ui-billing, the Usage check, i18n, lint, typecheck — pass.
+- [ ] **Step 5: Commit** `feat(billing): the QR stays until paid, cancelled or expired; cancel asks first; free-share bars`.
+
 ### Task 10: Release 1.31.0
 
 **Files:**

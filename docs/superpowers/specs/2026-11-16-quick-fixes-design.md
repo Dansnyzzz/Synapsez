@@ -194,3 +194,22 @@ model call: **replace old tool results with a short stub before a summary is eve
   steps, so the cached prefix is stable between batches.
 - **Order:** clearing first; compaction only if the request is still at or above the 82% line afterwards.
 - **The gauge** shows what is actually sent after clearing, with a line saying how many old results were cleared.
+
+### 6.1 Later the same day (owner, with screens of the live checkout, Usage and QR sheet)
+- **Checkout:** no "Chốt tỷ giá 1 USD = … cho đơn này" line. The order still locks its rate on the server; it is
+  simply not shown. (Replaces "The checkout keeps its own line saying which rate the order is locked at" above.)
+- **Usage → "Phần miễn phí của bạn trong tháng này":** searches, files and cloud computer each get a progress bar like
+  the other usage rows (used / share, the same colours and thresholds); the "Tính vào ngày 1: …" explanation goes.
+- **The QR sheet never loses an order by accident** (owner: a customer who has paid and presses ✕ must not lose money):
+  - Closing it (✕, Esc, clicking outside) keeps the order. Opening "Upgrade plan", the plans sheet or Settings →
+    Billing while that order is pending and not expired goes straight back to the **same QR**, with the clock still
+    running. It ends only when the order is paid, cancelled or expires.
+  - Settings → Billing shows a **"Đơn đang chờ thanh toán"** card while one exists: plan or top-up, amount, time left,
+    and **"Xem mã QR"**.
+  - Closing the sheet with an order pending says once, quietly: "Đơn vẫn mở thêm mm:ss — mở lại từ Cài đặt → Thanh toán."
+  - The line "Đang chờ chuyển khoản của bạn…" goes. The status line stays (empty while waiting) and speaks only when
+    something changes (part received, paid, expired, refunded).
+  - **"Huỷ đơn này"** moves to the bottom right with a red outline, and asks once more in an in-app confirmation (never the
+    browser's): "Huỷ đơn này? Nếu bạn đã chuyển khoản, đừng huỷ — tiền đến sau vẫn được cộng vào số dư của bạn."
+  - True today and kept: money that arrives after an order is closed, expired or cancelled is credited to the balance,
+    with a "late money" email (server/billing/sepay.js).
