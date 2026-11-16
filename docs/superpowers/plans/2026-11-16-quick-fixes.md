@@ -130,6 +130,20 @@ Spec: `docs/superpowers/specs/2026-11-16-quick-fixes-design.md` (approved by the
 - [ ] **Step 4: Run** the compaction suite, the browser check, i18n, lint, typecheck — pass.
 - [ ] **Step 5: Commit** `feat(compact): keep the recent turns by size, not count; a live % while it summarises`.
 
+### Task 6b: Clear old tool output before summarising
+
+**Files:**
+- Modify: `server/compact.js` (a `clearOldResults` step on the transcript that is sent; `shouldCompact` measured after it), `server/agent.js` (apply it where the request is built, before `shouldCompact`), `public/js/app.js` (the gauge line), locales
+- Test: `test/compact.test.mjs`, `test/agent.test.mjs`
+
+Exactly as spec §7: trigger at 60% of the gauge budget; keep the 3 newest tool results and every result of the current step; results under ~1,000 tokens stay; clear only when it frees at least 10% of the budget; a cleared result stays cleared on later steps (stable prefix); calls stay with a fixed stub as the result; pairs intact; clearing runs before `shouldCompact`; stored history unchanged; the gauge counts what is sent and says how many results were cleared.
+
+- [ ] **Step 1: Failing tests:** below 60% nothing changes; above it, results older than the newest 3 become the stub and the newest 3 and the current step stay word for word; a small result stays; a picture result is cleared; a batch that would free under 10% does nothing; once cleared, the next step sends the same cleared prefix byte for byte; no tool result is ever sent without its call; a chat at 85% that clearing brings under 82% does not compact; the stored messages are unchanged; the gauge line.
+- [ ] **Step 2: Run** — fails.
+- [ ] **Step 3: Implement.** Never `git stash`; prove red with a scratch copy from `git show HEAD:<path>`.
+- [ ] **Step 4: Run** compact, agent, ui-chat (gauge), i18n, lint, typecheck — pass.
+- [ ] **Step 5: Commit** `feat(compact): clear old tool output before summarising`.
+
 ### Task 7: The rate once a day from Frankfurter, and yearly prices that save 17%
 
 **Files:**

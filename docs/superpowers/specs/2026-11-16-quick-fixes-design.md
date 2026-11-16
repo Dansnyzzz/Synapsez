@@ -169,3 +169,28 @@ plan falls from about 37% to about 28%; monthly plans keep about 40%. Saved as "
   today.
 - Everything Tasks 9–10 of the billing plan built stays: locked renewal price, `later` periods unavailable,
   late answers ignored, refunds, the live status line.
+
+---
+
+## 7. Clearing old tool output before summarising (owner, 2026-11-16)
+
+Asked after a review of the four layers of context compression. Synapsez owns layer 1 and part of layer 2;
+layers 3–4 run inside the providers. Prompt caching is already on (`cache_control` for Claude, the date last
+and date-only in the system prompt). What layer 1 lacks is the cheap step that providers' own "context
+editing" does (Anthropic `clear_tool_uses`) and that research found about as good as summarising, for no
+model call: **replace old tool results with a short stub before a summary is ever needed.**
+
+- **What is sent, not what is stored.** The page keeps every result; only the transcript sent to the model
+  changes, like compaction.
+- **When:** once what would be sent passes **60% of the budget** (the same budget the gauge uses; compaction
+  still starts at 82%).
+- **What:** tool results older than the **3 newest tool results**, and never any result from the current
+  step. A result under about **1,000 tokens** is not worth clearing and stays. Pictures in old results count
+  and are cleared too.
+- **How:** the call stays (tool name and arguments), so the model knows what it did; its result becomes
+  `[Output cleared to save room — call the tool again if you need it.]`. Call/result pairs stay intact.
+- **Cache-friendly:** clearing breaks the prompt cache from the first changed message, so it happens in
+  batches — only when it frees at least **10% of the budget** — and a result once cleared stays cleared on later
+  steps, so the cached prefix is stable between batches.
+- **Order:** clearing first; compaction only if the request is still at or above the 82% line afterwards.
+- **The gauge** shows what is actually sent after clearing, with a line saying how many old results were cleared.
