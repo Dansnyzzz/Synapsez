@@ -177,7 +177,7 @@ section('the plans sheet');
     save: document.querySelector('#plans .plans__period [data-period="year"]').textContent,
   }));
   check('Yearly changes the prices', /\$57\b/.test(yearly.plus) && yearly.checked === 'true', yearly.plus);
-  check('  and says "save 5%"', /5%/.test(yearly.save), yearly.save);
+  check('  and says "save 17%"', /17%/.test(yearly.save), yearly.save);
   await page.click('#plans .plans__period [data-period="month"]');
 }
 

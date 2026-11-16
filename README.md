@@ -2737,18 +2737,20 @@ as before billing existed.
 ### Plans and pay as you go
 
 Prices are set in US dollars and charged in đồng at the day's rate, rounded up to the next 1,000đ. The
-rate is read from open.er-api, then Vietcombank's transfer rate, then Frankfurter, and kept for an
-hour; a rate older than 48 hours is not used, and a purchase is refused with a message rather than
-priced on a stale rate. An order locks its rate and price for the 30 minutes its QR is good.
+rate is read from Frankfurter, then Vietcombank's transfer rate, then open.er-api, once a day by the
+06:00 Vietnam time cron that also refreshes the model library, and kept (setting `billing_fx`) until
+the next one; with every source down the kept rate is used until it is 48 hours old, and after that a
+purchase is refused with a message rather than priced on a stale rate. Only open.er-api's rate shows
+its attribution link, because only its terms ask for one. An order locks its rate and price for the 30 minutes its QR is good.
 
 | Plan | Monthly | Yearly | Included each month |
 |---|---|---|---|
 | Free | 0 | - | no metered allowance, 0.5 GB of files |
-| Plus | 5 USD | 57 USD | 150 searches, 4 h, 3 GB |
-| Pro | 8 USD | 91 USD | 250 searches, 6 h, 5 GB |
-| Max | 15 USD | 171 USD | 450 searches, 12 h, 10 GB |
+| Plus | 5 USD | 50 USD | 150 searches, 4 h, 3 GB |
+| Pro | 8 USD | 80 USD | 250 searches, 6 h, 5 GB |
+| Max | 15 USD | 150 USD | 450 searches, 12 h, 10 GB |
 
-(The hours are of cloud computer; the gigabytes are of files.) Each plan is one person. The allowances are **a month's, usable on any day**: there is no daily limit,
+A year costs ten months (17% less than twelve). (The hours are of cloud computer; the gigabytes are of files.) Each plan is one person. The allowances are **a month's, usable on any day**: there is no daily limit,
 counter or display anywhere in billing. A Free account has none of the metered allowances.
 
 Past an allowance, or with no plan, a charge comes from the balance, at these prices at the anchor
@@ -2818,7 +2820,7 @@ message. The same rows are in the deploy table under "Deploy"; this is the list 
    Administration group; offered to the owner only, and only in preview), then one small real transfer:
    a 50,000đ top-up on your own account.
 
-A payment code is `SZ` followed by ten digits, shown with the QR; a transfer is matched on SePay's
+A payment code is `SZ` followed by ten digits, the first never 0 (SePay's code structure counts the digits as a whole number), shown with the QR; a transfer is matched on SePay's
 `code` field, else on the transfer's content, and a transfer that matches nothing waits in the
 administrators' Billing card to be assigned or dismissed by hand. Rate limits: 10 orders an hour and 10
 promo-code tries an hour per account.

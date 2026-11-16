@@ -1,10 +1,12 @@
 /**
  * The day's USD to VND rate (owner, 2026-11-13). Plans are priced in dollars and charged in đồng,
- * so a price needs a rate that is honest and recent. The chain is open.er-api, then Vietcombank's
- * transfer rate, then Frankfurter, through the finance layer's own sources (their politeness caps
- * and attribution stay theirs). A rate is kept an hour in memory and in the `billing_fx` setting,
- * so every instance of a deployment agrees and a busy hour asks nobody. A rate older than 48 hours
- * is not good enough to charge with (`BillingUnavailable`): a stale price would be a wrong price.
+ * so a price needs a rate that is honest and recent. The chain is Frankfurter, then Vietcombank's
+ * transfer rate, then open.er-api (owner, 2026-11-16: Frankfurter asks for no attribution link, the
+ * other asks for one wherever its rate shows), through the finance layer's own sources (their
+ * politeness caps and attribution stay theirs). The rate is read once a day by the 06:00 Vietnam
+ * cron (`refreshRate`) and kept in memory and in the `billing_fx` setting, so every instance of a
+ * deployment agrees and a busy day asks nobody. A rate older than 48 hours is not good enough to
+ * charge with (`BillingUnavailable`): a stale price would be a wrong price.
  *
  * Metering is the other side of this: a search or a minute of cloud computer must never wait on a
  * rate source, so `meteringRate` only ever reads what is already known.
@@ -18,7 +20,8 @@ import { PAYG_ANCHOR_RATE } from './plans.js';
 
 export const RATE_ATTRIBUTION = 'Rates By Exchange Rate API: https://www.exchangerate-api.com';
 const SETTING = 'billing_fx';
-const FRESH_MS = 3_600_000;
+// 06:00 in Vietnam (UTC+7, no daylight saving) is 23:00 UTC the day before: the cron's hour.
+const REFRESH_UTC_HOUR = 23;
 const USABLE_MS = 48 * 3_600_000;
 // A source that slips a decimal point (2,565.585 would price Plus at 13,000đ) is skipped, not charged with: a rate must
 // be within half to double the anchor and, when one is known, within 20% of the last one. Dong moves slowly.
@@ -44,6 +47,14 @@ const usable = (e) => !!e && Number.isFinite(Number(e.rate)) && Number(e.rate) >
 /** @returns {Rate} */
 const clean = (e) => ({ rate: Number(e.rate), source: e.source, at: new Date(e.at).toISOString() });
 const ageOf = (e, now) => now.getTime() - Date.parse(e.at);
+const nextRefreshAfter = (ms) => {
+  const d = new Date(ms);
+  const today = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), REFRESH_UTC_HOUR);
+  return today > ms ? today : today + 86_400_000;
+};
+// Fresh until the next 06:00 Vietnam time after it was read; past that the cron is due to renew it, though it stays usable.
+const fresh = (e, now) => !!e && ageOf(e, now) >= 0 && now.getTime() < nextRefreshAfter(Date.parse(e.at));
+const newest = (...list) => list.filter(Boolean).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0] ?? null;
 
 async function stored() {
   try {
@@ -63,9 +74,9 @@ async function stored() {
 async function ask(now, last) {
   /** @type {Array<{ source: 'erapi' | 'vietcombank' | 'frankfurter', pick: (rows: any[]) => any }>} */
   const chain = [
-    { source: 'erapi', pick: (rows) => rows[0] },
-    { source: 'vietcombank', pick: (rows) => rows.find((r) => r.kind === 'bank-transfer') },
     { source: 'frankfurter', pick: (rows) => rows[0] },
+    { source: 'vietcombank', pick: (rows) => rows.find((r) => r.kind === 'bank-transfer') },
+    { source: 'erapi', pick: (rows) => rows[0] },
   ];
   for (const { source, pick } of chain) {
     try {
@@ -79,33 +90,56 @@ async function ask(now, last) {
   return null;
 }
 
+async function keep(got) {
+  memory = got;
+  try {
+    await getStore().setSetting(SETTING, got);
+  } catch {
+    // Not remembering it costs another instance one more ask; it must not cost this order.
+  }
+}
+
+// The band holds against a recent rate only: a stored rate older than we would charge with must not lock billing out for good.
+const bandAgainst = (last, now) => (last && ageOf(last, now) <= USABLE_MS ? last.rate : null);
+
 /**
- * The rate to price and charge with: fresh (under an hour) if there is one, else asked for, else the last
- * known if it is under 48 hours old.
+ * The daily read, called by the 06:00 Vietnam cron: asks the chain unless the kept rate is still
+ * fresh, so a repeated call the same day asks nobody (`force` asks regardless). Never throws; null
+ * when no source answered, and the kept rate goes on being used until it is 48 hours old.
+ *
+ * @returns {Promise<Rate | null>}
+ */
+export async function refreshRate({ now = new Date(), force = false } = {}) {
+  const last = newest(memory, await stored());
+  if (!force && fresh(last, now)) {
+    memory = last;
+    return last;
+  }
+  const got = await ask(now, bandAgainst(last, now));
+  if (!got) return null;
+  await keep(got);
+  return got;
+}
+
+/**
+ * The rate to price and charge with: the one kept, while it is under 48 hours old (the cron renews it
+ * daily and nothing asks a source in between). Asked for only on a cold start with nothing kept, or
+ * when what is kept is too old to charge with.
  *
  * @returns {Promise<Rate>}
  */
 export async function usdVnd({ now = new Date() } = {}) {
-  const fresh = (e) => !!e && ageOf(e, now) >= 0 && ageOf(e, now) < FRESH_MS;
-  if (fresh(memory)) return memory;
-  const kept = await stored();
-  if (fresh(kept)) {
-    memory = kept;
-    return kept;
+  if (fresh(memory, now)) return memory;
+  const last = newest(memory, await stored());
+  if (last && ageOf(last, now) <= USABLE_MS) {
+    memory = last;
+    return last;
   }
-  const last = [memory, kept].filter(Boolean).sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
-  // The band holds against a recent rate only: a stored rate older than we would charge with must not lock billing out for good.
-  const got = await ask(now, last && ageOf(last, now) <= USABLE_MS ? last.rate : null);
+  const got = await ask(now, bandAgainst(last, now));
   if (got) {
-    memory = got;
-    try {
-      await getStore().setSetting(SETTING, got);
-    } catch {
-      // Not remembering it costs another instance one more ask; it must not cost this order.
-    }
+    await keep(got);
     return got;
   }
-  if (last && ageOf(last, now) <= USABLE_MS) return last;
   throw new BillingUnavailable();
 }
 

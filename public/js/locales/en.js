@@ -3583,7 +3583,7 @@ export const en = {
   'billing.period.month': 'Monthly',
   'billing.period.year': 'Yearly',
   'billing.plans.period': 'Billing period',
-  'billing.plans.save': 'save 5%',
+  'billing.plans.save': 'save 17%',
   'billing.plans.current': 'Current plan',
   'billing.plans.scheduled': 'Scheduled',
   'billing.plans.later': 'Changes at renewal',

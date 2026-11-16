@@ -53,6 +53,9 @@ const frankSays = (rate) => answers.set(FRANK, () => json([{ date: '2026-11-13',
 const allDown = () => { answers.clear(); };
 /** The finance layer keeps what it was told for an hour (and in the database): forget it between phases. */
 const forget = async () => { __resetCache(); __resetHttp(); await query('DELETE FROM finance_cache'); fx._resetFxForTests(); };
+// A day with nothing kept anywhere: the next price asks the chain.
+const reset = async () => { await forget(); await query("DELETE FROM settings WHERE key = 'billing_fx'"); };
+const keptRate = async () => { const v = await store.getSetting('billing_fx'); return v && { rate: v.rate, source: v.source, at: v.at }; };
 
 const NOW = new Date('2026-11-13T05:00:00Z');
 const hours = (h) => new Date(NOW.getTime() + h * 3_600_000);
@@ -65,40 +68,66 @@ const makeUser = async (role = 'admin') => {
 const balanceOf = async (userId) => (await store.billingState(userId)).balanceVnd;
 const caught = async (promise) => { try { await promise; return null; } catch (err) { return err; } };
 
-section('the day\'s rate: erapi, then Vietcombank, then Frankfurter');
+section('the day\'s rate: Frankfurter, then Vietcombank, then Exchange Rate API, read once a day');
 {
-  await forget();
+  await reset();
   allDown();
-  erapiSays(25655.85);
+  frankSays(25736);
+  vcbSays(25400);
+  erapiSays(25500);
   const a = await fx.usdVnd({ now: NOW });
-  check('open.er-api answers first', a.rate === 25655.85 && a.source === 'erapi' && a.at === NOW.toISOString(), JSON.stringify(a));
+  check('Frankfurter answers first, though the others are up', a.rate === 25736 && a.source === 'frankfurter' && a.at === NOW.toISOString() && asked.at(-1).includes('frankfurter'), JSON.stringify(a));
   const before = asked.length;
   const b = await fx.usdVnd({ now: hours(0.5) });
-  check('a second call within the hour asks nothing', asked.length === before && b.rate === 25655.85);
-  check('  and the rate is kept in the billing_fx setting', (await store.getSetting('billing_fx'))?.rate === 25655.85);
+  const sameDay = await fx.usdVnd({ now: hours(17) });
+  check('a second call the same day asks nobody', asked.length === before && b.rate === 25736 && sameDay.rate === 25736);
+  check('  and the rate is kept in the billing_fx setting with its source and time', JSON.stringify(await keptRate()) === JSON.stringify({ rate: 25736, source: 'frankfurter', at: NOW.toISOString() }));
 
   await forget();
   const kept = await fx.usdVnd({ now: hours(0.5) });
-  check('a new instance reads the setting while it is fresh, asking nobody', kept.rate === 25655.85 && !asked.slice(before).length, JSON.stringify(asked.slice(before)));
+  check('a new instance reads the setting, asking nobody', kept.rate === 25736 && !asked.slice(before).length, JSON.stringify(asked.slice(before)));
 
+  // 05:00Z is 12:00 in Vietnam: the next 06:00 there is 23:00Z, 18 hours on.
+  const stale = await fx.usdVnd({ now: hours(19) });
+  check('past the next 06:00 Vietnam time the rate is still used, nobody is asked', stale.rate === 25736 && !asked.slice(before).length, JSON.stringify(asked.slice(before)));
+  frankSays(25800);
+  const sameDayAgain = await fx.refreshRate({ now: hours(17) });
+  check('the cron the same day asks nobody either', sameDayAgain.rate === 25736 && !asked.slice(before).length);
+  const fresher = await fx.refreshRate({ now: hours(19) });
+  check('the cron past that 06:00 asks again and stores the new rate with its source and time', fresher.rate === 25800 && fresher.source === 'frankfurter' && fresher.at === hours(19).toISOString() && JSON.stringify(await keptRate()) === JSON.stringify({ rate: fresher.rate, source: fresher.source, at: fresher.at }), JSON.stringify(fresher));
+  check('  and the day\'s next price uses it', (await fx.usdVnd({ now: hours(20) })).rate === 25800);
+  allDown();
   await forget();
+  await store.setSetting('billing_fx', fresher);
+  const none = await fx.refreshRate({ now: hours(50), force: true });
+  check('the cron with every source down answers null, never throws, and leaves the kept rate', none === null && (await store.getSetting('billing_fx'))?.rate === 25800);
+
+  await reset();
   allDown();
   vcbSays(25400);
-  frankSays(25500);
+  erapiSays(25500);
   const c = await fx.usdVnd({ now: hours(2) });
-  check('erapi down: the Vietcombank transfer rate', c.rate === 25400 && c.source === 'vietcombank', JSON.stringify(c));
+  check('Frankfurter down: the Vietcombank transfer rate', c.rate === 25400 && c.source === 'vietcombank', JSON.stringify(c));
 
-  await forget();
+  await reset();
   allDown();
-  frankSays(25500);
+  erapiSays(25500);
   const d = await fx.usdVnd({ now: hours(4) });
-  check('both down: Frankfurter', d.rate === 25500 && d.source === 'frankfurter', JSON.stringify(d));
+  check('both down: Exchange Rate API last', d.rate === 25500 && d.source === 'erapi', JSON.stringify(d));
 
   await forget();
   allDown();
   await store.setSetting('billing_fx', { rate: 25111, source: 'erapi', at: hours(-47).toISOString() });
+  const askedBefore = asked.length;
   const e = await fx.usdVnd({ now: NOW });
-  check('all down, a 47-hour-old rate is still used', e.rate === 25111 && e.source === 'erapi', JSON.stringify(e));
+  check('a 47-hour-old rate is still used, without asking', e.rate === 25111 && e.source === 'erapi' && asked.length === askedBefore, JSON.stringify(e));
+
+  await forget();
+  frankSays(25700);
+  await store.setSetting('billing_fx', { rate: 25111, source: 'erapi', at: hours(-49).toISOString() });
+  const f = await fx.usdVnd({ now: NOW });
+  check('a 49-hour-old rate is asked for afresh', f.rate === 25700 && f.source === 'frankfurter', JSON.stringify(f));
+  allDown();
 
   await forget();
   await store.setSetting('billing_fx', { rate: 25111, source: 'erapi', at: hours(-49).toISOString() });
@@ -115,7 +144,7 @@ section('the day\'s rate: erapi, then Vietcombank, then Frankfurter');
 }
 
 /* From here the rate is 25655.85. */
-const prime = async () => { await forget(); allDown(); erapiSays(25655.85); };
+const prime = async () => { await reset(); allDown(); erapiSays(25655.85); };
 await prime();
 const subRow = (userId, over = {}) => ({
   userId, plan: 'plus', period: 'month', status: 'active', periodStart: new Date('2026-11-01T00:00:00+07:00'), periodEnd: new Date('2026-12-01T00:00:00+07:00'),
@@ -141,8 +170,8 @@ section('quotes');
   check('Pro to Plus is later: total 0, starts when the period ends', low.kind === 'later' && low.totalVnd === 0 && low.startsAt === new Date('2026-12-01T12:00:00Z').toISOString(), JSON.stringify(low));
   await store.saveSubscription(subRow(u.id, { periodStart: new Date('2026-11-01T12:00:00Z'), periodEnd: new Date('2026-12-01T12:00:00Z') }));
   const yr = await orders.quote(u.id, { plan: 'plus', period: 'year' }, { now: mid });
-  check('month to year on the same plan is an upgrade', yr.kind === 'upgrade' && yr.priceVnd === 1463000 && yr.creditVnd === 64500 && yr.totalVnd === 1398500, JSON.stringify(yr));
-  await store.saveSubscription(subRow(u.id, { plan: 'plus', period: 'year', paidVnd: 1463000, periodStart: new Date('2026-11-01T12:00:00Z'), periodEnd: new Date('2027-11-01T12:00:00Z') }));
+  check('month to year on the same plan is an upgrade', yr.kind === 'upgrade' && yr.priceVnd === 1283000 && yr.creditVnd === 64500 && yr.totalVnd === 1218500, JSON.stringify(yr));
+  await store.saveSubscription(subRow(u.id, { plan: 'plus', period: 'year', paidVnd: 1283000, periodStart: new Date('2026-11-01T12:00:00Z'), periodEnd: new Date('2027-11-01T12:00:00Z') }));
   const back = await orders.quote(u.id, { plan: 'plus', period: 'month' }, { now: mid });
   check('year to month is later', back.kind === 'later' && back.totalVnd === 0, JSON.stringify(back));
   const bad = await caught(orders.quote(u.id, { plan: 'gold', period: 'month' }, { now: NOW }));
@@ -642,7 +671,8 @@ section('M1/M3: a slipped rate is not charged with; a cancelled plan is free onc
   await forget();
   await store.setSetting('billing_fx', { rate: 25000, source: 'erapi', at: hours(-3).toISOString() });
   erapiSays(31000);
-  const b = await fx.usdVnd({ now: NOW });
+  // The cron's read: a usdVnd the same day would just use the kept rate.
+  const b = await fx.refreshRate({ now: NOW, force: true });
   check('a rate more than 20% from the last one is skipped too', b.source === 'vietcombank' && b.rate === 25400, JSON.stringify(b));
   await prime();
   const u = await makeUser();

@@ -11,9 +11,9 @@ export const PERIODS = ['month', 'year'];
 export const RANK = Object.freeze({ free: 0, plus: 1, pro: 2, max: 3 });
 export const PLANS = Object.freeze({
   free: Object.freeze({ id: 'free', usdCents: { month: 0, year: 0 }, searches: 0, sandboxMinutes: 0, storageGb: 0.5 }),
-  plus: Object.freeze({ id: 'plus', usdCents: { month: 500, year: 5700 }, searches: 150, sandboxMinutes: 240, storageGb: 3 }),
-  pro: Object.freeze({ id: 'pro', usdCents: { month: 800, year: 9100 }, searches: 250, sandboxMinutes: 360, storageGb: 5 }),
-  max: Object.freeze({ id: 'max', usdCents: { month: 1500, year: 17100 }, searches: 450, sandboxMinutes: 720, storageGb: 10 }),
+  plus: Object.freeze({ id: 'plus', usdCents: { month: 500, year: 5000 }, searches: 150, sandboxMinutes: 240, storageGb: 3 }),
+  pro: Object.freeze({ id: 'pro', usdCents: { month: 800, year: 8000 }, searches: 250, sandboxMinutes: 360, storageGb: 5 }),
+  max: Object.freeze({ id: 'max', usdCents: { month: 1500, year: 15000 }, searches: 450, sandboxMinutes: 720, storageGb: 10 }),
 });
 /** Pay-as-you-go prices at the anchor rate (owner, 2026-11-13: they follow the USD rate, as plan prices do). */
 export const PAYG_ANCHOR_RATE = 25_656;

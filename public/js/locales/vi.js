@@ -3569,7 +3569,7 @@ export const vi = {
   'billing.period.month': 'Theo tháng',
   'billing.period.year': 'Theo năm',
   'billing.plans.period': 'Chu kỳ thanh toán',
-  'billing.plans.save': 'tiết kiệm 5%',
+  'billing.plans.save': 'tiết kiệm 17%',
   'billing.plans.current': 'Gói hiện tại',
   'billing.plans.scheduled': 'Đã hẹn',
   'billing.plans.later': 'Đổi khi gia hạn',

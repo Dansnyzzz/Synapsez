@@ -11,7 +11,7 @@ export function vnd(n) {
   return `${new Intl.NumberFormat(localeTag(), { maximumFractionDigits: 0 }).format(Math.round(Number(n) || 0))}\u00a0₫`;
 }
 
-/** Whole US dollars from cents, cents shown only when there are some: `$5`, `$57`, `$4.75`. */
+/** Whole US dollars from cents, cents shown only when there are some: `$5`, `$50`, `$4.75`. */
 export function usd(cents) {
   const whole = Number(cents) % 100 === 0;
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: whole ? 0 : 2, maximumFractionDigits: 2 }).format((Number(cents) || 0) / 100);

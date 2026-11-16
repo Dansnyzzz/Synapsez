@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 export const CODE_PREFIX = 'SZ';
 const EXACT = /^SZ\d{10}$/i;
 const INSIDE = /SZ(\d{10})(?!\d)/i;
-export const newPaymentCode = (randomInt = crypto.randomInt) => `${CODE_PREFIX}${String(randomInt(0, 10_000_000_000)).padStart(10, '0')}`;
+export const newPaymentCode = (randomInt = crypto.randomInt) => `${CODE_PREFIX}${String(randomInt(1_000_000_000, 10_000_000_000))}`;
 /** The order code a transfer carries: SePay's parsed `code` first, else the content. Uppercase, or null. */
 export function findCode(code, content) {
   if (code && EXACT.test(String(code).trim())) return String(code).trim().toUpperCase();

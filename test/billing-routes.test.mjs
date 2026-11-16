@@ -33,6 +33,7 @@ const check = (label, pass, detail = '') => {
 const realFetch = globalThis.fetch;
 const outside = [];
 let rateUp = true;
+let frankUp = false;
 const e2bSandboxes = [{ sandboxID: 'a', state: 'running' }, { sandboxID: 'b', state: 'running' }, { sandboxID: 'c', state: 'paused' }, { sandboxID: 'd', state: 'running' }];
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 globalThis.fetch = async (url, options) => {
@@ -43,6 +44,7 @@ globalThis.fetch = async (url, options) => {
     if (!rateUp) return json({ result: 'error' }, 500);
     return json({ result: 'success', time_last_update_unix: Math.floor(Date.now() / 1000), rates: { VND: 25_500 } });
   }
+  if (u.host === 'api.frankfurter.dev' && frankUp) return json([{ date: '2026-11-16', base: 'USD', quote: 'VND', rate: 25_736 }]);
   if (u.host === 'api.e2b.app') return json(e2bSandboxes);
   throw new TypeError('fetch failed');
 };
@@ -778,6 +780,32 @@ section('your data');
   check('the billing information is in the owner\'s own export, in the clear', danExport.billing.profile?.email === 'tran.a@example.test' && danExport.billing.orders.length >= 1, JSON.stringify(danExport.billing.profile));
   check('  and nobody else\'s orders or ledger are in it', danExport.billing.orders.every((o) => o.code) && !JSON.stringify(danExport.billing).includes(bob.id) && !JSON.stringify(danExport.billing).includes('REF-ASSIGN-1'));
   check('no sealed text travels in it', !/buyerSealed|buyer_sealed|"sealed"/.test(exp.text) && !/"v2\.[A-Za-z0-9_-]+\./.test(exp.text));
+}
+
+section('the rate once a day, from the 06:00 cron');
+{
+  const cron = (headers = { Authorization: `Bearer ${process.env.CRON_SECRET}` }) => realFetch(`${base}/api/cron/refresh-models`, { headers });
+  await store.setSetting('billing_fx', { rate: 25_500, source: 'erapi', at: new Date(Date.now() - 30 * 3_600_000).toISOString() });
+  check('without the cron secret the rate is not touched', (await cron({})).status === 401 && (await store.getSetting('billing_fx')).source === 'erapi');
+  // The finance layer remembers a source that failed earlier in this run: forget it, as a day would.
+  (await import('../server/finance/cache.js')).__resetCache();
+  (await import('../server/finance/http.js')).__resetHttp();
+  (await import('../server/billing/fx.js'))._resetFxForTests();
+  frankUp = true;
+  const res = await cron();
+  const body = await res.json().catch(() => null);
+  const kept = await store.getSetting('billing_fx');
+  // Here no catalogue answers, so the refresh itself is a 500 as it always was; the rate was read all the same.
+  check('the model refresh also reads the rate, from Frankfurter first, whatever became of the library', res.status === 500 && kept.rate === 25_736 && kept.source === 'frankfurter' && body?.rate === undefined, JSON.stringify([res.status, kept, body]));
+  const { refreshRate } = await import('../server/billing/fx.js');
+  check('  and refreshRate answers the rate with its source', (await refreshRate({ force: true }))?.source === 'frankfurter');
+  const plansNow = await owner.j.call('GET', '/api/billing/plans');
+  check('/plans says which source the rate came from, so the client knows whether a link is owed', plansNow.json?.rate?.rate === 25_736 && plansNow.json.rate.source === 'frankfurter' && typeof plansNow.json.rate.at === 'string', JSON.stringify(plansNow.json?.rate));
+  frankUp = false;
+  rateUp = false;
+  const failing = await cron();
+  check('every rate source down leaves the kept rate and adds no failure of its own', failing.status === 500 && (await store.getSetting('billing_fx')).rate === 25_736);
+  rateUp = true;
 }
 
 server.close();

@@ -139,7 +139,8 @@ import { mountBotRoutes } from './routes/bots.js';
 import { acceptHook, HOOK_BODY_MAX } from './hooks.js';
 import { acceptTelegram } from './telegramInbound.js';
 import { acceptSepay } from './billing/sepay.js';
-import { billingVisible } from './billing/mode.js';
+import { billingVisible, billingMode } from './billing/mode.js';
+import { refreshRate } from './billing/fx.js';
 import { billingTick } from './billing/daily.js';
 import { mountBillingRoutes } from './routes/billing.js';
 import { flushOutbox } from './outbox.js';
@@ -558,11 +559,17 @@ export function createApp() {
 
   // ── daily model-library refresh ─────────────────────────────────────
   // Called by Vercel Cron, not a browser, so it authenticates with a secret.
+  // It runs at 06:00 Vietnam time, so it is also when the day's USD to VND rate is read: one cron
+  // rather than two (Hobby allows few). The two never hold each other up: a library that cannot
+  // be read is still an error, as before, but only after the rate has had its turn.
   app.get(
     '/api/cron/refresh-models',
     requireCron,
     wrap(async (req, res) => {
-      res.json(await refreshLibrary());
+      const [library, rate] = await Promise.allSettled([refreshLibrary(), billingMode() === 'off' ? null : refreshRate()]);
+      if (library.status === 'rejected') throw library.reason;
+      const read = rate.status === 'fulfilled' ? rate.value : null;
+      res.json({ ...library.value, rate: read ? { rate: read.rate, source: read.source, at: read.at } : null });
     }),
   );
 
