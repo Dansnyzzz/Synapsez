@@ -130,10 +130,62 @@ Spec: `docs/superpowers/specs/2026-11-16-quick-fixes-design.md` (approved by the
 - [ ] **Step 4: Run** the compaction suite, the browser check, i18n, lint, typecheck — pass.
 - [ ] **Step 5: Commit** `feat(compact): keep the recent turns by size, not count; a live % while it summarises`.
 
-### Task 7: Release 1.31.0
+### Task 7: The rate once a day from Frankfurter, and yearly prices that save 17%
 
 **Files:**
-- Modify: `package.json` (1.31.0), `public/changelog.json` (1.31.0, vi and en, same array lengths), `CHANGELOG.md`, `README.md` (Users page, guide, compaction rule), `test/features.test.mjs` (pins: compaction 10% / 4,000; top 10 / 20 a page)
+- Modify: `server/billing/fx.js` (source order at :64-68; freshness), `server/billing/plans.js` (yearly `usdCents` at :14-16), the 06:00 cron handler behind `/api/cron/refresh-models` (find it in server/app.js or server/routes), `server/routes/billing.js` (`GET /plans` rate fields), tests that pin prices (`test/billing-core.test.mjs`, `test/billing-flow.test.mjs`, `test/billing-docs.test.mjs`, `test/features.test.mjs`), `README.md` billing table (:2747) and the yearly figures in `CHANGELOG.md`/`public/changelog.json` 1.30.0 notes only if they state prices as current
+- Test: `test/billing-core.test.mjs` (rate chain), `test/billing-routes.test.mjs` (rate fields), `test/billing-flow.test.mjs` (yearly totals)
+
+**Interfaces:**
+- Produces: `GET /api/billing/plans` → `rate: { rate, source, at }` where `source ∈ 'frankfurter' | 'vietcombank' | 'erapi'`; the client shows one line and the Exchange Rate API link only when `source === 'erapi'`. `refreshRate({ now })` exported from fx.js and called by the 06:00 cron.
+
+Rules (spec §6):
+- Source order: `frankfurter` → `vietcombank` (bank-transfer row) → `erapi`.
+- Fetched once a day by the 23:00 UTC cron (06:00 Vietnam). Between runs the stored rate (setting `billing_fx`) is used; the one-hour in-memory freshness becomes "fresh until the next 06:00 Vietnam time". A cold start with no stored rate, or one older than 48 h, fetches on demand as today; older than 48 h with every source down stays `BillingUnavailable`.
+- Yearly: plus 5000, pro 8000, max 15000 USD cents (ten months' price). Monthly unchanged.
+
+- [ ] **Step 1: Failing tests:** the chain asks Frankfurter first and uses Vietcombank only when Frankfurter fails, Exchange Rate API last; `refreshRate` stores the rate with its source and time; a second `usdVnd()` the same day does not fetch; after the next 06:00 VN boundary it is stale for the cron but still usable; the cron route calls `refreshRate`; yearly prices are 50/80/150 USD everywhere they are pinned; `/plans` gives `rate.source`.
+- [ ] **Step 2: Run** — fails.
+- [ ] **Step 3: Implement.** Keep the plausibility band checks (0.5×–2× of the anchor, ±20% of a <48 h last rate).
+- [ ] **Step 4: Run** billing-core, billing-flow, billing-routes, billing-docs, features, lint, typecheck — pass.
+- [ ] **Step 5: Commit** `feat(billing): the rate from Frankfurter once a day at 06:00; yearly plans save 17%`.
+
+### Task 8: The plans sheet, laid out like Claude's
+
+**Files:**
+- Modify: `public/js/billing-plans.js` (the sheet view), `public/css/app.css`, locales, `server/routes/billing.js` + store prefs (Team interest), `public/js/billing-admin.js` (Team interest count)
+- Test: `test/ui-billing.test.mjs`
+
+**Interfaces:**
+- Consumes: Task 7's `rate.source`; existing `createPlansSheet` API (`open`, `openCheckout`, `openTopUp`) unchanged.
+- Produces: `POST /api/billing/team-interest` (signed-in, billing visible) → `{ ok: true }`, stored once per account in its preferences with the date; the admin figures gain `teamInterest: number`.
+
+Exactly as spec §6 "Plans sheet": segmented **Cá nhân · Nhóm**; four cards with our own line icons, tagline, price + second line, button, divider, "Mọi thứ trong … và:" ticks; one Monthly/Yearly toggle state shown in each paid card with "Tiết kiệm 17%"; "Không ràng buộc · Huỷ bất cứ lúc nào" under monthly buttons; the monthly-plan info box and "Chuyển sang <Plan> theo năm" on the current plan's card; pay-as-you-go line; the one rate line ("Tỷ giá cập nhật lúc HH:MM, DD/MM/YYYY", Vietnam time) with the link only for `erapi`; the Team tab card with "Báo tôi khi mở". Everything the sheet does today stays (preview note for administrators, `later` periods, renewal in grace, rate-null behaviour, keyboard, live regions, 360 px).
+
+- [ ] **Step 1: Failing checks:** the segmented control has Individual and Team, no month/year at the top; four cards in order with icon, tagline, price lines and ticks; the toggle in a paid card switches every paid card and the second line; the "Không ràng buộc" line only under monthly; a member on Plus monthly sees the info box and "Chuyển sang Plus theo năm" which opens checkout on yearly; the rate line has no link for Frankfurter and has the link for erapi; Team tab → the card → "Báo tôi khi mở" stores once and says so; the admin card shows the count; both themes readable (contrast 4.5:1 on the new text); 360 px no sideways scroll; keyboard reaches every control.
+- [ ] **Step 2: Run** — fails.
+- [ ] **Step 3: Implement.** Icons are inline SVG drawn for Synapsez (no external images, nothing copied from Anthropic).
+- [ ] **Step 4: Run** `node test/ui-billing.test.mjs`, billing-routes, i18n, features, lint, typecheck — pass.
+- [ ] **Step 5: Commit** `feat(billing): the plans sheet laid out like Claude's — Individual and Team, the year inside each card`.
+
+### Task 9: Checkout as "Configure your plan"
+
+**Files:**
+- Modify: `public/js/billing-plans.js` (the checkout view), `public/css/app.css`, locales
+- Test: `test/ui-billing.test.mjs`
+
+Exactly as spec §6 "Checkout": back arrow and "Thiết lập gói của bạn"; left — two radio cards (month / year with "Tiết kiệm 17%"), the inline billing-information form prefilled from the profile (saved with the order, as the profile save does today), payment method (VietQR via SePay; "Dùng số dư (x ₫)" when there is a balance); right — summary card (plan, line, credit, subtotal, tax line only when `BILLING_TAX_RATE` is set, total due today), the auto-renew info box with the real date, the consent checkbox that enables **Đăng ký**, the locked-rate line; then the QR step as today.
+
+- [ ] **Step 1: Failing checks:** radio cards switch the summary; the badge on yearly; the form is prefilled and an edit is saved; the consent box disables **Đăng ký** until ticked and its text names the renewal and the cancel place; the auto-renew line shows the right date for month and year; no tax line without `BILLING_TAX_RATE`; a renewal in grace still shows the locked price; the QR step and its live status unchanged; keyboard and 360 px.
+- [ ] **Step 2: Run** — fails.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** `node test/ui-billing.test.mjs`, i18n, features, lint, typecheck — pass.
+- [ ] **Step 5: Commit** `feat(billing): checkout as Configure your plan — consent before paying`.
+
+### Task 10: Release 1.31.0
+
+**Files:**
+- Modify: `package.json` (1.31.0), `public/changelog.json` (1.31.0, vi and en, same array lengths), `CHANGELOG.md`, `README.md` (Users page, guide, compaction rule), `test/features.test.mjs` (pins: compaction 10% / 4,000; top 10 / 20 a page; yearly 50/80/150 USD; Frankfurter first)
 - Memory (controller): `admin-dashboard-and-quick-fixes-decisions.md` — what shipped.
 
 - [ ] **Step 1:** Write the features pins; run `node test/features.test.mjs` — fails until the docs and version are in.
