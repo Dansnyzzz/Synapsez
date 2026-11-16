@@ -2886,10 +2886,11 @@ npm run test:ui-chat          # just the conversation screen's part of that, abo
 npm run onboarding:record     # re-record the getting-started guide's clips (vi + en)
 ```
 
-The getting-started guide shows a short clip on each of its six steps, in
-`public/onboarding/{vi,en}/step-N.webm` with a still frame beside each. They are recorded from the
+The getting-started guide has seven steps and shows a short clip on those that are watched rather than done (1, 4, 5, 6 and 7), in
+`public/onboarding/{vi,en}/step-N.webm` with a still frame beside each. The key step plays the real provider pages instead,
+recorded 2026-11-16 with everything personal blurred: `public/onboarding/keys/{openrouter,google,orcarouter}.webm`, one file for both languages. They are recorded from the
 app itself — a throwaway database, one demo account, headless Chrome — so re-record them after a
-change to anything they show (`npm run onboarding:record -- --step=3 --lang=vi` for one). The
+change to anything they show (`npm run onboarding:record -- --step=6 --lang=vi` for one). The
 settings in them are operated for real; the conversations are sample turns drawn by the app's own
 renderer, with no model called, and the guide says so under every clip. Encoding uses the ffmpeg
 Playwright installs (`npx playwright-core install ffmpeg`), or the one `FFMPEG` names. Each clip must

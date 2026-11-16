@@ -1986,8 +1986,62 @@ section('the getting-started guide says only what is true');
     // create_file "does not write PDFs" (its own description): a PDF is printed from the viewer.
     const documents = String(dict['onb.1.b'] || '');
     check(`${lang}: the documents it writes are the ones create_file writes, and a PDF is printed`, /Word/.test(documents) && /Excel/.test(documents) && /PowerPoint/.test(documents) && (!/PDF/.test(documents) || /\bIn\b|Print/.test(documents)), documents);
-    const tries = [1, 2, 3, 4, 5, 6].map((n) => dict[`onb.6.try${n}`]).filter(Boolean);
+    const tries = [1, 2, 3, 4, 5, 6].map((n) => dict[`onb.7.try${n}`]).filter(Boolean);
     check(`${lang}: six different things to try`, new Set(tries).size === 6, `${tries.length}`);
+
+    // The key steps as the providers' pages are today (recorded 2026-11-16).
+    const stepText = (provider, name) => String(dict[`onb.keys.step.${name}.${provider}`] || '');
+    const openrouter = stepText('openrouter', 'create');
+    check(`${lang}: OpenRouter's key needs an expiration and a credit limit, and says to set a limit if you have paid`, /No expiration/.test(openrouter) && /No limit/.test(openrouter) && /Expiration/.test(openrouter) && /Credit limit/.test(openrouter) && !/để trống|stay empty/.test(openrouter) && /leak|lộ/.test(openrouter), openrouter);
+    check(`${lang}:   and that a first sign-in may ask for a code emailed to you`, /e-?mail/i.test(stepText('openrouter', 'signin')) && /code|mã/.test(stepText('openrouter', 'signin')), stepText('openrouter', 'signin'));
+    const googleCreate = stepText('google', 'create');
+    check(`${lang}: Google's key: the button, then the small form's button`, lang === 'vi' ? /"Tạo khóa API"/.test(googleCreate) && /"Tạo khóa"/.test(googleCreate) : /"Create API key"/.test(googleCreate) && /"Create key"/.test(googleCreate), googleCreate);
+    check(`${lang}:   and its new key starts with AQ., with no AIza in the copy text`, /AQ\./.test(stepText('google', 'copy')) && !/AIza/.test(stepText('google', 'copy')), stepText('google', 'copy'));
+    const orca = stepText('orcarouter', 'create');
+    check(`${lang}: OrcaRouter's free plan limits the keys, and the way out is to delete one or reuse one`, (/delete a key you no longer use/.test(orca) && /reuse one you have/.test(orca)) || (/xoá một key không dùng nữa/.test(orca) && /dùng lại một key/.test(orca)), orca);
+
+    // Step 6, Automations & Bot: every sentence held to the code that makes it true.
+    const six = (key) => String(dict[`onb.6.${key}`] || '');
+    const read = (path) => fs.readFileSync(new URL(path, import.meta.url), 'utf8');
+    check(`${lang}: Automations has the two tabs the sentence names, by the page's own labels`, /AUTO_TABS = \/\*\* @type \{const\} \*\/ \(\['workflows', 'scheduled'\]\)/.test(read('../public/js/automations.js')) && six('a').includes(dict['nav.workflows']) && six('a').includes(dict['nav.scheduled']), six('a'));
+    check(`${lang}:   a workflow runs steps in order, each seeing what the one before produced`, /in order|theo thứ tự/.test(dict['wf.lede']) && /sees what the last one produced|thấy được kết quả của bước trước/.test(dict['wf.lede']) && /in order|theo thứ tự/.test(six('a')) && /produced|kết quả của bước trước/.test(six('a')), six('a'));
+    check(`${lang}:   a scheduled task runs on a clock, or only on Run now`, /FREQUENCIES = \['manual'/.test(read('../server/scheduler.js')) && six('a').includes(dict['pages.tasks.runNow']), six('a'));
+    check(`${lang}: each scheduled run lands in a conversation of its own`, /conversation of its own/.test(read('../server/scheduler.js')) && /own conversation|cuộc trò chuyện riêng/.test(dict['pages.tasks.lede']) && /conversation of its own|cuộc trò chuyện riêng/.test(six('b')), six('b'));
+    {
+      // The count on the Automations item is the page's own summary: needs you, failed (unless paused), overdue.
+      const { taskState } = await import('../public/js/automation-status.js');
+      const now = Date.parse('2026-11-16T09:00:00Z');
+      const base = { enabled: true, cron: '08:00', next_run_at: '2026-11-17T01:00:00Z' };
+      const needs = taskState({ ...base, run_state: 'needs_attention' }, now).attention;
+      const failed = taskState({ ...base, last_status: 'error: no' }, now).attention;
+      const pausedFailed = taskState({ ...base, enabled: false, last_status: 'error: no' }, now).attention;
+      const overdue = taskState({ ...base, next_run_at: '2026-11-16T08:00:00Z' }, now).attention;
+      const fine = taskState({ ...base, last_status: 'ok' }, now).attention;
+      check(`${lang}: the count is for what needs you, what failed (unless paused) and what is overdue`, needs && failed && !pausedFailed && overdue && !fine && /id="auto-badge"/.test(read('../public/index.html')) && /paused|tạm dừng/.test(six('c')), JSON.stringify({ needs, failed, pausedFailed, overdue, fine }));
+    }
+    const teamSource = read('../server/bots/team.js');
+    const promptSource = read('../server/bots/prompt.js');
+    check(`${lang}: every account has Chief, the main bot`, /export async function ensureChief/.test(teamSource) && /await ensureChief\(req\.user\.id/.test(read('../server/routes/bots.js')) && /Chief/.test(six('d')), six('d'));
+    check(`${lang}: each bot is its own long conversation with a role, instructions and memory`, /its own long-lived conversation/.test(promptSource) && /Your role:/.test(promptSource) && /Instructions the user wrote for you/.test(promptSource) && /Your memory, /.test(promptSource), six('d'));
+    check(`${lang}: Chief sets bots and groups up, and the button is the one the page has`, /create_bot/.test(promptSource) && /create_group/.test(promptSource) && six('e').includes(dict['bots.new']) && /data-act="new"/.test(read('../public/js/bots.js')), six('e'));
+    check(`${lang}: in a group its admin answers first, and @ calls a bot`, /admin|quản trị/i.test(dict['bots.emptyGroup']) && dict['bots.emptyGroup'].includes('@') && six('f').includes('@') && /admin|quản trị/i.test(six('f')), six('f'));
+    check(`${lang}: every bot answers on the model chosen in the top bar`, /Every bot answers on the model the user picked in the app\\'s top bar/.test(promptSource) && /top bar|thanh trên/.test(dict['bots.f.modelNote']) && /top bar|thanh trên/.test(six('model')), six('model'));
+    check(`${lang}: seven tabs, Automations & Bot sixth, First task last`, [1, 2, 3, 4, 5, 6, 7].every((n) => dict[`onb.${n}.tab`]) && /Automations|Tự động/.test(dict['onb.6.tab']) && /First task|Việc đầu tiên/.test(dict['onb.7.tab']), `${dict['onb.6.tab']} / ${dict['onb.7.tab']}`);
+    // Every video says it is the real page as of November 2026, and has its accessible name.
+    check(`${lang}: the provider videos are captioned as the real page, as of November 2026`, /2026/.test(dict['onb.keys.clip'] || '') && /{provider}/.test(dict['onb.keys.clip'] || '') && /{provider}/.test(dict['onb.keys.clipLabel'] || ''), dict['onb.keys.clip']);
+  }
+  check('the guide counts seven steps', /const TOTAL = 7;/.test(fs.readFileSync(new URL('../public/js/onboarding.js', import.meta.url), 'utf8')));
+  {
+    // The provider videos replace the drawings: recorded on the real sites, one file for both languages.
+    const keysSource = fs.readFileSync(new URL('../public/js/onboarding-keys.js', import.meta.url), 'utf8');
+    for (const id of ['openrouter', 'google', 'orcarouter']) {
+      const clip = new URL(`../public/onboarding/keys/${id}.webm`, import.meta.url);
+      const still = new URL(`../public/onboarding/keys/${id}.jpg`, import.meta.url);
+      const video = fs.existsSync(clip) ? fs.readFileSync(clip) : null;
+      const picture = fs.existsSync(still) ? fs.readFileSync(still) : null;
+      check(`${id}: its real video and still are there`, !!video && video.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3])) && !!picture && picture[0] === 0xff && picture[1] === 0xd8, video ? `${Math.round(video.length / 1024)} KB` : 'missing');
+    }
+    check('the key step plays them (muted, looping, inline, poster first) and no longer draws', /\/onboarding\/keys\/\$\{/.test(keysSource) && /muted/.test(keysSource) && /loop/.test(keysSource) && /playsinline/.test(keysSource) && /poster=/.test(keysSource) && !/function picture\(/.test(keysSource));
   }
 
   /**
@@ -2001,7 +2055,7 @@ section('the getting-started guide says only what is true');
   let total = 0;
   for (const lang of ['vi', 'en']) {
     // Steps 2 and 3 are done in the guide itself rather than watched (owner, 2026-11-06).
-    for (const step of [1, 4, 5, 6]) {
+    for (const step of [1, 4, 5, 6, 7]) {
       const clip = new URL(`../public/onboarding/${lang}/step-${step}.webm`, import.meta.url);
       const still = new URL(`../public/onboarding/${lang}/step-${step}.jpg`, import.meta.url);
       const video = fs.existsSync(clip) ? fs.readFileSync(clip) : null;

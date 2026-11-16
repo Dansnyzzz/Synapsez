@@ -2,7 +2,7 @@
 /**
  * Record the getting-started guide's clips from the app itself (owner, 2026-10-20).
  *
- *   npm run onboarding:record                      all six steps, vi and en
+ *   npm run onboarding:record                      every step with a clip, vi and en
  *   npm run onboarding:record -- --step=3 --lang=vi
  *
  * A clip is the real interface, never a drawing of it. The app runs here on a
@@ -20,7 +20,7 @@
  * cut where its scene begins and re-encoded with the ffmpeg Playwright installs
  * (VP8/WebM, no sound). Its still frame is a screenshot at the scene's best moment.
  *
- * Out: public/onboarding/{vi,en}/step-{1..6}.webm and .jpg.
+ * Out: public/onboarding/{vi,en}/step-{1,4,5,6,7}.webm and .jpg (2 and 3 are done in the guide).
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -116,6 +116,7 @@ const REVENUE = [412, 386, 455, 480, 512, 498, 540, 575, 562, 610, 688, 645];
 
 const COPY = {
   vi: {
+    task6: { title: 'Bản tin tin tức buổi sáng', prompt: 'Tìm 5 tin AI nổi bật hôm nay và tóm tắt mỗi tin trong 2 câu, kèm nguồn', when: 'weekdays 08:00' },
     ask1: 'Tìm 3 xu hướng thương mại điện tử nổi bật năm 2026 và viết thành báo cáo Word ngắn',
     results1: [
       ['Xu hướng thương mại điện tử 2026 — báo cáo ngành', 'https://example.com/bao-cao-tmdt-2026'],
@@ -159,6 +160,7 @@ const COPY = {
       '**5. Doanh nghiệp nhỏ dùng AI chăm sóc khách hàng** — Nhiều cửa hàng trả lời tin nhắn bằng AI. Người thật xử lý ca khó ([example.org](https://example.org/ai-doanh-nghiep)).',
   },
   en: {
+    task6: { title: 'Morning news digest', prompt: 'Find 5 notable AI stories today and summarise each in 2 sentences, with sources', when: 'weekdays 08:00' },
     ask1: 'Find 3 standout e-commerce trends for 2026 and write them up as a short Word report',
     results1: [
       ['E-commerce trends 2026 — industry report', 'https://example.com/ecommerce-2026'],
@@ -500,12 +502,26 @@ const SCENES = {
     await page.waitForTimeout(600);
   },
 
+  /** Automations, with one scheduled task on its clock; then the Bot page, where Chief is waiting. */
+  async 6({ page, begin, still }) {
+    await begin();
+    await press(page, '#open-automations');
+    await page.waitForTimeout(900);
+    await press(page, '[data-auto-tab="scheduled"]');
+    await page.waitForTimeout(1100);
+    await still();
+    await page.waitForTimeout(500);
+    await press(page, '#open-bots');
+    await page.waitForTimeout(1600);
+    await page.waitForTimeout(900);
+  },
+
   /** A suggestion goes into the box; sending it starts the work. */
-  async 6({ page, lang, begin, still }) {
+  async 7({ page, lang, begin, still }) {
     await page.evaluate(STAGE);
     await page.evaluate(() => document.getElementById('open-onboarding').click());
     await page.waitForTimeout(400);
-    for (let i = 0; i < 5; i += 1) await page.keyboard.press('ArrowRight');
+    for (let i = 0; i < 6; i += 1) await page.keyboard.press('ArrowRight');
     // The guide's own clip stays out of this one: a clip inside itself would
     // show whatever the last recording happened to be.
     await page.evaluate(() => {
@@ -604,8 +620,13 @@ try {
       shots: [(await upload('shop-1.jpg', 'image/jpeg', await shopShot(lang, false))).id, (await upload('shop-2.jpg', 'image/jpeg', await shopShot(lang, true))).id],
     };
     // Steps 2 and 3 are done in the guide itself, so they have no clip (owner, 2026-11-06).
-    for (const step of [1, 4, 5, 6]) {
+    for (const step of [1, 4, 5, 6, 7]) {
       if (onlyStep && step !== onlyStep) continue;
+      if (step === 6) {
+        // One scheduled task, made as the form makes it, so the page shows a real row.
+        for (const { id } of (await call('GET', '/api/tasks')).tasks || []) await call('DELETE', `/api/tasks/${id}`);
+        await call('POST', '/api/tasks', { ...COPY[lang].task6, tz: 'Asia/Ho_Chi_Minh' });
+      }
       await call('PUT', '/api/providers/openrouter/key', { apiKey: 'demo-key-not-real-0000' });
       await call('PUT', '/api/prefs', { defaultModel: 'auto' });
       // A new model's announcement is somebody else's moment, and which one is

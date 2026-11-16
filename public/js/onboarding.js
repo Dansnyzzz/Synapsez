@@ -3,7 +3,7 @@ import { escapeHtml } from './markdown.js';
 import { createKeyGuide } from './onboarding-keys.js';
 
 /**
- * The six-step guide a new account is shown once (rebuilt 2026-10-20).
+ * The seven-step guide a new account is shown once (rebuilt 2026-10-20, a step added 2026-11-16).
  *
  * Built for somebody who is not a developer, which changes what belongs in it.
  * Not a feature tour — the things that decide whether a new account works, in
@@ -16,7 +16,9 @@ import { createKeyGuide } from './onboarding-keys.js';
  *      is where people stall
  *   4. the cloud computer, which is where real work runs
  *   5. the five levels of freedom, because the first approval prompt is otherwise a fright
- *   6. one real task, because reading about it teaches nobody
+ *   6. Automations and the Bot page, because "carry on without me" is where the
+ *      work stops needing the person typing (owner, 2026-11-16)
+ *   7. one real task, because reading about it teaches nobody
  *
  * **Every sentence is true of this app** (owner, 2026-10-20: "minh bạch, chính
  * xác, thực tế 100%"). The one before said free models were fixed by paying,
@@ -38,7 +40,7 @@ import { createKeyGuide } from './onboarding-keys.js';
  *   **Step 2 marks itself done** when the account has a key.
  */
 
-const TOTAL = 6;
+const TOTAL = 7;
 
 const PLAY_ICON =
   '<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M6 4.5v11l9-5.5z" fill="currentColor"/></svg>';
@@ -88,19 +90,46 @@ export function createOnboarding({ providers, addKey, useModel, recommended, sug
   const p = (key, className = '') => `<p${className ? ` class="${className}"` : ''}>${escapeHtml(t(key))}</p>`;
 
   /**
-   * The six steps by name — a way to jump as well as a sense of how far there
+   * The seven steps by name — a way to jump as well as a sense of how far there
    * is to go. A short name each: the full titles were cut to "Synapsez là…" in
    * a sixth of the sheet (owner, 2026-10-26). The short name is the button's
    * name, so "click Autonomy" finds it by voice (WCAG 2.5.3); the full title
    * heads the step below, and is the button's description on hover.
    */
   function paintSteps() {
+    const kept = steps.scrollLeft;
     steps.innerHTML = Array.from({ length: TOTAL }, (_, i) => {
       const n = i + 1;
       const state = n === step ? ' is-current' : n < step ? ' is-done' : '';
       return `<li class="onb__dot${state}"><button type="button" data-step="${n}"${n === step ? ' aria-current="step"' : ''} title="${escapeHtml(t(`onb.${n}.title`))}">
         <span class="onb__dot-n" aria-hidden="true">${n < step ? '✓' : n}</span><span class="onb__dot-label">${escapeHtml(t(`onb.${n}.tab`))}</span></button></li>`;
     }).join('');
+    // Repainting the row put it back at the start; the person had it somewhere else.
+    steps.scrollLeft = kept;
+    showCurrentTab();
+  }
+
+  /**
+   * Scroll the row so the current tab is whole, with a little of its neighbours
+   * showing that there are more. Done by hand: `scrollIntoView` would also move
+   * the sheet itself.
+   */
+  function showCurrentTab() {
+    const tab = /** @type {HTMLElement | null} */ (steps.querySelector('.is-current'));
+    if (!tab) return;
+    const room = 28;
+    const left = tab.offsetLeft - room;
+    const right = tab.offsetLeft + tab.offsetWidth + room - steps.clientWidth;
+    const to = steps.scrollLeft > left ? left : steps.scrollLeft < right ? right : steps.scrollLeft;
+    if (Math.abs(to - steps.scrollLeft) > 1) steps.scrollTo({ left: Math.max(0, to), behavior: still() ? 'auto' : 'smooth' });
+    fadeEdges();
+  }
+
+  /** The soft fade at an edge says there is more that way; it goes when there is not. */
+  function fadeEdges() {
+    const max = steps.scrollWidth - steps.clientWidth;
+    steps.classList.toggle('has-before', steps.scrollLeft > 1);
+    steps.classList.toggle('has-after', steps.scrollLeft < max - 1);
   }
 
   /** This step's clip, in the interface's language; its still frame shows at once. */
@@ -218,15 +247,25 @@ export function createOnboarding({ providers, addKey, useModel, recommended, sug
         ${p('onb.5.body')}
         <ul class="onb__list onb__levels">${levels}</ul>
         ${p('onb.5.honest', 'onb__tip')}`;
-    } else {
-      const tries = [1, 2, 3, 4, 5, 6].map((n) => `onb.6.try${n}`);
+    } else if (step === 6) {
+      // Each line is held to the code in test/features ("says only what is true").
       body.innerHTML = `
         <h3 class="onb__title">${escapeHtml(t('onb.6.title'))}</h3>
         ${p('onb.6.body')}
+        <h4 class="onb__sub">${escapeHtml(t('nav.automations'))}</h4>
+        <ul class="onb__list">${li('onb.6.a')}${li('onb.6.b')}${li('onb.6.c')}</ul>
+        <h4 class="onb__sub">${escapeHtml(t('nav.bot'))}</h4>
+        <ul class="onb__list">${li('onb.6.d')}${li('onb.6.e')}${li('onb.6.f')}</ul>
+        ${p('onb.6.model', 'hint')}`;
+    } else {
+      const tries = [1, 2, 3, 4, 5, 6].map((n) => `onb.7.try${n}`);
+      body.innerHTML = `
+        <h3 class="onb__title">${escapeHtml(t('onb.7.title'))}</h3>
+        ${p('onb.7.body')}
         <div class="onb__tries">
           ${tries.map((key) => `<button class="onb__try" type="button" data-key="${key}">${escapeHtml(t(key))}</button>`).join('')}
         </div>
-        ${p('onb.6.note', 'hint')}`;
+        ${p('onb.7.note', 'hint')}`;
       for (const btn of body.querySelectorAll('.onb__try')) {
         btn.addEventListener('click', () => {
           // Closes the guide and puts the sentence in the box — not sent: the
@@ -240,7 +279,7 @@ export function createOnboarding({ providers, addKey, useModel, recommended, sug
     applyI18n(dialog);
     // After the dialog's own strings, or its `data-i18n` puts "Continue" back on
     // the last step's button.
-    next.textContent = step === TOTAL ? t('onb.6.finish') : t('action.next');
+    next.textContent = step === TOTAL ? t('onb.7.finish') : t('action.next');
     paintMedia();
   }
 
@@ -262,6 +301,8 @@ export function createOnboarding({ providers, addKey, useModel, recommended, sug
     if (video.dataset.clip) broken.add(video.dataset.clip);
     media.hidden = true;
   });
+  steps.addEventListener('scroll', fadeEdges, { passive: true });
+  window.addEventListener('resize', fadeEdges);
   video.addEventListener('play', paintPlay);
   video.addEventListener('pause', paintPlay);
   play.addEventListener('click', () => {

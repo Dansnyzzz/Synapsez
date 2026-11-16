@@ -93,6 +93,10 @@ section('the guide: a key, step by step');
     newTab: document.querySelector('[data-key-get]')?.target,
     video: !document.getElementById('onb-media').hidden,
     drawing: !!document.querySelector('.onbk__page'),
+    clip: (() => {
+      const v = document.querySelector('.onbk__video video');
+      return v && { src: v.getAttribute('src'), poster: v.getAttribute('poster'), muted: v.muted, loop: v.loop, inline: v.hasAttribute('playsinline'), name: v.getAttribute('aria-label'), playing: !v.paused, caption: document.querySelector('.onbk__sample')?.textContent };
+    })(),
     box: document.querySelector('[data-key-box]')?.tagName,
   }));
   check('it offers the three providers', seen.cards.slice().sort().join() === 'google,openrouter,orcarouter', seen.cards.join());
@@ -100,11 +104,24 @@ section('the guide: a key, step by step');
   check('five steps from its page to the key pasted back', seen.steps === 5, String(seen.steps));
   check('a real link, opening in a new tab', /^https:\/\/openrouter\.ai\/settings\/keys/.test(seen.link) && seen.newTab === '_blank', seen.link);
   check('no clip of somebody typing a key', !seen.video);
-  check('a drawing of what to look for, and one box to paste into', seen.drawing && seen.box === 'TEXTAREA');
+  check('the real page as a video, not a drawing, and one box to paste into', !seen.drawing && seen.box === 'TEXTAREA');
+  check('  OpenRouter\'s video: its own file, muted, looping, inline, still frame first, named', seen.clip?.src === '/onboarding/keys/openrouter.webm' && seen.clip.poster === '/onboarding/keys/openrouter.jpg' && seen.clip.muted && seen.clip.loop && seen.clip.inline && /OpenRouter/.test(seen.clip.name || ''), JSON.stringify(seen.clip));
+  check('  and says it is the real page as of November 2026', /November 2026/.test(seen.clip?.caption || ''), seen.clip?.caption);
   await shot('guide-keys');
   await page.click('.onbk__card[data-key-provider="google"]');
   await page.waitForTimeout(100);
   check('another provider has its own steps', await page.evaluate(() => /aistudio\.google\.com\/apikey/.test(document.querySelector('[data-key-get]').href) && /Create API key/.test(document.querySelector('.onbk__steps').textContent)));
+  check('  Google\'s video, and the new key\'s first letters in the step', await page.evaluate(() => /keys\/google\.webm$/.test(document.querySelector('.onbk__video video').getAttribute('src')) && /AQ\./.test(document.querySelector('.onbk__steps').textContent) && !/AIza/.test(document.querySelector('.onbk__steps').textContent)));
+  await page.click('.onbk__card[data-key-provider="orcarouter"]');
+  await page.waitForTimeout(100);
+  check('  OrcaRouter\'s video, and what to do at the free plan\'s key limit', await page.evaluate(() => /keys\/orcarouter\.webm$/.test(document.querySelector('.onbk__video video').getAttribute('src')) && /delete a key you no longer use/.test(document.querySelector('.onbk__steps').textContent)));
+  // Motion is unwelcome: the still frame waits behind a play button, and the person decides.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.click('.onbk__card[data-key-provider="openrouter"]');
+  await page.waitForTimeout(250);
+  const still = await page.evaluate(() => ({ paused: document.querySelector('.onbk__video video').paused, label: document.querySelector('[data-key-play]').getAttribute('aria-label') }));
+  check('  reduced motion: the poster, paused, with a Play button', still.paused && /Play/.test(still.label), JSON.stringify(still));
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.click('.onbk__card[data-key-provider="openrouter"]');
   await page.fill('[data-key-box]', 'sk-or-v1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1111\nsk-orca-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2222');
   await page.click('[data-key-add]');
@@ -117,8 +134,72 @@ section('the guide: a key, step by step');
   await shot('guide-keys-done');
 }
 
+section('the guide: seven steps, and the tabs scroll sideways when they do not fit');
+{
+  await page.evaluate(() => document.getElementById('onboarding').close());
+  const rows = {};
+  for (const width of [360, 768]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.evaluate(() => document.getElementById('open-onboarding')?.click());
+    await page.waitForSelector('#onboarding[open]');
+    await page.click('#onb-steps [data-step="1"]');
+    await page.waitForTimeout(400);
+    const row = await page.evaluate(() => {
+      const steps = document.getElementById('onb-steps');
+      const style = getComputedStyle(steps);
+      return {
+        tabs: steps.querySelectorAll('[data-step]').length,
+        overflow: steps.scrollWidth > steps.clientWidth + 1,
+        overflowX: style.overflowX,
+        track: style.scrollbarColor,
+        pageSideways: document.documentElement.scrollWidth > window.innerWidth + 1,
+        dialogSideways: document.getElementById('onboarding').scrollWidth > document.getElementById('onboarding').clientWidth + 1,
+        sixth: steps.querySelector('[data-step="6"] .onb__dot-label')?.textContent,
+        seventh: steps.querySelector('[data-step="7"] .onb__dot-label')?.textContent,
+      };
+    });
+    rows[width] = row;
+    check(`${width}px: seven tabs, Automations & Bot sixth, First task last`, row.tabs === 7 && /Automations/.test(row.sixth) && /First task/.test(row.seventh), JSON.stringify(row));
+    check(`${width}px: the row scrolls inside itself, on a transparent track`, row.overflow && /auto|scroll/.test(row.overflowX) && /(rgba\(0, 0, 0, 0\)|transparent)$/.test(row.track), JSON.stringify(row));
+    check(`${width}px: the page itself never scrolls sideways`, !row.pageSideways && !row.dialogSideways, JSON.stringify(row));
+    // Forward to the end and back: the current tab is whole in the row after each press.
+    const whole = async () =>
+      page.evaluate(() => {
+        const steps = document.getElementById('onb-steps').getBoundingClientRect();
+        const tab = document.querySelector('#onb-steps .is-current').getBoundingClientRect();
+        return tab.left >= steps.left - 1 && tab.right <= steps.right + 1;
+      });
+    const lost = [];
+    for (let n = 2; n <= 7; n += 1) {
+      await page.click('#onb-next');
+      await page.waitForTimeout(700);
+      if (!(await whole())) lost.push(n);
+    }
+    for (let n = 6; n >= 1; n -= 1) {
+      await page.click('#onb-back');
+      await page.waitForTimeout(700);
+      if (!(await whole())) lost.push(n);
+    }
+    check(`${width}px: the current tab is whole after every Next and Back`, lost.length === 0, `not whole at ${lost.join(', ')}`);
+    await page.evaluate(() => document.getElementById('onboarding').close());
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  // The new step says what is true of the Automations and Bot pages, and plays no provider video.
+  await page.evaluate(() => document.getElementById('open-onboarding')?.click());
+  await page.waitForSelector('#onboarding[open]');
+  await page.click('#onb-steps [data-step="6"]');
+  await page.waitForTimeout(150);
+  const six = await page.evaluate(() => ({ title: document.querySelector('#onb-body .onb__title')?.textContent, items: document.querySelectorAll('#onb-body .onb__list li').length }));
+  check('step 6 is Automations & Bot: six things said, under two headings', /carries on/.test(six.title) && six.items === 6, JSON.stringify(six));
+  await page.click('#onb-steps [data-step="7"]');
+  check('step 7 is the first task, and the last button finishes', await page.evaluate(() => document.querySelectorAll('.onb__try').length === 6 && /Done/.test(document.getElementById('onb-next').textContent)));
+  await page.evaluate(() => document.getElementById('onboarding').close());
+}
+
 section('the guide: the models suggested, and nothing else to choose between');
 {
+  await page.evaluate(() => document.getElementById('open-onboarding')?.click());
+  await page.waitForSelector('#onboarding[open]');
   await page.click('#onb-steps [data-step="3"]');
   await page.waitForSelector('.onb__model');
   const seen = await page.evaluate(() => ({

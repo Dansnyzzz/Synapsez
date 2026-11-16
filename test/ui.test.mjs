@@ -285,7 +285,7 @@ section('a new account is shown the guide, once');
       heights: [...new Set([...document.querySelectorAll('#onb-steps .onb__dot button')].map((b) => Math.round(b.getBoundingClientRect().height)))],
     };
   });
-  check('  its six tabs sit on one line, the same height', look.heights.length === 1, JSON.stringify(look.heights));
+  check('  its seven tabs sit on one line, the same height', look.heights.length === 1, JSON.stringify(look.heights));
   check('  its clip has no caption over it', look.caption === false);
   check('  its bar of buttons is solid, so no words show through it', look.footOpaque, JSON.stringify(look));
   check('  and every step is named whole', look.cut.length === 0, look.cut.join(' | '));
@@ -3010,7 +3010,7 @@ section('the getting-started guide');
 
   /*
    * Each step has a clip recorded from the app (2026-10-20): it plays, it can
-   * always be paused (WCAG 2.2.2), and the six steps are named across the top.
+   * always be paused (WCAG 2.2.2), and the seven steps are named across the top.
    */
   await page.waitForTimeout(900);
   const clip = await page.evaluate(() => {
@@ -3025,7 +3025,7 @@ section('the getting-started guide');
   });
   check('step 1 has its clip, in the interface language', clip.shown && /\/onboarding\/(vi|en)\/step-1\.webm$/.test(clip.src), JSON.stringify(clip));
   check('  playing, with a way to pause it', clip.playing && /Pause|Tạm dừng/.test(clip.label), JSON.stringify(clip));
-  check('  and all six steps named across the top', clip.named === 6, `${clip.named}`);
+  check('  and all seven steps named across the top', clip.named === 7, `${clip.named}`);
   await page.click('#onb-play');
   await page.waitForTimeout(200);
   const pausedClip = await page.evaluate(() => ({
@@ -3035,11 +3035,11 @@ section('the getting-started guide');
   check('  pressing it pauses the clip, and it offers to play again', pausedClip.paused && /Play|Phát/.test(pausedClip.label), JSON.stringify(pausedClip));
   await page.click('#onb-play');
 
-  // Walk all six steps. Each one has to render something.
+  // Walk all seven steps. Each one has to render something.
   const titles = [opened.title];
   /** @type {string[]} */
   let guideLevels = [];
-  for (let i = 2; i <= 6; i += 1) {
+  for (let i = 2; i <= 7; i += 1) {
     await page.click('#onb-next');
     await page.waitForTimeout(350);
     const at = await page.evaluate(() => ({
@@ -3051,13 +3051,13 @@ section('the getting-started guide');
     }));
     check(`step ${i} renders`, at.title.length > 0 && at.body > 40, `${at.title} (${at.body} chars)`);
     // The dialog's `data-i18n` once put "Continue" back on the last step's button.
-    if (i === 6) check('the last step\'s button says it finishes, not "Continue"', /^(Done\. Start working\.|Xong\. Bắt đầu làm việc\.)$/.test(at.next), at.next);
+    if (i === 7) check('the last step\'s button says it finishes, not "Continue"', /^(Done\. Start working\.|Xong\. Bắt đầu làm việc\.)$/.test(at.next), at.next);
     check(`step ${i} can be gone back from`, at.backHidden === false);
     titles.push(at.title);
     // Compared with the mode button's own menu once the guide is closed, below.
     if (i === 5) guideLevels = await page.evaluate(() => [...document.querySelectorAll('#onb-body .onb__level strong')].map((n) => n.textContent.trim()));
   }
-  check('all six steps are different', new Set(titles).size === 6, titles.join(' | '));
+  check('all seven steps are different', new Set(titles).size === 7, titles.join(' | '));
 
   /**
    * Step 2 tracks whether a key exists, in both directions.
@@ -3096,17 +3096,14 @@ section('the getting-started guide');
   check('and it now sees the key that was just saved', withKey.done === true);
   check('with the box still there for another', withKey.more === true);
 
-  // Step 6 puts a sentence in the composer — not sent — and closes. The button
+  // Step 7 puts a sentence in the composer — not sent — and closes. The button
   // that was pressed is gone now, so focus is on the page body: the
   // arrows have to work from there too (they went nowhere, 2026-10-20).
   await page.evaluate(() => document.activeElement?.blur?.());
-  await page.keyboard.press('ArrowRight');
-  await page.keyboard.press('ArrowRight');
-  await page.keyboard.press('ArrowRight');
-  await page.keyboard.press('ArrowRight');
+  for (let i = 0; i < 5; i += 1) await page.keyboard.press('ArrowRight');
   await page.waitForTimeout(400);
   const tries = await page.$$eval('#onb-body .onb__try', (els) => els.map((e) => e.textContent.trim()));
-  check('→ turns the pages, to step 6 and its six things to try', tries.length === 6, tries.length + ' suggestions');
+  check('→ turns the pages, to step 7 and its six things to try', tries.length === 6, tries.length + ' suggestions');
   await page.click('#onb-body .onb__try');
   await page.waitForTimeout(500);
   const handed = await page.evaluate(() => ({
