@@ -540,7 +540,7 @@ section('deciding when to fold');
    */
   const { measure } = await import('../server/compact.js');
   const seqd = full.map((m, i) => ({ ...m, seq: i + 1 }));
-  const afterFold = [...seqd, { role: 'summary', text: 'short summary', replaced: 11, covers: 11, seq: seqd.length + 1 }];
+  const afterFold = [...seqd, { role: 'summary', text: 'short summary', replaced: 8, covers: 8, seq: seqd.length + 1 }];
   const before = measure(seqd, entry, { maxOutput: 10_000 }).ratio;
   const after = measure(afterFold, entry, { maxOutput: 10_000 }).ratio;
   check('the ring drops the moment a fold lands', after < 0.1 && before > 0.8, `${before.toFixed(2)} → ${after.toFixed(2)}`);

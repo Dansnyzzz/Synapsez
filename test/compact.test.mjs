@@ -175,6 +175,111 @@ section('what the summary stands for is unchanged');
   check('the model gets the summary and exactly the kept tail', sent.length === 1 + (chat.length - start));
 }
 
+section('a long turn is folded inside itself, and the question survives');
+{
+  const entry = { context: 128_000, maxOutput: 8_000 };
+  const quiet = async function* () {
+    yield { type: 'text', delta: 'A summary of the work so far.' };
+    yield { type: 'done', usage: { input: 1, output: 1 } };
+  };
+  const step = (i) => [
+    say('assistant', 100, { toolCalls: [{ id: `t${seq}`, name: 'read_file', input: {} }] }),
+    say('tool', 0, { results: [{ content: 'x'.repeat(40_000) }] }),
+  ];
+  const full = (m) => {
+    const last = m.findLast((x) => x.role === 'assistant');
+    last.usage = { input: 110_000 };
+  };
+  const fold = async (chatId, messages) => {
+    const summary = await compact({ userId: user.id, chatId, entry, prefs: {}, messages, stream: quiet });
+    if (summary) messages.push(summary);
+    return summary;
+  };
+
+  // Two earlier turns, then a question and twelve steps of about 10K each: what an agent run does.
+  await store.createChat(user.id, { id: 'c-long', title: 'Long turn', model: 'm' });
+  seq = 0;
+  const m = [say('user', 3000), say('assistant', 3000), say('user', 3000), say('assistant', 3000)];
+  const asked = { id: 'q', seq: seq++, role: 'user', text: 'THE QUESTION: rebuild the report from every file' };
+  m.push(asked);
+  for (let i = 0; i < 12; i += 1) m.push(...step(i));
+  full(m);
+  check('a long run over the line is folded', shouldCompact(m, entry) === true);
+  const s1 = await fold('c-long', m);
+  check('the first fold folds the earlier turns', s1?.replaced === 4 && Number.isFinite(s1.covers), JSON.stringify([s1?.replaced, s1?.covers]));
+  check('the kept summary carries its seq, so a later fold can place it', Number.isFinite(s1?.seq), String(s1?.seq));
+
+  for (let i = 0; i < 4; i += 1) m.push(...step(i));
+  full(m);
+  check('the run goes on, still over the line', shouldCompact(m, entry) === true);
+  const s2 = await fold('c-long', m);
+  check('the second fold lands', !!s2 && Number.isFinite(s2.covers), String(s2?.covers));
+  const sent = activeTranscript(m);
+  check('what is sent still holds the question, word for word', sent.some((x) => /THE QUESTION: rebuild the report from every file/.test(x.text || '')));
+  check('the transcript does not start on a tool result', sent[1]?.role !== 'tool' && sent[0].role === 'user');
+  check('the newest step is kept', sent.at(-1).id === m.filter((x) => x.role === 'tool').at(-1).id);
+  check('a tool result is never first after the summary, and no call is cut from its result', sent.every((x, i) => x.role !== 'tool' || sent[i - 1]?.toolCalls?.length));
+  check('the first summary is not sent twice', sent.filter((x) => /A summary of the work/.test(x.text || '')).length === 1);
+  for (let i = 0; i < 4; i += 1) m.push(...step(i));
+  full(m);
+  const s3 = await fold('c-long', m);
+  const again = activeTranscript(m);
+  check('a third fold keeps the request once, not twice', !!s3 && (again[0].text.match(/word for word: THE QUESTION/g) || []).length === 1, String((again[0].text.match(/THE QUESTION/g) || []).length));
+}
+
+section('a long first turn can be folded');
+{
+  const entry = { context: 128_000, maxOutput: 8_000 };
+  await store.createChat(user.id, { id: 'c-first', title: 'First turn', model: 'm' });
+  seq = 0;
+  const m = [{ id: 'q1', seq: seq++, role: 'user', text: 'FIRST QUESTION: audit everything' }];
+  for (let i = 0; i < 12; i += 1) m.push(say('assistant', 100, { toolCalls: [{ id: `f${i}`, name: 'read_file', input: {} }] }), say('tool', 0, { results: [{ content: 'x'.repeat(40_000) }] }));
+  m.push({ ...say('assistant', 100), usage: { input: 110_000 } });
+  check('over the line with the question first, there is something to fold', shouldCompact(m, entry) === true);
+  const stream = async function* () {
+    yield { type: 'text', delta: 'Early steps summarised.' };
+    yield { type: 'done', usage: { input: 1, output: 1 } };
+  };
+  const summary = await compact({ userId: user.id, chatId: 'c-first', entry, prefs: {}, messages: m, stream });
+  check('and it folds the early steps (a manual press works too)', !!summary && summary.replaced > 1, String(summary?.replaced));
+  m.push(summary);
+  const sent = activeTranscript(m);
+  check('the question is kept word for word', /FIRST QUESTION: audit everything/.test(sent[0].text));
+  check('the newest step is still there, after a whole step boundary', sent.at(-1).id === m.at(-2).id && sent[1].role === 'assistant');
+}
+
+section('nothing is folded when there is nothing to gain');
+{
+  const entry = { context: 128_000, maxOutput: 8_000 };
+  seq = 0;
+  const only = [{ id: 's', seq: seq++, role: 'summary', text: 'old', covers: -1 }, say('user', 200), say('assistant', 100, { usage: { input: 118_000 } })];
+  check('a summary and a short turn are not folded again', shouldCompact(only, entry) === false);
+
+  seq = 0;
+  const small = { context: 8_191, maxOutput: 4_000 };
+  const lopsided = [say('user', 100), say('assistant', 100), say('user', 3_900), { ...say('assistant', 50), usage: { input: 3_400 } }];
+  check('a small window whose fixed part sits near the line does not fold 200 tokens ahead of a big question', shouldCompact(lopsided, small) === false);
+}
+
+section('the summary request asks for what its figure is measured against');
+{
+  await store.createChat(user.id, { id: 'c-cap', title: 'Cap', model: 'm' });
+  seq = 0;
+  const m = [];
+  for (let i = 0; i < 12; i += 1) m.push(say('user', 3_000), say('assistant', 3_000));
+  let asked;
+  const stream = async function* (opts) {
+    asked = opts.maxTokens;
+    yield { type: 'text', delta: 'word '.repeat(20) };
+    yield { type: 'done', usage: { input: 1, output: 1 } };
+  };
+  const events = [];
+  await compact({ userId: user.id, chatId: 'c-cap', entry: { id: 'x/y', provider: 'anthropic', model: 'y', context: 100_000, maxOutput: 2_000 }, prefs: {}, messages: m, stream, onProgress: (p) => events.push(p) });
+  const expected = events.find((p) => p.expected)?.expected;
+  check('max tokens is passed to the request', Number.isFinite(asked) && asked > 0, String(asked));
+  check('and expected never exceeds it', expected <= asked, `${expected} <= ${asked}`);
+}
+
 removeTemp(process.env.DATA_DIR);
 console.log(failures === 0 ? '\n\x1b[32mAll compact checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

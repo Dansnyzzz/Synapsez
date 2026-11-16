@@ -1638,6 +1638,41 @@ section('Compacting: a figure beside the words that only rises and ends at 100')
   await page.unroute('**/api/chats/cmp-bar/run');
 }
 
+section('Compacting by hand: the same figure, from the stream');
+{
+  await seed('cmp-hand', 'By hand');
+  await store.appendMessage(me.id, 'cmp-hand', { id: 'cmp-hand-big', role: 'assistant', text: 'A long one', usage: { input: 200_000, output: 10 }, createdAt: new Date().toISOString() });
+  await reload();
+  await openRow('cmp-hand');
+  const frame = (event, data) => `event: ${event}
+data: ${JSON.stringify(data)}
+
+`;
+  const folding = { phase: 'compacting', folding: 6, expected: 1000 };
+  const info = { used: 900, context: 262_000, budget: 250_000, ratio: 0.004, exact: false, provided: false, assumed: false, breakdown: null };
+  const body = [
+    frame('status', { ...folding, written: 0 }),
+    frame('status', { ...folding, written: 200 }),
+    frame('status', { ...folding, written: 600 }),
+    frame('compacted', { summary: { id: 's', text: 'A summary.', replaced: 6 }, context: info }),
+  ].join('');
+  await page.route('**/api/chats/cmp-hand/compact', (route) => route.fulfill({ status: 200, contentType: 'text/event-stream', body }));
+  await page.evaluate(() => {
+    const seen = { pct: [] };
+    /** @type {any} */ (window).__handSeen = seen;
+    new MutationObserver((records) => records.forEach((r) => seen.pct.push(r.addedNodes[0]?.textContent ?? ''))).observe(document.getElementById('compact-bar-pct'), { childList: true });
+  });
+  await page.click('#context-gauge');
+  await page.waitForTimeout(400);
+  await page.locator('#context-menu .menu__item', { hasText: /compact now/i }).click();
+  await page.waitForFunction(() => /** @type {any} */ (window).__handSeen.pct.includes('100%'), null, { timeout: 8000 });
+  const seen = await page.evaluate(() => /** @type {any} */ (window).__handSeen);
+  const figures = seen.pct.map((n) => Number.parseInt(n, 10));
+  check('pressing Compact now shows a figure that rises and ends at 100', figures.length >= 3 && figures.includes(20) && figures.includes(60) && figures.at(-1) === 100 && figures.every((n, i) => i === 0 || n >= figures[i - 1]), seen.pct.join(' '));
+  await page.waitForFunction(() => document.getElementById('compact-bar').hidden, null, { timeout: 4000 });
+  await page.unroute('**/api/chats/cmp-hand/compact');
+}
+
 /* ── done ───────────────────────────────────────────────────────── */
 
 await browser.close();

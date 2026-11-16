@@ -475,6 +475,19 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
         });
       }
 
+      /*
+       * Every refusal above is plain JSON; from here it is a stream, so the bar
+       * can show how far the summary has got. The outcome is the last frame:
+       * `compacted`, or `error` (also when there was not enough to fold).
+       */
+      res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+      const send = (event, data) => {
+        if (res.writableEnded || res.destroyed) return;
+        res.write(`event: ${event}
+data: ${JSON.stringify(data ?? {})}
+
+`);
+      };
       try {
         const summary = await compactChat({
           userId: req.user.id,
@@ -482,20 +495,20 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
           entry,
           prefs,
           messages,
+          onProgress: (p) => send('status', { phase: 'compacting', ...p }),
         });
         if (!summary) {
-          return res.status(400).json({ error: 'There is not enough here yet to be worth folding up.' });
+          send('error', { error: translateMessage('There is not enough here yet to be worth folding up.', languageOf(req)) });
+        } else {
+          const folded = [...messages, summary];
+          const context = measureContext(folded, entry);
+          context.breakdown = contextBreakdown(context, chat.context_parts, transcriptTokens(folded));
+          send('compacted', { summary: { id: summary.id, text: summary.text, replaced: summary.replaced }, context });
         }
-        const folded = [...messages, summary];
-        const context = measureContext(folded, entry);
-        context.breakdown = contextBreakdown(context, chat.context_parts, transcriptTokens(folded));
-        res.json({
-          summary: { id: summary.id, text: summary.text, replaced: summary.replaced },
-          context,
-        });
       } catch (err) {
-        res.status(400).json({ error: clientError(err) });
+        send('error', { error: translateMessage(clientError(err), languageOf(req)) });
       }
+      res.end();
     }),
   );
 

@@ -546,7 +546,7 @@ export const api = {
   /** Change a message and drop what followed it, ready to ask again from there. */
   editMessage: (chatId, messageId, text) =>
     request('PATCH', `/api/chats/${chatId}/messages/${messageId}`, { text }),
-  compactChat: (id) => request('POST', `/api/chats/${id}/compact`),
+  compactChat: (id, onEvent) => compactChat(id, onEvent),
 };
 
 /**
@@ -642,6 +642,27 @@ export async function readEvents(res, onEvent) {
       }
     }
   }
+}
+
+/**
+ * Fold a conversation up by hand and follow how far the summary has got.
+ * Refusals before it starts come back as plain JSON errors and are thrown by
+ * `readEvents`; the outcome is a `compacted` or `error` event.
+ *
+ * @param {string} id @param {(event: string, data: any) => void} onEvent
+ * @returns {Promise<{ summary: any, context: any }>}
+ */
+async function compactChat(id, onEvent) {
+  const res = await fetch(`/api/chats/${encodeURIComponent(id)}/compact`, { method: 'POST', headers: { 'X-Language': currentLanguage() } });
+  let outcome = null;
+  let failure = null;
+  await readEvents(res, (event, data) => {
+    if (event === 'compacted') outcome = data;
+    else if (event === 'error') failure = data?.error;
+    onEvent?.(event, data);
+  });
+  if (failure || !outcome) throw new Error(failure || t('api.streamFailed', { status: res.status }));
+  return outcome;
 }
 
 /**
