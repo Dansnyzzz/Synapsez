@@ -2192,16 +2192,22 @@ export function createPgStore(connectionString) {
      * over the wire sixty times in a single turn, and compaction does not help
      * because it trims in memory, after the read.
      *
-     * `messages_chat_seq_idx (chat_id, seq)` covers this exactly, so it costs
-     * an index seek and returns nothing at all in the common case.
+     * `messages_chat_seq_idx (chat_id, seq)` covers this, so it costs an index
+     * seek. The loop asks with `role: 'user'`: the rows it stored itself are
+     * dropped in the database, so in the common case nothing at all comes back.
+     *
+     * @param {string} userId @param {string} chatId @param {number} afterSeq
+     * @param {{ role?: string }} [options]  only rows with this role
      */
-    async messagesSince(userId, chatId, afterSeq) {
+    async messagesSince(userId, chatId, afterSeq, { role } = {}) {
+      const params = [chatId, userId, Number(afterSeq) || 0];
+      if (role) params.push(String(role));
       const rows = await q(
         `SELECT m.id, m.role, m.content, m.seq, m.created_at
            FROM messages m JOIN chats c ON c.id = m.chat_id
-          WHERE m.chat_id = $1 AND c.user_id = $2 AND m.seq > $3
+          WHERE m.chat_id = $1 AND c.user_id = $2 AND m.seq > $3${role ? ' AND m.role = $4' : ''}
           ORDER BY m.seq ASC`,
-        [chatId, userId, Number(afterSeq) || 0],
+        params,
       );
       return rows.map((r) => ({
         id: r.id,
@@ -2257,11 +2263,9 @@ export function createPgStore(connectionString) {
       /**
        * The `seq` comes back on the message.
        *
-       * `messagesSince` needs a high-water mark, and the caller holds these
-       * objects in memory rather than re-reading them — so a turn appended
-       * during a run carried no position and could not advance the mark. It
-       * still worked (the id set filtered the duplicates) but it re-fetched
-       * every row this loop had just written, on every step.
+       * The agent loop holds these objects in memory rather than re-reading
+       * them, and after a fold it chooses what to send by seq (`covers` in
+       * compact.js): a row held without one would be left out of the request.
        */
       return { ...message, seq: Number(rows[0].seq) };
     },

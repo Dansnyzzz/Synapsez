@@ -3370,6 +3370,14 @@ section('a line typed during a run is picked up, wherever in a step it lands');
       }
       return real(uid, cid, message);
     };
+    // The roles of the rows each pickup brought back.
+    const since = store.messagesSince;
+    const read = [];
+    store.messagesSince = async (...args) => {
+      const rows = await since.apply(store, args);
+      if (args[1] === chatId) read.push(...rows.map((r) => r.role));
+      return rows;
+    };
     let calls = 0;
     const saw = [];
     const stream = async function* (opts) {
@@ -3390,9 +3398,10 @@ section('a line typed during a run is picked up, wherever in a step it lands');
       await runAgent({ userId: steerer.id, user: steerer, chatId, emit: (type, p) => type === 'steer' && steers.push(p.text), stream });
     } finally {
       store.appendMessage = real;
+      store.messagesSince = since;
     }
     const stored = await store.listMessages(steerer.id, chatId);
-    return { saw, steers, typed: stored.find((m) => m.id === `${chatId}-typed`), firstTool: stored.find((m) => m.role === 'tool') };
+    return { saw, steers, read, typed: stored.find((m) => m.id === `${chatId}-typed`), firstTool: stored.find((m) => m.role === 'tool') };
   };
 
   // Two calls in one step: the line is typed while the second runs, so it is stored before the step's tool message.
@@ -3404,6 +3413,76 @@ section('a line typed during a run is picked up, wherever in a step it lands');
   // Typed after the step-2 pickup, before step 2's reply is stored.
   const later = await trial('before-second-reply', 'assistant', 2);
   check('a line stored under the next reply is read at the following step', later.saw[2] === true && later.steers.length === 1, JSON.stringify(later.saw));
+  check('the pickup brings back only what the person wrote, never the rows the loop stored itself', [...parallel.read, ...later.read].length === 2 && [...parallel.read, ...later.read].every((r) => r === 'user'), JSON.stringify([parallel.read, later.read]));
+  const everything = await store.messagesSince(steerer.id, 'steer-between-call-and-result', -1);
+  const theirs = await store.messagesSince(steerer.id, 'steer-between-call-and-result', -1, { role: 'user' });
+  check('  asked by role, the store returns that role only, and every row without it', theirs.length === 2 && theirs.every((r) => r.role === 'user') && everything.some((r) => r.role === 'tool'), `${theirs.map((r) => r.role)} / ${everything.length}`);
+
+  // The approval path: approved calls run before the loop's first pickup, and a line typed while they run is stored under their tool message.
+  {
+    const chatId = 'steer-approved';
+    await store.createChat(steerer.id, { id: chatId, title: chatId });
+    await store.appendMessage(steerer.id, chatId, { id: `${chatId}-q`, role: 'user', text: 'read two skills' });
+    await store.appendMessage(steerer.id, chatId, { id: `${chatId}-a`, role: 'assistant', text: '', toolCalls: [{ id: 'r1', name: 'skill_read', input: { name: 'docx' } }, { id: 'r2', name: 'skill_read', input: { name: 'pptx' } }] });
+    const real = store.appendMessage.bind(store);
+    let pending = true;
+    store.appendMessage = async (uid, cid, message) => {
+      if (cid === chatId && pending && message.role === 'tool') {
+        pending = false;
+        await real(uid, cid, { id: `${chatId}-typed`, role: 'user', text: 'TYPED WHILE THE APPROVED CALLS RAN' });
+      }
+      return real(uid, cid, message);
+    };
+    let calls = 0;
+    const saw = [];
+    const stream = async function* (opts) {
+      calls += 1;
+      saw.push(opts.messages.some((m) => /TYPED WHILE THE APPROVED/.test(m.text || '')));
+      if (calls === 1) {
+        yield { type: 'done', stopReason: 'tool_use', toolCalls: [{ id: 'r3', name: 'skill_read', input: { name: 'xlsx' } }], usage: { input: 50, output: 5 } };
+      } else {
+        yield { type: 'text', delta: 'ok' };
+        yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 70, output: 5 } };
+      }
+    };
+    const steers = [];
+    try {
+      await runAgent({ userId: steerer.id, user: steerer, chatId, policy: 'guarded', decision: 'allow', decisionFor: ['r1', 'r2'], emit: (type, p) => type === 'steer' && steers.push(p.text), stream });
+    } finally {
+      store.appendMessage = real;
+    }
+    const stored = await store.listMessages(steerer.id, chatId);
+    const typed = stored.find((m) => m.id === `${chatId}-typed`);
+    const tool = stored.find((m) => m.role === 'tool');
+    check('a line typed while approved calls ran sits under their tool message', !!typed && !!tool && typed.seq < tool.seq);
+    check('  and the first request after them carries it, with one steer event', saw[0] === true && steers.length === 1, JSON.stringify({ saw, steers: steers.length }));
+  }
+}
+
+section('a call nobody approved keeps its "not run" answer once the conversation is folded');
+{
+  // Paused for an approval nobody gave, then the person wrote something else; the
+  // earlier part has since been folded. The synthesised answer has no seq of its own.
+  const mover = await store.createUser({ id: 'u-notrun', email: 'notrun@example.com', name: 'NotRun', passwordHash: 'x', role: 'admin' });
+  const chatId = 'c-notrun';
+  await store.createChat(mover.id, { id: chatId, title: chatId });
+  const put = (message) => store.appendMessage(mover.id, chatId, message);
+  await put({ id: 'nr-0', role: 'user', text: 'draft the report' });
+  const reply = await put({ id: 'nr-1', role: 'assistant', text: 'Here is the draft.' });
+  await put({ id: 'nr-2', role: 'user', text: 'send the report' });
+  await put({ id: 'nr-3', role: 'assistant', text: '', toolCalls: [{ id: 'k-nr', name: 'send_email', input: { to: 'a@example.com' } }] });
+  await put({ id: 'nr-4', role: 'user', text: 'never mind, just summarise it' });
+  await put({ id: 'nr-sum', role: 'summary', text: 'The user asked for a draft of the report.', replaced: 2, covers: reply.seq });
+  let sent = null;
+  const stream = async function* (opts) {
+    sent ??= opts.messages;
+    yield { type: 'text', delta: 'Summarised.' };
+    yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 70, output: 5 } };
+  };
+  await runAgent({ userId: mover.id, user: mover, chatId, emit: () => {}, stream });
+  const at = (sent || []).findIndex((m) => m.toolCalls?.some((c) => c.id === 'k-nr'));
+  check('the request is the folded one', !!sent && sent[0]?.summary === true && !sent.some((m) => m.id === 'nr-0'), JSON.stringify(sent?.map((m) => m.id)));
+  check('  and the call it still holds is answered right after it', at > 0 && sent[at + 1]?.role === 'tool' && sent[at + 1].results?.some((r) => r.toolCallId === 'k-nr' && r.isError), JSON.stringify(sent?.map((m) => `${m.role}:${m.id}`)));
 }
 
 // Last, after every section that uses the database: it was removed midway, and

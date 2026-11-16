@@ -300,7 +300,7 @@ for (const context of [32_000, 128_000]) {
   for (let i = 0; i < 24; i += 1) {
     const before = activeTranscript(m);
     if (shouldCompact(m, entry)) {
-      const fp = foldPoint(before, { window: context });
+      const fp = foldPoint(before, { window: context, budget: measure(m, entry).budget });
       if (fp.start === 1 && before[0].summary) bad += `summary-only@${i} `;
       const s = await foldNow(chat, m, entry, written(300));
       folds += 1;
@@ -428,20 +428,22 @@ section('a steer after an in-turn fold keeps the original task in view, and a no
 section('a line typed between a call and its result does not break a fold');
 {
   const entry = { context: 128_000, maxOutput: 8_000 };
-  const build = async (chat) => {
+  const budget = measure([], entry).budget;
+  const build = async (chat, resultTokens = 2_000) => {
     await store.createChat(user.id, { id: chat, title: chat, model: 'm' });
     const m = [];
     await add(chat, m, 'user', 50);
     await add(chat, m, 'assistant', 20_000);
     await add(chat, m, 'assistant', 100, { toolCalls: [{ id: `k-${chat}`, name: 'read_file', input: {} }] });
     const typed = await add(chat, m, 'user', 0, { text: 'TYPED WHILE THE TOOL RAN' });
-    await add(chat, m, 'tool', 0, { results: [{ toolCallId: `k-${chat}`, content: 'x'.repeat(2_000 * 4) }] });
+    await add(chat, m, 'tool', 0, { results: [{ toolCallId: `k-${chat}`, content: 'x'.repeat(resultTokens * 4) }] });
     return { m, typed };
   };
-  const audit = (label, before, summary, after, typed) => {
+  // `before` is a copy taken ahead of the fold: with no summary yet, activeTranscript hands back the list itself, which the fold then appends to.
+  const audit = (label, before, start, after, typed) => {
     const sentIds = new Set(after.map((x) => x.id));
-    const folded = new Set(before.slice(0, foldPoint(before, { window: 128_000 })?.start ?? 0).map((x) => x.id));
-    const dropped = before.filter((x) => !x.summary && x.seq <= summary.covers && !folded.has(x.id));
+    const folded = new Set(before.slice(0, start).map((x) => x.id));
+    const dropped = before.filter((x) => !x.summary && !folded.has(x.id) && !sentIds.has(x.id));
     check(`${label}: nothing is neither folded nor sent`, dropped.length === 0, dropped.map((x) => x.id).join());
     check(`${label}: no result without its call`, after.every((x, i) => x.role !== 'tool' || after[i - 1]?.toolCalls?.length));
     check(`${label}: the typed line is sent or folded, never lost`, sentIds.has(typed.id) || folded.has(typed.id));
@@ -453,25 +455,76 @@ section('a line typed between a call and its result does not break a fold');
     for (let i = 0; i < 4; i += 1) await step('c-order-a', m, 10_000);
     const ordered = normaliseOrder(m);
     usage(ordered, 110_000);
-    const before = activeTranscript(ordered);
+    const before = [...activeTranscript(ordered)];
+    const fp = foldPoint(before, { window: 128_000, budget });
     const s = await foldNow('c-order-a', ordered, entry);
     check('the fold lands', !!s && Number.isFinite(s.covers));
-    audit('after the pair', before, s, activeTranscript(ordered), typed);
+    audit('after the pair', before, fp?.start ?? 0, activeTranscript(ordered), typed);
   }
-  // The newest user line is the typed one, in the middle of a pair.
-  {
-    const { m, typed } = await build('c-order-b');
-    const a5 = await add('c-order-b', m, 'assistant', 100, { text: 'carrying on', usage: { input: 118_000 } });
+  // The newest user line is the typed one, in the middle of a pair: a small result
+  // (the tail could reach back past it) and a large one (it cannot).
+  for (const resultTokens of [2_000, 20_000]) {
+    const chat = `c-order-b-${resultTokens}`;
+    const label = `typed line is newest, ${resultTokens / 1000}K result`;
+    const { m, typed } = await build(chat, resultTokens);
+    const a5 = await add(chat, m, 'assistant', 100, { text: 'carrying on', usage: { input: 118_000 } });
     const ordered = normaliseOrder(m);
-    const before = activeTranscript(ordered);
+    const before = [...activeTranscript(ordered)];
     const start = tailStart(before, { window: 128_000 });
-    check('the tail never starts on the typed line while a higher seq lies before it', ordered.slice(0, start).every((x) => x.summary || Number(x.seq) < Math.min(...ordered.slice(start).map((y) => Number(y.seq)))), String(start));
-    if (shouldCompact(ordered, entry)) {
-      const s = await foldNow('c-order-b', ordered, entry);
-      audit('typed line is newest', before, s, activeTranscript(ordered), typed);
-    }
-    check('(a5 was stored last)', a5.seq > typed.seq);
+    check(`${label}: the tail never starts on the typed line while a higher seq lies before it`, ordered.slice(0, start).every((x) => x.summary || Number(x.seq) < Math.min(...ordered.slice(start).map((y) => Number(y.seq)))), String(start));
+    check(`${label}: at ${Math.round(100 * measure(ordered, entry).ratio)}% of the budget there is a fold`, shouldCompact(ordered, entry) === true);
+    const fp = foldPoint(before, { window: 128_000, budget });
+    check(`${label}: it cuts at the start of the step the line was typed in`, fp?.start === 2 && !!before[2].toolCalls?.length && !fp.question, JSON.stringify(fp));
+    const s = await foldNow(chat, ordered, entry);
+    check(`${label}: and covers the reply before that step`, s?.covers === m[1].seq, `${s?.covers} vs ${m[1].seq}`);
+    audit(label, before, fp?.start ?? 0, activeTranscript(ordered), typed);
+    check(`${label}: (a5 was stored last)`, a5.seq > typed.seq);
   }
+}
+
+section('a line typed while a tool ran never lets a 32K run outgrow its budget');
+{
+  // Folding at the top of each step, as the loop does; at step `at` the line is
+  // typed while the step's tool runs, so it is stored between the call and its result.
+  const entry = { context: 32_000, maxOutput: 8_000 };
+  const overhead = 11_000;
+  let moments = 0;
+  const over = [];
+  for (const toolTokens of [600, 1_500]) {
+    for (let at = 2; at < 26; at += 1) {
+      const chat = `c-scan-${toolTokens}-${at}`;
+      await store.createChat(user.id, { id: chat, title: chat, model: 'm' });
+      let m = [];
+      await add(chat, m, 'user', 0, { text: 'THE TASK' });
+      const budget = measure(m, entry).budget;
+      let peak = 0;
+      for (let s = 0; s < 30; s += 1) {
+        await foldNow(chat, m, entry, written(2_000));
+        const input = overhead + transcriptTokens(m);
+        peak = Math.max(peak, input);
+        const call = await add(chat, m, 'assistant', 100, { toolCalls: [{ id: `v${ids}`, name: 'read_file', input: {} }], usage: { input } });
+        if (s === at) await add(chat, m, 'user', 0, { text: 'STEER' });
+        await add(chat, m, 'tool', 0, { results: [{ toolCallId: call.toolCalls[0].id, content: 'x'.repeat(toolTokens * 4) }] });
+        m = normaliseOrder(m);
+      }
+      moments += 1;
+      if (peak > budget) over.push(`${toolTokens}@${at}: ${Math.round((100 * peak) / budget)}%`);
+    }
+  }
+  check(`every request stays within the budget, whichever of ${moments} moments the line is typed at`, moments === 48 && over.length === 0, over.join(' '));
+}
+
+section('with no budget given, foldPoint cuts where compact() would');
+{
+  // Two steps come to about 3,700 tokens: within the room a 0.75 × window budget
+  // gives (capped at the 4,000 tail), over the room the gauge's 16,000 gives (a
+  // quarter, less the 500-token question: 3,500). So the two defaults cut apart.
+  seq = 0;
+  const run = [say('user', 500)];
+  for (let i = 0; i < 10; i += 1) run.push({ ...say('assistant', 100), toolCalls: [{ id: `d${i}`, name: 'read_file', input: {} }] }, { ...say('tool', 0), results: [{ toolCallId: `d${i}`, content: 'x'.repeat(1_750 * 4) }] });
+  const given = foldPoint(run, { window: 32_000, budget: measure(run, { context: 32_000 }).budget });
+  const assumed = foldPoint(run, { window: 32_000 });
+  check('the default budget is the one measure() works out', !!given && JSON.stringify(assumed) === JSON.stringify(given), `${JSON.stringify(assumed)} vs ${JSON.stringify(given)}`);
 }
 
 section('the small-window guard decides, not the ratio');

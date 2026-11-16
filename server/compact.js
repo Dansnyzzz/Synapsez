@@ -219,8 +219,9 @@ function boundaries(messages) {
  * user message and everything after it are kept whatever they weigh — folding
  * the question being answered would leave the model answering nothing.
  *
- * Always a user message, which is what keeps it legal: every provider rejects a
- * `tool` message whose call it cannot see, so a boundary inside an assistant
+ * A user message, or the start of a step when the newest one sits out of order,
+ * and never a tool result, which is what keeps it legal: every provider rejects
+ * a `tool` message whose call it cannot see, so a boundary between an assistant
  * turn and its tool results turns a working conversation into a 400. A turn
  * that only half fits is folded whole rather than cut.
  */
@@ -246,8 +247,13 @@ export function tailStart(messages, { window = ASSUMED_CONTEXT } = {}) {
     if (used > budget) break;
     if (messages[i].role === 'user' && clean(i)) start = i;
   }
-  // The newest question can itself sit where the orders disagree; then keep more, from the nearest clean question.
-  while (start > 0 && !(clean(start) && messages[start].role === 'user')) start -= 1;
+  // The newest line can itself sit where the orders disagree (typed while a tool
+  // ran, so stored between the call and its result). Then keep more, from the
+  // nearest clean point before it, and that may be the start of a step. Going back
+  // to the previous question kept every step since it, and with nothing older there
+  // was nothing to fold until enough steps had followed the line: the request
+  // passed its budget first.
+  while (start > 0 && !(clean(start) && (messages[start].role === 'user' || messages[start].role === 'assistant'))) start -= 1;
   return start;
 }
 
@@ -265,10 +271,15 @@ export function tailStart(messages, { window = ASSUMED_CONTEXT } = {}) {
  * kept, and only steps after the question are folded: the question itself is
  * never summarised (it is put back by `activeTranscript`, whole).
  *
+ * `budget` is the gauge's, `measure().budget`, which is what both callers pass.
+ * Left out, it is what `measure()` works out for a model that names no output
+ * cap, so a caller without an entry still cuts by the gauge's rule, not by a
+ * share of the window that no gauge uses.
+ *
  * @returns {{ start: number, question: { id: string, seq: number } | null } | null}
  *   `question` is set when the cut is inside the turn: the message that asked it.
  */
-export function foldPoint(live, { window = ASSUMED_CONTEXT, budget: gauge = Math.floor(window * 0.75) } = {}) {
+export function foldPoint(live, { window = ASSUMED_CONTEXT, budget: gauge = measure([], { context: window }).budget } = {}) {
   const budget = Math.max(KEEP_FLOOR, Math.floor(window * KEEP_SHARE));
   const clean = boundaries(live);
   const worth = (from, end) => live.slice(from, end).reduce((sum, m) => sum + estimateTokens(m), 0) >= MIN_FOLD;
@@ -297,10 +308,12 @@ export function foldPoint(live, { window = ASSUMED_CONTEXT, budget: gauge = Math
    * line and the very next step folds again: a model call on every step. Aim the
    * kept transcript at a quarter of the gauge's budget (the window less the room
    * for a reply, which is what 82% is a share of). The system prompt and tools
-   * come on top, typically a fifth to a third of the window, so the request lands
-   * near half the budget, well clear of the line. Never less than the last step.
-   * A small window with a heavy fixed part still folds every few steps, because
-   * what a fold cannot remove is the summary and the question.
+   * come on top. At 128K they are about a fifth of the window and the request
+   * lands near half the budget, well clear of the line; at 32K they are about a
+   * third and it lands near 71% (11K + 6K of a 24K budget), under the line but a
+   * few steps from the next fold. Never less than the last step. A small window
+   * with a heavy fixed part still folds every few steps, because what a fold
+   * cannot remove is the summary and the question.
    */
   let fixed = 0;
   for (let i = 0; i <= q; i += 1) fixed += estimateTokens(live[i]);

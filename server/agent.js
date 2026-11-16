@@ -1835,6 +1835,14 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
    * sending in the other cut a call from its result.
    */
   let messages = normaliseOrder(await store.listMessages(userId, chatId));
+  /*
+   * How far `absorbNewMessages` has read, by seq: from the list just loaded, and
+   * so before the approval path below stores anything. Taken at the first pickup
+   * instead, it came after an approved call's tool message, and a line typed while
+   * that call ran (a seq below the tool message's) was never read. -1 when nothing
+   * is loaded, because the first row of a conversation is seq 0.
+   */
+  let readMark = messages.reduce((n, m) => (Number.isFinite(Number(m.seq)) ? Math.max(n, Number(m.seq)) : n), -1);
 
   /*
    * Who started this turn (owner, 2026-11-10): the person, unless the message that started
@@ -2277,8 +2285,8 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
       emit('done', { stopReason: 'aborted' });
       return;
     }
-    // The stored copy, which carries the `seq` `absorbNewMessages` reads as its
-    // high-water mark.
+    // The stored copy, which carries its `seq`: after a fold the tail is chosen by
+    // seq (`activeTranscript`), so a row held without one would not be sent.
     messages.push(await store.appendMessage(userId, chatId, toolMessage));
   }
 
@@ -2290,39 +2298,25 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
    * model. This is what lets someone change their mind mid-task instead of
    * waiting for the run to finish.
    */
-  // What has been read from the store, by seq; set at the first pickup, which is before anything this turn stores.
-  let readMark = null;
   async function absorbNewMessages() {
-    /**
-     * Ask only for what is newer than the highest turn already in hand.
+    /*
+     * Only the person's rows since the mark, and the mark moves only over those.
      *
-     * This used to re-read the whole conversation — every message body, tool
-     * result included — once per step, purely to discover whether one new user
-     * message had arrived, and then throw all but that away. On a thirty-step
-     * turn that moved the entire transcript thirty times.
-     *
-     * Messages appended in this process carry a `seq` from `appendMessage`, so
-     * the high-water mark is simply the largest one seen. A message with no
-     * `seq` cannot move the mark (`|| 0`), and a mark of 0 asks for everything —
-     * which is the correct answer for a conversation nothing has been stored in
-     * yet.
+     * Re-reading the whole conversation once per step, tool results included, to
+     * find one new line moved a thirty-step turn's transcript thirty times. Reading
+     * every row since the largest seq in memory lost lines instead: this loop
+     * stores its own rows (a summary at the top of a step, the reply, the tool
+     * message), and a line typed meanwhile has a seq between them, below one the
+     * loop wrote after it. Read by role, the loop's own rows never come back, so a
+     * step with nothing typed reads nothing. Seq is handed out under the chat row's
+     * lock in the insert, so a row that has committed is never below a mark that
+     * was read past it. The mark is moved on the role here as well as in the
+     * query, so it cannot pass a typed line even if a store ignores the filter.
      */
     const known = new Set(messages.map((m) => m.id));
-    /*
-     * The mark moves only over rows actually read from the store.
-     *
-     * It was the largest seq held in memory. This loop stores its own rows — a
-     * summary at the top of a step, the reply, the tool message — and a line the
-     * user typed meanwhile has a seq between them, lower than the one the loop
-     * wrote after it, so the mark had already passed it and it was never read.
-     * That also lost a line typed between a call and its result when a step ran
-     * several calls. Seq is handed out under the chat row's lock in the insert,
-     * so a row that has committed is never below a mark that was read past it.
-     */
-    readMark ??= messages.reduce((n, m) => Math.max(n, Number(m.seq) || 0), 0);
-    const fresh = await store.messagesSince(userId, chatId, readMark);
+    const fresh = (await store.messagesSince(userId, chatId, readMark, { role: 'user' })).filter((m) => m.role === 'user');
     for (const m of fresh) readMark = Math.max(readMark, Number(m.seq) || 0);
-    const added = fresh.filter((m) => m.role === 'user' && !known.has(m.id));
+    const added = fresh.filter((m) => !known.has(m.id));
     if (!added.length) return false;
 
     messages = normaliseOrder([...messages, ...added]);
@@ -2544,13 +2538,21 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
           return;
         }
       }
+      /*
+       * Ordered after the fold is applied, not before. `messages` is in request
+       * order already; what this adds back is the "not run" answer to a call the
+       * conversation moved on from. That answer is never stored, so it has no seq,
+       * and once a fold chooses the tail by seq it was dropped while its call was
+       * kept: a call with no result, which strict providers refuse with a 400.
+       */
+      const sendable = normaliseOrder(activeTranscript(messages));
       // Where the plan stands rides on the tool results — see progress.js.
       const tracked = withProgressNotes(
         // The reasoning level in words, on every turn (effortNote).
         withRunNote(
           unattended
-            ? withRunNote(activeTranscript(normaliseOrder(messages)), runNote)
-            : withSkillNotes(withIntentNotes(withoutBareThoughts(activeTranscript(normaliseOrder(messages)))), picked),
+            ? withRunNote(sendable, runNote)
+            : withSkillNotes(withIntentNotes(withoutBareThoughts(sendable)), picked),
           effortNote(prefs.effort),
         ),
       );
@@ -3011,7 +3013,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
     }
     assistant.model = entry.id;
 
-    // `seq` comes back on the stored copy; see `absorbNewMessages`.
+    // `seq` comes back on the stored copy: after a fold the tail is chosen by it (`activeTranscript`).
     const stored = await store.appendMessage(userId, chatId, assistant);
     assistant.seq = stored.seq;
     // The gate's note was for that one request; it is never stored.
