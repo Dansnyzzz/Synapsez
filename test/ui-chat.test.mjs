@@ -1440,8 +1440,53 @@ section('Progress: the step it is on, a line down the list, no blue band');
   p = await progress();
   check('"2 earlier steps" as the run moves on', p.fold === '2 earlier steps' && p.states === 'ddrp' && p.titles[0] === 'Check the sources', `${p.fold} ${p.states} ${p.titles[0]}`);
 
+  // The up chevron after "N earlier steps" is Claude's: there on hover or keyboard focus only.
+  const chev = () =>
+    page.evaluate(() => {
+      const fold = document.getElementById('progress-fold');
+      const svg = fold.querySelector('svg');
+      const css = svg && getComputedStyle(svg);
+      const word = fold.querySelector('span').getBoundingClientRect();
+      return { has: !!svg, shown: !!css && css.visibility !== 'hidden' && Number(css.opacity) > 0.5, left: Math.round(word.left), width: Math.round(word.width) };
+    });
+  await page.mouse.move(2, 2);
+  await page.waitForTimeout(350);
+  const rest = await chev();
+  check('"2 earlier steps" carries an up chevron, hidden at rest', rest.has && !rest.shown, JSON.stringify(rest));
+  await page.hover('#progress-fold');
+  await page.waitForTimeout(350);
+  const hover = await chev();
+  check('  shown on hover, and the words do not move', hover.shown && hover.left === rest.left && hover.width === rest.width, JSON.stringify({ rest, hover }));
+  await page.mouse.move(2, 2);
+  await page.focus('#progress-fold');
+  await page.keyboard.press('Shift');
+  await page.waitForTimeout(350);
+  check('  shown on keyboard focus', (await chev()).shown);
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.mouse.move(2, 2);
+  const slide = () =>
+    page.evaluate(() => {
+      const list = getComputedStyle(document.getElementById('progress-steps'));
+      const app = getComputedStyle(document.getElementById('app'));
+      return { listProp: list.transitionProperty, listTime: list.transitionDuration, appTime: app.transitionDuration };
+    });
+  let s = await slide();
+  check('folding slides: height and opacity, 200 ms', /height/.test(s.listProp) && /opacity/.test(s.listProp) && s.listTime.split(',').every((d) => d.trim() === '0.2s'), JSON.stringify(s));
+  check('  the Progress panel itself slides too', s.appTime === '0.24s', s.appTime);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  s = await slide();
+  check('with reduced motion both are instant', s.listTime.split(',').every((d) => parseFloat(d) < 0.001) && parseFloat(s.appTime) < 0.001, JSON.stringify(s));
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+
   await pressFold();
   p = await progress();
+  check('  and while it opens the list ends at its full height, nothing left clipped', await page.evaluate(() => {
+    const list = document.getElementById('progress-steps');
+    return list.style.height === '' || list.offsetHeight >= list.scrollHeight - 1;
+  }));
+  await page.waitForTimeout(300);
+  check('  the slide leaves no inline height behind', await page.evaluate(() => document.getElementById('progress-steps').style.height === ''));
+  check('  "Hide earlier steps" keeps its chevron visible', (await chev()).shown);
   check('pressed, every step shows (screenshot 5)', p.titles.length === 6 && p.states === 'ddddrp', p.states);
   check('  and the button says "Hide earlier steps" with its chevron', p.fold === 'Hide earlier steps' && p.chevron && p.expanded === 'true', `${p.fold} ${p.chevron} ${p.expanded}`);
   check('  focus stays on it', await page.evaluate(() => document.activeElement?.id === 'progress-fold'));

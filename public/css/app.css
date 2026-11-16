@@ -1554,7 +1554,12 @@ textarea {
 }
 /* Collapsed the column is zero-width, so hide the contents rather than letting
    them spill across the conversation. */
-.app:not(.is-detail) .detail { visibility: hidden; }
+.app:not(.is-detail) .detail {
+  visibility: hidden;
+  /* Hidden only once the column has finished closing; at once, the panel
+     vanished and the slide had nothing left to show. */
+  transition: visibility 0s linear 240ms;
+}
 .detail__head {
   display: flex;
   align-items: center;
@@ -1660,6 +1665,31 @@ textarea {
 .pfold:hover { color: var(--text-dim); }
 .pfold:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .pfold__chev { flex: none; }
+/* Claude's "2 earlier steps ^": the chevron only on hover or keyboard focus. It
+   keeps its width at rest (opacity, not display) so the words never shift. */
+.pfold__chev--up {
+  opacity: 0;
+  transform: rotate(180deg);
+  transition: opacity 0.15s ease-out;
+}
+.pfold:hover .pfold__chev--up,
+.pfold:focus-visible .pfold__chev--up { opacity: 1; }
+@media (hover: none) {
+  /* Nothing to hover on a touch screen, so the cue would never show. */
+  .pfold__chev--up { opacity: 0.7; }
+}
+/* Earlier steps slide in and out (~200 ms). Bottom-aligned while moving, see
+   slideProgress() in app.js; the transition itself is cut to nothing for
+   prefers-reduced-motion by the global rule, and app.js skips it too. */
+#progress-steps {
+  transition: height 0.2s ease-out, opacity 0.2s ease-out;
+}
+#progress-steps.is-sliding {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+}
 
 /* ── one step: its mark, its title, and what it involves ───────── */
 
@@ -5470,6 +5500,8 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
     transform: none;
     visibility: visible;
   }
+  /* The desktop rule that delays hiding would otherwise replace the slide's own transition. */
+  .app:not(.is-detail) .detail { transition: transform 0.22s ease, visibility 0s linear 0.22s; }
   .sidebar__close { display: inline-grid; }
   /* The drawer either is or is not; collapsing it to a rail on a phone would
      leave a column of icons over the conversation for no gain. */

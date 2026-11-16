@@ -8330,7 +8330,7 @@ function paintProgress() {
   fold.setAttribute('aria-expanded', String(progressOpen));
   fold.innerHTML = progressOpen
     ? `<span>${escapeHtml(t('progress.hideEarlier'))}</span>${FOLD_CHEVRON}`
-    : `<span>${escapeHtml(t(view.earlier === 1 ? 'progress.earlierOne' : 'progress.earlier', { n: view.earlier }))}</span>`;
+    : `<span>${escapeHtml(t(view.earlier === 1 ? 'progress.earlierOne' : 'progress.earlier', { n: view.earlier }))}</span>${FOLD_CHEVRON.replace('class="pfold__chev"', 'class="pfold__chev pfold__chev--up"')}`;
 
   // "Step 2 of 7": where the run is, as Claude says it. Was "1/7" — the steps
   // done, which read as the step being worked on and was one behind it.
@@ -8338,9 +8338,46 @@ function paintProgress() {
 }
 
 $('progress-fold').addEventListener('click', () => {
+  const list = $('progress-steps');
+  const from = list.offsetHeight;
   progressOpen = !progressOpen;
   paintProgress();
+  slideProgress(list, from);
 });
+
+/**
+ * Let the list grow or shrink to its new height instead of jumping. The rows that
+ * come and go are the earlier ones, at the top, so the list is bottom-aligned while
+ * it moves: the rows that stay keep their place against the bottom edge and the
+ * earlier ones are uncovered above them. Inline height is cleared afterwards so the
+ * list is back to plain content height, as it was before the slide.
+ *
+ * @param {HTMLElement} list
+ * @param {number} from  its height before the repaint
+ */
+function slideProgress(list, from) {
+  const to = list.scrollHeight;
+  if (from === to || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  list.classList.add('is-sliding');
+  list.style.height = `${from}px`;
+  list.style.opacity = '0.4';
+  void list.offsetHeight; // commit the start, so the next values are a change and not the first state
+  list.style.height = `${to}px`;
+  list.style.opacity = '1';
+  const done = () => {
+    list.classList.remove('is-sliding');
+    list.style.height = '';
+    list.style.opacity = '';
+    list.removeEventListener('transitionend', onEnd);
+    clearTimeout(timer);
+  };
+  const onEnd = (e) => {
+    if (e.target === list && e.propertyName === 'height') done();
+  };
+  list.addEventListener('transitionend', onEnd);
+  // A transition cancelled by the panel being hidden never ends; do not leave the height pinned.
+  const timer = setTimeout(done, 400);
+}
 
 function openSidebar() {
   $('app').classList.add('is-open');
