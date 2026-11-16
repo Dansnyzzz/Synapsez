@@ -2325,6 +2325,13 @@ section('keys: recognised wherever pasted, checked with their provider, one Open
     const barred = await intake.inspectKey('google', AQ, { fetchImpl: google(403, { error: { code: 403, message: 'Generative Language API has not been used in project 1 before.', status: 'PERMISSION_DENIED' } }) });
     check('  and so does a 403', barred.ok === false && /has not been used/.test(barred.reason), JSON.stringify(barred));
     check('  a busy or missing answer is not a refusal', (await intake.inspectKey('google', AQ, { fetchImpl: google(429, {}) })).ok === null && (await intake.inspectKey('google', AQ, { fetchImpl: google(404, {}) })).ok === null);
+    // What is a refusal and what is only "could not check".
+    const sent = [];
+    const capture = (status, body) => async (url, init) => { sent.push(init?.body); return new Response(JSON.stringify(body), { status }); };
+    check('  a 400 about the API key is a refusal', (await intake.inspectKey('google', AQ, { fetchImpl: capture(400, { error: { message: 'API key not valid. Please pass a valid API key.' } }) })).ok === false);
+    check('  any other 400 is not', (await intake.inspectKey('google', AQ, { fetchImpl: capture(400, { error: { message: 'Invalid JSON payload received.' } }) })).ok === null);
+    check('  a 5xx, and no network or a timeout, are "could not check", never a refusal', (await intake.inspectKey('google', AQ, { fetchImpl: capture(503, {}) })).ok === null && (await intake.inspectKey('google', AQ, { fetchImpl: async () => { throw new Error('offline'); } })).ok === null && (await intake.inspectKey('google', AQ, { fetchImpl: async () => { throw Object.assign(new Error('timed out'), { name: 'TimeoutError' }); } })).ok === null);
+    check('  the request carries a fixed word and none of the person text', sent.every((body) => body === '{"contents":[{"parts":[{"text":"hi"}]}]}'), sent[0]);
     const uid = (await store.createUser({ id: 'u-keys-g', email: 'keys-g@example.com', passwordHash: 'x', name: 'G', role: 'user' })).id;
     let said = '';
     await intake.intakeKey(uid, 'google', AQ, { fetchImpl: google(401, { error: { message: 'API keys are not supported by this API.' } }) }).catch((err) => (said = err.message));

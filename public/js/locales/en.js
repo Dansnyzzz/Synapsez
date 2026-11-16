@@ -1528,6 +1528,7 @@ export const en = {
   'onb.keys.clip': 'The real {provider} page, recorded in November 2026 with personal details blurred. It may have changed since.',
   'onb.keys.clipLabel': 'Video: getting your {provider} key, step by step',
   'onb.keys.boxLabel': 'Key {n}',
+  'keys.hintOr': 'or',
   'onb.keys.checking': 'Checking the key…',
   'onb.keys.added': 'Added',
   'onb.keys.movedA': 'That is a {where} key — added to {where}',

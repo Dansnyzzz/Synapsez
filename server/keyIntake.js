@@ -2,13 +2,15 @@ import crypto from 'node:crypto';
 import { PROVIDERS, CATALOG } from './providers/catalog.js';
 import { keyEntries, setKeyMeta, addApiKey } from './settings.js';
 import { connect } from './connectors.js';
+import { PROVIDER_SHAPES, SERVICE_SHAPES } from '../public/js/key-shapes.js';
+import { log } from './util/trace.js';
 
 /**
  * A key or a token pasted somewhere in Settings, taken where it belongs
  * (owner, 2026-11-02).
  *
  * Every issuer gives its secrets a shape of its own — OpenRouter's begin
- * `sk-or-v1-`, Google's `AIza`, a GitHub token `ghp_` or `github_pat_` — so a
+ * `sk-or-v1-`, Google's `AIza` or `AQ.`, a GitHub token `ghp_` or `github_pat_` — so a
  * secret pasted in the wrong box can be recognised and saved in the right one,
  * with a word to say so, rather than failing on the first message. Then it is
  * checked with the issuer before it is kept: a key the provider refuses is
@@ -21,33 +23,6 @@ import { connect } from './connectors.js';
  * of the account it belongs to, and whether that account has ever paid for
  * credit (OpenRouter's `is_free_tier`), which decides the model suggested.
  */
-
-/**
- * Provider keys, by the shape each issuer gives them. The first that fits wins.
- * @type {Array<[string, RegExp]>}
- */
-const PROVIDER_SHAPES = [
-  ['openrouter', /^sk-or-(v\d+-)?\S{6,}$/],
-  ['orcarouter', /^sk-orca-\S{6,}$/],
-  ['anthropic', /^sk-ant-\S{8,}$/],
-  // AI Studio issues only the AQ. kind now; the AIza kind is still in use.
-  ['google', /^(AIza[0-9A-Za-z_-]{30,}|AQ\.[0-9A-Za-z_-]{30,})$/],
-  ['openai', /^sk-(proj|svcacct|admin)-\S{8,}$/],
-  ['openai', /^sk-[A-Za-z0-9]{16,}T3BlbkFJ[A-Za-z0-9]{16,}$/],
-];
-
-/**
- * Connector tokens, the same way.
- * @type {Array<[string, RegExp]>}
- */
-const SERVICE_SHAPES = [
-  ['github', /^(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})$/],
-  ['notion', /^(ntn_|secret_)[A-Za-z0-9]{20,}$/],
-  ['slack', /^xox[abpe]-[A-Za-z0-9-]{10,}$/],
-  ['telegram', /^\d{5,12}:[A-Za-z0-9_-]{30,}$/],
-  ['supadata', /^sd_[A-Za-z0-9]{10,}$/],
-  ['meta_page', /^EAA[A-Za-z0-9]{20,}$/],
-];
 
 /**
  * Providers whose keys always have their shape: a secret without it, pasted
@@ -65,7 +40,11 @@ export function recognise(secret) {
   return null;
 }
 
-/** The Gemini the Google check asks about: the catalogue's cheapest, so the check never names a model that is gone. */
+/**
+ * The Gemini the Google check asks about: the catalogue's cheapest. Google can still retire it
+ * before the catalogue is updated; the check then answers 404, which is not a refusal, so the
+ * key is kept unchecked and the warning below says why.
+ */
 const GOOGLE_CHECK_MODEL = (CATALOG.find((m) => m.provider === 'google' && m.tags?.includes('cheap')) || CATALOG.find((m) => m.provider === 'google'))?.model || 'gemini-flash-lite-latest';
 
 /** Off in the test suites, which save made-up keys: KEY_CHECKS=off. */
@@ -161,6 +140,7 @@ export async function inspectKey(provider, key, { fetchImpl = fetch } = {}) {
         if (res.status !== 400 || /api key/i.test(reason)) return { ok: false, reason: reason || undefined };
         return { ok: null };
       }
+      if (res.status === 404) log.warn('the Google key check model is gone; keys are kept unchecked', { model: GOOGLE_CHECK_MODEL });
       // Every Gemini key has the free tier; whether billing is on is not something a key can be asked.
       return res.ok ? { ok: true, paid: null } : { ok: null };
     }

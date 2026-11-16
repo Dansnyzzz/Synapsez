@@ -578,10 +578,13 @@ section('secret redaction');
    */
   for (const [id, spec] of Object.entries(PROVIDERS)) {
     const hint = String(spec?.keyHint || '');
-    const prefix = hint.replace(/[…\s].*$/, '');
-    if (!prefix || !/^[A-Za-z]/.test(prefix)) continue;
-    const sample = `${prefix}${'k9'.repeat(24)}`;
-    check(`a ${id} key (${prefix}…) is stripped`, gone(sample), redactSecrets(sample).text);
+    // A hint may name two shapes ("AIza… or AQ.…"): every one is tested.
+    for (const part of hint.split(' or ')) {
+      const prefix = part.replace(/[…\s].*$/, '');
+      if (!prefix || !/^[A-Za-z]/.test(prefix)) continue;
+      const sample = `${prefix}${'k9'.repeat(24)}`;
+      check(`a ${id} key (${prefix}…) is stripped`, gone(sample), redactSecrets(sample).text);
+    }
   }
 
   check('it says what it removed', caught('sk-ant-' + 'f'.repeat(40)));

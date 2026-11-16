@@ -33,6 +33,7 @@ import { createBotPage, readBotsHash } from './bots.js';
 import { createProjectPage } from './project-page.js';
 import { t, applyI18n, adoptLanguage, setLanguage, currentLanguage, LANGUAGES, localeTag } from './i18n.js';
 import { createOnboarding } from './onboarding.js';
+import { hintText } from './key-hint.js';
 import { humanSize, localMoment, localTimes } from './format.js';
 import { normalisePlan, planItemHtml } from './plan.js';
 import { planWindow, samePlan } from './plan-window.js';
@@ -6426,7 +6427,7 @@ function fillSettings() {
           ${status.shared ? `<p class="pcard__note">${t('keys.sharedFallback', { envVar: `<code>${escapeHtml(status.envVar || '')}</code>` })}</p>` : ''}
           ${keys.length ? `<div class="keylist" role="list" aria-label="${escapeHtml(t('keys.listAria', { provider: meta.label }))}">${keys.map((entry) => keyRow(key, entry, keys.length > 1)).join('')}</div>` : ''}
           <form class="pcard__add" data-save-form="${escapeHtml(key)}">
-            <input class="pcard__input" type="password" placeholder="${escapeHtml(meta.keyHint)}" data-key="${escapeHtml(key)}" autocomplete="off" spellcheck="false" aria-label="${escapeHtml(t('keys.pasteFor', { provider: meta.label }))}" />
+            <input class="pcard__input" type="password" placeholder="${escapeHtml(hintText(meta.keyHint))}" data-key="${escapeHtml(key)}" autocomplete="off" spellcheck="false" aria-label="${escapeHtml(t('keys.pasteFor', { provider: meta.label }))}" />
             <button class="btn btn--primary pcard__save" data-save-key="${escapeHtml(key)}" type="submit">${escapeHtml(keys.length ? t('keys.add') : t('action.save'))}</button>
           </form>
           <p class="pcard__foot">

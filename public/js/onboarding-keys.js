@@ -1,5 +1,8 @@
 import { t } from './i18n.js';
 import { escapeHtml } from './markdown.js';
+import { looksLikeKey, looksWhole } from './key-shapes.js';
+import { hintText } from './key-hint.js';
+import { CONNECTOR_BY_ID } from './connector-catalog.js';
 
 const PLAY_ICON = '<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M6 4.5v11l9-5.5z" fill="currentColor"/></svg>';
 const PAUSE_ICON = '<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M5.5 4.5h3v11h-3zM11.5 4.5h3v11h-3z" fill="currentColor"/></svg>';
@@ -22,7 +25,7 @@ const PAUSE_ICON = '<svg viewBox="0 0 20 20" width="16" height="16" aria-hidden=
  * longer matches. One file serves both languages: OpenRouter's site has only English,
  * Google's and OrcaRouter's were recorded in Vietnamese.
  *
- * @typedef {{ id: number, key: string, state: 'idle' | 'checking' | 'ok' | 'bad', tail: string, text: string, extra: string, timer: any }} KeyRow
+ * @typedef {{ id: number, key: string, state: 'idle' | 'checking' | 'ok' | 'bad', tail: string, text: string, extra: string, timer: ReturnType<typeof setTimeout> | null }} KeyRow
  * @typedef {{ id: string, url: string, hint: string, width: number, height: number, steps: string[] }} ProviderGuide
  */
 
@@ -73,6 +76,14 @@ export function createKeyGuide({ providers, recommended, addKey, onSaved }) {
    */
   let rows = [blankRow()];
 
+  /** Counts the boxes drawn afresh (another provider, leaving the step): an answer from before is no longer wanted. */
+  let epoch = 0;
+  /**
+   * One announcer for the whole step, outside what is redrawn, so a result is heard however the step repaints.
+   * @type {HTMLElement | null}
+   */
+  let live = null;
+
   /** @returns {KeyRow} */
   function blankRow() {
     rowIds += 1;
@@ -80,6 +91,7 @@ export function createKeyGuide({ providers, recommended, addKey, onSaved }) {
   }
 
   function resetRows() {
+    epoch += 1;
     for (const row of rows) clearTimeout(row.timer);
     rows = [blankRow()];
   }
@@ -148,11 +160,12 @@ export function createKeyGuide({ providers, recommended, addKey, onSaved }) {
 
   function rowHtml(row, n) {
     const locked = row.state === 'ok';
-    const mode = locked ? 'data-key-done readonly' : `data-key-box placeholder="${escapeHtml(GUIDES[current()].hint)}"`;
-    const flags = (row.state === 'bad' ? ' aria-invalid="true"' : '') + (row.state === 'checking' ? ' readonly aria-busy="true"' : '');
+    const mode = locked ? 'data-key-done readonly' : `data-key-box placeholder="${escapeHtml(hintText(GUIDES[current()].hint))}"`;
+    // Never read-only while it checks: a person typing on keeps their keystrokes.
+    const flags = (row.state === 'bad' ? ' aria-invalid="true"' : '') + (row.state === 'checking' ? ' aria-busy="true"' : '');
     return `<li class="onbk__row is-${row.state}" data-key-row="${row.id}">
         <label for="onbk-key-${row.id}">${escapeHtml(t('onb.keys.boxLabel', { n }))}</label>
-        <input id="onbk-key-${row.id}" class="onbk__box" type="text" spellcheck="false" autocomplete="off" ${mode} aria-describedby="onbk-note-${row.id}"${flags} />
+        <input id="onbk-key-${row.id}" class="onbk__box" type="text" spellcheck="false" autocomplete="off" ${mode} aria-describedby="onbk-note-${row.id} onbk-rule"${flags} />
         <p class="onbk__note" id="onbk-note-${row.id}">${noteHtml(row)}</p>
       </li>`;
   }
@@ -174,7 +187,6 @@ export function createKeyGuide({ providers, recommended, addKey, onSaved }) {
     const input = /** @type {HTMLInputElement | null | undefined} */ (item?.querySelector('input'));
     if (!item || !input) return;
     item.className = `onbk__row is-${row.state}`;
-    input.readOnly = row.state === 'checking';
     if (row.state === 'bad') input.setAttribute('aria-invalid', 'true');
     else input.removeAttribute('aria-invalid');
     if (row.state === 'checking') input.setAttribute('aria-busy', 'true');
@@ -185,11 +197,11 @@ export function createKeyGuide({ providers, recommended, addKey, onSaved }) {
 
   /** Said once, politely: the region is emptied first so the same words twice are still heard. */
   function announce(text) {
-    const live = host?.querySelector('[data-key-live]');
     if (!live) return;
-    live.textContent = '';
+    const region = live;
+    region.textContent = '';
     setTimeout(() => {
-      if (host?.querySelector('[data-key-live]') === live) live.textContent = text;
+      region.textContent = text;
     }, 60);
   }
 
@@ -200,13 +212,19 @@ export function createKeyGuide({ providers, recommended, addKey, onSaved }) {
     clearTimeout(row.timer);
     const key = row.key.trim();
     if (!key || row.state === 'checking' || row.state === 'ok') return;
+    const provider = current();
     row.state = 'checking';
     row.text = '';
     paintRow(row);
     announce(t('onb.keys.checking'));
+    const turn = epoch;
     try {
-      const { saved } = await addKey(current(), key);
-      const where = saved.kind === 'service' ? saved.id : NAMES[saved.id] || saved.id;
+      const { saved } = await addKey(provider, key);
+      // Another provider chosen, or the step left, or the box changed since: this answer is about
+      // something no longer on screen. A changed box is looked at again as it now stands.
+      if (turn !== epoch) return;
+      if (row.key.trim() !== key) return settle(row);
+      const where = saved.kind === 'service' ? CONNECTOR_BY_ID.get(saved.id)?.name || saved.id : NAMES[saved.id] || saved.id;
       row.state = 'ok';
       row.tail = key.slice(-4);
       row.key = '';
@@ -215,13 +233,22 @@ export function createKeyGuide({ providers, recommended, addKey, onSaved }) {
       // Keeping a key redraws the step (its "done" line, the card's count); the rows come back from here.
       onSaved();
       focusBox();
-      announce(row.text);
+      announce(row.extra ? `${row.text}. ${row.extra}` : row.text);
     } catch (err) {
+      if (turn !== epoch) return;
+      if (row.key.trim() !== key) return settle(row);
       row.state = 'bad';
       row.text = err.message;
       paintRow(row);
-      announce(err.message);
+      announce(row.extra ? `${err.message} ${row.extra}` : err.message);
     }
+  }
+
+  /** A check whose key was edited meanwhile: back to idle, and the edit checked when it looks whole. */
+  function settle(row) {
+    row.state = 'idle';
+    paintRow(row);
+    if (looksWhole(row.key)) void check(row);
   }
 
   function paint() {
@@ -253,8 +280,7 @@ export function createKeyGuide({ providers, recommended, addKey, onSaved }) {
           <a class="btn btn--primary" href="https://${guide.url}" target="_blank" rel="noopener" data-key-get>${escapeHtml(t('onb.keys.get', { provider: NAMES[chosen] }))} ↗</a>
         </div>
         <ul class="onbk__keys" data-key-rows></ul>
-        <p class="onbk__rule">${escapeHtml(t('onb.keys.rule'))}</p>
-        <div class="sr-only" role="status" aria-live="polite" data-key-live></div>
+        <p class="onbk__rule" id="onbk-rule">${escapeHtml(t('onb.keys.rule'))}</p>
       </div>`;
     paintRows();
     paintStep();
@@ -302,17 +328,20 @@ export function createKeyGuide({ providers, recommended, addKey, onSaved }) {
       at = GUIDES[current()].steps.length - 1;
       paintStep();
       // A paste is a finished key: checked now, with no button to press.
-      const keys = keysIn(/** @type {ClipboardEvent} */ (event).clipboardData?.getData('text'));
-      if (!keys.length || row.state === 'checking') return;
+      const parts = keysIn(/** @type {ClipboardEvent} */ (event).clipboardData?.getData('text'));
+      if (!parts.length || row.state === 'checking') return;
       event.preventDefault();
-      target.value = row.key = keys[0];
-      row.extra = keys.length > 1 ? t('onb.keys.onlyFirst') : '';
+      // "Key: sk-or-..." is a label and a key: the first part that looks like one, else the first.
+      const keyLike = parts.filter(looksLikeKey);
+      const taken = keyLike[0] || parts[0];
+      target.value = row.key = taken;
+      row.extra = keyLike.length > 1 || (!keyLike.length && parts.length > 1) ? t('onb.keys.onlyFirst') : '';
       void check(row);
     });
     host.addEventListener('input', (event) => {
       const target = /** @type {HTMLInputElement} */ (event.target);
       const row = target.matches?.('[data-key-box]') ? rowOf(target) : null;
-      if (!row || row.state === 'checking') return;
+      if (!row || row.state === 'ok') return;
       row.key = target.value;
       row.extra = '';
       // Typing again clears the red: it is a new key. Checked after a pause, in case more is coming.
@@ -322,7 +351,8 @@ export function createKeyGuide({ providers, recommended, addKey, onSaved }) {
         paintRow(row);
       }
       clearTimeout(row.timer);
-      if (row.key.trim().length >= 8) row.timer = setTimeout(() => void check(row), TYPING_PAUSE);
+      // Only a key that looks whole is worth a check on a pause; Enter checks anything.
+      if (looksWhole(row.key)) row.timer = setTimeout(() => void check(row), TYPING_PAUSE);
     });
     host.addEventListener('keydown', (event) => {
       const target = /** @type {HTMLInputElement} */ (event.target);
@@ -339,6 +369,16 @@ export function createKeyGuide({ providers, recommended, addKey, onSaved }) {
     /** Draw into the guide's step. @param {HTMLElement} element */
     mount(element) {
       host = element;
+      if (!live) {
+        live = document.createElement('div');
+        live.className = 'sr-only';
+        live.setAttribute('data-key-live', '');
+        live.setAttribute('role', 'status');
+        live.setAttribute('aria-live', 'polite');
+      }
+      // In the dialog, which is modal: what sits outside it is not read. It outlives each redraw of the step.
+      const home = element.closest('dialog') || document.body;
+      if (live.parentElement !== home) home.append(live);
       listen();
       paint();
     },

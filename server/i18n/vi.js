@@ -369,6 +369,7 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'notion.so/my-integrations → New integration → Internal Integration Secret. Then share the pages you want it to see with that integration.':
     'notion.so/my-integrations → New integration → Internal Integration Secret. Sau đó chia sẻ các trang bạn muốn nó thấy với integration đó.',
   'ntn_… or secret_…': 'ntn_… hoặc secret_…',
+  'AIza or AQ': 'AIza hoặc AQ',
   'Notion rejected that token (HTTP {0}).': 'Notion từ chối token đó (HTTP {0}).',
   'api.slack.com/apps → your app → OAuth & Permissions → Bot User OAuth Token.':
     'api.slack.com/apps → ứng dụng của bạn → OAuth & Permissions → Bot User OAuth Token.',

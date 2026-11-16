@@ -43,7 +43,7 @@ const KNOWN_KEYS = [
    */
   /\bsk-(?:[A-Za-z0-9]{1,12}-){0,3}[A-Za-z0-9_]{24,}/g,
   /\bAIza[A-Za-z0-9_-]{30,}/g, // Google
-  // Google's "Authentication Keys" (AI Studio, November 2026). The long unbroken tail keeps "AQ.12" and the like alone.
+  // Google's "Authentication Keys" (AI Studio, November 2026). The 30-character minimum keeps "AQ.12" and the like alone.
   /\bAQ\.[A-Za-z0-9_-]{30,}/g,
   /\bgh[pousr]_[A-Za-z0-9]{30,}/g, // GitHub
   /\bxox[baprs]-[A-Za-z0-9-]{10,}/g, // Slack

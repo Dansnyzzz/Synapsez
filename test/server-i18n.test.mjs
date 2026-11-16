@@ -68,6 +68,7 @@ section('a translation keeps every value its English carries');
 section('the translator');
 {
   check('an exact sentence', translateMessage('Wrong email or password.', 'vi') === 'Sai email hoặc mật khẩu.');
+  check('a key shape named in two ways keeps its "or" in Vietnamese', /AIza hoặc AQ/.test(translateMessage('That does not look like a Google Gemini key — those begin AIza or AQ.', 'vi')), translateMessage('That does not look like a Google Gemini key — those begin AIza or AQ.', 'vi'));
   check(
     'a shape fills its values back in',
     translateMessage('No API key for Anthropic. Add one in Settings → Providers.', 'vi') ===

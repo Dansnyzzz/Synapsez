@@ -1514,6 +1514,7 @@ export const vi = {
   'onb.keys.clip': 'Trang {provider} thật, quay vào tháng 11/2026, đã làm mờ thông tin cá nhân. Từ đó trang có thể đã đổi.',
   'onb.keys.clipLabel': 'Video: lấy key {provider}, từng bước',
   'onb.keys.boxLabel': 'Key {n}',
+  'keys.hintOr': 'hoặc',
   'onb.keys.checking': 'Đang kiểm tra key…',
   'onb.keys.added': 'Đã thêm',
   'onb.keys.movedA': 'Đây là key của {where} — đã thêm vào {where}',

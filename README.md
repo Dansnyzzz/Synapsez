@@ -1370,7 +1370,7 @@ because a fallback nobody can see is how somebody finds out their first key died
   under the server, or sees the code that pairs that machine. The owner can hand the deployment to another
   administrator, and has to before deleting their own account (`server/adminRoles.js`).
 - **Recognised by its shape.** OpenRouter `sk-or-v1-`, OrcaRouter `sk-orca-`, Anthropic `sk-ant-`, Google
-  `AIza…`, OpenAI `sk-proj-`; and the connectors' tokens — GitHub `ghp_`/`github_pat_`, Notion
+  `AIza…` or `AQ.…`, OpenAI `sk-proj-`; and the connectors' tokens — GitHub `ghp_`/`github_pat_`, Notion
   `ntn_`/`secret_`, Slack `xox…`, Telegram `123456:AA…`, Supadata `sd_`, a Facebook Page `EAA…`. Pasted in
   the wrong provider's box, a key is kept under the right one; a connector's token is connected as that
   connector; and the toast says where it went. The connectors' boxes do the same the other way. A secret

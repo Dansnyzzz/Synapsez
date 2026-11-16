@@ -127,19 +127,26 @@ section('the guide: a key, step by step');
   section('the guide: keys one at a time, checked as they are pasted');
   // The intake route answers by key, so the flow is the page's and the answers are the server's own words.
   const asks = [];
+  let release;
+  const heldGate = new Promise((r) => (release = r));
   const saved = { kind: 'provider', id: 'openrouter', moved: false, from: 'openrouter' };
   const answers = {
     'sk-or-v1-good-0001': { saved },
-    'sk-or-v1-typed-0002': { saved },
+    'sk-or-v1-typed-0002-xxxxxxxxxxxxxxxxxxxx': { saved },
     'sk-or-v1-enter-0003': { saved },
     'sk-orca-moved-0004': { saved: { kind: 'provider', id: 'orcarouter', moved: true, from: 'openrouter' } },
     'sk-or-v1-refused-0005': { status: 400, error: 'OpenRouter refused that key. Check that it was copied whole and has not been revoked.' },
+    'sk-or-v1-held-0007': { saved },
+    'sk-or-v1-held-0011': { saved },
+    'sk-or-v1-multi-0008': { saved },
+    'sk-or-v1-label-0010': { saved },
     'sk-or-v1-same-0006': { status: 400, error: 'That key belongs to the same OpenRouter account as key 1. One account, one key: two keys of one account share its limits, so the second is no fallback. Add a key from another OpenRouter account.' },
   };
   await page.route('**/api/providers/intake', async (route) => {
     const sent = route.request().postDataJSON();
     asks.push(sent.apiKey);
     await new Promise((r) => setTimeout(r, 350));
+    if (/held/.test(sent.apiKey)) await heldGate;
     const answer = answers[sent.apiKey] || { status: 400, error: 'Nobody knows that key.' };
     if (answer.error) return route.fulfill({ status: answer.status, contentType: 'application/json', body: JSON.stringify({ error: answer.error }) });
     return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ providers: { openrouter: { configured: true, own: true, keys: [{ position: 1, hint: '…0001' }] } }, saved: { ...answer.saved, account: null, paid: null }, suggestion: null }) });
@@ -184,22 +191,69 @@ section('the guide: a key, step by step');
   await page.waitForTimeout(200);
   const refused = await rows();
   check('a refused key turns the box red with the provider\'s reason, and no new box appears', /refused that key/.test(refused.text) && refused.boxes === 1 && refused.done.length === 2 && /refused that key/.test(refused.live), JSON.stringify(refused));
-  check('  the red is on the box itself, and the reason is tied to it', await page.evaluate(() => { const box = document.querySelector('[data-key-box]'); const why = document.getElementById(box.getAttribute('aria-describedby') || 'none'); return box.closest('.onbk__row').classList.contains('is-bad') && !!why && /refused/.test(why.textContent); }));
+  check('  the red is on the box itself, and the reason is tied to it', await page.evaluate(() => { const box = document.querySelector('[data-key-box]'); const why = document.getElementById((box.getAttribute('aria-describedby') || 'none').split(' ')[0]); return box.closest('.onbk__row').classList.contains('is-bad') && !!why && /refused/.test(why.textContent); }));
   await paste('sk-or-v1-same-0006');
   await page.waitForFunction(() => /One account, one key/.test(document.querySelector('.onbk__keys')?.textContent || ''), null, { timeout: 5000 });
   check("OpenRouter's second key from one account: refused with the one-key-per-account sentence, nothing locked", (await rows()).done.length === 2);
   // Typed, not pasted: a pause, then the check — and Enter does not wait.
   asks.length = 0;
-  await page.fill('[data-key-box]', 'sk-or-v1-typed-0002');
+  await page.fill('[data-key-box]', 'sk-or-v1-typed-0002-xxxxxxxxxxxxxxxxxxxx');
   await page.waitForTimeout(400);
   check('typed: nothing is asked while the person may still be typing', asks.length === 0, asks.join());
   await page.waitForFunction(() => document.querySelectorAll('[data-key-done]').length === 3, null, { timeout: 6000 });
-  check('  and after a pause the key is checked and added', asks.join() === 'sk-or-v1-typed-0002', asks.join());
+  check('  and after a pause the key is checked and added', asks.join() === 'sk-or-v1-typed-0002-xxxxxxxxxxxxxxxxxxxx', asks.join());
   await page.fill('[data-key-box]', 'sk-or-v1-enter-0003');
   await page.press('[data-key-box]', 'Enter');
   await page.waitForTimeout(150);
   check('typed, then Enter: checked at once', asks.includes('sk-or-v1-enter-0003') && /Checking the key/.test((await rows()).text), asks.join());
   await page.waitForFunction(() => document.querySelectorAll('[data-key-done]').length === 4, null, { timeout: 6000 });
+  // Typing a partial key, with pauses between: nothing is sent (each check costs one of the hourly twenty).
+  asks.length = 0;
+  for (const bit of ['sk-or-v1-abc', 'defg', 'hijk']) {
+    await page.type('[data-key-box]', bit);
+    await page.waitForTimeout(1100);
+  }
+  check('typing a partial key with pauses sends nothing', asks.length === 0, asks.join());
+  await page.fill('[data-key-box]', '');
+  // A paste with a label in front takes the part that looks like a key.
+  await paste('Key: sk-or-v1-label-0010');
+  await page.waitForFunction(() => document.querySelectorAll('[data-key-done]').length === 5, null, { timeout: 6000 });
+  check('a paste like "Key: sk-or-..." takes the part that looks like a key', asks.join() === 'sk-or-v1-label-0010', asks.join());
+  // Several keys pasted: only the first goes, the rest are not left in the box, and it says so.
+  asks.length = 0;
+  await paste('sk-or-v1-multi-0008 sk-or-v1-multi-0009');
+  await page.waitForFunction(() => document.querySelectorAll('[data-key-done]').length === 6, null, { timeout: 6000 });
+  const many = await rows();
+  check('several keys pasted: only the first is sent, the second is not in the box, and the line says so', asks.join() === 'sk-or-v1-multi-0008' && /Only the first key/.test(many.text) && (await page.evaluate(() => !document.querySelector('[data-key-box]').value.includes('0009'))), JSON.stringify({ asks, text: many.text }));
+  check('  and a kept key shows on the provider card count', await page.evaluate(() => /1 key/i.test(document.querySelector('.onbk__card[data-key-provider="openrouter"]').textContent)));
+  check('  the announcer lives outside the redrawn step, and each box points at the one-key-per-account line', await page.evaluate(() => { const live = document.querySelector('[data-key-live]'); return !!live && !document.getElementById('onb-key-guide').contains(live) && live.getAttribute('aria-live') === 'polite' && (document.querySelector('[data-key-box]').getAttribute('aria-describedby') || '').split(' ').includes('onbk-rule'); }));
+  // Typing on during a held check keeps the characters, and the stale answer is ignored.
+  asks.length = 0;
+  await paste('sk-or-v1-held-0007');
+  await page.waitForFunction(() => document.querySelector('[data-key-box]')?.getAttribute('aria-busy') === 'true', null, { timeout: 3000 });
+  await page.type('[data-key-box]', 'xy');
+  release();
+  await page.waitForTimeout(900);
+  const typedOn = await page.evaluate(() => ({ value: document.querySelector('[data-key-box]')?.value, locked: document.querySelectorAll('[data-key-done]').length, readonly: document.querySelector('[data-key-box]')?.readOnly, live: document.querySelector('[data-key-live]')?.textContent }));
+  check('typing during a check keeps the keystrokes', typedOn.value === 'sk-or-v1-held-0007xy' && !typedOn.readonly, JSON.stringify(typedOn));
+  check('  and the answer for the older value is ignored: nothing locked, nothing announced', typedOn.locked === 6 && !/Added/.test(typedOn.live || ''), JSON.stringify(typedOn));
+  await page.fill('[data-key-box]', '');
+  // An answer that comes after another provider was chosen is not announced.
+  let release2;
+  const gate2 = new Promise((r) => (release2 = r));
+  await page.unroute('**/api/providers/intake');
+  await page.route('**/api/providers/intake', async (route) => {
+    await gate2;
+    await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ providers: { openrouter: { configured: true, own: true, keys: [{ position: 1, hint: '…0001' }] } }, saved, suggestion: null }) });
+  });
+  await paste('sk-or-v1-late-0012');
+  await page.waitForFunction(() => document.querySelector('[data-key-box]')?.getAttribute('aria-busy') === 'true', null, { timeout: 3000 });
+  await page.click('.onbk__card[data-key-provider="google"]');
+  release2();
+  await page.waitForTimeout(500);
+  const late = await page.evaluate(() => ({ live: document.querySelector('[data-key-live]')?.textContent, done: document.querySelectorAll('[data-key-done]').length, hint: document.querySelector('[data-key-box]')?.placeholder }));
+  check('a check that ends after another provider was chosen is not shown or announced', late.done === 0 && !/Added/.test(late.live || ''), JSON.stringify(late));
+  check("Google's box shows both key shapes in its hint", late.hint === 'AIza… or AQ.…', late.hint);
   await page.unroute('**/api/providers/intake');
   await shot('guide-keys-done');
 }
