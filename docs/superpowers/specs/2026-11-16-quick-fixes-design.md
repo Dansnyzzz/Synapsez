@@ -47,16 +47,13 @@ tabs.
 
 **A to Z (owner asks whether it is complete).** Today: 1 What Synapsez does · 2 API key · 3 Model & limits ·
 4 Cloud computer · 5 Freedom level · 6 First task. Missing for a new person: where their work lives and how
-to make it carry on without them. **Proposed — three steps added before "First task":**
-- **Projects & files** — a project keeps its own chats, files and instructions; files you upload or the
-  assistant makes are in Files; the 20-chat limit per place.
-- **Connectors & skills** — connect Google Drive, Gmail and others; skills the assistant can use; where to
-  turn them on.
+to make it carry on without them. **Owner chose (2026-11-16) one step, added before "First task":**
 - **Automations & Bot** — schedule a task, the Bot page, what runs while you are away.
 
-That makes nine steps. Each new step follows the guide's existing rule: every sentence is held to the code
+That makes seven steps (Projects & files, Connectors & skills and Memory & privacy were offered and not
+chosen). The new step follows the guide's existing rule: every sentence is held to the code
 or an official page and pinned by the "getting-started guide says only what is true" checks in
-`test/features.test.mjs`; each gets a recorded clip from `npm run onboarding:record` like steps 1, 4, 5 and 6.
+`test/features.test.mjs`, and gets a recorded clip from `npm run onboarding:record` like steps 1, 4, 5 and 6.
 
 **Provider videos (owner): later** — the step 2 illustrations stay until the videos exist.
 
