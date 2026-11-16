@@ -534,6 +534,20 @@ const bob = jar();
   const allowed = await alice.call('GET', '/api/admin/users');
   check('an administrator can', allowed.status === 200, `got ${allowed.status}`);
   check('and sees both accounts', allowed.json?.users?.length === 2, `${allowed.json?.users?.length}`);
+  // Paged for the Users page: the busiest ten first, the rest by page; the plain call stays as it was.
+  const paged = await alice.call('GET', '/api/admin/users?page=1&size=1');
+  check('paged: one account, the total of both', paged.status === 200 && paged.json?.users?.length === 1 && paged.json?.total === 2 && paged.json?.page === 1 && paged.json?.size === 1, JSON.stringify({ n: paged.json?.users?.length, t: paged.json?.total, p: paged.json?.page, s: paged.json?.size }));
+  check('  each with what it may do', Array.isArray(paged.json?.users?.[0]?.permissions));
+  const clamped = (await alice.call('GET', '/api/admin/users?page=0&size=500')).json;
+  check('a page below 1 and a size above 50 are clamped', clamped?.page === 1 && clamped?.size === 50, `${clamped?.page}/${clamped?.size}`);
+  const junk = (await alice.call('GET', '/api/admin/users?page=abc&size=-4')).json;
+  check('  and nonsense falls back', junk?.page === 1 && junk?.size >= 1 && junk?.size <= 50, `${junk?.page}/${junk?.size}`);
+  const defaulted = (await alice.call('GET', '/api/admin/users?page=1')).json;
+  check('a page with no size is 20 a page', defaulted?.size === 20 && defaulted?.total === 2, `${defaulted?.size}`);
+  const adminsOnly = (await alice.call('GET', '/api/admin/users?role=admin')).json;
+  check('role=admin lists the administrators only, unpaged', adminsOnly?.users?.length === 1 && adminsOnly.users[0].role === 'admin' && !('total' in adminsOnly) && Array.isArray(adminsOnly.users[0].permissions), JSON.stringify(adminsOnly?.users?.map((u) => u.role)));
+  check('a member is refused the paged list too', (await bob.call('GET', '/api/admin/users?page=1&size=10')).status === 403);
+
 
   // Express 5 leaves req.body undefined with no JSON body, and `'x' in undefined`
   // is a TypeError — this used to be a 500.

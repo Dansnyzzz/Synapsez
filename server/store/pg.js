@@ -599,6 +599,47 @@ export function createPgStore(connectionString) {
            FROM users u ORDER BY u.created_at ASC`,
       );
     },
+    /**
+     * One page of accounts, the busiest this month first, with how many there are
+     * in all. Paged here rather than in the route so a deployment with thousands
+     * of accounts never loads them all to show ten. Ties settle by name, then id,
+     * so a page boundary never shuffles between two requests.
+     */
+    async listUsersPage({ page = 1, size = 20 } = {}) {
+      const rows = await q(
+        `SELECT * FROM (
+           SELECT u.id, u.email, u.username, u.name, u.role, u.created_at, u.last_seen_at,
+                  u.email_verified_at, u.suspended_at, u.monthly_token_limit, u.is_owner, u.admin_permissions,
+                  (u.worker_token IS NOT NULL) AS has_worker,
+                  (SELECT COUNT(*)::int FROM chats c WHERE c.user_id = u.id) AS chat_count,
+                  COALESCE((SELECT SUM(e.input_tokens + e.output_tokens) FROM usage_events e
+                             WHERE e.user_id = u.id
+                               AND e.created_at >= date_trunc('month', NOW())), 0)::bigint AS tokens_this_month,
+                  COUNT(*) OVER ()::int AS total_rows
+             FROM users u
+         ) t
+         ORDER BY t.tokens_this_month DESC, lower(COALESCE(NULLIF(t.name, ''), t.email)) ASC, t.id ASC
+         LIMIT $1 OFFSET $2`,
+        [size, (page - 1) * size],
+      );
+      if (rows.length > 0) return { users: rows.map(({ total_rows: _t, ...u }) => u), total: rows[0].total_rows };
+      // Past the last page there is no row to carry the count.
+      const [{ n }] = await q('SELECT COUNT(*)::int AS n FROM users');
+      return { users: [], total: n };
+    },
+    /** Every administrator, owner included: the Administrators list is never paged. */
+    async listAdmins() {
+      return q(
+        `SELECT u.id, u.email, u.username, u.name, u.role, u.created_at, u.last_seen_at,
+                u.email_verified_at, u.suspended_at, u.monthly_token_limit, u.is_owner, u.admin_permissions,
+                (u.worker_token IS NOT NULL) AS has_worker,
+                (SELECT COUNT(*)::int FROM chats c WHERE c.user_id = u.id) AS chat_count,
+                COALESCE((SELECT SUM(e.input_tokens + e.output_tokens) FROM usage_events e
+                           WHERE e.user_id = u.id
+                             AND e.created_at >= date_trunc('month', NOW())), 0)::bigint AS tokens_this_month
+           FROM users u WHERE u.role = 'admin' OR u.is_owner ORDER BY u.created_at ASC`,
+      );
+    },
     async touchUser(id) {
       await q('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [id]);
     },

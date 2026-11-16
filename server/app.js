@@ -2974,7 +2974,17 @@ export function createApp() {
     wrap(async (req, res) => {
       // `permissions` is the server's word for what each account may do (a list stored as text, or none stored, included): the
       // Administration page draws its boxes from it and never from the raw column.
-      res.json({ users: (await getStore().listUsers()).map((u) => ({ ...u, permissions: permissionsOf(u) })) });
+      const store = getStore();
+      const withPermissions = (list) => list.map((u) => ({ ...u, permissions: permissionsOf(u) }));
+      if (req.query.role === 'admin') return res.json({ users: withPermissions(await store.listAdmins()) });
+      // No page asked for: the whole list, as before the Users page was paged.
+      if (req.query.page === undefined && req.query.size === undefined) return res.json({ users: withPermissions(await store.listUsers()) });
+      // Clamped here, not refused: the numbers come straight from the address bar.
+      const clamp = (v, lo, hi, fallback) => (Number.isFinite(Number(v)) && v !== '' ? Math.min(hi, Math.max(lo, Math.trunc(Number(v)))) : fallback);
+      const page = clamp(req.query.page, 1, 1e6, 1);
+      const size = clamp(req.query.size, 1, 50, 20);
+      const found = await store.listUsersPage({ page, size });
+      res.json({ users: withPermissions(found.users), total: found.total, page, size });
     }),
   );
 

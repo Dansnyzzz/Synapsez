@@ -329,5 +329,36 @@ section('service keys (schema 52)');
   await db.close();
 }
 
+section('the accounts list is paged in SQL, busiest this month first');
+{
+  const { PGlite } = await import('@electric-sql/pglite');
+  const { createPgStore } = await import('../server/store/pg.js');
+  const db = new PGlite();
+  const store = createPgStore({ query: async (text, params = []) => (await db.query(text, params)).rows });
+  await store.init();
+  for (let i = 0; i < 22; i += 1) {
+    const id = `p${String(i).padStart(2, '0')}`;
+    await store.createUser({ id, email: `${id}@example.com`, name: `Person ${id}`, passwordHash: 'x', role: i === 5 ? 'admin' : 'user' });
+    await store.recordUsage(id, { id: `ev-${id}`, model: 'm', inputTokens: (i + 1) * 100, outputTokens: 0 });
+  }
+  // Three with nothing this month tie, so the name settles it (the email when there is none).
+  await store.createUser({ id: 'z1', email: 'zed@example.com', name: 'Zed', passwordHash: 'x', role: 'user' });
+  await store.createUser({ id: 'z2', email: 'amy@example.com', name: 'Amy', passwordHash: 'x', role: 'user' });
+  await store.createUser({ id: 'z3', email: 'bob@example.com', name: null, passwordHash: 'x', role: 'user' });
+  const one = await store.listUsersPage({ page: 1, size: 10 });
+  check('page 1 is the ten highest, in order', one.users.map((u) => u.id).join() === 'p21,p20,p19,p18,p17,p16,p15,p14,p13,p12', one.users.map((u) => u.id).join());
+  check('  with the total of everyone', one.total === 25, String(one.total));
+  check('  and the row shape listUsers has', ['tokens_this_month', 'chat_count', 'has_worker', 'is_owner', 'role', 'admin_permissions'].every((k) => k in one.users[0]) && Number(one.users[0].tokens_this_month) === 2200, JSON.stringify(one.users[0]));
+  const three = await store.listUsersPage({ page: 3, size: 10 });
+  check('page 3 is the last five: lowest earners, then the zeros by name', three.users.map((u) => u.id).join() === 'p01,p00,z2,z3,z1', three.users.map((u) => u.id).join());
+  check('  and the total does not shrink on the last page', three.total === 25);
+  const beyond = await store.listUsersPage({ page: 9, size: 10 });
+  check('a page past the end is empty, the total still known', beyond.users.length === 0 && beyond.total === 25, String(beyond.total));
+  const admins = await store.listAdmins();
+  check('administrators are listed whole', admins.length === 1 && admins[0].id === 'p05', admins.map((u) => u.id).join());
+  check('listUsers is as it was: everyone', (await store.listUsers()).length === 25);
+  await db.close();
+}
+
 console.log(failures === 0 ? '\n\x1b[32mAll database checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);
