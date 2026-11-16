@@ -2278,6 +2278,9 @@ section('keys: recognised wherever pasted, checked with their provider, one Open
   const shapes = [
     [OR('a'), 'provider:openrouter'],
     ['AIzaSyA-features-0123456789abcdefghijklmn', 'provider:google'],
+    // The "Authentication Keys" AI Studio issues now (November 2026).
+    ['AQ.Ab8features0123456789_abcdefghijklmnopqrstuvwx', 'provider:google'],
+    ['AQ.12', 'none'],
     ['sk-ant-api03-features0123456789', 'provider:anthropic'],
     ['sk-orca-features0123', 'provider:orcarouter'],
     ['sk-proj-features0123456789', 'provider:openai'],
@@ -2306,6 +2309,32 @@ section('keys: recognised wherever pasted, checked with their provider, one Open
   const checked = await intake.inspectKey('openrouter', OR('c'), { fetchImpl });
   check('OpenRouter says whose key it is and whether that account has paid — kept as a hash, never the id', checked.ok === true && checked.paid === true && checked.account && checked.account !== 'user_C', JSON.stringify(checked));
   check('  a key OpenRouter refuses is refused; one it cannot be asked about is not', (await intake.inspectKey('openrouter', OR('d'), { fetchImpl })).ok === false && (await intake.inspectKey('openrouter', OR('e'), { fetchImpl: async () => { throw new Error('offline'); } })).ok === null);
+
+  // Google's check must be a call that can chat: some AQ. keys pass models.list and fail on generateContent.
+  {
+    const AQ = 'AQ.Ab8features0123456789_abcdefghijklmnopqrstuvwx';
+    const calls = [];
+    const google = (status, body) => async (url, init) => {
+      calls.push({ url: String(url), method: init?.method || 'GET', key: init?.headers?.['x-goog-api-key'] });
+      return new Response(JSON.stringify(body), { status });
+    };
+    const good = await intake.inspectKey('google', AQ, { fetchImpl: google(200, { totalTokens: 1 }) });
+    check('Google is checked with countTokens on a catalogue Gemini model, POSTed with the key in the header', good.ok === true && /\/v1beta\/models\/gemini-[a-z-]+latest:countTokens$/.test(calls[0].url) && calls[0].method === 'POST' && calls[0].key === AQ && !calls[0].url.includes(AQ), JSON.stringify(calls[0]));
+    const nope = await intake.inspectKey('google', AQ, { fetchImpl: google(401, { error: { code: 401, message: 'API keys are not supported by this API.', status: 'UNAUTHENTICATED' } }) });
+    check('  a 401 refuses the key, with Google\'s own reason', nope.ok === false && nope.reason === 'API keys are not supported by this API.', JSON.stringify(nope));
+    const barred = await intake.inspectKey('google', AQ, { fetchImpl: google(403, { error: { code: 403, message: 'Generative Language API has not been used in project 1 before.', status: 'PERMISSION_DENIED' } }) });
+    check('  and so does a 403', barred.ok === false && /has not been used/.test(barred.reason), JSON.stringify(barred));
+    check('  a busy or missing answer is not a refusal', (await intake.inspectKey('google', AQ, { fetchImpl: google(429, {}) })).ok === null && (await intake.inspectKey('google', AQ, { fetchImpl: google(404, {}) })).ok === null);
+    const uid = (await store.createUser({ id: 'u-keys-g', email: 'keys-g@example.com', passwordHash: 'x', name: 'G', role: 'user' })).id;
+    let said = '';
+    await intake.intakeKey(uid, 'google', AQ, { fetchImpl: google(401, { error: { message: 'API keys are not supported by this API.' } }) }).catch((err) => (said = err.message));
+    check('  the refusal reaches the person with that reason, and nothing is kept', said === 'Google Gemini refused that key: API keys are not supported by this API.' && !(await providerStatus(uid)).google?.own, said);
+    const kept = await intake.intakeKey(uid, 'google', AQ, { fetchImpl: google(200, {}) });
+    check('  an AQ. key that can chat is kept under Google', kept.id === 'google' && !kept.moved && (await providerStatus(uid)).google.keys.length === 1, JSON.stringify(kept));
+    let wrong = '';
+    await intake.intakeKey(uid, 'google', 'just some words', { fetchImpl }).catch((err) => (wrong = err.message));
+    check('  a shapeless secret is told both shapes, without a doubled full stop', /those begin AIza or AQ\.$/.test(wrong), wrong);
+  }
 
   const user = await store.createUser({ id: 'u-keys', email: 'keys@example.com', passwordHash: 'x', name: 'K', role: 'user' });
   const moved = await intake.intakeKey(user.id, 'google', OR('a'), { fetchImpl });

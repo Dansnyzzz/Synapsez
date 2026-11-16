@@ -3081,8 +3081,9 @@ section('the getting-started guide');
   check('and offers the way to add one, right there', noKey.prompts === true);
 
   // A key is pasted in the guide itself.
+  // One key to a box, checked on Enter (no Add button any more); a new empty box opens after it.
   await page.fill('[data-key-box]', 'sk-or-v1-ui-test-key');
-  await page.click('[data-key-add]');
+  await page.press('[data-key-box]', 'Enter');
   await page.waitForFunction(() => document.querySelector('#onb-body .onb__state.is-done'), null, { timeout: 8000 });
 
   const withKey = await page.evaluate(() => ({

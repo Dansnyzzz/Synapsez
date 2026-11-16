@@ -528,6 +528,8 @@ section('secret redaction');
   check('an OpenRouter key is stripped', gone('key is sk-or-v1-' + 'a'.repeat(40)));
   check('an Anthropic key is stripped', gone('sk-ant-' + 'b'.repeat(40)));
   check('a Google key is stripped', gone('AIza' + 'c'.repeat(35)));
+  check('a new-style Google key is stripped', gone('AQ.Ab8' + 'c'.repeat(44)));
+  check('  and AQ. in ordinary writing is not', !caught('Mã AQ.12 và AQ.Mark: xem mục AQ.3 trang 4') && !caught('the AQ.report-final-version file'));
   check('a GitHub token is stripped', gone('ghp_' + 'd'.repeat(36)));
   check('a Slack token is stripped', gone('xoxb-' + 'e'.repeat(30)));
   check('a JWT is stripped', gone('eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27u'));

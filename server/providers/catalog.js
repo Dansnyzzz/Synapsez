@@ -217,7 +217,7 @@ export const CATALOG = [
 export const PROVIDERS = {
   anthropic: { label: 'Anthropic', keyHint: 'sk-ant-…', console: 'https://console.anthropic.com/settings/keys' },
   openai: { label: 'OpenAI', keyHint: 'sk-…', console: 'https://platform.openai.com/api-keys' },
-  google: { label: 'Google Gemini', keyHint: 'AIza…', console: 'https://aistudio.google.com/apikey' },
+  google: { label: 'Google Gemini', keyHint: 'AIza… or AQ.…', console: 'https://aistudio.google.com/apikey' },
   openrouter: { label: 'OpenRouter', keyHint: 'sk-or-v1-…', console: 'https://openrouter.ai/keys' },
   // Keys and spend both live in the dashboard (docs: getting-started/get-api-key).
   orcarouter: { label: 'OrcaRouter', keyHint: 'sk-orca-…', console: 'https://www.orcarouter.ai/console' },

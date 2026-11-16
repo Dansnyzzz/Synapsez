@@ -133,7 +133,7 @@ const DETECTORS = [
   // A key by its shape: the same providers redact.js knows, for the same reason.
   {
     kind: 'SECRET',
-    re: /\b(?:sk-(?:[A-Za-z0-9]{1,12}-){0,3}[A-Za-z0-9_]{24,200}|AIza[A-Za-z0-9_-]{30,80}|gh[pousr]_[A-Za-z0-9]{30,120}|xox[baprs]-[A-Za-z0-9-]{10,120}|ntn_[A-Za-z0-9]{30,80}|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{10,2000}\.[A-Za-z0-9_-]{10,2000}\.[A-Za-z0-9_-]{10,2000})/gu,
+    re: /\b(?:sk-(?:[A-Za-z0-9]{1,12}-){0,3}[A-Za-z0-9_]{24,200}|AIza[A-Za-z0-9_-]{30,80}|AQ\.[A-Za-z0-9_-]{30,120}|gh[pousr]_[A-Za-z0-9]{30,120}|xox[baprs]-[A-Za-z0-9-]{10,120}|ntn_[A-Za-z0-9]{30,80}|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{10,2000}\.[A-Za-z0-9_-]{10,2000}\.[A-Za-z0-9_-]{10,2000})/gu,
   },
   // What a link carries in its address, the value alone: the link still reads as the link.
   { kind: 'SECRET', group: 1, re: /[?&](?:access_token|refresh_token|id_token|token|api_key|apikey|key|secret|password|passwd|pwd|auth|sig|signature|session|sid)=([^&\s#"'<>]{6,400})/giu },

@@ -37,6 +37,16 @@ section('the page says what was measured');
 check('the page is measured when it is asked, by the shield running now', JSON.stringify(currentMasking().kinds) === JSON.stringify(figures) && Date.now() - Date.parse(currentMasking().measuredAt) < 600_000, JSON.stringify(figures));
 check('and how many samples they came from', currentMasking().samples === CORPUS.length && currentMasking().clean === clean, `${CORPUS.length}/${clean}`);
 
+section('a key of either Google shape is masked, prose with AQ. is not');
+{
+  const shield = createShield({ key: 'corpus' });
+  const old = `AIza${'x'.repeat(35)}`;
+  const fresh = `AQ.Ab8${'y'.repeat(44)}`;
+  const masked = shield.maskText(`keys ${old} and ${fresh} and code AQ.12 or AQ.Mark`);
+  check('both keys are gone', !masked.includes(old) && !masked.includes(fresh) && !masked.includes('yyyy'), masked);
+  check('the prose is left alone', masked.includes('AQ.12') && masked.includes('AQ.Mark'), masked);
+}
+
 section('the shield only ever counts');
 {
   const shield = createShield({ key: 'corpus' });

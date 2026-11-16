@@ -588,6 +588,7 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'That does not look like an {0} key — those begin {1}.': 'Đây không giống key {0} — key {0} bắt đầu bằng {1}.',
   '{0} refused that key. Check that it was copied whole and has not been revoked.':
     '{0} từ chối key này. Hãy kiểm tra key đã được sao chép đầy đủ và chưa bị thu hồi.',
+  '{0} refused that key: {1}': '{0} từ chối key này: {1}',
   'That key belongs to the same OpenRouter account as key {0}. One account, one key: two keys of one account share its limits, so the second is no fallback. Add a key from another OpenRouter account.':
     'Key này thuộc cùng tài khoản OpenRouter với key {0}. Mỗi tài khoản chỉ gắn một key: hai key của cùng một tài khoản dùng chung hạn mức, nên key thứ hai không phải là dự phòng. Hãy thêm key từ một tài khoản OpenRouter khác.',
   'That free model is not in the library.': 'Model miễn phí đó không có trong thư viện.',

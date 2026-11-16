@@ -104,7 +104,7 @@ section('the guide: a key, step by step');
   check('five steps from its page to the key pasted back', seen.steps === 5, String(seen.steps));
   check('a real link, opening in a new tab', /^https:\/\/openrouter\.ai\/settings\/keys/.test(seen.link) && seen.newTab === '_blank', seen.link);
   check('no clip of somebody typing a key', !seen.video);
-  check('the real page as a video, not a drawing, and one box to paste into', !seen.drawing && seen.box === 'TEXTAREA');
+  check('the real page as a video, not a drawing, and one box to paste into', !seen.drawing && seen.box === 'INPUT');
   check('  OpenRouter\'s video: its own file, muted, looping, inline, still frame first, named', seen.clip?.src === '/onboarding/keys/openrouter.webm' && seen.clip.poster === '/onboarding/keys/openrouter.jpg' && seen.clip.muted && seen.clip.loop && seen.clip.inline && /OpenRouter/.test(seen.clip.name || ''), JSON.stringify(seen.clip));
   check('  and says it is the real page as of November 2026', /November 2026/.test(seen.clip?.caption || ''), seen.clip?.caption);
   await shot('guide-keys');
@@ -123,14 +123,84 @@ section('the guide: a key, step by step');
   check('  reduced motion: the poster, paused, with a Play button', still.paused && /Play/.test(still.label), JSON.stringify(still));
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.click('.onbk__card[data-key-provider="openrouter"]');
-  await page.fill('[data-key-box]', 'sk-or-v1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1111\nsk-orca-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2222');
-  await page.click('[data-key-add]');
-  await page.waitForFunction(() => document.querySelector('.onb__state')?.classList.contains('is-done'), null, { timeout: 8000 });
+
+  section('the guide: keys one at a time, checked as they are pasted');
+  // The intake route answers by key, so the flow is the page's and the answers are the server's own words.
+  const asks = [];
+  const saved = { kind: 'provider', id: 'openrouter', moved: false, from: 'openrouter' };
+  const answers = {
+    'sk-or-v1-good-0001': { saved },
+    'sk-or-v1-typed-0002': { saved },
+    'sk-or-v1-enter-0003': { saved },
+    'sk-orca-moved-0004': { saved: { kind: 'provider', id: 'orcarouter', moved: true, from: 'openrouter' } },
+    'sk-or-v1-refused-0005': { status: 400, error: 'OpenRouter refused that key. Check that it was copied whole and has not been revoked.' },
+    'sk-or-v1-same-0006': { status: 400, error: 'That key belongs to the same OpenRouter account as key 1. One account, one key: two keys of one account share its limits, so the second is no fallback. Add a key from another OpenRouter account.' },
+  };
+  await page.route('**/api/providers/intake', async (route) => {
+    const sent = route.request().postDataJSON();
+    asks.push(sent.apiKey);
+    await new Promise((r) => setTimeout(r, 350));
+    const answer = answers[sent.apiKey] || { status: 400, error: 'Nobody knows that key.' };
+    if (answer.error) return route.fulfill({ status: answer.status, contentType: 'application/json', body: JSON.stringify({ error: answer.error }) });
+    return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ providers: { openrouter: { configured: true, own: true, keys: [{ position: 1, hint: '…0001' }] } }, saved: { ...answer.saved, account: null, paid: null }, suggestion: null }) });
+  });
+  const paste = (text) =>
+    page.evaluate((value) => {
+      const box = document.querySelector('[data-key-box]');
+      box.focus();
+      const data = new DataTransfer();
+      data.setData('text/plain', value);
+      box.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    }, text);
+  const rows = () =>
+    page.evaluate(() => ({
+      boxes: document.querySelectorAll('[data-key-box]').length,
+      done: [...document.querySelectorAll('[data-key-done]')].map((el) => el.value),
+      add: !!document.querySelector('[data-key-add]'),
+      textarea: !!document.querySelector('.onbk textarea'),
+      focused: document.activeElement?.hasAttribute('data-key-box') || false,
+      live: document.querySelector('[data-key-live]')?.textContent.trim(),
+      liveRole: document.querySelector('[data-key-live]')?.getAttribute('aria-live'),
+      text: document.querySelector('.onbk__keys')?.textContent.replace(/\s+/g, ' '),
+    }));
+  const first = await rows();
+  check('one empty box and no Add button or multi-line field', first.boxes === 1 && !first.add && !first.textarea && first.done.length === 0, JSON.stringify(first));
+  check('  the box has a label, and the one-key-per-account line is under it', await page.evaluate(() => { const box = document.querySelector('[data-key-box]'); const rule = document.querySelector('.onbk__rule'); return !!box.labels?.[0]?.textContent.trim() && !!rule && /one key per account/i.test(rule.textContent) && /limit/i.test(rule.textContent) && !!(box.compareDocumentPosition(rule) & Node.DOCUMENT_POSITION_FOLLOWING); }));
+  await paste('sk-or-v1-good-0001');
+  await page.waitForFunction(() => /Checking the key/.test(document.querySelector('.onbk__keys')?.textContent || ''), null, { timeout: 3000 });
+  check('a pasted key is checked at once, with no press: "Checking the key…"', asks.length === 1 && asks[0] === 'sk-or-v1-good-0001', asks.join());
+  await page.waitForFunction(() => document.querySelectorAll('[data-key-done]').length === 1, null, { timeout: 5000 });
+  await page.waitForTimeout(250);
+  const added = await rows();
+  check('  good: ✓ Added, the box locks (showing only the end of the key) and a new empty box appears', /✓ Added/.test(added.text) && added.done.length === 1 && added.done[0] === '…0001' && added.boxes === 1, JSON.stringify(added));
+  check('  focus is in the new box, and the result is announced politely', added.focused && added.liveRole === 'polite' && /Added/.test(added.live), JSON.stringify(added));
+  await shot('guide-keys-one');
+  await paste('sk-orca-moved-0004');
+  await page.waitForFunction(() => document.querySelectorAll('[data-key-done]').length === 2, null, { timeout: 5000 });
+  const movedTo = await rows();
+  check("another provider's key: says it is theirs and was added there", /That is an OrcaRouter key — added to OrcaRouter/.test(movedTo.text) && movedTo.boxes === 1, movedTo.text);
+  await paste('sk-or-v1-refused-0005');
+  await page.waitForFunction(() => document.querySelector('[data-key-box]')?.getAttribute('aria-invalid') === 'true', null, { timeout: 5000 });
   await page.waitForTimeout(200);
-  const held = await store.getUserSetting('u-usage', 'providerKeys').catch(() => null);
-  const status = await page.evaluate(async () => (await (await fetch('/api/bootstrap')).json()).providers);
-  check('two keys pasted at once are both taken, each where it belongs', (status.openrouter?.keys || []).length === 1 && (status.orcarouter?.keys || []).length === 1, JSON.stringify({ held: !!held, or: status.openrouter?.keys?.length, orca: status.orcarouter?.keys?.length }));
-  check('and it says so on the card', await page.evaluate(() => /1 key/i.test(document.querySelector('.onbk__card[data-key-provider="openrouter"]').textContent)));
+  const refused = await rows();
+  check('a refused key turns the box red with the provider\'s reason, and no new box appears', /refused that key/.test(refused.text) && refused.boxes === 1 && refused.done.length === 2 && /refused that key/.test(refused.live), JSON.stringify(refused));
+  check('  the red is on the box itself, and the reason is tied to it', await page.evaluate(() => { const box = document.querySelector('[data-key-box]'); const why = document.getElementById(box.getAttribute('aria-describedby') || 'none'); return box.closest('.onbk__row').classList.contains('is-bad') && !!why && /refused/.test(why.textContent); }));
+  await paste('sk-or-v1-same-0006');
+  await page.waitForFunction(() => /One account, one key/.test(document.querySelector('.onbk__keys')?.textContent || ''), null, { timeout: 5000 });
+  check("OpenRouter's second key from one account: refused with the one-key-per-account sentence, nothing locked", (await rows()).done.length === 2);
+  // Typed, not pasted: a pause, then the check — and Enter does not wait.
+  asks.length = 0;
+  await page.fill('[data-key-box]', 'sk-or-v1-typed-0002');
+  await page.waitForTimeout(400);
+  check('typed: nothing is asked while the person may still be typing', asks.length === 0, asks.join());
+  await page.waitForFunction(() => document.querySelectorAll('[data-key-done]').length === 3, null, { timeout: 6000 });
+  check('  and after a pause the key is checked and added', asks.join() === 'sk-or-v1-typed-0002', asks.join());
+  await page.fill('[data-key-box]', 'sk-or-v1-enter-0003');
+  await page.press('[data-key-box]', 'Enter');
+  await page.waitForTimeout(150);
+  check('typed, then Enter: checked at once', asks.includes('sk-or-v1-enter-0003') && /Checking the key/.test((await rows()).text), asks.join());
+  await page.waitForFunction(() => document.querySelectorAll('[data-key-done]').length === 4, null, { timeout: 6000 });
+  await page.unroute('**/api/providers/intake');
   await shot('guide-keys-done');
 }
 

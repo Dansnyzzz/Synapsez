@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { PROVIDERS } from './providers/catalog.js';
+import { PROVIDERS, CATALOG } from './providers/catalog.js';
 import { keyEntries, setKeyMeta, addApiKey } from './settings.js';
 import { connect } from './connectors.js';
 
@@ -30,7 +30,8 @@ const PROVIDER_SHAPES = [
   ['openrouter', /^sk-or-(v\d+-)?\S{6,}$/],
   ['orcarouter', /^sk-orca-\S{6,}$/],
   ['anthropic', /^sk-ant-\S{8,}$/],
-  ['google', /^AIza[0-9A-Za-z_-]{30,}$/],
+  // AI Studio issues only the AQ. kind now; the AIza kind is still in use.
+  ['google', /^(AIza[0-9A-Za-z_-]{30,}|AQ\.[0-9A-Za-z_-]{30,})$/],
   ['openai', /^sk-(proj|svcacct|admin)-\S{8,}$/],
   ['openai', /^sk-[A-Za-z0-9]{16,}T3BlbkFJ[A-Za-z0-9]{16,}$/],
 ];
@@ -63,6 +64,9 @@ export function recognise(secret) {
   for (const [id, shape] of SERVICE_SHAPES) if (shape.test(value)) return { kind: 'service', id };
   return null;
 }
+
+/** The Gemini the Google check asks about: the catalogue's cheapest, so the check never names a model that is gone. */
+const GOOGLE_CHECK_MODEL = (CATALOG.find((m) => m.provider === 'google' && m.tags?.includes('cheap')) || CATALOG.find((m) => m.provider === 'google'))?.model || 'gemini-flash-lite-latest';
 
 /** Off in the test suites, which save made-up keys: KEY_CHECKS=off. */
 const checksOn = () => !/^(0|false|no|off)$/i.test(String(process.env.KEY_CHECKS || '').trim());
@@ -115,7 +119,7 @@ export function orcaStanding(balance, rung = 20) {
  * outage). `paid` is true when the account has paid for credit, false when it
  * never has, null when the provider does not say.
  *
- * @returns {Promise<{ ok: boolean | null, account?: string | null, paid?: boolean | null, freeTier?: 'high' | null }>}
+ * @returns {Promise<{ ok: boolean | null, account?: string | null, paid?: boolean | null, freeTier?: 'high' | null, reason?: string }>}
  */
 export async function inspectKey(provider, key, { fetchImpl = fetch } = {}) {
   if (!checksOn()) return { ok: null };
@@ -143,8 +147,20 @@ export async function inspectKey(provider, key, { fetchImpl = fetch } = {}) {
       return { ok: true, ...orcaStanding(orcaBalance(await res.json())) };
     }
     if (provider === 'google') {
-      const res = await get('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', { 'x-goog-api-key': key });
-      if ([400, 401, 403].includes(res.status)) return { ok: false };
+      // countTokens, not models.list: some AQ. keys pass the list and get 401 on generateContent
+      // (AI Developers Forum, June 2026). countTokens is free and goes through the auth chat uses.
+      const res = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${GOOGLE_CHECK_MODEL}:countTokens`, {
+        method: 'POST',
+        headers: { 'x-goog-api-key': key, 'content-type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: 'hi' }] }] }),
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (res.status === 401 || res.status === 403 || res.status === 400) {
+        const reason = String((await res.json().catch(() => null))?.error?.message || '').trim().slice(0, 200);
+        // A 400 is a refusal only when it is about the key; any other is our request, not theirs.
+        if (res.status !== 400 || /api key/i.test(reason)) return { ok: false, reason: reason || undefined };
+        return { ok: null };
+      }
       // Every Gemini key has the free tier; whether billing is on is not something a key can be asked.
       return res.ok ? { ok: true, paid: null } : { ok: null };
     }
@@ -187,13 +203,15 @@ export async function intakeKey(userId, asked, value, { fetchImpl = fetch } = {}
   const provider = seen?.kind === 'provider' ? seen.id : asked;
   if (!seen && STRICT.has(asked)) {
     const label = PROVIDERS[asked].label;
-    const begin = PROVIDERS[asked].keyHint.replace('…', '');
+    // A hint can hold two shapes ("AIza… or AQ.…") and end in a full stop of its own.
+    const begin = PROVIDERS[asked].keyHint.replaceAll('…', '').replace(/\.$/, '');
     throw fail(/^[AEIOU]/i.test(label) ? `That does not look like an ${label} key — those begin ${begin}.` : `That does not look like a ${label} key — those begin ${begin}.`);
   }
 
   const check = await inspectKey(provider, secret, { fetchImpl });
   if (check.ok === false) {
-    throw fail(`${PROVIDERS[provider].label} refused that key. Check that it was copied whole and has not been revoked.`);
+    // Google says why (an API not enabled, a key type not accepted) — more use to a person than a guess.
+    throw fail(check.reason ? `${PROVIDERS[provider].label} refused that key: ${check.reason}` : `${PROVIDERS[provider].label} refused that key. Check that it was copied whole and has not been revoked.`);
   }
 
   return oneAtATime(userId, async () => {
