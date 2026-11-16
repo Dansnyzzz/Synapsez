@@ -41,7 +41,7 @@ Report the numbers. A small-window model should be visibly cheaper.
 ## 2. Conversation growth
 
 `server/compact.js` folds old turns into a summary at `COMPACT_AT` (0.82 of the
-window), keeping the newest whole turns verbatim up to `KEEP_SHARE` (10% of the model's window, at least `KEEP_FLOOR` 4,000 tokens; the newest question and what follows it always stay), and it chains so cost stays
+window), keeping the newest whole turns verbatim up to `KEEP_SHARE` (10% of the model's window, at least `KEEP_FLOOR` 4,000 tokens; the newest question and what follows it always stay), folding inside a long turn when that leaves nothing older (the question is kept by a `question` pointer and put back whole by `activeTranscript`, never summarised), and it chains so cost stays
 flat however long the conversation runs. Verify:
 
 - compaction triggers before the window is full — the compaction call itself must

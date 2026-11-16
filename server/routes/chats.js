@@ -483,10 +483,7 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
       res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
       const send = (event, data) => {
         if (res.writableEnded || res.destroyed) return;
-        res.write(`event: ${event}
-data: ${JSON.stringify(data ?? {})}
-
-`);
+        res.write('event: ' + event + '\ndata: ' + JSON.stringify(data ?? {}) + '\n\n');
       };
       try {
         const summary = await compactChat({

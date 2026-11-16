@@ -796,6 +796,19 @@ const notRun = (assistant) => ({
   })),
 });
 
+/**
+ * The newest seq in hand that a typed-in message cannot be older than.
+ *
+ * A summary does not count. It is written at the top of a step and takes the
+ * next seq while the model is busy summarising for as long as half a minute; a
+ * line the user types in that time is stored before it and therefore has a
+ * lower seq. Counting the summary raised the mark past it and `messagesSince`
+ * never returned it: the message typed mid-run vanished.
+ */
+export function highWaterMark(messages) {
+  return messages.reduce((n, m) => (m.role === 'summary' ? n : Math.max(n, Number(m.seq) || 0)), 0);
+}
+
 export function normaliseOrder(messages) {
   const out = [];
   let i = 0;
@@ -2300,7 +2313,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
      * yet.
      */
     const known = new Set(messages.map((m) => m.id));
-    const highWater = messages.reduce((n, m) => Math.max(n, Number(m.seq) || 0), 0);
+    const highWater = highWaterMark(messages);
     const fresh = await store.messagesSince(userId, chatId, highWater);
     const added = fresh.filter((m) => m.role === 'user' && !known.has(m.id));
     if (!added.length) return false;

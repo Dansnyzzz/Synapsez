@@ -3353,6 +3353,24 @@ section('the gauge says what the window is spent on (owner, 2026-10-19)');
   check('  which no other account can write over', (await store.getChat(gauge.id, 'c-gauge'))?.context_parts?.system === kept.system);
 }
 
+section('a line typed while the summary is written is still picked up');
+{
+  const { highWaterMark } = await import('../server/agent.js');
+  const hw = await store.createUser({ id: 'u-hw', email: 'hw@example.com', name: 'HW', passwordHash: 'x', role: 'user' });
+  await store.createChat(hw.id, { id: 'c-hw', title: 'hw', model: 'm' });
+  const held = [];
+  held.push(await store.appendMessage(hw.id, 'c-hw', { id: 'hw-1', role: 'user', text: 'start' }));
+  held.push(await store.appendMessage(hw.id, 'c-hw', { id: 'hw-2', role: 'assistant', text: 'working' }));
+  // The user types while the summary is being written, so their line is stored first and has the lower seq.
+  const typed = await store.appendMessage(hw.id, 'c-hw', { id: 'hw-typed', role: 'user', text: 'actually, use the other file' });
+  held.push(await store.appendMessage(hw.id, 'c-hw', { id: 'hw-sum', role: 'summary', text: 's', covers: 1 }));
+  check('the summary has the higher seq', held.at(-1).seq > typed.seq);
+  const fresh = await store.messagesSince(hw.id, 'c-hw', highWaterMark(held));
+  check('the typed line is still returned from the mark', fresh.some((m) => m.id === 'hw-typed'), JSON.stringify(fresh.map((m) => m.id)));
+  const wrong = await store.messagesSince(hw.id, 'c-hw', Math.max(...held.map((m) => m.seq)));
+  check('(counting the summary would have skipped it)', !wrong.some((m) => m.id === 'hw-typed'));
+}
+
 // Last, after every section that uses the database: it was removed midway, and
 // the sections after it ran against pages PGlite happened to still hold.
 removeTemp(process.env.DATA_DIR);

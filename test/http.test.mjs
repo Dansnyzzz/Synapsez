@@ -891,6 +891,45 @@ section('the owner adds, checks and removes service keys');
   }
 }
 
+// ── Compact now: refusals are JSON, the outcome is a stream ─────────────
+section('Compact now answers with JSON refusals, then a stream that ends in compacted or error');
+{
+  const aliceId = (await store.getUserByEmail('alice@example.com')).id;
+  const frames = async (chatId) => {
+    const res = await fetch(`${base}/api/chats/${chatId}/compact`, { method: 'POST', headers: { Cookie: alice.value } });
+    const text = await res.text();
+    const out = text.split('\n\n').filter(Boolean).map((frame) => ({ event: /^event: (\w+)/.exec(frame)[1], data: JSON.parse(/\ndata: (.*)$/.exec(frame)[1]) }));
+    return { status: res.status, type: res.headers.get('content-type') || '', frames: out };
+  };
+
+  const missing = await alice.call('POST', '/api/chats/no-such-chat/compact');
+  check('an unknown conversation is a JSON 404', missing.status === 404 && !!missing.json?.error, JSON.stringify(missing.json));
+
+  const small = (await alice.call('POST', '/api/chats', { model: 'anthropic/claude-opus-5' })).json.chat.id;
+  await alice.call('POST', `/api/chats/${small}/messages`, { text: 'hello' });
+  const tooSmall = await alice.call('POST', `/api/chats/${small}/compact`);
+  check('under a quarter of the window is a JSON 400', tooSmall.status === 400 && /nothing worth folding/.test(tooSmall.json?.error || ''), JSON.stringify(tooSmall.json));
+
+  // Heavy in the gauge (a billed figure) but with nothing older than the tail: nothing to fold.
+  const nothing = (await alice.call('POST', '/api/chats', { model: 'anthropic/claude-opus-5' })).json.chat.id;
+  await store.appendMessage(aliceId, nothing, { id: 'n-u', role: 'user', text: 'hello' });
+  await store.appendMessage(aliceId, nothing, { id: 'n-a', role: 'assistant', text: 'hi', usage: { input: 900_000, output: 5 } });
+  const none = await frames(nothing);
+  check('a conversation with nothing to fold gets an error frame, after a 200 stream', none.status === 200 && /event-stream/.test(none.type) && none.frames.at(-1)?.event === 'error' && /not enough/.test(none.frames.at(-1).data.error), JSON.stringify(none.frames));
+
+  // Plenty to fold, but no key to write the summary with: the throw becomes an error frame.
+  const thrown = (await alice.call('POST', '/api/chats', { model: 'anthropic/claude-opus-5' })).json.chat.id;
+  for (let i = 0; i < 12; i += 1) await store.appendMessage(aliceId, thrown, { id: `t-${i}`, role: i % 2 ? 'assistant' : 'user', text: 'x'.repeat(400_000), ...(i === 11 ? { usage: { input: 900_000, output: 5 } } : {}) });
+  const failed = await frames(thrown);
+  check('a summary that cannot be written is an error frame, not a hung stream', failed.status === 200 && failed.frames.at(-1)?.event === 'error' && !!failed.frames.at(-1).data.error, JSON.stringify(failed.frames.at(-1)));
+  check('and no compacted frame was sent', !failed.frames.some((f) => f.event === 'compacted'));
+
+  check('another tab running it is a JSON 409', await store.claimChatRun(aliceId, thrown, 'other-tab'));
+  const busy = await alice.call('POST', `/api/chats/${thrown}/compact`);
+  check('  refused with 409 and a reason', busy.status === 409 && /still answering/.test(busy.json?.error || ''), JSON.stringify(busy.json));
+  await store.releaseChatRun?.(aliceId, thrown, 'other-tab');
+}
+
 // ── one run per conversation ────────────────────────────────────────
 section('a conversation runs in one place at a time');
 {
