@@ -1589,6 +1589,55 @@ section('Progress: reduced motion keeps the ring still');
 }
 planner.close();
 
+section('Compacting: a figure beside the words that only rises and ends at 100');
+{
+  await seed('cmp-bar', 'Compacting');
+  await reload();
+  await openRow('cmp-bar');
+  const frame = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  const folding = { phase: 'compacting', folding: 12 };
+  // The sixth figure is lower than the one before it, and the seventh is far past what was expected:
+  // a client that trusted the stream would step back and then claim to be done.
+  const body = [
+    frame('status', { phase: 'compacting' }),
+    frame('status', folding),
+    frame('status', { ...folding, written: 0, expected: 1000 }),
+    frame('status', { ...folding, written: 100, expected: 1000 }),
+    frame('status', { ...folding, written: 450, expected: 1000 }),
+    frame('status', { ...folding, written: 300, expected: 1000 }),
+    frame('status', { ...folding, written: 1500, expected: 1000 }),
+    frame('compacted', { replaced: 12, text: 'A summary.' }),
+    frame('done', {}),
+  ].join('');
+  await page.route('**/api/chats/cmp-bar/run', (route) => route.fulfill({ status: 200, contentType: 'text/event-stream', body }));
+  await page.evaluate(() => {
+    const seen = { pct: [], now: [], last: null };
+    /** @type {any} */ (window).__compactSeen = seen;
+    const pct = document.getElementById('compact-bar-pct');
+    const bar = document.getElementById('compact-bar');
+    // One callback can carry several writes when the events arrive together, so read each record, not the page.
+    new MutationObserver((records) => records.forEach((r) => seen.pct.push(r.addedNodes[0]?.textContent ?? ''))).observe(pct, { childList: true });
+    new MutationObserver((records) => {
+      records.forEach((r) => seen.now.push(r.oldValue));
+      seen.last = bar.getAttribute('aria-valuenow');
+    }).observe(bar, { attributes: true, attributeFilter: ['aria-valuenow'], attributeOldValue: true });
+  });
+  await page.fill('#input', 'fold it');
+  await page.click('#send');
+  await page.waitForFunction(() => /** @type {any} */ (window).__compactSeen.pct.includes('100%'), null, { timeout: 8000 });
+  const seen = await page.evaluate(() => /** @type {any} */ (window).__compactSeen);
+  const figures = seen.pct.map((s) => Number.parseInt(s, 10));
+  check('a percentage is shown beside the words', figures.length >= 4 && figures.every((n) => Number.isFinite(n)), seen.pct.join(' '));
+  check('it only ever rises', figures.every((n, i) => i === 0 || n >= figures[i - 1]), seen.pct.join(' '));
+  check('it reads what was written against what was expected', figures.includes(10) && figures.includes(45), seen.pct.join(' '));
+  check('it holds at 99 when the guess is passed, until the fold lands', figures.filter((n) => n === 99).length >= 1 && figures.indexOf(100) === figures.length - 1, seen.pct.join(' '));
+  check('and ends at 100', figures.at(-1) === 100);
+  const bar = [...seen.now.slice(1), seen.last].map(Number);
+  check('the bar says the same figure', seen.last === '100' && bar.every((n, i) => i === 0 || n >= bar[i - 1]), bar.join(' '));
+  await page.waitForFunction(() => document.getElementById('compact-bar').hidden, null, { timeout: 4000 });
+  await page.unroute('**/api/chats/cmp-bar/run');
+}
+
 /* ── done ───────────────────────────────────────────────────────── */
 
 await browser.close();

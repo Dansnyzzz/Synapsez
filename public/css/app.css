@@ -3779,6 +3779,8 @@ details.block > summary > .mark--pending { margin: 0 3.5px; }
 }
 .compactbar[hidden] { display: none; }
 .compactbar__row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 13px; color: var(--text-dim); }
+.compactbar__pct { margin-left: auto; font-variant-numeric: tabular-nums; }
+.compactbar__pct[hidden] { display: none; }
 .compactbar__spin {
   width: 14px;
   height: 14px;

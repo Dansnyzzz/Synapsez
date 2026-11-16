@@ -3969,11 +3969,8 @@ export function stopNote(kind, text, onContinue = null) {
  * What is happening right now, under the transcript.
  *
  * `bar` adds an indeterminate progress track — a stripe that travels, with no
- * percentage on it. That is deliberate and it is the honest shape for the one
- * thing that uses it: folding the earlier turns is a single request to a
- * model, so there are no steps to count and nothing to be a fraction of. A
- * number here would have to be invented, and an invented number is worse than
- * no number, because it is believed.
+ * percentage on it, for a wait that has nothing to measure. (Folding the
+ * earlier turns has its own bar, with a figure, in app.js `compactBar`.)
  */
 export function statusLine(text, { bar = false } = {}) {
   const node = el('div', 'status-line');

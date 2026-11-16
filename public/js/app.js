@@ -4399,7 +4399,7 @@ async function streamOnce(run, decision, answers, handoff = false) {
       runId: run.runId,
       signal: run.abort.signal,
       handlers: {
-        status: ({ phase, name, message, seconds, model, free, stop, folding, chars }) => {
+        status: ({ phase, name, message, seconds, model, free, stop, folding, chars, written, expected }) => {
           if (onScreen(run)) {
             if (phase === 'thinking' || phase === 'waiting' || phase === 'compacting') mascot.show('thinking');
             else if (phase === 'tool' || phase === 'drafting') mascot.show('typing');
@@ -4413,6 +4413,7 @@ async function streamOnce(run, decision, answers, handoff = false) {
               // and this run ending any way at all must (see `stream`'s finally).
               run.compacting = true;
               compactBar.start(folding || 0);
+              if (expected > 0 && typeof written === 'number') compactBar.progress(written, expected);
             }
           }
           else if (phase === 'thinking') {
@@ -5034,20 +5035,28 @@ function renderPolicy() {
  * Folding the conversation up, shown as it happens.
  *
  * One bar above the composer for both kinds — pressed by hand, or started by
- * the run when the window was nearly full. It fills while the summary is
- * written (a single model call, so the fill is time, not steps — it slows
- * toward the end rather than claiming a finish it cannot see), reaches the end
- * when the fold lands, and then gives way to a notice. Sending waits for it.
+ * the run when the window was nearly full. A run reports how much of the
+ * summary is written against how much is expected (server/compact.js), and the
+ * bar and the figure beside the words are that share: an estimate, so it only
+ * rises, stops at 99 until the fold lands, and then reads 100. The hand-pressed
+ * one has no stream to report from, so its bar eases with time and says no
+ * figure. Either way it gives way to a notice, and sending waits for it.
  */
 const compactBar = (() => {
   let timer = null;
   let started = 0;
+  let shown = 0;
   const fill = (ratio) => {
     $('compact-bar-fill').style.width = `${Math.round(ratio * 100)}%`;
     $('compact-bar').setAttribute('aria-valuenow', String(Math.round(ratio * 100)));
   };
+  const figure = (percent) => {
+    shown = percent;
+    fill(percent / 100);
+    $('compact-bar-pct').textContent = `${percent}%`;
+  };
   return {
-    start(count) {
+    start(count, { timed = false } = {}) {
       const bar = $('compact-bar');
       if (count) $('compact-bar-say').textContent = t('compact.progressN', { n: String(count) });
       if (state.compacting) return;
@@ -5056,10 +5065,19 @@ const compactBar = (() => {
       bar.classList.remove('is-done');
       if (!count) $('compact-bar-say').textContent = t('compact.progress');
       started = Date.now();
-      fill(0.03);
       clearInterval(timer);
-      timer = setInterval(() => fill(0.93 * (1 - Math.exp(-(Date.now() - started) / 7000))), 150);
+      $('compact-bar-pct').hidden = timed;
+      if (timed) {
+        fill(0.03);
+        timer = setInterval(() => fill(0.93 * (1 - Math.exp(-(Date.now() - started) / 7000))), 150);
+      } else {
+        figure(0);
+      }
       refreshSendState();
+    },
+    progress(written, expected) {
+      if (!state.compacting || $('compact-bar-pct').hidden) return;
+      figure(Math.max(shown, Math.min(99, Math.round((100 * written) / expected))));
     },
     finish(ok, replaced = 0) {
       clearInterval(timer);
@@ -5067,6 +5085,7 @@ const compactBar = (() => {
       const bar = $('compact-bar');
       if (ok) {
         fill(1);
+        if (!$('compact-bar-pct').hidden) $('compact-bar-pct').textContent = '100%';
         bar.classList.add('is-done');
         $('compact-bar-say').textContent = t('compact.doneBar');
       }
@@ -7721,7 +7740,7 @@ $('context-gauge').addEventListener('click', () => {
       async run() {
         if (!state.chatId) return toast(t('compact.nothing'));
         const chatId = state.chatId;
-        compactBar.start(0);
+        compactBar.start(0, { timed: true });
         try {
           const { summary, context } = await api.compactChat(chatId);
           // The ring is reset now, from the fold, not after the next reply.

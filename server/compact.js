@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { getStore } from './store/index.js';
-import { streamCompletion } from './providers/index.js';
+import { streamCompletion, outputBudget } from './providers/index.js';
 import { priceTurn } from './providers/catalog.js';
 import { record as recordUsage } from './usage.js';
 import { modelForRole } from './roleModel.js';
@@ -36,8 +36,17 @@ import { carriesGoogleData } from './googleData.js';
  */
 const COMPACT_AT = 0.82;
 
-/** Turns kept word for word. Recent context is where the work actually is. */
-const KEEP_RECENT = 8;
+/**
+ * How much of the window the kept tail may take, and the least it may be given.
+ *
+ * Recent context is where the work actually is, but a count of turns says
+ * nothing about their size: eight turns that include one 60K-token reply kept
+ * the whole reply and folded almost nothing, on a chat that was only 54K of
+ * messages. A tenth of the model's own window follows the model; the floor
+ * stops a small window from keeping less than a couple of ordinary turns.
+ */
+const KEEP_SHARE = 0.1;
+const KEEP_FLOOR = 4_000;
 
 /** Assumed window for a model that never said how big its own is. */
 const ASSUMED_CONTEXT = 128_000;
@@ -171,24 +180,46 @@ export const transcriptTokens = (messages) => activeTranscript(messages).reduce(
 
 /** Whether the next turn should fold the older part up first. */
 export function shouldCompact(messages, entry, options = {}) {
-  const { ratio } = measure(messages, entry, options);
-  // Nothing to gain from summarising a conversation that is mostly tail.
-  // Counted on what is sent, not on everything ever said: a transcript already
-  // folded is short, and folding it again would summarise three turns.
-  return ratio >= COMPACT_AT && activeTranscript(messages).length > KEEP_RECENT + 2;
+  const { ratio, context } = measure(messages, entry, options);
+  // Nothing to gain from summarising a conversation that is all tail. Counted on
+  // what is sent, not on everything ever said: a transcript already folded is
+  // short, and folding it again would summarise three turns.
+  return ratio >= COMPACT_AT && tailStart(activeTranscript(messages), { window: context }) >= 1;
 }
 
 /**
- * Where the kept tail begins.
+ * Where the kept tail begins: the newest whole turns that fit a tenth of the window.
  *
- * Never between an assistant turn and the results of the tools it called: every
- * provider rejects a `tool` message whose call it cannot see, so a boundary in
- * the wrong place turns a working conversation into a 400. Walks backwards past
- * any leading tool message until the split is somewhere legal.
+ * Walks back from the newest message adding turns while they fit. The newest
+ * user message and everything after it are kept whatever they weigh — folding
+ * the question being answered would leave the model answering nothing.
+ *
+ * Always a user message, which is what keeps it legal: every provider rejects a
+ * `tool` message whose call it cannot see, so a boundary inside an assistant
+ * turn and its tool results turns a working conversation into a 400. A turn
+ * that only half fits is folded whole rather than cut.
  */
-export function tailStart(messages, keep = KEEP_RECENT) {
-  let start = Math.max(0, messages.length - keep);
-  while (start > 0 && messages[start].role === 'tool') start -= 1;
+export function tailStart(messages, { window = ASSUMED_CONTEXT } = {}) {
+  const budget = Math.max(KEEP_FLOOR, Math.floor(window * KEEP_SHARE));
+  let newest = -1;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].role === 'user') {
+      newest = i;
+      break;
+    }
+  }
+  if (newest < 0) return 0;
+
+  let used = 0;
+  for (let i = messages.length - 1; i > newest; i -= 1) used += estimateTokens(messages[i]);
+  used += estimateTokens(messages[newest]);
+
+  let start = newest;
+  for (let i = newest - 1; i >= 0; i -= 1) {
+    used += estimateTokens(messages[i]);
+    if (used > budget) break;
+    if (messages[i].role === 'user') start = i;
+  }
   return start;
 }
 
@@ -213,7 +244,7 @@ export function activeTranscript(messages) {
    * there. `compact()` writes it with `appendMessage` — `MAX(seq) + 1` — and the
    * loop pushes it onto the end of the array, so it is the *last* element and
    * that slice is empty. The model was handed the summary alone: not the eight
-   * turns `KEEP_RECENT` exists to preserve, and not the question the user had
+   * turns `tailStart` exists to preserve, and not the question the user had
    * just asked, which had been appended moments earlier.
    *
    * It recovered on the following turn, because a new user message then landed
@@ -322,7 +353,8 @@ const SYSTEM = [
  *   userId: string, chatId: string, entry: any, prefs: any, messages: any[],
  *   signal?: AbortSignal,
  *   stream?: (opts: any) => AsyncGenerator<any, void, unknown>,
- *   onProgress?: (p: { folding: number }) => void,
+ *   onProgress?: (p: { folding: number, written?: number, expected?: number }) => void,
+ *   progressEveryMs?: number,
  *   deadline?: number,
  * }} args
  *
@@ -330,21 +362,24 @@ const SYSTEM = [
  * a turn can be stopped, and the chat route does not because a compaction the
  * user asked for by pressing a button has nothing to cancel it.
  */
-export async function compact({ userId, chatId, entry, prefs, messages, signal, stream = streamCompletion, onProgress, deadline }) {
+export async function compact({ userId, chatId, entry, prefs, messages, signal, stream = streamCompletion, onProgress, progressEveryMs = 300, deadline }) {
   const store = getStore();
   const live = activeTranscript(messages);
-  const start = tailStart(live);
+  const start = tailStart(live, { window: Number(entry?.context) || ASSUMED_CONTEXT });
   if (start < 1) return null;
 
   const older = live.slice(0, start);
   /**
    * How many turns are about to be folded, said before the work begins.
    *
-   * The only number about a compaction that is known and true. What follows is
-   * a single request to a model, so there is no second, third or ninetieth
-   * step to count off — a percentage here would be an animation wearing the
-   * costume of a measurement. The interface shows this count and an
-   * indeterminate bar, which is exactly as much as is actually known.
+   * The summary is a single request, so there are no steps to count off and a
+   * percentage made of elapsed time would be an animation dressed as a
+   * measurement. The figure sent below is something else and is an estimate:
+   * the share of the summary written so far, counted from the tokens that
+   * have streamed, against an expected length. That length is guessed from the
+   * size of what is being folded and bounded by the request's own max tokens.
+   * It never moves backwards, and the client holds it under 100 until the
+   * summary is saved, because a guess can be too low but a save cannot be early.
    */
   onProgress?.({ folding: older.length });
   const transcript = older
@@ -383,8 +418,14 @@ export async function compact({ userId, chatId, entry, prefs, messages, signal, 
   const googleData = carriesGoogleData(messages);
   const writer = await modelForRole(userId, 'compaction', entry, prefs, { googleData });
 
+  const foldedTokens = Math.ceil(transcript.length / 4);
+  // A summary runs near a tenth of what it replaces; never under a short note, never over what it may ask for.
+  const expected = Math.max(1, Math.min(outputBudget(writer, foldedTokens), Math.max(400, Math.round(foldedTokens * 0.1))));
   let summary = '';
   let spent = null;
+  let reportedAt = Date.now();
+  let reported = 0;
+  onProgress?.({ folding: older.length, written: 0, expected });
   for await (const ev of stream({
     userId,
     entry: writer,
@@ -403,8 +444,16 @@ export async function compact({ userId, chatId, entry, prefs, messages, signal, 
     // summary that nobody is waiting for.
     signal,
   })) {
-    if (ev.type === 'text') summary += ev.delta;
-    else if (ev.type === 'done' && ev.usage) spent = ev.usage;
+    if (ev.type === 'text') {
+      summary += ev.delta;
+      // Throttled: a model streams dozens of chunks a second and each one would be a status event.
+      const written = Math.ceil(summary.length / 4);
+      if (written > reported && Date.now() - reportedAt >= progressEveryMs) {
+        reported = written;
+        reportedAt = Date.now();
+        onProgress?.({ folding: older.length, written, expected });
+      }
+    } else if (ev.type === 'done' && ev.usage) spent = ev.usage;
   }
 
   /**
@@ -439,7 +488,7 @@ export async function compact({ userId, chatId, entry, prefs, messages, signal, 
      * summary lands at the end of the transcript, so "the first N" is no longer
      * a position anybody can act on. `activeTranscript` needs a boundary rather
      * than a quantity — everything newer than this is the tail, and the tail is
-     * the eight turns `KEEP_RECENT` kept plus whatever the user has said since.
+     * the turns `tailStart` kept plus whatever the user has said since.
      */
     covers: Number(older[older.length - 1]?.seq),
   };
@@ -447,4 +496,4 @@ export async function compact({ userId, chatId, entry, prefs, messages, signal, 
   return message;
 }
 
-export const LIMITS = { compactAt: COMPACT_AT, keepRecent: KEEP_RECENT };
+export const LIMITS = { compactAt: COMPACT_AT, keepShare: KEEP_SHARE, keepFloor: KEEP_FLOOR };
