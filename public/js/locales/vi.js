@@ -2925,6 +2925,8 @@ export const vi = {
   'context.deferred': '{n} công cụ khác chỉ nạp khi cần ({tokens}), chưa tính vào.',
   'context.notMeasured': 'Chi tiết từng phần có sau câu trả lời tiếp theo.',
   'context.estimated': 'Mỗi phần là ước tính; tổng là số nhà cung cấp báo khi có.',
+  'context.cleared': 'Đã lược bỏ kết quả của {n} lần dùng công cụ cũ để tiết kiệm chỗ. Các lần gọi vẫn còn, và mô hình có thể chạy lại khi cần.',
+  'context.clearedOne': 'Đã lược bỏ kết quả của 1 lần dùng công cụ cũ để tiết kiệm chỗ. Lần gọi vẫn còn, và mô hình có thể chạy lại khi cần.',
   'work.running': 'Đang chạy… {s} giây',
   'search.searching': 'Đang tìm…',
   'models.contextM': 'ngữ cảnh {n}M',

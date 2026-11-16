@@ -2939,6 +2939,8 @@ export const en = {
   'context.deferred': '{n} more tools load only when needed ({tokens}) and are not counted.',
   'context.notMeasured': 'The breakdown by part appears after the next reply.',
   'context.estimated': 'Each part is an estimate; the total is the provider’s own count when there is one.',
+  'context.cleared': '{n} old tool results were cleared to save room. The calls are still there, and the model can run them again.',
+  'context.clearedOne': '1 old tool result was cleared to save room. The call is still there, and the model can run it again.',
   'work.running': 'Running… {s}s',
   'search.searching': 'Searching…',
   'models.contextM': '{n}M context',

@@ -26,7 +26,7 @@ import { priceTurn, isFreeEntry } from './providers/catalog.js';
 import { loadForTranscript, pdfTextsOf, toParts } from './attachments.js';
 import { projectPrompt } from './projects.js';
 import { freeFallbackFor } from './recommend.js';
-import { compact, shouldCompact, measure, activeTranscript, transcriptTokens } from './compact.js';
+import { compact, shouldCompact, measure, activeTranscript, transcriptTokens, clearOldResults } from './compact.js';
 import { promptParts, contextBreakdown } from './contextParts.js';
 import { log, annotate, currentTrace, withTrace } from './util/trace.js';
 import { mapWithLimit, MAX_PARALLEL_TOOLS } from './util/parallel.js';
@@ -2404,6 +2404,12 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
     // Something plugged in (or taken out) since the turn began is in this step's tools.
     if (step > 0) await refreshConnections();
 
+    // Old tool results are cleared from what is sent before anything is folded
+    // (clearOldResults): the fold, the gauge and the request all read this view, so a
+    // conversation that clearing brings back under the line is not summarised.
+    // `messages` stays what is stored, which the gate and the checks read.
+    let view = clearOldResults(messages, entry);
+
     /**
      * Fold the older turns up before they stop fitting.
      *
@@ -2412,7 +2418,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
      * *before* the request is what makes it work at all. Waiting until the
      * provider refuses means the compaction call has no room either.
      */
-    if (prefs.autoCompact !== false && shouldCompact(messages, entry)) {
+    if (prefs.autoCompact !== false && shouldCompact(view.messages, entry)) {
       emit('status', { phase: 'compacting' });
       try {
         const summary = await compact({
@@ -2420,7 +2426,8 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
           chatId,
           entry,
           prefs,
-          messages,
+          messages: view.messages,
+          clearedTo: view.line,
           signal,
           // Said as soon as the count is known, which is before the request
           // goes out: "folding 24 earlier turns" is a great deal more settling
@@ -2430,6 +2437,7 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
         });
         if (summary) {
           messages.push(summary);
+          view = clearOldResults(messages, entry);
           emit('compacted', { replaced: summary.replaced, text: summary.text });
         }
       } catch (err) {
@@ -2448,10 +2456,10 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
        */
       const offered = buildTools();
       const parts = promptParts({ system, skills, memory, project: project?.briefing, tools: offered, deferred: deferredTools(offered) });
-      const info = measure(messages, entry);
-      const breakdown = contextBreakdown(info, parts, transcriptTokens(messages));
+      const info = measure(view.messages, entry);
+      const breakdown = contextBreakdown(info, parts, transcriptTokens(view.messages));
       stepInput = Number(breakdown?.used ?? info.used) || 0;
-      emit('context', { ...info, breakdown });
+      emit('context', { ...info, breakdown, cleared: view.cleared });
       const written = JSON.stringify(parts);
       if (written !== partsWritten) {
         partsWritten = written;
@@ -2461,6 +2469,9 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
     emit('status', { phase: 'thinking', step: step + 1, model: entry.label });
 
     const assistant = { id: newId(), role: 'assistant', text: '', thinking: '', toolCalls: [] };
+    // What this request had cleared, kept beside its usage: the next step reads the
+    // provider's figure by it and starts its own line there (clearOldResults).
+    if (view.line != null) assistant.clearedTo = view.line;
     let done = null;
     /** What to book once the reply itself is safely stored. See below. */
     let pendingUsage = null;
@@ -2544,8 +2555,9 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
        * conversation moved on from. That answer is never stored, so it has no seq,
        * and once a fold chooses the tail by seq it was dropped while its call was
        * kept: a call with no result, which strict providers refuse with a 400.
+       * Built from the cleared view, the one the fold and the gauge were decided on.
        */
-      const sendable = normaliseOrder(activeTranscript(messages));
+      const sendable = normaliseOrder(activeTranscript(view.messages));
       // Where the plan stands rides on the tool results — see progress.js.
       const tracked = withProgressNotes(
         // The reasoning level in words, on every turn (effortNote).

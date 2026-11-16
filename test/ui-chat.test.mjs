@@ -1673,6 +1673,38 @@ data: ${JSON.stringify(data)}
   await page.unroute('**/api/chats/cmp-hand/compact');
 }
 
+section('The gauge says how many old tool results were cleared from what is sent');
+{
+  await seed('ctx-cleared', 'Cleared');
+  await reload();
+  await openRow('ctx-cleared');
+  const frame = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  const info = { used: 40_000, context: 200_000, budget: 136_000, ratio: 0.29, exact: false, provided: true, assumed: false, cleared: 9, breakdown: null };
+  const body = [frame('context', info), frame('done', {})].join('');
+  await page.route('**/api/chats/ctx-cleared/run', (route) => route.fulfill({ status: 200, contentType: 'text/event-stream', body }));
+  // Every title the gauge is given, since reopening the conversation afterwards measures it again.
+  await page.evaluate(() => {
+    const seen = [];
+    /** @type {any} */ (window).__gaugeTitles = seen;
+    const gauge = document.getElementById('context-gauge');
+    new MutationObserver(() => seen.push(gauge.title)).observe(gauge, { attributes: true, attributeFilter: ['title'] });
+  });
+  await page.fill('#input', 'carry on');
+  await page.click('#send');
+  await page.waitForFunction(() => /** @type {any} */ (window).__gaugeTitles.some((t) => /9 old tool results/.test(t)), null, { timeout: 8000 }).catch(() => {});
+  const titles = await page.evaluate(() => /** @type {any} */ (window).__gaugeTitles);
+  check('the gauge\'s tooltip says how many old results were cleared', titles.some((t) => /9 old tool results/.test(t) && /20% of the context window/.test(t)), titles.join(' | '));
+  const lines = await page.evaluate(async (given) => {
+    const { contextPanel } = await import('/js/context-panel.js');
+    const read = (n) => [...contextPanel({ ...given, cleared: n }).querySelectorAll('.ctx__note')].map((p) => p.textContent).join(' | ');
+    return { many: read(9), one: read(1), none: read(0) };
+  }, info);
+  check('and its panel says it in a line of its own', /9 old tool results/.test(lines.many), lines.many);
+  check('  one result reads as one', /1 old tool result was/.test(lines.one), lines.one);
+  check('  and with nothing cleared there is no such line', !/old tool result/.test(lines.none), lines.none);
+  await page.unroute('**/api/chats/ctx-cleared/run');
+}
+
 /* ── done ───────────────────────────────────────────────────────── */
 
 await browser.close();

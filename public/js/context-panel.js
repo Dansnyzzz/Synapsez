@@ -28,6 +28,10 @@ export function fmtTokens(value) {
   return String(n);
 }
 
+// How many old tool results the request leaves out (server/compact.js clearOldResults),
+// in the same words for the gauge's tooltip and its panel; nothing when there are none.
+export const clearedLine = (n) => (n > 0 ? t(n === 1 ? 'context.clearedOne' : 'context.cleared', { n }) : '');
+
 /** A share of the window as people read one: "2.1%", "<0.1%", "0%". */
 function pct(part, whole) {
   if (!whole || !part) return '0%';
@@ -87,7 +91,7 @@ function fold(title, count, list, perRow = null) {
 /**
  * The panel itself.
  *
- * @param {{ used: number, context: number, assumed?: boolean, breakdown?: any }} info  what the gauge was given
+ * @param {{ used: number, context: number, assumed?: boolean, cleared?: number, breakdown?: any }} info  what the gauge was given
  */
 export function contextPanel(info) {
   const context = Number(info?.context) || 0;
@@ -107,6 +111,9 @@ export function contextPanel(info) {
   );
   panel.append(head);
   if (info?.assumed) panel.append(node('p', 'ctx__note', t('context.assumedNote', { total: fmtTokens(context) })));
+  // Before the bar: the figures under it are what is sent once those are left out.
+  const cleared = clearedLine(Number(info?.cleared) || 0);
+  if (cleared) panel.append(node('p', 'ctx__note', cleared));
 
   // What is drawn, in order: the measured parts (or "used" as one piece before
   // anything was measured), the free track, and the reply's room at the end.

@@ -19,7 +19,7 @@ const { initStore } = await import('../server/store/index.js');
 const store = await initStore();
 const { hashPassword } = await import('../server/crypto.js');
 const { normaliseOrder } = await import('../server/agent.js');
-const { tailStart, shouldCompact, compact, activeTranscript, foldPoint, measure, transcriptTokens } = await import('../server/compact.js');
+const { tailStart, shouldCompact, compact, activeTranscript, foldPoint, measure, transcriptTokens, clearOldResults } = await import('../server/compact.js');
 
 let failures = 0;
 const section = (name) => console.log(`\n\x1b[1m${name}\x1b[0m`);
@@ -605,6 +605,170 @@ section('the summary request asks for what its figure is measured against');
   const expected = events.find((p) => p.expected)?.expected;
   check('max tokens is passed to the request', Number.isFinite(asked) && asked > 0, String(asked));
   check('and expected never exceeds it', expected <= asked, `${expected} <= ${asked}`);
+}
+
+/*
+ * Task 6b (owner, 2026-11-16): before a summary is ever needed, old tool results in
+ * what is sent become a short stub. What is stored is never touched.
+ */
+section('old tool results are cleared from what is sent, before a summary is needed');
+{
+  const STUB = '[Output cleared to save room — call the tool again if you need it.]';
+  // A 128K window with 16K kept for a reply: a 112,000 budget. 60% is 67,200, 10% is 11,200, 82% is 91,840.
+  const entry = { context: 128_000, maxOutput: 16_000 };
+  const budget = measure([], entry).budget;
+  // Before 6b nothing was cleared, which is the identity: each check below then says what is missing.
+  const clear = typeof clearOldResults === 'function' ? clearOldResults : (list) => ({ messages: list, cleared: 0, freed: 0, line: null });
+  const read = async (chatId, m, tokens, extra = {}, reply = {}) => {
+    const call = await add(chatId, m, 'assistant', 100, { toolCalls: [{ id: `c${ids}`, name: 'read_file', input: { path: `f${ids}` } }], ...reply });
+    return add(chatId, m, 'tool', 0, { results: [{ toolCallId: call.toolCalls[0].id, name: 'read_file', content: 'r'.repeat(tokens * 4), ...extra }] });
+  };
+  const sentOf = (list) => normaliseOrder(activeTranscript(list));
+  // Every result straight after the call that asked for it, and every call but a last one answered.
+  const paired = (list) =>
+    list.every((x, i) => x.role !== 'tool' || (x.results || []).every((r) => list[i - 1]?.toolCalls?.some((c) => c.id === r.toolCallId))) &&
+    list.every((x, i) => !x.toolCalls?.length || i === list.length - 1 || x.toolCalls.every((c) => list[i + 1]?.results?.some((r) => r.toolCallId === c.id)));
+  const toolsIn = (list) => list.filter((x) => x.role === 'tool');
+  const stubbed = (x) => !!x && (x.results || []).every((r) => r.content === STUB);
+
+  {
+    const chat = 'c-clear-low';
+    await store.createChat(user.id, { id: chat, title: 'Below the line', model: 'm' });
+    const m = [];
+    await add(chat, m, 'user', 500);
+    for (let i = 0; i < 8; i += 1) await read(chat, m, 6_000);
+    const view = clear(m, entry);
+    const ratio = measure(m, entry).ratio;
+    check('under 60% of the budget nothing is cleared', ratio < 0.6 && view.cleared === 0 && view.messages.length === m.length && view.messages.every((x, i) => x === m[i]), `${ratio.toFixed(2)}, ${view.cleared}`);
+  }
+
+  {
+    const chat = 'c-clear-high';
+    await store.createChat(user.id, { id: chat, title: 'Over the line', model: 'm' });
+    const m = [];
+    await add(chat, m, 'user', 500);
+    const tools = [];
+    for (let i = 0; i < 14; i += 1) {
+      // Step 2 is small; step 4 is a picture read with a few words beside it.
+      const tokens = i === 2 ? 900 : i === 4 ? 200 : 6_000;
+      const extra = i === 4 ? { shot: { id: 'pic-1', name: 'figure.png' }, pictures: [{ id: 'pic-1', name: 'figure.png' }] } : {};
+      tools.push(await read(chat, m, tokens, extra));
+    }
+    const before = JSON.stringify(m);
+    const view = clear(m, entry);
+    const at = (i) => toolsIn(view.messages).find((x) => x.id === tools[i].id);
+    check('over 60% of the budget', measure(m, entry).ratio >= 0.6, measure(m, entry).ratio.toFixed(2));
+    check('results older than the newest three become the stub', [0, 1, 3, 5, 6, 7, 8, 9, 10].every((i) => stubbed(at(i))), toolsIn(view.messages).map((x) => (stubbed(x) ? 'S' : '.')).join(''));
+    check(
+      '  in their own place, with their call id and tool name',
+      [0, 1, 3].every((i) => at(i)?.results[0].toolCallId === tools[i].results[0].toolCallId && at(i).results[0].name === 'read_file') &&
+        view.messages.findIndex((x) => x.id === tools[3].id) === m.findIndex((x) => x.id === tools[3].id),
+    );
+    check('  and the calls themselves are sent as they were', view.messages.filter((x) => x.role === 'assistant').every((x) => m.includes(x)));
+    check('the newest three stay word for word', [11, 12, 13].every((i) => JSON.stringify(at(i)) === JSON.stringify(tools[i])));
+    check('a result under 1,000 tokens stays', JSON.stringify(at(2)) === JSON.stringify(tools[2]));
+    check('a picture result is cleared, its pictures with it', stubbed(at(4)) && !at(4).results[0].pictures && !at(4).results[0].shot);
+    check('the count says how many were cleared', view.cleared === 10, String(view.cleared));
+    check('what is sent is measured after clearing', measure(view.messages, entry).used < measure(m, entry).used - 50_000, `${measure(view.messages, entry).used} vs ${measure(m, entry).used}`);
+    check('no tool result is sent without its call', paired(sentOf(view.messages)));
+    check('the stored messages are unchanged', JSON.stringify(m) === before && m.find((x) => x.id === tools[0].id).results[0].content.length === 24_000);
+
+    // A step with five calls at once: all five are the step being answered.
+    const many = await add(chat, m, 'assistant', 100, { toolCalls: [0, 1, 2, 3, 4].map((k) => ({ id: `p${k}`, name: 'read_file', input: { path: `p${k}` } })) });
+    const batch = await add(chat, m, 'tool', 0, { results: many.toolCalls.map((c) => ({ toolCallId: c.id, name: 'read_file', content: 'p'.repeat(24_000) })) });
+    const wide = clear(m, entry);
+    check('every result of the current step stays, even past three', JSON.stringify(toolsIn(wide.messages).find((x) => x.id === batch.id)) === JSON.stringify(batch));
+    check('  and the three before it, no longer the newest, are cleared', [11, 12, 13].every((i) => stubbed(toolsIn(wide.messages).find((x) => x.id === tools[i].id))));
+    check('  every call still answered', paired(sentOf(wide.messages)));
+  }
+
+  {
+    const chat = 'c-clear-batch';
+    await store.createChat(user.id, { id: chat, title: 'Batches', model: 'm' });
+    const m = [];
+    await add(chat, m, 'user', 66_000);
+    for (let i = 0; i < 6; i += 1) await read(chat, m, 3_000);
+    const small = clear(m, entry);
+    const ratio = measure(m, entry).ratio;
+    check('over 60%, but a batch that frees under 10% of the budget clears nothing', ratio >= 0.6 && small.cleared === 0 && small.messages.every((x, i) => x === m[i]), `${ratio.toFixed(2)}, ${small.cleared}`);
+    await read(chat, m, 3_000);
+    const enough = clear(m, entry);
+    check('one step later the four old results go at once', enough.cleared === 4 && enough.freed >= budget * 0.1, `${enough.cleared}, ${enough.freed}`);
+  }
+
+  {
+    const chat = 'c-clear-stable';
+    await store.createChat(user.id, { id: chat, title: 'Stable prefix', model: 'm' });
+    const m = [];
+    await add(chat, m, 'user', 500);
+    for (let i = 0; i < 14; i += 1) await read(chat, m, 6_000);
+    let view = clear(m, entry);
+    const first = view.cleared;
+    let batches = 0;
+    let drift = '';
+    let lost = '';
+    let under = false;
+    for (let s = 0; s < 24; s += 1) {
+      // As the loop does: the reply a request wrote says what that request had cleared.
+      await read(chat, m, 6_000, {}, view.line == null ? {} : { clearedTo: view.line });
+      const next = clear(m, entry);
+      const was = sentOf(view.messages);
+      if (next.line === view.line) {
+        if (JSON.stringify(sentOf(next.messages).slice(0, was.length)) !== JSON.stringify(was)) drift += `${s} `;
+        if (measure(next.messages, entry).ratio < 0.6) under = true;
+      } else {
+        batches += 1;
+        if (next.freed - view.freed < budget * 0.1) drift += `${s}(under 10%) `;
+      }
+      const gone = toolsIn(view.messages).filter(stubbed).map((x) => x.id);
+      if (!gone.every((id) => stubbed(toolsIn(next.messages).find((x) => x.id === id)))) lost += `${s} `;
+      view = next;
+    }
+    check('the first batch clears every old result', first === 11, String(first));
+    check('between batches the next step sends the same prefix, byte for byte', drift === '', drift);
+    check('  and what is sent may fall back under 60%: a cleared result stays cleared', under && lost === '', lost);
+    check('later batches come, each freeing at least 10% of the budget', batches >= 2, String(batches));
+  }
+
+  {
+    const chat = 'c-clear-85';
+    await store.createChat(user.id, { id: chat, title: '85 per cent', model: 'm' });
+    const m = [];
+    await add(chat, m, 'user', 500);
+    for (let i = 0; i < 5; i += 1) await read(chat, m, 6_000);
+    // The provider's figure for a request nothing had been cleared from, with the newest result on top: 85%.
+    usage(m, Math.round(budget * 0.85) - 6_000);
+    const view = clear(m, entry);
+    const before = measure(m, entry).ratio;
+    const after = measure(view.messages, entry).ratio;
+    check('a chat at 85% is over the fold line before clearing', before >= 0.849 && shouldCompact(m, entry) === true, before.toFixed(3));
+    check('clearing brings it under 82%, so it is not folded', after < 0.82 && shouldCompact(view.messages, entry) === false, after.toFixed(3));
+
+    // The next reply was counted on the cleared request, and says so: nothing comes off twice.
+    const counted = measure(view.messages, entry).used + 200;
+    await read(chat, m, 6_000, {}, { clearedTo: view.line, usage: { input: counted } });
+    const later = clear(m, entry);
+    check('a figure counted on the cleared request is not reduced again', measure(later.messages, entry).used === counted + 6_000, `${measure(later.messages, entry).used} vs ${counted + 6_000}`);
+  }
+
+  {
+    const chat = 'c-clear-fold';
+    await store.createChat(user.id, { id: chat, title: 'Fold after clearing', model: 'm' });
+    const m = [];
+    for (let i = 0; i < 4; i += 1) await add(chat, m, i % 2 ? 'assistant' : 'user', 9_000);
+    await add(chat, m, 'user', 500);
+    for (let i = 0; i < 14; i += 1) await read(chat, m, i < 11 ? 5_000 : 1_500);
+    const view = clear(m, entry);
+    const summary = await compact({ userId: user.id, chatId: chat, entry, prefs: {}, messages: view.messages, clearedTo: view.line, stream: quiet });
+    if (summary) m.push(summary);
+    const after = clear(m, entry);
+    const cleared = new Set(toolsIn(view.messages).filter(stubbed).map((x) => x.id));
+    const kept = toolsIn(activeTranscript(after.messages)).filter((x) => cleared.has(x.id));
+    // Uncleared, the folded transcript is under 60%: only the line the fold kept holds these stubs in place.
+    check('a fold after clearing keeps cleared results in its tail', !!summary && kept.length === 11, `${kept.length}`);
+    check('  and they are still cleared after it', kept.length > 0 && kept.every(stubbed));
+    check('  every call still answered', paired(sentOf(after.messages)));
+  }
 }
 
 removeTemp(process.env.DATA_DIR);

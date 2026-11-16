@@ -119,7 +119,16 @@ export function measure(messages, entry, { maxOutput } = {}) {
     }
   }
 
-  let used = counted;
+  // Results cleared since the request the provider counted were in its figure whole
+  // (clearOldResults). Each cleared copy says what it took out, and the reply says how
+  // far its own request had cleared already, so nothing comes off twice.
+  const had = lastCounted >= 0 ? lineOf(messages[lastCounted]) : -Infinity;
+  let since = 0;
+  for (let i = 0; i < lastCounted; i += 1) {
+    const m = messages[i];
+    if (m.clearedTokens && !(Number(m.seq) <= had)) since += Number(m.clearedTokens) || 0;
+  }
+  let used = Math.max(0, counted - since);
   for (let i = lastCounted + 1; i < messages.length; i += 1) used += estimateTokens(messages[i]);
 
   /**
@@ -174,7 +183,7 @@ export function measure(messages, entry, { maxOutput } = {}) {
     budget,
     ratio: Math.min(1, used / budget),
     // `counted` is exact; anything past it is arithmetic on character counts.
-    exact: !folded && lastCounted === messages.length - 1,
+    exact: !folded && lastCounted === messages.length - 1 && !since,
     // Whether `used` rests on a provider's figure at all — which, unlike the
     // estimate, includes the system prompt and the tools. See contextParts.js.
     provided: !folded && lastCounted >= 0,
@@ -415,6 +424,101 @@ export function activeTranscript(messages) {
   ];
 }
 
+/*
+ * Old tool output, cleared from what is sent before a summary is ever needed (owner,
+ * 2026-11-16). Most of a long run is results the model has already read and acted on;
+ * a stub in their place is what providers' own context editing does, costs no model
+ * call, and was found about as good as summarising. A result under CLEAR_MIN is not
+ * worth the cache it breaks. One that carried pictures goes whatever its words weigh,
+ * and its pictures with it, so `withLookedPictures` (fileLook.js) cannot show them again.
+ */
+const CLEAR_AT = 0.6;
+const CLEAR_BATCH = 0.1;
+const CLEAR_KEEP = 3;
+const CLEAR_MIN = 1_000;
+export const CLEARED = '[Output cleared to save room — call the tool again if you need it.]';
+
+// How far the request that wrote this message had cleared, or nothing. Only a number
+// counts: a null read through Number() would be seq 0 and clear the first result.
+const lineOf = (m) => (typeof m?.clearedTo === 'number' && Number.isFinite(m.clearedTo) ? m.clearedTo : -Infinity);
+
+/**
+ * The transcript with old tool results cleared, as the next request should send it.
+ *
+ * Once what would be sent passes 60% of the gauge's budget, results older than the
+ * three newest, and none of the step being answered, are sent as `CLEARED`. The call
+ * stays, and the result keeps its place, its call id and its tool name, so the model
+ * knows what it did and no call is ever without its result. Only copies change: what
+ * is stored, and so the page, keeps every result whole.
+ *
+ * Why batches, and why the line is kept on the reply. A prompt cache is a prefix
+ * match, so clearing breaks it from the first changed message on; one result per
+ * step would break it every step. So it goes in batches, only when one frees at least a
+ * tenth of the budget, and what is cleared is a line by seq that only moves forward:
+ * every result worth clearing in a tool message at or below it. Between batches a
+ * request is the one before plus the new step, byte for byte. The line is not worked
+ * out afresh each step because the 60% test needs the provider's own figure (four
+ * characters a token is far off for Vietnamese and for code), and that figure was
+ * counted on a request already cleared to some line: reading it needs to know which.
+ * So the reply a request wrote keeps its line (`clearedTo`, beside its `usage`), and
+ * so does a summary, whose tail was chosen on the cleared sizes. A step starts from
+ * the highest line kept and moves it only for a batch, so the same transcript and
+ * budget always clear the same results.
+ *
+ * @param {any[]} messages  as stored, in request order
+ * @param {any} entry  the model, for the budget
+ * @param {{ maxOutput?: number }} [options]  as `measure`
+ * @returns {{ messages: any[], cleared: number, freed: number, line: number | null }}
+ *   `messages` is the same array when nothing is cleared; `cleared` counts the results
+ *   sent as the stub, `freed` the tokens that saves, `line` is what to keep on the reply.
+ */
+export function clearOldResults(messages, entry, options = {}) {
+  const live = activeTranscript(messages);
+  // Walked back from the newest: every tool message after the newest reply is the step
+  // being answered, and the three newest results are kept with it, however many messages hold them.
+  const lastReply = live.findLastIndex((m) => m.role === 'assistant');
+  let open = live.length;
+  let newer = 0;
+  for (let i = live.length - 1; i >= 0; i -= 1) {
+    if (live[i].role !== 'tool') continue;
+    if (i < lastReply && newer >= CLEAR_KEEP) break;
+    open = i;
+    newer += (live[i].results || []).length;
+  }
+  // Older than all of those, and stored: only a seq can be held against a line.
+  const old = live.slice(0, open).filter((m) => m.role === 'tool' && Number.isFinite(Number(m.seq)));
+  const floor = messages.reduce((line, m) => Math.max(line, lineOf(m)), -Infinity);
+  const worth = (r) => estimateTokens({ results: [r] }) >= CLEAR_MIN || !!r?.shot || (Array.isArray(r?.pictures) && r.pictures.length > 0);
+
+  const upTo = (line) => {
+    const swap = new Map();
+    let cleared = 0;
+    let freed = 0;
+    for (const m of old) {
+      if (!(Number(m.seq) <= line)) continue;
+      const hits = (m.results || []).filter(worth).length;
+      if (!hits) continue;
+      // Only what a provider reads of a result: the call it answers, the tool, whether it failed.
+      const copy = { ...m, results: m.results.map((r) => (worth(r) ? { toolCallId: r.toolCallId, ...(r.name ? { name: r.name } : {}), content: CLEARED, ...(r.isError ? { isError: true } : {}) } : r)) };
+      // What it took out, in measure's own unit, so a figure counted before it can be read.
+      copy.clearedTokens = estimateTokens(m) - estimateTokens(copy);
+      swap.set(m, copy);
+      cleared += hits;
+      freed += copy.clearedTokens;
+    }
+    return { messages: swap.size ? messages.map((m) => swap.get(m) || m) : messages, cleared, freed, line: Number.isFinite(line) ? line : null };
+  };
+
+  const kept = upTo(floor);
+  if (!old.length) return kept;
+  const { ratio, budget } = measure(kept.messages, entry, options);
+  if (ratio < CLEAR_AT) return kept;
+  const reach = old.reduce((n, m) => Math.max(n, Number(m.seq)), -Infinity);
+  if (!(reach > floor)) return kept;
+  const next = upTo(reach);
+  return next.freed - kept.freed >= budget * CLEAR_BATCH ? next : kept;
+}
+
 /**
  * Every way a line can end: CRLF, LF, a lone CR, and the Unicode line and
  * paragraph separators, which a model reading the transcript may take as a
@@ -491,13 +595,14 @@ const SYSTEM = [
  *   onProgress?: (p: { folding: number, written?: number, expected?: number }) => void,
  *   progressEveryMs?: number,
  *   deadline?: number,
+ *   clearedTo?: number | null,
  * }} args
  *
  * `signal` is optional and was not marked so: the agent loop passes one because
  * a turn can be stopped, and the chat route does not because a compaction the
  * user asked for by pressing a button has nothing to cancel it.
  */
-export async function compact({ userId, chatId, entry, prefs, messages, signal, stream = streamCompletion, onProgress, progressEveryMs = 300, deadline }) {
+export async function compact({ userId, chatId, entry, prefs, messages, signal, stream = streamCompletion, onProgress, progressEveryMs = 300, deadline, clearedTo = null }) {
   const store = getStore();
   const live = activeTranscript(messages);
   const fold = foldPoint(live, { window: Number(entry?.context) || ASSUMED_CONTEXT, budget: measure(messages, entry).budget });
@@ -644,9 +749,12 @@ export async function compact({ userId, chatId, entry, prefs, messages, signal, 
     covers: newest,
     // The question this fold left behind, when it cut inside its turn: `activeTranscript` puts it back.
     ...(fold.question ? { question: fold.question } : {}),
+    // The line the kept tail was measured with, which clearOldResults holds from here:
+    // with fewer results cleared after the fold, the tail would outgrow what was chosen.
+    ...(typeof clearedTo === 'number' && Number.isFinite(clearedTo) ? { clearedTo } : {}),
   };
   // The stored copy, which has its seq: the loop keeps this object, and without a seq `covers` of the next fold is NaN.
   return store.appendMessage(userId, chatId, message);
 }
 
-export const LIMITS = { compactAt: COMPACT_AT, keepShare: KEEP_SHARE, keepFloor: KEEP_FLOOR };
+export const LIMITS = { compactAt: COMPACT_AT, keepShare: KEEP_SHARE, keepFloor: KEEP_FLOOR, clearAt: CLEAR_AT, clearBatch: CLEAR_BATCH, clearKeep: CLEAR_KEEP, clearMin: CLEAR_MIN };

@@ -52,6 +52,19 @@ flat however long the conversation runs. Verify:
   Vietnamese, and the design already accounts for that by keeping its blast
   radius to a few messages. Do not widen it.
 
+Before any fold, `clearOldResults` sends old tool results as a fixed stub once the
+request passes `CLEAR_AT` (60% of the budget): everything but the 3 newest results
+and the step being answered, results under `CLEAR_MIN` (1,000 tokens) kept unless
+they carry pictures. It clears in batches of at least `CLEAR_BATCH` (10% of the
+budget) up to a seq line that only moves forward and is kept on the reply
+(`clearedTo`) and on a summary. Verify:
+
+- the stored transcript is never changed, and every call is still sent with its result;
+- between batches a request is the previous one plus the new step, byte for byte;
+- the gauge, `shouldCompact` and the request all read the same cleared view, and a
+  provider figure counted before a batch has the batch's estimate taken off it once,
+  never twice (that subtraction is the one other place the estimate is used).
+
 ## 3. Output budget
 
 `outputBudget(entry)` derives `max_tokens` from the model's own cap, clamped

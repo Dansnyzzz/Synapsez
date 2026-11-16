@@ -6,7 +6,7 @@ import { pastedOpening, verifyOwned } from '../attachments.js';
 import { deriveTitle, needsApproval as pendingApproval, normaliseOrder } from '../agent.js';
 import { changesRule, ruleNotesInReach, RULE_REASON } from '../memory.js';
 import { normaliseQuestions, askLayout } from '../tools/askOptions.js';
-import { compact as compactChat, measure as measureContext, transcriptTokens } from '../compact.js';
+import { compact as compactChat, measure as measureContext, transcriptTokens, clearOldResults } from '../compact.js';
 import { contextBreakdown } from '../contextParts.js';
 import { settledAfterStop } from '../liveRuns.js';
 
@@ -195,9 +195,12 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
         // The account's model, not the one stored on the conversation — the gauge
         // has to be measured against the window the next turn will actually use.
         const entry = await resolveForUser(req.user.id, (await getPrefs(req.user.id)).defaultModel);
-        context = measureContext(messages, entry);
+        // What the next step would send: in request order, old tool results cleared (compact.js).
+        const view = clearOldResults(normaliseOrder(messages), entry);
+        context = measureContext(view.messages, entry);
         // What it is spent on, from the parts the last step measured (contextParts.js).
-        context.breakdown = contextBreakdown(context, chat.context_parts, transcriptTokens(messages));
+        context.breakdown = contextBreakdown(context, chat.context_parts, transcriptTokens(view.messages));
+        context.cleared = view.cleared;
       } catch {
         /* an unresolvable model is the model picker's problem, not the gauge's */
       }
@@ -462,6 +465,8 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
       // performed against the window the next turn will run in. Through
       // resolveForUser so Auto expands to the free model it would actually pick.
       const entry = await resolveForUser(req.user.id, prefs.defaultModel);
+      // Folded as a turn would fold it: on what is sent, old tool results cleared first.
+      const view = clearOldResults(messages, entry);
 
       /**
        * Not until there is something worth folding.
@@ -470,7 +475,7 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
        * since — a model call to save almost nothing, and one more "summarised"
        * line in the transcript each time. A quarter of the window is the floor.
        */
-      if (measureContext(messages, entry).ratio < MIN_MANUAL_COMPACT) {
+      if (measureContext(view.messages, entry).ratio < MIN_MANUAL_COMPACT) {
         return res.status(400).json({
           error: 'This conversation uses under 25% of the window, so there is nothing worth folding yet.',
         });
@@ -492,15 +497,17 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
           chatId,
           entry,
           prefs,
-          messages,
+          messages: view.messages,
+          clearedTo: view.line,
           onProgress: (p) => send('status', { phase: 'compacting', ...p }),
         });
         if (!summary) {
           send('error', { error: translateMessage('There is not enough here yet to be worth folding up.', languageOf(req)) });
         } else {
-          const folded = [...messages, summary];
-          const context = measureContext(folded, entry);
-          context.breakdown = contextBreakdown(context, chat.context_parts, transcriptTokens(folded));
+          const folded = clearOldResults([...messages, summary], entry);
+          const context = measureContext(folded.messages, entry);
+          context.breakdown = contextBreakdown(context, chat.context_parts, transcriptTokens(folded.messages));
+          context.cleared = folded.cleared;
           send('compacted', { summary: { id: summary.id, text: summary.text, replaced: summary.replaced }, context });
         }
       } catch (err) {

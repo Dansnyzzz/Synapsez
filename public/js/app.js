@@ -63,7 +63,7 @@ import { createFeedback, renderFeedbackList, transcriptLines, answerLines } from
 import { createAnswerFeedback } from './answer-feedback.js';
 import { CONNECTOR_BY_ID } from './connector-catalog.js';
 import { createChangelog, appVersion } from './changelog.js';
-import { contextPanel } from './context-panel.js';
+import { contextPanel, clearedLine } from './context-panel.js';
 import { createModelNews } from './model-news.js';
 import { createTwoFactor } from './two-factor.js';
 import { createPrivacy } from './privacy.js';
@@ -7684,7 +7684,10 @@ function renderContext(info) {
   gauge.classList.toggle('is-warm', ratio >= 0.6);
   gauge.classList.toggle('is-hot', ratio >= 0.85);
 
-  gauge.title = t(info.exact ? 'context.gauge' : 'context.gaugeEstimated', { percent, used: fmtK(info.used), total: fmtK(info.context) });
+  const said = t(info.exact ? 'context.gauge' : 'context.gaugeEstimated', { percent, used: fmtK(info.used), total: fmtK(info.context) });
+  // The figure is what is sent, so it says when old tool results were left out of it.
+  const cleared = clearedLine(Number(info.cleared) || 0);
+  gauge.title = cleared ? `${said}\n${cleared}` : said;
 }
 
 /** How full the window is, from 0 to 1. */

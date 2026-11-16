@@ -3485,6 +3485,93 @@ section('a call nobody approved keeps its "not run" answer once the conversation
   check('  and the call it still holds is answered right after it', at > 0 && sent[at + 1]?.role === 'tool' && sent[at + 1].results?.some((r) => r.toolCallId === 'k-nr' && r.isError), JSON.stringify(sent?.map((m) => `${m.role}:${m.id}`)));
 }
 
+section('old tool results are cleared before a summary is needed, through the loop (owner, 2026-11-16)');
+{
+  const { measure } = await import('../server/compact.js');
+  const STUB = '[Output cleared to save room — call the tool again if you need it.]';
+  // A 200K window with 64K kept for a reply: a 136,000 budget. 60% is 81,600, 82% is 111,520.
+  const MODEL = 'anthropic/claude-haiku-4-5';
+  const entry = { context: 200_000, maxOutput: 64_000 };
+  const budget = measure([], entry).budget;
+  const owner = await store.createUser({ id: 'u-clear', email: 'clear@example.com', name: 'Clear', passwordHash: 'x', role: 'admin' });
+  const tokensOf = (list) =>
+    list.reduce((n, m) => n + Math.ceil(((m.text || '').length + (m.toolCalls || []).reduce((s, c) => s + c.name.length + JSON.stringify(c.input ?? {}).length, 0) + (m.results || []).reduce((s, r) => s + String(r.content ?? '').length, 0)) / 4), 0);
+  // A stored conversation: a question, `steps` file reads of `size` tokens each, then a line asking to carry on.
+  const seed = async (chatId, steps, size, input) => {
+    await store.createChat(owner.id, { id: chatId, title: chatId });
+    const put = (message) => store.appendMessage(owner.id, chatId, message);
+    const rows = [await put({ id: `${chatId}-q`, role: 'user', text: `Read every file and report. ${'q'.repeat(2_000)}` })];
+    for (let i = 0; i < steps; i += 1) {
+      const counted = i === steps - 1 ? { usage: { input: input(rows), output: 5 } } : {};
+      rows.push(await put({ id: `${chatId}-a${i}`, role: 'assistant', text: '', toolCalls: [{ id: `${chatId}-k${i}`, name: 'read_file', input: { path: `f${i}.txt` } }], ...counted }));
+      rows.push(await put({ id: `${chatId}-t${i}`, role: 'tool', results: [{ toolCallId: `${chatId}-k${i}`, name: 'read_file', content: `file ${i}\n${'r'.repeat(size * 4)}` }] }));
+    }
+    rows.push(await put({ id: `${chatId}-go`, role: 'user', text: 'carry on' }));
+    return rows;
+  };
+  const resultsIn = (list) => list.filter((m) => m.role === 'tool').flatMap((m) => m.results || []);
+  const paired = (list) =>
+    list.every((m, i) => m.role !== 'tool' || (m.results || []).every((r) => list[i - 1]?.toolCalls?.some((c) => c.id === r.toolCallId))) &&
+    list.every((m, i) => !m.toolCalls?.length || i === list.length - 1 || m.toolCalls.every((c) => list[i + 1]?.results?.some((r) => r.toolCallId === c.id)));
+
+  {
+    const chatId = 'c-clear-run';
+    // The provider counted the newest reply's request whole, with about 20K of prompt and tools on top.
+    const rows = await seed(chatId, 12, 6_000, (before) => 20_000 + tokensOf(before));
+    const sent = [];
+    const gauges = [];
+    const phases = [];
+    let calls = 0;
+    const stream = async function* (opts) {
+      calls += 1;
+      sent.push(JSON.parse(JSON.stringify(opts.messages)));
+      const usage = { input: 20_000 + tokensOf(opts.messages), output: 5 };
+      if (calls <= 3) {
+        yield { type: 'done', stopReason: 'tool_use', toolCalls: [{ id: `cr${calls}`, name: 'skill_read', input: { name: ['docx', 'pptx', 'xlsx'][calls - 1] } }], usage };
+      } else {
+        yield { type: 'text', delta: 'Done.' };
+        yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage };
+      }
+    };
+    const emit = (type, p) => {
+      if (type === 'context') gauges.push(p);
+      if (type === 'status') phases.push(p.phase);
+    };
+    await runAgent({ userId: owner.id, user: owner, chatId, modelId: MODEL, emit, stream });
+    const stored = await store.listMessages(owner.id, chatId);
+    const whole = new Map(resultsIn(stored).map((r) => [r.toolCallId, r.content]));
+    const old = resultsIn(rows).slice(0, 9).map((r) => r.toolCallId);
+    check('the run made four requests', sent.length === 4, String(sent.length));
+    check('each sends the nine old results as the stub', sent.every((req) => resultsIn(req).filter((r) => old.includes(r.toolCallId)).map((r) => r.content).join('|') === Array(9).fill(STUB).join('|')));
+    check('  and the newest three word for word', sent.every((req) => resultsIn(req).slice(-3).every((r) => r.content !== STUB && r.content === whole.get(r.toolCallId))), sent.map((req) => resultsIn(req).slice(-3).map((r) => r.toolCallId).join(',')).join(' / '));
+    check('no tool result is sent without its call, nor a call without its result', sent.every(paired));
+    check('steps in the same batch send the same prefix, byte for byte', [1, 2, 3].every((i) => JSON.stringify(sent[i].slice(0, sent[i - 1].length)) === JSON.stringify(sent[i - 1])));
+    check('the gauge counts what is sent, and says how many were cleared', gauges[0]?.cleared === 9 && gauges[0].ratio < 0.6, JSON.stringify({ cleared: gauges[0]?.cleared, ratio: gauges[0]?.ratio }));
+    check('the stored results are still whole', resultsIn(stored).slice(0, 12).every((r) => r.content.length > 24_000));
+    check('nothing was folded', !phases.includes('compacting') && !stored.some((m) => m.role === 'summary'));
+  }
+
+  {
+    const chatId = 'c-clear-85';
+    // The newest reply's figure plus the newest result and the line after it (6,004 by the estimate): 85% of the budget.
+    const rows = await seed(chatId, 6, 6_000, () => Math.round(budget * 0.85) - 6_004);
+    const before = measure(rows, entry).ratio;
+    const events = [];
+    let first = null;
+    const stream = async function* (opts) {
+      first ??= JSON.parse(JSON.stringify(opts.messages));
+      yield { type: 'text', delta: 'Report.' };
+      yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 90_000, output: 5 } };
+    };
+    await runAgent({ userId: owner.id, user: owner, chatId, modelId: MODEL, emit: (type, p) => events.push({ type, p }), stream });
+    const gauge = events.find((e) => e.type === 'context')?.p;
+    check('the chat is at 85% before anything is cleared', Math.abs(before - 0.85) < 0.005, before.toFixed(3));
+    check('clearing brings it under 82%', !!gauge && gauge.ratio < 0.82 && gauge.cleared === 3, JSON.stringify({ ratio: gauge?.ratio, cleared: gauge?.cleared }));
+    check('  so it is not folded', !events.some((e) => e.type === 'status' && e.p.phase === 'compacting') && !(await store.listMessages(owner.id, chatId)).some((m) => m.role === 'summary'));
+    check('  and the request carries the three old results as the stub', !!first && resultsIn(first).filter((r) => r.content === STUB).length === 3 && paired(first));
+  }
+}
+
 // Last, after every section that uses the database: it was removed midway, and
 // the sections after it ran against pages PGlite happened to still hold.
 removeTemp(process.env.DATA_DIR);
