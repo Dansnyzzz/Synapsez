@@ -514,6 +514,55 @@ section('a line typed while a tool ran never lets a 32K run outgrow its budget')
   check(`every request stays within the budget, whichever of ${moments} moments the line is typed at`, moments === 48 && over.length === 0, over.join(' '));
 }
 
+section('after a typed line, the earlier summary and the question alone are never folded');
+{
+  // The shape: an earlier fold, the question (with a picture), then one step whose
+  // line was typed while its tool ran and whose result is large. The tail starts at
+  // that step, so all that lies before it is the summary and the question.
+  const entry = { context: 128_000, maxOutput: 8_000 };
+  const budget = measure([], entry).budget;
+  const chat = 'c-sq';
+  await store.createChat(user.id, { id: chat, title: chat, model: 'm' });
+  let m = [];
+  await add(chat, m, 'user', 50);
+  await add(chat, m, 'assistant', 60_000);
+  const q = await add(chat, m, 'user', 0, { text: 'THE QUESTION', attachments: [{ id: 'img', kind: 'image', name: 'q.png' }] });
+  usage(m, 105_000);
+  const s1 = await foldNow(chat, m, entry, written(3_000));
+  check('(the first fold leaves the question at the head of the tail)', !!s1 && activeTranscript(m)[1]?.id === q.id);
+  await add(chat, m, 'assistant', 100, { toolCalls: [{ id: 'k-sq', name: 'read_file', input: {} }], usage: { input: 30_000 } });
+  await add(chat, m, 'user', 0, { text: 'TYPED' });
+  await add(chat, m, 'tool', 0, { results: [{ toolCallId: 'k-sq', content: 'x'.repeat(80_000 * 4) }] });
+  m = normaliseOrder(m);
+  const live = activeTranscript(m);
+  check(`at ${Math.round(100 * measure(m, entry).ratio)}% full there is nothing worth folding`, shouldCompact(m, entry) === false && foldPoint(live, { window: 128_000, budget }) === null, JSON.stringify(foldPoint(live, { window: 128_000, budget })));
+  const pressed = await compact({ userId: user.id, chatId: chat, entry, prefs: {}, messages: m, stream: written(3_000) });
+  check('  and pressing Compact folds nothing either', pressed === null, JSON.stringify(pressed && { replaced: pressed.replaced, covers: pressed.covers }));
+  if (pressed) m.push(pressed);
+  check('  so the question and its picture are still sent', activeTranscript(m).some((x) => x.id === q.id && x.attachments?.length === 1));
+
+  // However long the earlier summary is: it is rewritten by the fold, not removed, so it never makes one worth it.
+  const shapes = [];
+  for (const summaryTokens of [400, 1_500, 3_000, 10_000]) {
+    for (const questionTokens of [0, 250]) {
+      seq = 0;
+      const first = say('user', 50);
+      const reply = say('assistant', 60_000);
+      const asked = { ...say('user', questionTokens), attachments: [{ id: 'img', kind: 'image', name: 'q.png' }] };
+      const earlier = { id: `sum-${seq}`, seq: seq++, role: 'summary', text: 'y'.repeat(summaryTokens * 4), covers: reply.seq };
+      const call = { ...say('assistant', 100), toolCalls: [{ id: 'k1', name: 'read_file', input: {} }], usage: { input: 30_000 } };
+      const typed = say('user', 0, { text: 'TYPED' });
+      const result = { ...say('tool', 0), results: [{ toolCallId: 'k1', content: 'x'.repeat(80_000 * 4) }] };
+      const list = normaliseOrder([first, reply, asked, earlier, call, typed, result]);
+      const sent = activeTranscript(list);
+      const fp = foldPoint(sent, { window: 128_000, budget });
+      const older = fp ? sent.slice(0, fp.start) : [];
+      if (fp && older.every((x) => x.summary || x.id === asked.id)) shapes.push(`${summaryTokens}/${questionTokens}`);
+    }
+  }
+  check('no length of earlier summary makes the summary and a short question worth a fold', shapes.length === 0, shapes.join(' '));
+}
+
 section('with no budget given, foldPoint cuts where compact() would');
 {
   // Two steps come to about 3,700 tokens: within the room a 0.75 × window budget

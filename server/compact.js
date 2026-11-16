@@ -282,7 +282,10 @@ export function tailStart(messages, { window = ASSUMED_CONTEXT } = {}) {
 export function foldPoint(live, { window = ASSUMED_CONTEXT, budget: gauge = measure([], { context: window }).budget } = {}) {
   const budget = Math.max(KEEP_FLOOR, Math.floor(window * KEEP_SHARE));
   const clean = boundaries(live);
-  const worth = (from, end) => live.slice(from, end).reduce((sum, m) => sum + estimateTokens(m), 0) >= MIN_FOLD;
+  // What a fold removes. An earlier summary is not removed, only rewritten into the
+  // new one, so it never counts: with it, an earlier summary and a short question
+  // passed for a fold that freed little (1.2K at 92% full) and lost the question's files.
+  const worth = (from, end) => live.slice(from, end).reduce((sum, m) => sum + (m.summary ? 0 : estimateTokens(m)), 0) >= MIN_FOLD;
 
   const start = tailStart(live, { window });
   const onlySummary = start === 1 && live[0].summary === true;
