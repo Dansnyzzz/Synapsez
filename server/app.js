@@ -2977,6 +2977,11 @@ export function createApp() {
       const store = getStore();
       const withPermissions = (list) => list.map((u) => ({ ...u, permissions: permissionsOf(u) }));
       if (req.query.role === 'admin') return res.json({ users: withPermissions(await store.listAdmins()) });
+      // The owner's search for someone to make an administrator: a few columns, twenty at most, never the whole list.
+      if (req.query.q !== undefined) {
+        const text = String(req.query.q).trim().slice(0, 100);
+        return res.json({ users: await store.findUsers({ q: text, limit: 20 }) });
+      }
       // No page asked for: the whole list, as before the Users page was paged.
       if (req.query.page === undefined && req.query.size === undefined) return res.json({ users: withPermissions(await store.listUsers()) });
       // Clamped here, not refused: the numbers come straight from the address bar.

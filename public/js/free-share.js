@@ -1,8 +1,8 @@
 import { t, currentLanguage } from './i18n.js';
 
 /*
- * How a month's free share is said (server/freeShares.js, owner 2026-11-13): shared by
- * Settings → Usage (the account's card) and the administrators' Free allowances page.
+ * How a month's free share is said (server/freeShares.js, owner 2026-11-13): read by Settings → Usage
+ * (the account's card).
  */
 
 /** About an hour of the 2-vCPU machine costs this many thousandths of a dollar (server/freeShares.js MACHINE_MILLS_PER_HOUR). */

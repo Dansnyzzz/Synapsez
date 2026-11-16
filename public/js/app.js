@@ -7081,21 +7081,29 @@ async function loadRecommended() {
 
 /**
  * Each recommended-model select saves the moment it changes (owner, 2026-11-16: no Save button). The select is
- * disabled while its save is out; a change made elsewhere in the meantime waits its turn, and is sent with what the
- * server has confirmed for the others, never with a choice still on its way. A refusal puts the old choice back and says
- * why under the select.
+ * disabled while its save is out. What is wanted is kept per select, newest only, and saved one at a time: the server
+ * takes all three choices at once, so a second save sent while the first is out could undo it. Each save sends what the
+ * server has confirmed for the others, never a choice still on its way. A refusal puts the confirmed choice back and
+ * says why under the select, unless a newer choice for it is already waiting.
  */
 function wireRecommended(host) {
   const ids = ['rec-free', 'rec-free-second', 'rec-paid'];
   const select = (id) => /** @type {HTMLSelectElement} */ ($(id));
   /** What the server holds for each, as last confirmed. */
   const known = Object.fromEntries(ids.map((id) => [id, select(id).value]));
+  /** @type {Map<string, string>} */
+  const pending = new Map();
   const clearTimers = new Map();
-  let reverting = false;
-  let turn = Promise.resolve();
+  let pumping = false;
+  // Disabling the select disables the picker's button, and a disabled button drops the keyboard's place on the page.
+  let focused = /** @type {EventTarget | null} */ (null);
+  host.addEventListener('focusin', (event) => {
+    focused = event.target;
+  });
 
   async function save(id, chosen) {
     const box = select(id);
+    const button = box.previousElementSibling;
     const status = $(`${id}-status`);
     const failure = $(`${id}-error`);
     clearTimeout(clearTimers.get(id));
@@ -7103,30 +7111,53 @@ function wireRecommended(host) {
     failure.textContent = '';
     box.disabled = true;
     const next = { ...known, [id]: chosen };
+    let saved = false;
     try {
       await api.setRecommended({ free: next['rec-free'], freeSecond: next['rec-free-second'] || null, paid: next['rec-paid'] || null });
       known[id] = chosen;
-      const boot = await api.bootstrap();
-      Object.assign(state.boot, { recommended: boot.recommended, suggestion: boot.suggestion });
-      status.textContent = t('recommend.saved');
-      clearTimers.set(id, setTimeout(() => { status.textContent = ''; }, 4000));
+      saved = true;
     } catch (err) {
-      // Back to what is stored. The picker draws from 'change', which setting a value does not send.
-      reverting = true;
-      box.value = known[id];
-      box.dispatchEvent(new Event('change', { bubbles: true }));
-      reverting = false;
-      failure.textContent = err.message;
+      if (!pending.has(id)) {
+        box.value = known[id];
+        failure.textContent = err.message;
+      }
     } finally {
       box.disabled = false;
+    }
+    if (saved && !pending.has(id)) {
+      status.textContent = t('recommend.saved');
+      clearTimers.set(id, setTimeout(() => { status.textContent = ''; }, 4000));
+    }
+    // What the app suggests follows what was saved; if this read fails the save still stands.
+    if (saved) {
+      api
+        .bootstrap()
+        .then((boot) => Object.assign(state.boot, { recommended: boot.recommended, suggestion: boot.suggestion }))
+        .catch(() => {});
+    }
+    // The picker enables its button a moment after the select is enabled.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (button && focused === button && !pending.has(id) && (!document.activeElement || document.activeElement === document.body)) /** @type {HTMLElement} */ (button).focus();
+  }
+
+  async function pump() {
+    if (pumping) return;
+    pumping = true;
+    try {
+      while (pending.size) {
+        const [id, chosen] = /** @type {[string, string]} */ (pending.entries().next().value);
+        pending.delete(id);
+        await save(id, chosen);
+      }
+    } finally {
+      pumping = false;
     }
   }
 
   for (const id of ids) {
     select(id).addEventListener('change', () => {
-      if (reverting) return;
-      const chosen = select(id).value;
-      turn = turn.then(() => save(id, chosen));
+      pending.set(id, select(id).value);
+      void pump();
     });
   }
 }
@@ -7144,17 +7175,12 @@ const chosenPowers = (host) => [.../** @type {NodeListOf<HTMLInputElement>} */ (
 
 /**
  * Who administers this deployment, for its owner (owner, 2026-11-04): each
- * administrator with what they may do, and a way to add one. The person is chosen
- * from one list, which can be searched by typing or scrolled through. Nothing is
- * given by default: an owner says what each person may do.
- *
- * `candidates` are the accounts that could be added: null while they are still being fetched
- * (the list is every account, and is fetched after the page is up, not before it).
+ * administrator with what they may do, and a way to add one. The person is found by
+ * typing: the server answers a search with twenty at most, so the list never holds
+ * every account. Nothing is given by default: an owner says what each person may do.
  */
-function drawAdmins(admins, candidates) {
+function drawAdmins(admins) {
   const host = $('admin-admins');
-  const person = (u) => `${u.name || u.email}${u.username ? ` (@${u.username})` : ''} · ${u.email}`;
-  const others = (candidates || []).filter((u) => u.role !== 'admin' && !u.suspended_at);
   const heldBy = (u) => (Array.isArray(u.permissions) ? u.permissions : []);
   host.innerHTML = `<div class="admins">
       ${admins
@@ -7166,18 +7192,16 @@ function drawAdmins(admins, candidates) {
         .join('')}
       <div class="admins__add">
         <h4 class="admins__title">${escapeHtml(t('admins.add'))}</h4>
-        ${
-          candidates === null
-            ? `<p class="hint">${escapeHtml(t('common.loading'))}</p>`
-            : others.length
-            ? `<label class="admins__label" for="admin-add-person">${escapeHtml(t('admins.person'))}</label>
-               <select id="admin-add-person" class="sselect sselect--wide" data-search="always"><option value="">${escapeHtml(t('admins.choosePerson'))}</option>${others.map((u) => `<option value="${escapeHtml(u.id)}">${escapeHtml(person(u))}</option>`).join('')}</select>
-               <p class="admins__label">${escapeHtml(t('admins.mayDo'))}</p>
-               ${powerBoxes('admin-add', [])}
-               <p class="admins__note">${escapeHtml(t('admins.ownerOnly'))}</p>
-               <div class="admins__actions"><button class="btn btn--primary btn--small" type="button" id="admin-add-go" disabled>${escapeHtml(t('admins.addButton'))}</button></div>`
-            : `<p class="hint">${escapeHtml(t('admins.nobody'))}</p>`
-        }
+        <label class="admins__label" for="admin-add-search">${escapeHtml(t('admins.search'))}</label>
+        <input type="search" id="admin-add-search" class="admins__search" autocomplete="off" />
+        <p class="admins__note admins__note--error" id="admin-add-error" role="alert"></p>
+        <label class="admins__label" for="admin-add-person">${escapeHtml(t('admins.person'))}</label>
+        <select id="admin-add-person" class="sselect sselect--wide"><option value="">${escapeHtml(t('admins.choosePerson'))}</option></select>
+        <p class="admins__note" id="admin-add-none" role="status" aria-live="polite"></p>
+        <p class="admins__label">${escapeHtml(t('admins.mayDo'))}</p>
+        ${powerBoxes('admin-add', [])}
+        <p class="admins__note">${escapeHtml(t('admins.ownerOnly'))}</p>
+        <div class="admins__actions"><button class="btn btn--primary btn--small" type="button" id="admin-add-go" disabled>${escapeHtml(t('admins.addButton'))}</button></div>
       </div>
     </div>`;
 
@@ -7188,6 +7212,35 @@ function drawAdmins(admins, candidates) {
     if (go && who) go.disabled = !who.value || !chosenPowers(add).length;
   };
   add.addEventListener('change', ready);
+
+  // The search: the newest typing is the only one that is drawn, whatever order the answers come back in.
+  const box = /** @type {HTMLInputElement} */ (host.querySelector('#admin-add-search'));
+  const failure = host.querySelector('#admin-add-error');
+  const none = host.querySelector('#admin-add-none');
+  const search = latestOnly((text) => api.users({ q: text }), {
+    saved: ({ users }, text) => {
+      // Whoever is chosen stays chosen while the list under them changes.
+      const keep = who.value;
+      const kept = keep ? who.selectedOptions[0]?.textContent : '';
+      const person = (u) => `${u.name || u.email}${u.username ? ` (@${u.username})` : ''} · ${u.email}`;
+      const rows = users.map((u) => [u.id, person(u)]);
+      if (keep && !users.some((u) => u.id === keep)) rows.unshift([keep, kept]);
+      who.innerHTML = `<option value="">${escapeHtml(t('admins.choosePerson'))}</option>${rows.map(([id, label]) => `<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`).join('')}`;
+      who.value = keep;
+      none.textContent = users.length ? '' : t(text ? 'admins.noMatch' : 'admins.nobody');
+      ready();
+    },
+    failed: (err) => {
+      failure.textContent = err.message;
+    },
+  });
+  let typing = 0;
+  box.addEventListener('input', () => {
+    clearTimeout(typing);
+    failure.textContent = '';
+    typing = setTimeout(() => search.push(box.value.trim()), 250);
+  });
+  void search.push('');
   go?.addEventListener('click', async () => {
     go.disabled = true;
     try {
@@ -7233,38 +7286,47 @@ function drawAdmins(admins, candidates) {
   }
 }
 
-/** The accounts: the ten busiest this month and, for the owner, every administrator; the rest are in the See all dialog. */
+/** The ten busiest accounts this month; the rest are in the See all dialog. */
 const TOP_USERS = 10;
 
-/** Which draw of the Administrators card is the latest: a slow list for an older one must not overwrite a newer. */
-let adminsDraw = 0;
+/** What the Administrators card was last drawn from, so it is redrawn only when it would look different. */
+let adminsDrawn = '';
 
 const usersDialog = createUsersDialog({ api, me: () => state.boot.user, armed, onChanged: () => loadUsers() });
 
-async function loadUsers() {
-  const me = state.boot.user;
-  try {
-    // The Administrators card is every administrator, whichever page they would be on, so it asks for them by role.
+/**
+ * The accounts, newest answer only: an older one arriving late never paints over a newer. The owner's Administrators
+ * card is every administrator, whichever page they would be on, so it asks for them by role.
+ */
+const usersLoader = latestOnly(
+  async () => {
+    const me = state.boot.user;
     const [top, admins] = await Promise.all([api.users({ page: 1, size: TOP_USERS }), me.isOwner ? api.users({ role: 'admin' }) : null]);
-    if (admins) {
-      drawAdmins(admins.users, null);
-      // Everyone who could be made an administrator: the one place that still needs the whole list, asked for after
-      // the page is drawn so the ten busiest never wait on it.
-      const mine = ++adminsDraw;
-      api
-        .users()
-        .then((all) => mine === adminsDraw && drawAdmins(admins.users, all.users))
-        .catch((err) => mine === adminsDraw && (drawAdmins(admins.users, []), toast(err.message, 'error')));
-    }
-
-    const host = $('user-list');
-    host.innerHTML = userRowsHtml(top.users, me) + (top.total > top.users.length ? `<button type="button" class="btn btn--ghost btn--small users__all" id="users-see-all" aria-haspopup="dialog">${escapeHtml(t('admin.seeAll', { n: Number(top.total).toLocaleString(localeTag()) }))}</button>` : '');
-    wireUserRows(host, { api, armed, reload: loadUsers });
-    $('users-see-all')?.addEventListener('click', () => usersDialog.open());
-  } catch (err) {
-    toast(err.message, 'error');
-  }
-}
+    return { top, admins };
+  },
+  {
+    saved: ({ top, admins }) => {
+      const me = state.boot.user;
+      if (admins) {
+        // Redrawn only when the administrators differ: it holds a search being typed and boxes being ticked.
+        const drawn = JSON.stringify([t('admins.add'), admins.users.map((u) => [u.id, u.name, u.email, u.suspended_at, u.permissions])]);
+        if (drawn !== adminsDrawn) {
+          adminsDrawn = drawn;
+          drawAdmins(admins.users);
+        }
+      }
+      const host = $('user-list');
+      // An action in the dialog redraws this list while focus is on the button that opened it.
+      const hadFocus = document.activeElement?.id === 'users-see-all';
+      host.innerHTML = userRowsHtml(top.users, me) + (top.total > top.users.length ? `<button type="button" class="btn btn--ghost btn--small users__all" id="users-see-all" aria-haspopup="dialog">${escapeHtml(t('admin.seeAll', { n: Number(top.total).toLocaleString(localeTag()) }))}</button>` : '');
+      wireUserRows(host, { api, armed, reload: loadUsers });
+      $('users-see-all')?.addEventListener('click', () => usersDialog.open());
+      if (hadFocus) $('users-see-all')?.focus();
+    },
+    failed: (err) => toast(err.message, 'error'),
+  },
+);
+const loadUsers = () => usersLoader.push(null);
 
 async function loadAdmin() {
   const me = state.boot.user;

@@ -11976,6 +11976,9 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 
 /* Settings → People: the ten busiest, then the full list a page at a time (public/js/users-dialog.js). */
 .users__all { justify-self: start; }
+.admins__search { width: 100%; max-width: 420px; }
+.admins__add .admins__note--error { color: var(--danger); }
+.admins__note:empty { display: none; }
 .users__limit { width: 9rem; }
 .users-all {
   width: 100vw;

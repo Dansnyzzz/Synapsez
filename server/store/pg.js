@@ -627,6 +627,23 @@ export function createPgStore(connectionString) {
       const [{ n }] = await q('SELECT COUNT(*)::int AS n FROM users');
       return { users: [], total: n };
     },
+    /**
+     * Ordinary, active accounts whose email, name or username contains `text`: what the owner searches when choosing
+     * who to make an administrator. Only the columns that picker draws, and a limit, so a deployment with thousands of
+     * accounts never sends them all. A percent sign, an underscore or a backslash typed is taken literally.
+     */
+    async findUsers({ q: text = '', limit = 20 } = {}) {
+      const like = `%${String(text).toLowerCase().replace(/[\\%_]/g, '\\$&')}%`;
+      return q(
+        `SELECT u.id, u.email, u.username, u.name, u.role, u.suspended_at
+           FROM users u
+          WHERE u.role <> 'admin' AND NOT u.is_owner AND u.suspended_at IS NULL
+            AND (lower(u.email) LIKE $1 ESCAPE '\\' OR lower(u.name) LIKE $1 ESCAPE '\\' OR lower(u.username) LIKE $1 ESCAPE '\\')
+          ORDER BY lower(COALESCE(NULLIF(u.name, ''), u.email)) ASC, u.id ASC
+          LIMIT $2`,
+        [like, limit],
+      );
+    },
     /** Every administrator, owner included: the Administrators list is never paged. */
     async listAdmins() {
       return q(

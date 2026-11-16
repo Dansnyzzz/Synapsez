@@ -44,7 +44,7 @@ export function userRowsHtml(users, me) {
               ? `<span class="muted">${escapeHtml(t('admin.you'))}</span>`
               : `${
                   touchable && perms.has('users')
-                    ? `<button type="button" data-limit-user="${escapeHtml(u.id)}">${escapeHtml(t('admin.limitButton'))}</button>
+                    ? `<button type="button" data-limit-user="${escapeHtml(u.id)}" data-limit="${escapeHtml(u.monthly_token_limit || '')}">${escapeHtml(t('admin.limitButton'))}</button>
                  <button type="button" data-suspend-user="${escapeHtml(u.id)}" data-suspended="${!!u.suspended_at}">
                    ${escapeHtml(u.suspended_at ? t('admin.unsuspend') : t('admin.suspend'))}
                  </button>`
@@ -87,6 +87,9 @@ export function wireUserRows(host, { api, armed, reload }) {
       const field = document.createElement('input');
       field.type = 'number';
       field.min = '0';
+      // Opened on the limit it has: leaving the field as it is must not change anything.
+      const was = String(btn.dataset.limit || '');
+      field.value = was;
       field.className = 'chat-item--editing users__limit';
       field.placeholder = t('admin.limitPlaceholder');
       field.title = t('admin.tokenLimit');
@@ -95,10 +98,12 @@ export function wireUserRows(host, { api, armed, reload }) {
       field.focus();
 
       let settled = false;
-      const finish = async (commit) => {
+      const finish = async (commit, explicit = false) => {
         if (settled) return;
         settled = true;
-        if (!commit) return reload();
+        // Leaving the box (a click elsewhere) is not a decision to remove the cap: only Enter commits an empty box.
+        const unchanged = field.value.trim() === was || (!explicit && field.value.trim() === '');
+        if (!commit || unchanged) return reload();
         try {
           await api.updateUser(btn.dataset.limitUser, { monthlyTokenLimit: Number(field.value) || 0 });
         } catch (err) {
@@ -109,7 +114,7 @@ export function wireUserRows(host, { api, armed, reload }) {
       field.addEventListener('keydown', (event) => {
         // Esc here leaves the field, not the dialog around it.
         if (event.key === 'Escape') event.preventDefault();
-        if (event.key === 'Enter') finish(true);
+        if (event.key === 'Enter') finish(true, true);
         if (event.key === 'Escape') finish(false);
       });
       field.addEventListener('blur', () => finish(true));
@@ -137,7 +142,6 @@ export function createUsersDialog({ api, me, armed, onChanged }) {
   const $ = (selector) => /** @type {HTMLElement} */ (dialog.querySelector(selector));
 
   function ensure() {
-    if (dialog) return dialog;
     dialog = document.createElement('dialog');
     dialog.id = 'users-all';
     dialog.className = 'sheet users-all';
@@ -185,7 +189,7 @@ export function createUsersDialog({ api, me, armed, onChanged }) {
     try {
       const found = await api.users({ page, size: PAGE_SIZE });
       if (mine !== ticket) return;
-      total = found.total ?? found.users.length;
+      total = found.total;
       // The last account of the last page was removed: the page is gone, so show the one before.
       if (!found.users.length && page > 1) {
         page = pages();
@@ -223,7 +227,7 @@ export function createUsersDialog({ api, me, armed, onChanged }) {
       page = 1;
       dialog.querySelector('[data-users-rows]').replaceChildren();
       paintPager();
-      if (!dialog.open) dialog.showModal();
+      dialog.showModal();
       $('#users-all-title').focus();
       await load();
     },

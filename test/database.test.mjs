@@ -357,6 +357,22 @@ section('the accounts list is paged in SQL, busiest this month first');
   const admins = await store.listAdmins();
   check('administrators are listed whole', admins.length === 1 && admins[0].id === 'p05', admins.map((u) => u.id).join());
   check('listUsers is as it was: everyone', (await store.listUsers()).length === 25);
+  // The add-an-administrator search: a few columns, ordinary and not suspended, wildcards taken literally.
+  await store.createUser({ id: 'w1', email: '100%_sure@example.com', name: 'Wild 100%', passwordHash: 'x', role: 'user' });
+  await store.createUser({ id: 'w2', email: '1000sure@example.com', name: 'Wild 1000', passwordHash: 'x', role: 'user' });
+  await store.createUser({ id: 'w3', email: 'gone@example.com', name: 'Wild Gone', passwordHash: 'x', role: 'user' });
+  await db.query("UPDATE users SET suspended_at = NOW() WHERE id = 'w3'");
+  const byName = await store.findUsers({ q: 'AMY', limit: 20 });
+  check('findUsers matches name or email without regard to case', byName.length === 1 && byName[0].id === 'z2', byName.map((u) => u.id).join());
+  check('  and returns only what the picker needs', Object.keys(byName[0]).sort().join() === 'email,id,name,role,suspended_at,username', Object.keys(byName[0]).sort().join());
+  const literal = await store.findUsers({ q: '100%', limit: 20 });
+  check('a percent sign in the search is a percent sign', literal.map((u) => u.id).join() === 'w1', literal.map((u) => u.id).join());
+  const under = await store.findUsers({ q: '_sure', limit: 20 });
+  check('  and so is an underscore', under.map((u) => u.id).join() === 'w1', under.map((u) => u.id).join());
+  check('  and a backslash', (await store.findUsers({ q: '\\', limit: 20 })).length === 0);
+  check('administrators and suspended accounts are left out', !(await store.findUsers({ q: 'person p05', limit: 20 })).length && !(await store.findUsers({ q: 'wild gone', limit: 20 })).length);
+  const capped = await store.findUsers({ q: 'person', limit: 5 });
+  check('the limit holds, in name order', capped.length === 5 && capped.map((u) => u.id).join() === 'p00,p01,p02,p03,p04', capped.map((u) => u.id).join());
   await db.close();
 }
 

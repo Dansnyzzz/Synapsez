@@ -407,14 +407,15 @@ export const api = {
   updateUser: (id, patch) => request('PATCH', `/api/admin/users/${id}`, patch),
 
   /**
-   * One page of accounts, the busiest first (`page`, `size`), or every administrator (`role: 'admin'`); no options is every account.
-   * @param {{ page?: number, size?: number, role?: string }} [options]
+   * One page of accounts, the busiest first (`page`, `size`), every administrator (`role: 'admin'`), or a search for someone to add (`q`, twenty at most); no options is every account.
+   * @param {{ page?: number, size?: number, role?: string, q?: string }} [options]
    */
-  users: ({ page, size, role } = {}) => {
+  users: ({ page, size, role, q } = {}) => {
     const query = new URLSearchParams();
     if (role) query.set('role', role);
     if (page) query.set('page', String(page));
     if (size) query.set('size', String(size));
+    if (q !== undefined) query.set('q', q);
     const qs = query.toString();
     return request('GET', `/api/admin/users${qs ? `?${qs}` : ''}`);
   },

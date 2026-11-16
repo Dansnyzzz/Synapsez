@@ -766,17 +766,17 @@ section('the owner adds an administrator, who sees what they were given');
   check('the owner has the section, and is marked as the owner', form.section && form.owner === 'Owner', JSON.stringify(form));
   check('  nothing is given by default, and it cannot be sent empty', form.powers === 8 && form.checked === 0 && form.disabled, JSON.stringify(form));
 
-  // Scrolled to, or typed for: one list does both.
-  await page.locator('.picker:has(#admin-add-person) .picker__btn').click();
-  await page.waitForSelector('.picker__menu .picker__find');
-  const before = await page.evaluate(() => [...document.querySelectorAll('.picker__menu [role="option"]')].filter((o) => !o.hidden).map((o) => o.textContent.trim()));
-  check('the list can be scrolled through, and holds the people', before.some((p) => /new\.admin@test\.local/.test(p)) && before.some((p) => /third@test\.local/.test(p)), before.join(' | '));
+  // Found by typing: the server answers a search, twenty at most, never the whole list.
+  await page.waitForSelector('#admin-add-search');
+  await page.waitForFunction(() => document.querySelectorAll('#admin-add-person option').length > 1);
+  const before = await page.evaluate(() => [...document.querySelectorAll('#admin-add-person option')].map((o) => o.textContent.trim()));
+  check('the list holds the people', before.some((p) => /new\.admin@test\.local/.test(p)) && before.some((p) => /third@test\.local/.test(p)), before.join(' | '));
   check('  not the owner, who is already one', !before.some((p) => /round@test\.local/.test(p)));
-  await page.keyboard.type('new.admin');
-  await page.waitForTimeout(80);
-  const typed = await page.evaluate(() => [...document.querySelectorAll('.picker__menu [role="option"]')].filter((o) => !o.hidden).map((o) => o.textContent.trim()));
+  await page.fill('#admin-add-search', 'new.admin');
+  await page.waitForFunction(() => document.querySelectorAll('#admin-add-person option').length === 2);
+  const typed = await page.evaluate(() => [...document.querySelectorAll('#admin-add-person option')].slice(1).map((o) => o.textContent.trim()));
   check('  and typed for', typed.length === 1 && /new\.admin@test\.local/.test(typed[0]), typed.join(' | '));
-  await page.keyboard.press('Enter');
+  await page.selectOption('#admin-add-person', { label: typed[0] });
   await page.waitForTimeout(80);
   check('choosing a person is not yet enough', await page.evaluate(() => document.getElementById('admin-add-go').disabled));
   await page.check('.admins__add [data-power="feedback"]');

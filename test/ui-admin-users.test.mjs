@@ -60,6 +60,12 @@ const check = (label, ok, detail = '') => {
 const page = await browser.newPage({ viewport: { width: 1280, height: 860 } });
 page.setDefaultTimeout(8000);
 page.on('pageerror', (err) => realLog(`  \x1b[31m[page error]\x1b[0m ${err.message}`));
+/** Every request for accounts, so the page can be held to asking only for what it draws. */
+const userCalls = [];
+page.on('request', (r) => {
+  const url = new URL(r.url());
+  if (url.pathname === '/api/admin/users' && r.method() === 'GET') userCalls.push(url.search);
+});
 await page.route('**/api/models/news*', (route) => (route.request().method() === 'GET' ? route.fulfill({ contentType: 'application/json', body: '{"model":null}' }) : route.continue()));
 
 await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
@@ -86,6 +92,7 @@ for (let i = 1; i <= 24; i += 1) {
 await store.createUser({ id: 'u-helper-admin', email: 'helper@test.local', name: 'Zed Helper', passwordHash: 'x', role: 'admin' });
 await store.upsertModels([
   { id: 'orcarouter/deepseek/deepseek-v4.1-flash-free', provider: 'orcarouter', model: 'deepseek/deepseek-v4.1-flash-free', family: 'deepseek', label: 'DeepSeek V4.1 Flash (Free)', context: 1048576, maxOutput: 384000, priceIn: 0, priceOut: 0, isFree: true, releasedAt: new Date().toISOString(), vision: true },
+  { id: 'openrouter/acme/big', provider: 'openrouter', model: 'acme/big', family: 'acme', label: 'Acme Big', context: 200000, maxOutput: 8000, priceIn: 1, priceOut: 2, isFree: false, releasedAt: new Date().toISOString(), vision: false },
   { id: 'openrouter/nvidia/nemotron:free', provider: 'openrouter', model: 'nvidia/nemotron:free', family: 'nvidia', label: 'Nemotron (free)', context: 128000, maxOutput: 8000, priceIn: 0, priceOut: 0, isFree: true, releasedAt: new Date().toISOString(), vision: false },
 ]);
 
@@ -172,7 +179,8 @@ section('the ten busiest, then See all');
   await firstLimit.click();
   const field = page.locator('#users-all input[type="number"]');
   await field.fill('5000');
-  await page.keyboard.press('ArrowLeft');
+  // On page 1 only a right arrow could move the page, so it is the one that can fail.
+  await page.keyboard.press('ArrowRight');
   check('  but not in a text field', await page.evaluate(() => /Page 1 of 2/.test(document.querySelector('#users-all [data-users-page]').textContent)));
   await page.keyboard.press('Escape');
   await page.waitForTimeout(300);
@@ -242,6 +250,119 @@ section('the recommended models save themselves');
   const back = await page.evaluate(() => ({ value: document.getElementById('rec-free').value, enabled: !document.getElementById('rec-free').disabled, err: document.getElementById('rec-free-error').textContent }));
   check('a refused save puts the old value back and shows the error', back.value === before && back.enabled && /Not that one\./.test(back.err), JSON.stringify(back));
   await page.unroute('**/api/admin/recommended');
+}
+
+section('a paid model, the queue, and focus');
+{
+  const { getRecommended } = await import('../server/recommend.js');
+  await page.selectOption('#rec-paid', 'openrouter/acme/big');
+  await page.waitForFunction(() => /Saved/.test(document.getElementById('rec-paid-status')?.textContent || ''));
+  check('the paid choice saves too', (await getRecommended()).paid === 'openrouter/acme/big', JSON.stringify(await getRecommended()));
+
+  // Hold the first save, fail it, and change the same select again meanwhile: the screen must end where the server does.
+  let release;
+  const held = new Promise((r) => (release = r));
+  let puts = 0;
+  await page.route('**/api/admin/recommended', async (route) => {
+    if (route.request().method() !== 'PUT') return route.continue();
+    puts += 1;
+    if (puts === 1) {
+      await held;
+      return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'Not that one.' }) });
+    }
+    return route.continue();
+  });
+  const change = (value) =>
+    page.evaluate((v) => {
+      const box = document.getElementById('rec-free');
+      box.value = v;
+      box.dispatchEvent(new Event('change', { bubbles: true }));
+    }, value);
+  await change('openrouter/nvidia/nemotron:free');
+  await page.waitForFunction(() => document.getElementById('rec-free').disabled);
+  await change('auto');
+  release();
+  await page.waitForFunction(() => /Saved/.test(document.getElementById('rec-free-status')?.textContent || ''));
+  await page.waitForTimeout(300);
+  const end = await page.evaluate(() => ({ value: document.getElementById('rec-free').value, shown: document.querySelector('#admin-recommended .picker:has(#rec-free) .picker__btn').textContent.trim() }));
+  const stored = await getRecommended();
+  check('a change made while a save is out is sent after it, and is not undone by the first one failing', end.value === 'auto' && stored.free === 'auto' && puts === 2, JSON.stringify({ end, free: stored.free, puts }));
+  check('  and the button shows what the select holds', /auto/i.test(end.shown), end.shown);
+  await page.unroute('**/api/admin/recommended');
+
+  // Keyboard: the picker's button is disabled while its save is out, which would drop focus to the page.
+  await page.focus('#admin-recommended .picker:has(#rec-free) .picker__btn');
+  await change('openrouter/nvidia/nemotron:free');
+  await page.waitForFunction(() => /Saved/.test(document.getElementById('rec-free-status')?.textContent || ''));
+  await page.waitForTimeout(100);
+  check("focus is back on the select's button once the save is over", await page.evaluate(() => document.activeElement?.classList.contains('picker__btn') && document.activeElement.nextElementSibling?.id === 'rec-free'), await page.evaluate(() => document.activeElement?.tagName + '.' + document.activeElement?.className));
+}
+
+section('the Administrators card: one search, one draw, no stale grants');
+{
+  const helperRow = '[data-admin="u-helper-admin"]';
+  await page.click(helperRow + ' summary');
+  await page.uncheck(helperRow + ' [data-power="themes"]');
+  await page.waitForTimeout(300);
+  await page.uncheck(helperRow + ' [data-power="feedback"]');
+  await page.waitForTimeout(400);
+  const saved = JSON.parse(JSON.stringify((await store.getUserByEmail('helper@test.local')).admin_permissions));
+  const boxes = await page.evaluate((sel) => ({ themes: document.querySelector(sel + ' [data-power="themes"]').checked, feedback: document.querySelector(sel + ' [data-power="feedback"]').checked }), helperRow);
+  check('two powers unticked one after the other are both gone, on screen and stored', !boxes.themes && !boxes.feedback && Array.isArray(saved) && !saved.includes('themes') && !saved.includes('feedback') && saved.length === 5, JSON.stringify({ boxes, saved }));
+
+  await page.waitForSelector('#admin-add-search');
+  check('the search has a label', (await page.locator('label[for="admin-add-search"]').count()) === 1);
+  const optionCount = () => page.evaluate(() => document.querySelectorAll('#admin-add-person option').length);
+  check('it starts with twenty people to choose from, not everyone', (await optionCount()) === 21, String(await optionCount()));
+  const before = userCalls.length;
+  await page.locator('#admin-add-search').pressSequentially('member 07', { delay: 30 });
+  await page.waitForFunction(() => document.querySelectorAll('#admin-add-person option').length === 2);
+  check('typing narrows the list, asking the server once or twice, not once a letter', userCalls.length - before <= 2 && userCalls.slice(before).every((q) => /q=/.test(q)), JSON.stringify(userCalls.slice(before)));
+
+  // A slow answer for an older search must not paint over the newer one.
+  await page.route('**/api/admin/users?*', async (route) => {
+    if (new URL(route.request().url()).searchParams.get('q') === 'member 1') await new Promise((r) => setTimeout(r, 900));
+    return route.continue();
+  });
+  await page.fill('#admin-add-search', 'member 1');
+  await page.waitForTimeout(400);
+  await page.fill('#admin-add-search', 'member 05');
+  await page.waitForTimeout(1500);
+  const names = await page.evaluate(() => [...document.querySelectorAll('#admin-add-person option')].map((o) => o.textContent));
+  check('a slow answer for an older search is dropped', names.length === 2 && /member05@test\.local/.test(names[1]), names.join(' | '));
+  await page.unroute('**/api/admin/users?*');
+
+  await page.selectOption('#admin-add-person', 'u-member-5');
+  await page.check('.admins__add [data-power="feedback"]');
+  await page.click('#admin-add-go');
+  await page.waitForFunction(() => document.querySelector('[data-admin="u-member-5"]'));
+  check('the person chosen from the search becomes an administrator', (await store.getUserByEmail('member05@test.local')).role === 'admin');
+
+  check('no request for every account was made: each asked for a page, a role or a search', userCalls.length > 3 && userCalls.every((q) => /[?&](page|role|q)=/.test(q)), JSON.stringify(userCalls));
+}
+
+section('the limit field does not remove a limit by being left');
+{
+  await page.evaluate(async (id) => fetch('/api/admin/users/' + id, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ monthlyTokenLimit: 7777 }) }), 'u-member-2');
+  await reload();
+  await openPeople();
+  const row = page.locator('#user-list .rows__item', { hasText: 'member02@test.local' });
+  await row.locator('[data-limit-user]').click();
+  const shown = await page.locator('#user-list input[type="number"]').inputValue();
+  check('the field opens with the limit already set', shown === '7777', shown);
+  await page.locator('#user-list input[type="number"]').blur();
+  await page.waitForTimeout(500);
+  check('  and leaving it as it was keeps the limit', Number((await store.getUserByEmail('member02@test.local')).monthly_token_limit) === 7777);
+  await row.locator('[data-limit-user]').click();
+  await page.fill('#user-list input[type="number"]', '');
+  await page.locator('#user-list input[type="number"]').blur();
+  await page.waitForTimeout(500);
+  check('  and leaving it empty does not clear it either', Number((await store.getUserByEmail('member02@test.local')).monthly_token_limit) === 7777);
+  await row.locator('[data-limit-user]').click();
+  await page.fill('#user-list input[type="number"]', '9000');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(500);
+  check('  but a new number is saved', Number((await store.getUserByEmail('member02@test.local')).monthly_token_limit) === 9000);
 }
 
 await browser.close();

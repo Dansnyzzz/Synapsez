@@ -547,6 +547,14 @@ const bob = jar();
   const adminsOnly = (await alice.call('GET', '/api/admin/users?role=admin')).json;
   check('role=admin lists the administrators only, unpaged', adminsOnly?.users?.length === 1 && adminsOnly.users[0].role === 'admin' && !('total' in adminsOnly) && Array.isArray(adminsOnly.users[0].permissions), JSON.stringify(adminsOnly?.users?.map((u) => u.role)));
   check('a member is refused the paged list too', (await bob.call('GET', '/api/admin/users?page=1&size=10')).status === 403);
+  // The search for someone to make an administrator: few columns, ordinary accounts, wildcards literal, capped.
+  const found = await alice.call('GET', '/api/admin/users?q=%20BOB%20');
+  check('?q= finds an ordinary account, trimmed and without regard to case', found.status === 200 && found.json?.users?.length === 1 && found.json.users[0].email === 'bob@example.com', JSON.stringify(found.json));
+  check('  with only what the picker draws', Object.keys(found.json?.users?.[0] || {}).sort().join() === 'email,id,name,role,suspended_at,username', Object.keys(found.json?.users?.[0] || {}).join());
+  check('  and the owner is not offered', (await alice.call('GET', '/api/admin/users?q=alice')).json?.users?.length === 0);
+  check('a percent sign is not a wildcard', (await alice.call('GET', '/api/admin/users?q=%25')).json?.users?.length === 0);
+  check('a very long search is cut, not refused', (await alice.call('GET', `/api/admin/users?q=${'b'.repeat(500)}`)).status === 200);
+  check('a member is refused the search too', (await bob.call('GET', '/api/admin/users?q=a')).status === 403);
 
 
   // Express 5 leaves req.body undefined with no JSON body, and `'x' in undefined`
