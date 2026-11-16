@@ -1,0 +1,132 @@
+# Quick fixes 1.31.0 Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Ship the owner's 2026-11-15 quick fixes as release 1.31.0: a leaner Users page, a guide that scrolls and covers Automations & Bot, one key at a time in the guide, a calmer Progress panel, and compaction that keeps recent turns by size with a live %.
+
+**Architecture:** Each fix stays in the module that already owns it: user paging in `server/store/pg.js` + the users route in `server/app.js`, the Users page in `public/js/app.js` (`loadAdmin`, `loadRecommended`), the guide in `public/js/onboarding.js` / `onboarding-keys.js`, the Progress panel in `public/js/app.js` (`progress-fold`), compaction in `server/compact.js` with its progress sent through the existing `status` event (`phase: 'compacting'`).
+
+**Tech Stack:** Node 22 ESM, Express, Postgres/PGlite store, vanilla JS front end, the repo's hand-rolled test harness (`node test/<name>.test.mjs`), Playwright for `test/ui*.test.mjs`.
+
+Spec: `docs/superpowers/specs/2026-11-16-quick-fixes-design.md` (approved by the owner 2026-11-16).
+
+## Global Constraints
+
+- Users page keeps only: Users, Administrators, Recommended models, Free allowances. Themes, Billing, Security activity **stay where they are** until `/admin` exists (out of scope).
+- Remove the notes `admin.lede`, `recommend.lede`, `freetier.lede`, and the `freetier.enforced` / `freetier.enforcedFallback` status line (markup, the code that writes them, and both locales). Members still see their monthly share in Settings → Usage.
+- Recommended models: **no Save button**; each select saves on `change`; select disabled while saving; "Saved" in a polite live region on success; on failure the select returns to its previous value and the error shows under it; a change made while a save is in flight waits for it.
+- Users list: top **10** by tokens this month (desc, then name), then **See all** → full-screen dialog, **20** a page, ← and → buttons on both sides, "Page N of M"; ← → keys move pages when focus is not in a text field; Esc closes; rows keep today's facts and buttons.
+- `GET /api/admin/users?page=&size=` → `{ users, total, page, size }`; size 1–50, default 20; paging in SQL; `?role=admin` → every administrator, unpaged. Permission `users` or `delete_users` as today. Existing callers of `store.listUsers()` (feedback, account routes) are unchanged.
+- Guide: step tabs scroll horizontally when they overflow — thin scrollbar on a **transparent** track, current tab scrolled into view, edge fades; one new step **Automations & Bot** before "First task" (7 steps); every sentence of it pinned by the "getting-started guide says only what is true" checks in `test/features.test.mjs`; a recorded clip like steps 1, 4, 5, 6 (`npm run onboarding:record`).
+- Keys in the guide: one key per box; checked on **paste** (no Add press), after a pause or Enter when typed; "Checking the key…" while it runs; good → ✓ "Added", box locks, a new empty box appears; another provider's key → moved by the existing intake-by-shape with "That is an <Provider> key — added to <Provider>"; refused → red with the provider's reason, no new box. Line under the box: one key per account; several keys from one account share its limit. OpenRouter's same-account second key is refused (existing `/api/v1/key` check). Settings → Providers is unchanged.
+- Progress panel: on "N earlier steps" the up chevron shows **only on hover or keyboard focus**; "Hide earlier steps" keeps its chevron; opening/folding slides (height + opacity, ~200 ms, ease-out); `prefers-reduced-motion` → instant.
+- Compaction %: right end of the "Compacting the conversation…" line, same figure as the bar; share of the summary written against its expected length (from how much is folded, bounded by the summary's token limit); held below 100 until saved, then 100; never decreases.
+- Compaction tail by size: walk back from the newest message adding whole turns while the tail ≤ **10% of the model's window, minimum 4,000 tokens**; the latest user message and everything after it always kept; never split a tool call from its results (`tailStart`'s rule); everything older is summarised; "should compact" asks whether anything older than the tail exists (not `> KEEP_RECENT + 2`).
+- Every new user-facing string in both `public/js/locales/en.js` and `vi.js` (`test/i18n.test.mjs`); server errors a person sees in `server/i18n/vi.js`.
+- Comments say why, not what; CODE-039 ceiling 93 back-to-back doc blocks (a section banner straight above a `/** */` counts — leave a blank line).
+- `npm run typecheck` must stay within baseline (new errors fail the gate); `npm run lint` clean.
+- Working tree is CRLF; never leave a lone CR.
+- Never read, edit or stage `.env` or `.env.example`. Stage by path; never stage `.claude/AUDIT_RULES.md`, `.claude/audit-annex/`, `.vscode/`, `Exa Deep Research-3.4.1-v1/`.
+- Run tests in the foreground; implementers never run `npm run gate` or the full `npm run test:ui` (the controller does).
+- Commits end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+
+---
+
+### Task 1: Users paged on the server
+
+**Files:**
+- Modify: `server/store/pg.js` (new `listUsersPage({ page, size })` and `listAdmins()` beside `listUsers` at :590), `server/app.js` (the users route at :2977)
+- Test: `test/database.test.mjs` (store), `test/http.test.mjs` or the suite that already covers `/api/admin/users` (route)
+
+**Interfaces:**
+- Produces: `store.listUsersPage({ page, size }) → { users, total }` — same row shape as `listUsers()` (including `tokens_this_month`, `chat_count`, `has_worker`, `is_owner`, `role`, flags), ordered `tokens_this_month DESC, lower(name or email) ASC, id`; `store.listAdmins() → users[]` (role admin or owner).
+- Produces: `GET /api/admin/users?page=1&size=10` → `{ users, total, page, size }` with each user's `permissions: permissionsOf(u)` as today; `?role=admin` → `{ users }` of every administrator. Bad `page`/`size` → clamped (page ≥ 1, size 1–50).
+
+- [ ] **Step 1: Write failing tests.** Store: seed 25 users with distinct monthly token totals (and a few at 0); page 1 size 10 = the 10 highest in order; page 3 size 10 = the last 5; `total` 25; ties ordered by name. Route: page/size clamp; `role=admin` lists administrators only; a member gets 403/404 as today; `permissions` present on each row.
+- [ ] **Step 2: Run** `node test/database.test.mjs` and the route suite — new checks fail.
+- [ ] **Step 3: Implement** with `LIMIT $n OFFSET $m` and a `COUNT(*) OVER ()` (or a second count query) over the same joins `listUsers` uses; no N+1.
+- [ ] **Step 4: Run** the same suites — pass. `npm run lint`, `npm run typecheck`.
+- [ ] **Step 5: Commit** `feat(admin): accounts paged on the server, busiest this month first`.
+
+### Task 2: The Users page — top 10, See all, saves itself, fewer notes
+
+**Files:**
+- Modify: `public/index.html` (panel-admin at :2335 — drop the four notes, keep the sections' order), `public/js/app.js` (`loadAdmin` :7184, `loadRecommended` :7038, the free-tier status line), `public/js/api.js` (users call takes `{ page, size, role }`), `public/css/app.css`, locales
+- Create: `public/js/users-dialog.js` (the full-screen paged list)
+- Test: `test/ui.test.mjs` (Users section) or a new `test/ui-admin-users.test.mjs` added to `test:ui` if the section is long
+
+**Interfaces:**
+- Consumes: Task 1's `GET /api/admin/users?page&size` and `?role=admin`.
+- Produces: `createUsersDialog({ api, me, armed, onChanged }) → { open() }`.
+
+- [ ] **Step 1: Failing browser checks:** the four notes gone (vi and en); no `#rec-save`; changing each select sends one save and shows "Saved"; a refused save puts the old value back and shows the error; the list shows exactly 10 rows in token order with See all; See all opens a full-screen dialog with 20 rows, "Page 1 of N", → and ← (buttons and keys) change page, Esc closes and focus returns to See all; row buttons still work inside the dialog (Suspend once); the Administrators card still lists every administrator; 360px width has no sideways scroll in the dialog.
+- [ ] **Step 2: Run** — fails.
+- [ ] **Step 3: Implement.** The dialog reuses the row renderer (move it to a shared function, no copy).
+- [ ] **Step 4: Run** the suite, `node test/i18n.test.mjs`, lint, typecheck — pass.
+- [ ] **Step 5: Commit** `feat(admin): the Users page shows the ten busiest, the rest a page at a time; suggestions save as you pick`.
+
+### Task 3: The guide scrolls, and covers Automations & Bot
+
+**Files:**
+- Modify: `public/js/onboarding.js`, `public/css/app.css`, locales (`onb.*`), `scripts/record-onboarding.mjs` (the new step's clip), `public/onboarding/{vi,en}/` (the clip and poster it writes), `test/features.test.mjs` (pins)
+- Test: `test/ui-usage-guide.test.mjs` (the guide's browser suite)
+
+- [ ] **Step 1: Read** how Automations and the Bot page actually work today (`public/js/` automations and bot page, `server/` scheduler) — every sentence of the new step must be true and pinnable.
+- [ ] **Step 2: Failing checks:** features pins for each new sentence; the guide has 7 steps with Automations & Bot sixth; at 360px and 768px the tab row scrolls horizontally, its track is transparent, the current tab is fully visible after Next/Back, the page itself never scrolls sideways.
+- [ ] **Step 3: Run** — fails.
+- [ ] **Step 4: Implement**; record the clip with `npm run onboarding:record` for the new step only (vi and en); keep the clip small like the others.
+- [ ] **Step 5: Run** `node test/features.test.mjs`, the guide suite, i18n, lint, typecheck — pass.
+- [ ] **Step 6: Commit** `feat(guide): Automations & Bot step; the steps scroll sideways when they do not fit`.
+
+### Task 4: One key at a time in the guide
+
+**Files:**
+- Modify: `public/js/onboarding-keys.js` (`createKeyGuide`, the paste box at :138), locales, `public/css/app.css`
+- Test: `test/ui-usage-guide.test.mjs` (or wherever the guide's key step is tested today)
+
+**Interfaces:**
+- Consumes: `addKey(provider, key)` → the existing `api.intakeKey` (moves a key to its provider by shape; OpenRouter one-account-one-key) — read `server/routes/account.js` intake to learn exactly what it answers for good / moved / refused / same account.
+
+- [ ] **Step 1: Failing checks (stub the intake route):** pasting a good key checks at once (no Add press), shows "Checking the key…" then ✓ "Added", locks the box and shows a new empty box; a key of another provider says it was added there; a refused key turns the box red with the reason and no new box appears; a second key from the same OpenRouter account is refused with the one-key-per-account sentence; typed (not pasted) checks after a pause and on Enter; the one-key-per-account line is under the box; keyboard and screen reader: the result is announced, focus moves to the new box.
+- [ ] **Step 2: Run** — fails.
+- [ ] **Step 3: Implement.** Remove the multi-line textarea and the Add key button from the guide; Settings → Providers untouched.
+- [ ] **Step 4: Run** the suite, i18n, features (if guide sentences are pinned), lint, typecheck — pass.
+- [ ] **Step 5: Commit** `feat(guide): keys one at a time, checked as they are pasted`.
+
+### Task 5: Progress panel — chevron on hover, a slide
+
+**Files:**
+- Modify: `public/js/app.js` (progress fold at :8271–8290), `public/css/app.css`
+- Test: `test/ui-chat.test.mjs` (the Progress section at ~:1395)
+
+- [ ] **Step 1: Failing checks:** "N earlier steps" has an up chevron that is hidden at rest and visible on hover and on keyboard focus; "Hide earlier steps" keeps its chevron visible; opening and folding animate (a transition on height/opacity is present and the end state matches today's); with `prefers-reduced-motion: reduce` there is no transition; focus stays on the button; the existing Progress checks still pass.
+- [ ] **Step 2: Run** — fails.
+- [ ] **Step 3: Implement** (CSS `grid-template-rows` 0fr→1fr or a measured height; no layout jump of the steps after the fold).
+- [ ] **Step 4: Run** `node test/ui-chat.test.mjs`, lint, typecheck — pass.
+- [ ] **Step 5: Commit** `feat(progress): the earlier-steps chevron shows on hover; folding slides`.
+
+### Task 6: Compaction keeps recent turns by size, and shows a live %
+
+**Files:**
+- Modify: `server/compact.js` (`KEEP_RECENT`, `tailStart`, `shouldCompact`, `compact`'s `onProgress`), `server/agent.js` (:2414 status emit), `server/routes/chats.js` (manual compact, if it passes progress), `public/js/app.js` (compact bar at :5050), `public/css/app.css`, locales
+- Test: `test/agent.test.mjs` or the suite that covers `server/compact.js` today (find it), `test/ui-chat.test.mjs` or `test/ui.test.mjs` for the % line
+
+**Interfaces:**
+- Produces: `tailStart(messages, { window })` choosing by tokens (10% of `window`, min 4,000); `onProgress({ folding, written, expected })` while the summary streams; the client shows `Math.round(100 * written / expected)` capped at 99 until the done event, then 100, never decreasing.
+
+- [ ] **Step 1: Failing checks:** a transcript with a 60K-token old reply and short recent turns: the reply is folded, the tail ≤ 10% of a 262K window; a single latest user message bigger than the budget is still kept whole with what follows it; a tool call is never separated from its result at the boundary; a 32K window uses the 4,000 floor; `shouldCompact` is false when nothing lies before the tail; progress events carry `written`/`expected`; the client % only rises and ends at 100.
+- [ ] **Step 2: Run** — fails.
+- [ ] **Step 3: Implement.** Keep `activeTranscript`'s `covers` logic as is. Throttle progress events (at most a few per second).
+- [ ] **Step 4: Run** the compaction suite, the browser check, i18n, lint, typecheck — pass.
+- [ ] **Step 5: Commit** `feat(compact): keep the recent turns by size, not count; a live % while it summarises`.
+
+### Task 7: Release 1.31.0
+
+**Files:**
+- Modify: `package.json` (1.31.0), `public/changelog.json` (1.31.0, vi and en, same array lengths), `CHANGELOG.md`, `README.md` (Users page, guide, compaction rule), `test/features.test.mjs` (pins: compaction 10% / 4,000; top 10 / 20 a page)
+- Memory (controller): `admin-dashboard-and-quick-fixes-decisions.md` — what shipped.
+
+- [ ] **Step 1:** Write the features pins; run `node test/features.test.mjs` — fails until the docs and version are in.
+- [ ] **Step 2:** Update the files.
+- [ ] **Step 3:** Run `node test/features.test.mjs`, `node test/billing-docs.test.mjs`, `node test/i18n.test.mjs`, `node test/deploy.test.mjs`, lint — pass. (The controller runs the gate and `test:ui`.)
+- [ ] **Step 4: Commit** `release: 1.31.0 — a leaner Users page, the guide, keys one at a time, compaction by size`.
