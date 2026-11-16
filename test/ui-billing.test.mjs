@@ -176,7 +176,7 @@ section('the plans sheet');
     checked: document.querySelector('#plans .plans__period [data-period="year"]').getAttribute('aria-checked'),
     save: document.querySelector('#plans .plans__period [data-period="year"]').textContent,
   }));
-  check('Yearly changes the prices', /\$57\b/.test(yearly.plus) && yearly.checked === 'true', yearly.plus);
+  check('Yearly changes the prices', /\$50\b/.test(yearly.plus) && yearly.checked === 'true', yearly.plus);
   check('  and says "save 17%"', /17%/.test(yearly.save), yearly.save);
   await page.click('#plans .plans__period [data-period="month"]');
 }

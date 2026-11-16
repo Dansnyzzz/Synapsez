@@ -193,7 +193,7 @@ export function mountBillingRoutes(api, admin, { wrap }) {
         storageGb: PLANS[id].storageGb,
       })),
       payg: { anchorRate: PAYG_ANCHOR_RATE, base: PAYG_BASE, prices: rate ? paygPrices(rate.rate) : null },
-      rate: rate ? { rate: rate.rate, source: rate.source, at: rate.at, attribution: RATE_ATTRIBUTION } : null,
+      rate: rate ? { rate: rate.rate, source: rate.source, at: rate.at, ...(rate.source === 'erapi' ? { attribution: RATE_ATTRIBUTION } : {}) } : null,
       current: { plan: current.plan, period: current.period },
     });
   }));

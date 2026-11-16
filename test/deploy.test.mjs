@@ -110,6 +110,10 @@ section('vercel.json');
   const crons = (conf.crons || []).map((c) => c.path);
   check('scheduled tasks have a cron', crons.includes('/api/cron/run-tasks'), crons.join(', '));
   check('the model library has one too', crons.includes('/api/cron/refresh-models'));
+  // The same cron reads the day's USD to VND rate, and the rate is "fresh until the next 06:00 in Vietnam" by that hour.
+  const { REFRESH_UTC_HOUR } = await import('../server/billing/fx.js');
+  const rateCron = (conf.crons || []).find((c) => c.path === '/api/cron/refresh-models');
+  check('the billing rate refresh hour is the cron hour (23:00 UTC, 06:00 in Vietnam)', rateCron?.schedule === `0 ${REFRESH_UTC_HOUR} * * *`, `${rateCron?.schedule} vs ${REFRESH_UTC_HOUR}`);
   // Hobby allows 100 cron jobs, so both of these run on the free plan. The limit
   // that bites is frequency, not count, and it bites at deploy time: an
   // expression that would fire more than once a day is refused with "Hobby

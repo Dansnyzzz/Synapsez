@@ -141,6 +141,31 @@ section('the day\'s rate: Frankfurter, then Vietcombank, then Exchange Rate API,
   await forget();
   check('  with nothing known it is the anchor', (await fx.meteringRate()) === PAYG_ANCHOR_RATE);
   check('the attribution text is exact', fx.RATE_ATTRIBUTION === 'Rates By Exchange Rate API: https://www.exchangerate-api.com');
+
+  // The boundary itself: 23:00 UTC is 06:00 in Vietnam (and vercel.json's cron, which test/deploy.test.mjs ties to it).
+  await reset();
+  allDown();
+  frankSays(25736);
+  await fx.usdVnd({ now: NOW });
+  frankSays(25800);
+  await forget();
+  const onTime = await fx.refreshRate({ now: new Date('2026-11-13T22:59:00Z') });
+  check('at 22:59 UTC the rate is still fresh: the cron asks nobody', onTime.rate === 25736);
+  const atSix = await fx.refreshRate({ now: new Date('2026-11-13T23:00:00Z') });
+  check('at 23:00 UTC (06:00 in Vietnam) it is due: the cron asks again', atSix.rate === 25800 && atSix.at === '2026-11-13T23:00:00.000Z', JSON.stringify(atSix));
+  await forget();
+  const nextDay = await fx.refreshRate({ now: new Date('2026-11-14T22:59:00Z') });
+  frankSays(25900);
+  await forget();
+  check('  and a rate read at exactly 23:00 lasts until the 23:00 after', nextDay.rate === 25800 && (await fx.refreshRate({ now: new Date('2026-11-14T23:00:00Z') })).at === '2026-11-14T23:00:00.000Z');
+
+  // A kept rate dated in the future (a clock that was wrong) is not trusted.
+  await reset();
+  allDown();
+  frankSays(25700);
+  await store.setSetting('billing_fx', { rate: 25111, source: 'erapi', at: hours(3).toISOString() });
+  const future = await fx.usdVnd({ now: NOW });
+  check('a kept rate from the future is not used: the chain is asked', future.rate === 25700 && future.source === 'frankfurter', JSON.stringify(future));
 }
 
 /* From here the rate is 25655.85. */
@@ -661,19 +686,19 @@ section('I6: open top-up QRs count against the cap');
 
 section('M1/M3: a slipped rate is not charged with; a cancelled plan is free once it ends');
 {
-  await forget();
+  // The bad rate must come from Frankfurter, the first source asked: a bad one further down the chain is never reached.
+  await reset();
   allDown();
-  await query(`DELETE FROM settings WHERE key = 'billing_fx'`);
-  erapiSays(2565.585);
+  frankSays(2565.585);
   vcbSays(25400);
   const a = await fx.usdVnd({ now: NOW });
-  check('a rate off by a factor of ten is skipped for the next source', a.source === 'vietcombank' && a.rate === 25400, JSON.stringify(a));
+  check('a rate off by a factor of ten is skipped for the next source (a cold start)', a.source === 'vietcombank' && a.rate === 25400 && asked.at(-2).includes('frankfurter') && asked.at(-1).includes('vietcombank'), JSON.stringify([a, asked.slice(-2)]));
   await forget();
   await store.setSetting('billing_fx', { rate: 25000, source: 'erapi', at: hours(-3).toISOString() });
-  erapiSays(31000);
+  frankSays(31000);
   // The cron's read: a usdVnd the same day would just use the kept rate.
   const b = await fx.refreshRate({ now: NOW, force: true });
-  check('a rate more than 20% from the last one is skipped too', b.source === 'vietcombank' && b.rate === 25400, JSON.stringify(b));
+  check('a rate more than 20% from the last one is skipped too', b.source === 'vietcombank' && b.rate === 25400 && asked.at(-2).includes('frankfurter') && asked.at(-1).includes('vietcombank'), JSON.stringify([b, asked.slice(-2)]));
   await prime();
   const u = await makeUser();
   await store.saveSubscription(subRow(u.id, { periodStart: P0, periodEnd: P1, cancelAtEnd: true }));

@@ -34,6 +34,7 @@ const realFetch = globalThis.fetch;
 const outside = [];
 let rateUp = true;
 let frankUp = false;
+let catalogueUp = false;
 const e2bSandboxes = [{ sandboxID: 'a', state: 'running' }, { sandboxID: 'b', state: 'running' }, { sandboxID: 'c', state: 'paused' }, { sandboxID: 'd', state: 'running' }];
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 globalThis.fetch = async (url, options) => {
@@ -45,6 +46,7 @@ globalThis.fetch = async (url, options) => {
     return json({ result: 'success', time_last_update_unix: Math.floor(Date.now() / 1000), rates: { VND: 25_500 } });
   }
   if (u.host === 'api.frankfurter.dev' && frankUp) return json([{ date: '2026-11-16', base: 'USD', quote: 'VND', rate: 25_736 }]);
+  if (u.host === 'openrouter.ai' && catalogueUp) return json({ data: [] });
   if (u.host === 'api.e2b.app') return json(e2bSandboxes);
   throw new TypeError('fetch failed');
 };
@@ -801,11 +803,40 @@ section('the rate once a day, from the 06:00 cron');
   check('  and refreshRate answers the rate with its source', (await refreshRate({ force: true }))?.source === 'frankfurter');
   const plansNow = await owner.j.call('GET', '/api/billing/plans');
   check('/plans says which source the rate came from, so the client knows whether a link is owed', plansNow.json?.rate?.rate === 25_736 && plansNow.json.rate.source === 'frankfurter' && typeof plansNow.json.rate.at === 'string', JSON.stringify(plansNow.json?.rate));
+  check('  and Frankfurter, which asks for no link, sends no attribution text', !('attribution' in plansNow.json.rate), JSON.stringify(plansNow.json?.rate));
+
+  // A day later, with the library answering: the cron's own answer carries the rate.
+  const aged = async () => {
+    await store.setSetting('billing_fx', { rate: 25_736, source: 'frankfurter', at: new Date(Date.now() - 30 * 3_600_000).toISOString() });
+    const finance = await import('../server/finance/cache.js');
+    finance.__resetCache();
+    // The answer a source gave is also kept in the database for a while: forget it so the next read asks again.
+    for (const source of ['frankfurter', 'erapi']) await finance.forget(`${source}|fx|USD|VND|latest`);
+    (await import('../server/finance/http.js')).__resetHttp();
+    (await import('../server/billing/fx.js'))._resetFxForTests();
+  };
+  catalogueUp = true;
+  await aged();
+  const good = await cron();
+  const goodBody = await good.json().catch(() => null);
+  check('the cron answers with the rate it read: rate, source and at', good.status === 200 && goodBody?.rate?.rate === 25_736 && goodBody.rate.source === 'frankfurter' && typeof goodBody.rate.at === 'string' && Object.keys(goodBody.rate).length === 3, JSON.stringify(goodBody?.rate));
+
+  // Every source down, the kept rate a day old: the chain really is asked, finds nobody, and the model refresh is none the worse.
+  await aged();
   frankUp = false;
   rateUp = false;
+  const asked = outside.length;
   const failing = await cron();
-  check('every rate source down leaves the kept rate and adds no failure of its own', failing.status === 500 && (await store.getSetting('billing_fx')).rate === 25_736);
+  const failBody = await failing.json().catch(() => null);
+  check('every rate source down: the sources were asked, the kept rate stays, the model refresh still succeeds with rate null', failing.status === 200 && failBody?.rate === null && outside.slice(asked).some((x) => x.startsWith('api.frankfurter.dev')) && (await store.getSetting('billing_fx')).rate === 25_736, JSON.stringify([failing.status, failBody?.rate, outside.slice(asked)]));
   rateUp = true;
+
+  process.env.BILLING_MODE = 'off';
+  const skipped = await cron();
+  const skipBody = await skipped.json().catch(() => null);
+  delete process.env.BILLING_MODE;
+  check('billing off: nothing is asked and the answer says skipped, not "no source answered"', skipped.status === 200 && skipBody?.rate?.skipped === 'off', JSON.stringify(skipBody?.rate));
+  catalogueUp = false;
 }
 
 server.close();

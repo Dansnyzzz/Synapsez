@@ -1,8 +1,8 @@
 /**
  * The day's USD to VND rate (owner, 2026-11-13). Plans are priced in dollars and charged in đồng,
  * so a price needs a rate that is honest and recent. The chain is Frankfurter, then Vietcombank's
- * transfer rate, then open.er-api (owner, 2026-11-16: Frankfurter asks for no attribution link, the
- * other asks for one wherever its rate shows), through the finance layer's own sources (their
+ * transfer rate, then open.er-api (owner, 2026-11-16: Frankfurter asks for no attribution link, and
+ * open.er-api asks for one wherever its rate shows), through the finance layer's own sources (their
  * politeness caps and attribution stay theirs). The rate is read once a day by the 06:00 Vietnam
  * cron (`refreshRate`) and kept in memory and in the `billing_fx` setting, so every instance of a
  * deployment agrees and a busy day asks nobody. A rate older than 48 hours is not good enough to
@@ -17,11 +17,12 @@
 import { getStore } from '../store/index.js';
 import { fromSource } from '../finance/sources/fx.js';
 import { PAYG_ANCHOR_RATE } from './plans.js';
+import { log } from '../util/trace.js';
 
 export const RATE_ATTRIBUTION = 'Rates By Exchange Rate API: https://www.exchangerate-api.com';
 const SETTING = 'billing_fx';
 // 06:00 in Vietnam (UTC+7, no daylight saving) is 23:00 UTC the day before: the cron's hour.
-const REFRESH_UTC_HOUR = 23;
+export const REFRESH_UTC_HOUR = 23;
 const USABLE_MS = 48 * 3_600_000;
 // A source that slips a decimal point (2,565.585 would price Plus at 13,000đ) is skipped, not charged with: a rate must
 // be within half to double the anchor and, when one is known, within 20% of the last one. Dong moves slowly.
@@ -131,10 +132,13 @@ export async function refreshRate({ now = new Date(), force = false } = {}) {
 export async function usdVnd({ now = new Date() } = {}) {
   if (fresh(memory, now)) return memory;
   const last = newest(memory, await stored());
-  if (last && ageOf(last, now) <= USABLE_MS) {
+  // A rate dated in the future (a clock that was wrong) is not trusted either: fresh() refuses it, so does this.
+  if (last && ageOf(last, now) >= 0 && ageOf(last, now) <= USABLE_MS) {
     memory = last;
     return last;
   }
+  // The only sign the 06:00 read is not running: a price had to wait for a source.
+  if (last) log.warn('billing: the kept rate is too old to charge with, so the rate of the day is asked for now; is the 06:00 cron running?', { at: last.at });
   const got = await ask(now, bandAgainst(last, now));
   if (got) {
     await keep(got);

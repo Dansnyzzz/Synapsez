@@ -569,7 +569,10 @@ export function createApp() {
       const [library, rate] = await Promise.allSettled([refreshLibrary(), billingMode() === 'off' ? null : refreshRate()]);
       if (library.status === 'rejected') throw library.reason;
       const read = rate.status === 'fulfilled' ? rate.value : null;
-      res.json({ ...library.value, rate: read ? { rate: read.rate, source: read.source, at: read.at } : null });
+      const off = billingMode() === 'off';
+      if (!off && !read) log.warn('billing: the rate of the day could not be read', { error: rate.status === 'rejected' ? String(rate.reason?.message || rate.reason).slice(0, 160) : 'no source answered' });
+      // "skipped" (billing is off, nothing was asked) is not "null" (every source was down).
+      res.json({ ...library.value, rate: off ? { skipped: 'off' } : read ? { rate: read.rate, source: read.source, at: read.at } : null });
     }),
   );
 
