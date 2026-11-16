@@ -3353,22 +3353,57 @@ section('the gauge says what the window is spent on (owner, 2026-10-19)');
   check('  which no other account can write over', (await store.getChat(gauge.id, 'c-gauge'))?.context_parts?.system === kept.system);
 }
 
-section('a line typed while the summary is written is still picked up');
+section('a line typed during a run is picked up, wherever in a step it lands');
 {
-  const { highWaterMark } = await import('../server/agent.js');
-  const hw = await store.createUser({ id: 'u-hw', email: 'hw@example.com', name: 'HW', passwordHash: 'x', role: 'user' });
-  await store.createChat(hw.id, { id: 'c-hw', title: 'hw', model: 'm' });
-  const held = [];
-  held.push(await store.appendMessage(hw.id, 'c-hw', { id: 'hw-1', role: 'user', text: 'start' }));
-  held.push(await store.appendMessage(hw.id, 'c-hw', { id: 'hw-2', role: 'assistant', text: 'working' }));
-  // The user types while the summary is being written, so their line is stored first and has the lower seq.
-  const typed = await store.appendMessage(hw.id, 'c-hw', { id: 'hw-typed', role: 'user', text: 'actually, use the other file' });
-  held.push(await store.appendMessage(hw.id, 'c-hw', { id: 'hw-sum', role: 'summary', text: 's', covers: 1 }));
-  check('the summary has the higher seq', held.at(-1).seq > typed.seq);
-  const fresh = await store.messagesSince(hw.id, 'c-hw', highWaterMark(held));
-  check('the typed line is still returned from the mark', fresh.some((m) => m.id === 'hw-typed'), JSON.stringify(fresh.map((m) => m.id)));
-  const wrong = await store.messagesSince(hw.id, 'c-hw', Math.max(...held.map((m) => m.seq)));
-  check('(counting the summary would have skipped it)', !wrong.some((m) => m.id === 'hw-typed'));
+  const steerer = await store.createUser({ id: 'u-steer', email: 'steer@example.com', name: 'Steer', passwordHash: 'x', role: 'admin' });
+  // `typedBefore`: the role of the next row the loop stores once `armedAt` requests have begun; the typed line is stored just ahead of it.
+  const trial = async (label, typedBefore, armedAt) => {
+    const chatId = `steer-${label}`;
+    await store.createChat(steerer.id, { id: chatId, title: chatId });
+    await store.appendMessage(steerer.id, chatId, { id: `${chatId}-q`, role: 'user', text: 'read the skills, then tell me' });
+    const real = store.appendMessage.bind(store);
+    let pending = false;
+    store.appendMessage = async (uid, cid, message) => {
+      if (cid === chatId && pending && message.role === typedBefore) {
+        pending = false;
+        await real(uid, cid, { id: `${chatId}-typed`, role: 'user', text: 'TYPED MID-STEP: use the pptx one only' });
+      }
+      return real(uid, cid, message);
+    };
+    let calls = 0;
+    const saw = [];
+    const stream = async function* (opts) {
+      calls += 1;
+      saw.push(opts.messages.some((m) => /TYPED MID-STEP/.test(m.text || '')));
+      if (calls === armedAt) pending = true;
+      if (calls === 1) {
+        yield { type: 'done', stopReason: 'tool_use', toolCalls: [{ id: 'k1', name: 'skill_read', input: { name: 'docx' } }, { id: 'k2', name: 'skill_read', input: { name: 'pptx' } }], usage: { input: 50, output: 5 } };
+      } else if (calls === 2) {
+        yield { type: 'done', stopReason: 'tool_use', toolCalls: [{ id: 'k3', name: 'skill_read', input: { name: 'xlsx' } }], usage: { input: 60, output: 5 } };
+      } else {
+        yield { type: 'text', delta: 'ok' };
+        yield { type: 'done', stopReason: 'end_turn', toolCalls: [], usage: { input: 70, output: 5 } };
+      }
+    };
+    const steers = [];
+    try {
+      await runAgent({ userId: steerer.id, user: steerer, chatId, emit: (type, p) => type === 'steer' && steers.push(p.text), stream });
+    } finally {
+      store.appendMessage = real;
+    }
+    const stored = await store.listMessages(steerer.id, chatId);
+    return { saw, steers, typed: stored.find((m) => m.id === `${chatId}-typed`), firstTool: stored.find((m) => m.role === 'tool') };
+  };
+
+  // Two calls in one step: the line is typed while the second runs, so it is stored before the step's tool message.
+  const parallel = await trial('between-call-and-result', 'tool', 1);
+  check('the typed line sits between the call and its result', parallel.typed && parallel.typed.seq < parallel.firstTool.seq);
+  check('and the next request carries it', parallel.saw[1] === true, JSON.stringify(parallel.saw));
+  check('and the page is told once', parallel.steers.length === 1, String(parallel.steers.length));
+
+  // Typed after the step-2 pickup, before step 2's reply is stored.
+  const later = await trial('before-second-reply', 'assistant', 2);
+  check('a line stored under the next reply is read at the following step', later.saw[2] === true && later.steers.length === 1, JSON.stringify(later.saw));
 }
 
 // Last, after every section that uses the database: it was removed midway, and

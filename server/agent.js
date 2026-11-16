@@ -796,19 +796,6 @@ const notRun = (assistant) => ({
   })),
 });
 
-/**
- * The newest seq in hand that a typed-in message cannot be older than.
- *
- * A summary does not count. It is written at the top of a step and takes the
- * next seq while the model is busy summarising for as long as half a minute; a
- * line the user types in that time is stored before it and therefore has a
- * lower seq. Counting the summary raised the mark past it and `messagesSince`
- * never returned it: the message typed mid-run vanished.
- */
-export function highWaterMark(messages) {
-  return messages.reduce((n, m) => (m.role === 'summary' ? n : Math.max(n, Number(m.seq) || 0)), 0);
-}
-
 export function normaliseOrder(messages) {
   const out = [];
   let i = 0;
@@ -1841,7 +1828,13 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
    * asked. Scheduled tasks, workflows and a resumed turn pass none: they run on
    * the account's choice at the time they run.
    */
-  let messages = await store.listMessages(userId, chatId);
+  /*
+   * In the order the request is built in. Folds are decided on this list, and
+   * the request's own copy is made from it: a line typed while a tool ran sits
+   * between the call and its result in storage, and deciding on one order while
+   * sending in the other cut a call from its result.
+   */
+  let messages = normaliseOrder(await store.listMessages(userId, chatId));
 
   /*
    * Who started this turn (owner, 2026-11-10): the person, unless the message that started
@@ -2297,6 +2290,8 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
    * model. This is what lets someone change their mind mid-task instead of
    * waiting for the run to finish.
    */
+  // What has been read from the store, by seq; set at the first pickup, which is before anything this turn stores.
+  let readMark = null;
   async function absorbNewMessages() {
     /**
      * Ask only for what is newer than the highest turn already in hand.
@@ -2313,8 +2308,20 @@ async function runTurn({ userId, user, chatId, modelId, decision, decisionFor, a
      * yet.
      */
     const known = new Set(messages.map((m) => m.id));
-    const highWater = highWaterMark(messages);
-    const fresh = await store.messagesSince(userId, chatId, highWater);
+    /*
+     * The mark moves only over rows actually read from the store.
+     *
+     * It was the largest seq held in memory. This loop stores its own rows — a
+     * summary at the top of a step, the reply, the tool message — and a line the
+     * user typed meanwhile has a seq between them, lower than the one the loop
+     * wrote after it, so the mark had already passed it and it was never read.
+     * That also lost a line typed between a call and its result when a step ran
+     * several calls. Seq is handed out under the chat row's lock in the insert,
+     * so a row that has committed is never below a mark that was read past it.
+     */
+    readMark ??= messages.reduce((n, m) => Math.max(n, Number(m.seq) || 0), 0);
+    const fresh = await store.messagesSince(userId, chatId, readMark);
+    for (const m of fresh) readMark = Math.max(readMark, Number(m.seq) || 0);
     const added = fresh.filter((m) => m.role === 'user' && !known.has(m.id));
     if (!added.length) return false;
 

@@ -3,7 +3,7 @@ import { riskReason } from '../tools/definitions.js';
 import { resolveForUser } from '../autoPick.js';
 import { getStore } from '../store/index.js';
 import { pastedOpening, verifyOwned } from '../attachments.js';
-import { deriveTitle, needsApproval as pendingApproval } from '../agent.js';
+import { deriveTitle, needsApproval as pendingApproval, normaliseOrder } from '../agent.js';
 import { changesRule, ruleNotesInReach, RULE_REASON } from '../memory.js';
 import { normaliseQuestions, askLayout } from '../tools/askOptions.js';
 import { compact as compactChat, measure as measureContext, transcriptTokens } from '../compact.js';
@@ -456,7 +456,8 @@ export function mountChatRoutes(api, { wrap, body, isRunning }) {
       }
 
       const prefs = await getPrefs(req.user.id);
-      const messages = await store.listMessages(req.user.id, chatId);
+      // Reordered as a turn's request is, so the fold is decided on what would be sent.
+      const messages = normaliseOrder(await store.listMessages(req.user.id, chatId));
       // The account's model. Folding a conversation up has to be measured and
       // performed against the window the next turn will run in. Through
       // resolveForUser so Auto expands to the free model it would actually pick.
