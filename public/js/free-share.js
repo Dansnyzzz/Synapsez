@@ -29,16 +29,3 @@ export function filesSize(bytes) {
   if (n >= 1e3) return `${one(n / 1e3)} KB`;
   return `${n} B`;
 }
-
-/** The administrators' sentence under the allowances table. */
-export function freeShareLine(shares) {
-  if (!shares || shares.fallback || !shares.capacity?.searches) return t('freetier.enforcedFallback');
-  return t('freetier.enforced', {
-    n: countOf(shares.searches),
-    h: machineTime(shares.machineMills),
-    c: countOf(shares.capacity.searches),
-    p: countOf(shares.people?.searches ?? 0),
-    min: '30',
-    max: '900',
-  });
-}

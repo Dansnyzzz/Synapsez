@@ -2334,11 +2334,6 @@
           <!-- ── Administration: only for the people who run the deployment ── -->
           <section class="panel" data-panel="admin" id="panel-admin" role="tabpanel" aria-labelledby="tab-admin">
             <h3 class="settings__title" data-i18n="settings.tab.people">People</h3>
-            <p class="settings__lede" data-i18n-html="admin.lede">
-              Anyone can sign up with an email and a password. Each account brings its own API keys and
-              pairs its own computer — never yours. Set <code>ALLOW_SIGNUP=false</code> to close
-              registration once everyone you want is in.
-            </p>
             <div id="user-list" data-needs="users delete_users"></div>
             <!-- Who administers the deployment, and what each may do: the owner's (server/adminRoles.js). -->
             <div data-needs="owner">
@@ -2349,7 +2344,6 @@
             <!-- The models suggested to everyone (server/recommend.js). -->
             <div data-needs="models">
             <h3 class="settings__title" data-i18n="recommend.title">Recommended models</h3>
-            <p class="settings__lede" data-i18n="recommend.lede">Suggested to everyone. An account whose key has paid for credit is given the paid one; everyone else the free one. Someone who never chose a model uses it at once.</p>
             <div id="admin-recommended"></div>
             </div>
             <!-- What each theme is called and who holds it (server/themes.js). -->
@@ -2361,7 +2355,6 @@
             <!-- The deployment's free allowances, shared by every account (server/freeTier.js). -->
             <div data-needs="free_tier">
             <h3 class="settings__title" data-i18n="freetier.title">Free allowances</h3>
-            <p class="settings__lede" data-i18n="freetier.lede">One allowance per service for the whole deployment, shared by every account. A service that has used its own stands aside until it resets, and the free engines carry on.</p>
             <div id="admin-free-tier"></div>
             </div>
             <!-- Money in, what it cost, transfers nobody claimed, promo codes (server/routes/billing.js; public/js/billing-admin.js). -->

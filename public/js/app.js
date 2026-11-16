@@ -43,6 +43,7 @@ import { openAccountMenu, paintAccount, paintPlan, shortcutFor, renderShortcuts 
 import { createPlansSheet } from './billing-plans.js';
 import { createBillingPanel } from './billing-panel.js';
 import { createBillingAdmin } from './billing-admin.js';
+import { createUsersDialog, userRowsHtml, wireUserRows } from './users-dialog.js';
 import { planName } from './billing-format.js';
 import { createUsagePanel } from './usage-panel.js';
 import { createThemes } from './themes-panel.js';
@@ -7055,30 +7056,78 @@ async function loadRecommended() {
     host.innerHTML = `<div class="rec">
         <div class="rec__row">
           <div class="rec__label"><label for="rec-free">${escapeHtml(t('recommend.free'))}</label><p>${escapeHtml(t('recommend.freeHint'))}</p></div>
-          <select id="rec-free" class="sselect sselect--wide">${grouped(options.free, current.free)}</select>
+          <div class="rec__field"><select id="rec-free" class="sselect sselect--wide">${grouped(options.free, current.free)}</select>
+          <p class="rec__note" id="rec-free-status" role="status" aria-live="polite"></p><p class="rec__note rec__note--error" id="rec-free-error" role="alert"></p>
+          </div>
         </div>
         <div class="rec__row">
           <div class="rec__label"><label for="rec-free-second">${escapeHtml(t('recommend.freeSecond'))}</label><p>${escapeHtml(t('recommend.freeSecondHint'))}</p></div>
-          <select id="rec-free-second" class="sselect sselect--wide"><option value="">${escapeHtml(t('recommend.none'))}</option>${grouped(options.free, current.freeSecond)}</select>
+          <div class="rec__field"><select id="rec-free-second" class="sselect sselect--wide"><option value="">${escapeHtml(t('recommend.none'))}</option>${grouped(options.free, current.freeSecond)}</select>
+          <p class="rec__note" id="rec-free-second-status" role="status" aria-live="polite"></p><p class="rec__note rec__note--error" id="rec-free-second-error" role="alert"></p>
+          </div>
         </div>
         <div class="rec__row">
           <div class="rec__label"><label for="rec-paid">${escapeHtml(t('recommend.paid'))}</label><p>${escapeHtml(t('recommend.paidHint'))}</p></div>
-          <select id="rec-paid" class="sselect sselect--wide"><option value="">${escapeHtml(t('recommend.none'))}</option>${grouped(options.paid, current.paid)}</select>
+          <div class="rec__field"><select id="rec-paid" class="sselect sselect--wide"><option value="">${escapeHtml(t('recommend.none'))}</option>${grouped(options.paid, current.paid)}</select>
+          <p class="rec__note" id="rec-paid-status" role="status" aria-live="polite"></p><p class="rec__note rec__note--error" id="rec-paid-error" role="alert"></p>
+          </div>
         </div>
-        <div class="settings__actions"><button class="btn btn--primary btn--small" type="button" id="rec-save">${escapeHtml(t('action.save'))}</button></div>
       </div>`;
-    $('rec-save').addEventListener('click', async () => {
-      try {
-        await api.setRecommended({ free: /** @type {HTMLSelectElement} */ ($('rec-free')).value, freeSecond: /** @type {HTMLSelectElement} */ ($('rec-free-second')).value || null, paid: /** @type {HTMLSelectElement} */ ($('rec-paid')).value || null });
-        const boot = await api.bootstrap();
-        Object.assign(state.boot, { recommended: boot.recommended, suggestion: boot.suggestion });
-        toast(t('recommend.saved'), 'ok');
-      } catch (err) {
-        toast(err.message, 'error');
-      }
-    });
+    wireRecommended(host);
   } catch (err) {
     host.textContent = err.message;
+  }
+}
+
+/**
+ * Each recommended-model select saves the moment it changes (owner, 2026-11-16: no Save button). The select is
+ * disabled while its save is out; a change made elsewhere in the meantime waits its turn, and is sent with what the
+ * server has confirmed for the others, never with a choice still on its way. A refusal puts the old choice back and says
+ * why under the select.
+ */
+function wireRecommended(host) {
+  const ids = ['rec-free', 'rec-free-second', 'rec-paid'];
+  const select = (id) => /** @type {HTMLSelectElement} */ ($(id));
+  /** What the server holds for each, as last confirmed. */
+  const known = Object.fromEntries(ids.map((id) => [id, select(id).value]));
+  const clearTimers = new Map();
+  let reverting = false;
+  let turn = Promise.resolve();
+
+  async function save(id, chosen) {
+    const box = select(id);
+    const status = $(`${id}-status`);
+    const failure = $(`${id}-error`);
+    clearTimeout(clearTimers.get(id));
+    status.textContent = '';
+    failure.textContent = '';
+    box.disabled = true;
+    const next = { ...known, [id]: chosen };
+    try {
+      await api.setRecommended({ free: next['rec-free'], freeSecond: next['rec-free-second'] || null, paid: next['rec-paid'] || null });
+      known[id] = chosen;
+      const boot = await api.bootstrap();
+      Object.assign(state.boot, { recommended: boot.recommended, suggestion: boot.suggestion });
+      status.textContent = t('recommend.saved');
+      clearTimers.set(id, setTimeout(() => { status.textContent = ''; }, 4000));
+    } catch (err) {
+      // Back to what is stored. The picker draws from 'change', which setting a value does not send.
+      reverting = true;
+      box.value = known[id];
+      box.dispatchEvent(new Event('change', { bubbles: true }));
+      reverting = false;
+      failure.textContent = err.message;
+    } finally {
+      box.disabled = false;
+    }
+  }
+
+  for (const id of ids) {
+    select(id).addEventListener('change', () => {
+      if (reverting) return;
+      const chosen = select(id).value;
+      turn = turn.then(() => save(id, chosen));
+    });
   }
 }
 
@@ -7098,12 +7147,14 @@ const chosenPowers = (host) => [.../** @type {NodeListOf<HTMLInputElement>} */ (
  * administrator with what they may do, and a way to add one. The person is chosen
  * from one list, which can be searched by typing or scrolled through. Nothing is
  * given by default: an owner says what each person may do.
+ *
+ * `candidates` are the accounts that could be added: null while they are still being fetched
+ * (the list is every account, and is fetched after the page is up, not before it).
  */
-function drawAdmins(users) {
+function drawAdmins(admins, candidates) {
   const host = $('admin-admins');
   const person = (u) => `${u.name || u.email}${u.username ? ` (@${u.username})` : ''} · ${u.email}`;
-  const admins = users.filter((u) => u.role === 'admin');
-  const others = users.filter((u) => u.role !== 'admin' && !u.suspended_at);
+  const others = (candidates || []).filter((u) => u.role !== 'admin' && !u.suspended_at);
   const heldBy = (u) => (Array.isArray(u.permissions) ? u.permissions : []);
   host.innerHTML = `<div class="admins">
       ${admins
@@ -7116,7 +7167,9 @@ function drawAdmins(users) {
       <div class="admins__add">
         <h4 class="admins__title">${escapeHtml(t('admins.add'))}</h4>
         ${
-          others.length
+          candidates === null
+            ? `<p class="hint">${escapeHtml(t('common.loading'))}</p>`
+            : others.length
             ? `<label class="admins__label" for="admin-add-person">${escapeHtml(t('admins.person'))}</label>
                <select id="admin-add-person" class="sselect sselect--wide" data-search="always"><option value="">${escapeHtml(t('admins.choosePerson'))}</option>${others.map((u) => `<option value="${escapeHtml(u.id)}">${escapeHtml(person(u))}</option>`).join('')}</select>
                <p class="admins__label">${escapeHtml(t('admins.mayDo'))}</p>
@@ -7140,7 +7193,7 @@ function drawAdmins(users) {
     try {
       await api.setAdmin(who.value, chosenPowers(add));
       toast(t('admins.added'), 'ok');
-      loadAdmin();
+      loadUsers();
     } catch (err) {
       toast(err.message, 'error');
       ready();
@@ -7175,8 +7228,41 @@ function drawAdmins(users) {
   for (const btn of /** @type {NodeListOf<HTMLElement>} */ (host.querySelectorAll('[data-admin-remove]'))) {
     armed(btn, t('action.reallyRemove'), async () => {
       await api.removeAdmin(/** @type {string} */ (btn.dataset.adminRemove));
-      loadAdmin();
+      loadUsers();
     });
+  }
+}
+
+/** The accounts: the ten busiest this month and, for the owner, every administrator; the rest are in the See all dialog. */
+const TOP_USERS = 10;
+
+/** Which draw of the Administrators card is the latest: a slow list for an older one must not overwrite a newer. */
+let adminsDraw = 0;
+
+const usersDialog = createUsersDialog({ api, me: () => state.boot.user, armed, onChanged: () => loadUsers() });
+
+async function loadUsers() {
+  const me = state.boot.user;
+  try {
+    // The Administrators card is every administrator, whichever page they would be on, so it asks for them by role.
+    const [top, admins] = await Promise.all([api.users({ page: 1, size: TOP_USERS }), me.isOwner ? api.users({ role: 'admin' }) : null]);
+    if (admins) {
+      drawAdmins(admins.users, null);
+      // Everyone who could be made an administrator: the one place that still needs the whole list, asked for after
+      // the page is drawn so the ten busiest never wait on it.
+      const mine = ++adminsDraw;
+      api
+        .users()
+        .then((all) => mine === adminsDraw && drawAdmins(admins.users, all.users))
+        .catch((err) => mine === adminsDraw && (drawAdmins(admins.users, []), toast(err.message, 'error')));
+    }
+
+    const host = $('user-list');
+    host.innerHTML = userRowsHtml(top.users, me) + (top.total > top.users.length ? `<button type="button" class="btn btn--ghost btn--small users__all" id="users-see-all" aria-haspopup="dialog">${escapeHtml(t('admin.seeAll', { n: Number(top.total).toLocaleString(localeTag()) }))}</button>` : '');
+    wireUserRows(host, { api, armed, reload: loadUsers });
+    $('users-see-all')?.addEventListener('click', () => usersDialog.open());
+  } catch (err) {
+    toast(err.message, 'error');
   }
 }
 
@@ -7189,99 +7275,7 @@ async function loadAdmin() {
   if (perms.has('billing')) billingAdmin.load();
   if (perms.has('models')) loadRecommended();
   if (!perms.has('users') && !perms.has('delete_users')) return;
-  try {
-    const { users } = await api.users();
-    if (me.isOwner) drawAdmins(users);
-
-    $('user-list').innerHTML = `<div class="rows">${users
-      .map((u) => {
-        const tags = [
-          t('admin.chatCount', { n: u.chat_count }),
-          t('admin.tokensThisMonth', { n: Number(u.tokens_this_month || 0).toLocaleString(localeTag()) }),
-          u.has_worker ? t('admin.workerPaired') : null,
-          u.email_verified_at ? null : t('admin.unconfirmed'),
-          u.suspended_at ? t('admin.suspended') : null,
-          u.monthly_token_limit ? t('admin.limit', { n: Number(u.monthly_token_limit).toLocaleString(localeTag()) }) : null,
-        ].filter(Boolean);
-
-        const self = u.id === state.boot.user.id;
-        // What this administrator may do to that account. The server decides; this
-        // only leaves out the buttons it would refuse.
-        const touchable = !self && !u.is_owner && (u.role !== 'admin' || me.isOwner);
-        const role = u.is_owner ? t('admins.owner') : u.role === 'admin' ? t('role.admin') : null;
-        return `<div class="rows__item">
-          <span class="grow">${escapeHtml(u.name || u.email)}
-            <span class="muted">· ${escapeHtml(u.email)} · ${tags.join(' · ')}</span>
-            ${role ? `<span class="admins__tag">${escapeHtml(role)}</span>` : ''}
-          </span>
-          ${
-            self
-              ? `<span class="muted">${escapeHtml(t('admin.you'))}</span>`
-              : `${
-                  touchable && perms.has('users')
-                    ? `<button data-limit-user="${escapeHtml(u.id)}">${escapeHtml(t('admin.limitButton'))}</button>
-                 <button data-suspend-user="${escapeHtml(u.id)}" data-suspended="${!!u.suspended_at}">
-                   ${escapeHtml(u.suspended_at ? t('admin.unsuspend') : t('admin.suspend'))}
-                 </button>`
-                    : ''
-                }${touchable && perms.has('delete_users') ? `<button data-del-user="${escapeHtml(u.id)}">${escapeHtml(t('action.remove'))}</button>` : ''}`
-          }
-        </div>`;
-      })
-      .join('')}</div>`;
-
-    for (const btn of document.querySelectorAll('[data-del-user]')) {
-      armed(btn, t('action.reallyRemove'), async () => {
-        await api.deleteUser(btn.dataset.delUser);
-        loadAdmin();
-      });
-    }
-    for (const btn of document.querySelectorAll('[data-suspend-user]')) {
-      btn.addEventListener('click', async () => {
-        try {
-          await api.updateUser(btn.dataset.suspendUser, { suspended: btn.dataset.suspended !== 'true' });
-          loadAdmin();
-        } catch (err) {
-          toast(err.message, 'error');
-        }
-      });
-    }
-    // An inline field rather than prompt(), for the same reason as everything
-    // else here: a suppressed dialog is indistinguishable from a dead button.
-    for (const btn of document.querySelectorAll('[data-limit-user]')) {
-      btn.addEventListener('click', () => {
-        const field = document.createElement('input');
-        field.type = 'number';
-        field.min = '0';
-        field.className = 'chat-item--editing';
-        field.style.width = '9rem';
-        field.placeholder = t('admin.limitPlaceholder');
-        field.title = t('admin.tokenLimit');
-        btn.replaceWith(field);
-        field.focus();
-
-        let settled = false;
-        const finish = async (commit) => {
-          if (settled) return;
-          settled = true;
-          if (!commit) return loadAdmin();
-          try {
-            await api.updateUser(btn.dataset.limitUser, { monthlyTokenLimit: Number(field.value) || 0 });
-          } catch (err) {
-            toast(err.message, 'error');
-          }
-          loadAdmin();
-        };
-        field.addEventListener('keydown', (event) => {
-          if (event.key === 'Enter') finish(true);
-          if (event.key === 'Escape') finish(false);
-        });
-        field.addEventListener('blur', () => finish(true));
-      });
-    }
-  } catch (err) {
-    toast(err.message, 'error');
-  }
+  await loadUsers();
 }
 
 $('logout').addEventListener('click', signOut);

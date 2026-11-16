@@ -406,7 +406,18 @@ export const api = {
   decideModelNews: (id, action) => request('POST', '/api/models/news', { id, action }),
   updateUser: (id, patch) => request('PATCH', `/api/admin/users/${id}`, patch),
 
-  users: () => request('GET', '/api/admin/users'),
+  /**
+   * One page of accounts, the busiest first (`page`, `size`), or every administrator (`role: 'admin'`); no options is every account.
+   * @param {{ page?: number, size?: number, role?: string }} [options]
+   */
+  users: ({ page, size, role } = {}) => {
+    const query = new URLSearchParams();
+    if (role) query.set('role', role);
+    if (page) query.set('page', String(page));
+    if (size) query.set('size', String(size));
+    const qs = query.toString();
+    return request('GET', `/api/admin/users${qs ? `?${qs}` : ''}`);
+  },
   deleteUser: (id) => request('DELETE', `/api/admin/users/${id}`),
   setAdmin: (id, permissions) => request('PUT', `/api/admin/admins/${encodeURIComponent(id)}`, { permissions }),
   removeAdmin: (id) => request('DELETE', `/api/admin/admins/${encodeURIComponent(id)}`),

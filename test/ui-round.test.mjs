@@ -875,8 +875,8 @@ section('model suggestions: two free, one paid, each saying which router');
   check('  each model says which router it is through', seen.second.some((o) => /· OrcaRouter$/.test(o)) && seen.second.some((o) => /· OpenRouter$/.test(o)), seen.second.join(' | '));
   await page.selectOption('#rec-free', 'orcarouter/deepseek/deepseek-v4.1-flash-free');
   await page.selectOption('#rec-free-second', 'openrouter/nvidia/nemotron:free');
-  await page.click('#rec-save');
-  await page.waitForTimeout(400);
+  // No Save button any more (2026-11-16): each choice saved as it was made.
+  await page.waitForFunction(() => /Saved/.test(document.getElementById('rec-free-second-status')?.textContent || ''));
   const { getRecommended } = await import('../server/recommend.js');
   const saved = await getRecommended();
   check('both are saved', saved.free === 'orcarouter/deepseek/deepseek-v4.1-flash-free' && saved.freeSecond === 'openrouter/nvidia/nemotron:free', JSON.stringify(saved));
