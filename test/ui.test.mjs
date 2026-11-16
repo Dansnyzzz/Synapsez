@@ -3004,7 +3004,7 @@ section('the getting-started guide');
   }));
   check('the guide opens', opened.open === true);
   check('and it is the only thing open', opened.others.join() === 'onboarding', opened.others.join(' '));
-  check('it starts at step 1 of 6', /1/.test(opened.step) && /6/.test(opened.step), opened.step);
+  check('it starts at step 1 of 7', /1/.test(opened.step) && /7/.test(opened.step), opened.step);
   check('with a title', opened.title.length > 0, opened.title);
   check('and no Back button on the first step', opened.backHidden === true);
 
