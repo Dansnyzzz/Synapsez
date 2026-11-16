@@ -112,3 +112,60 @@ near 15–20% after compacting.
   under reduced motion; the % beside the compaction line.
 - `features` pins for every new guide sentence; i18n for every string in vi and en.
 - Gate + `test:ui` before release 1.31.0.
+
+---
+
+## 6. Billing screens like Claude's, the rate once a day, yearly saves 17% (owner, 2026-11-16)
+
+Asked with screens of Synapsez's plans sheet and checkout next to claude.ai's upgrade pages. Decisions taken
+the same day: Frankfurter first (no attribution needed); a "coming soon" Team tab; yearly prices that save 17%.
+
+**Rate.** Order of sources becomes **Frankfurter v2** (`/v2/rates?base=USD&quotes=VND`: about twenty central
+banks blended, no key, no attribution, MIT) → Vietcombank's transfer rate → Exchange Rate API (open access;
+its terms require a "Rates By Exchange Rate API" link, so that link shows **only on a day its rate is the one
+in use**). The rate is fetched **once a day at 06:00 Vietnam time** by the existing 23:00 UTC cron
+(`/api/cron/refresh-models`); between runs the stored rate is used. On a cold start with no stored rate, or a
+stored rate older than 48 hours, it is fetched on demand as today; older than 48 hours with every source down
+is still `BillingUnavailable`. Every page shows a single line: "Tỷ giá cập nhật lúc 06:00, 16/11/2026" (the
+time it was fetched), plus the small link only when the source is Exchange Rate API. The checkout keeps its
+own line saying which rate the order is locked at.
+
+**Yearly prices save 17%:** a year is ten months' price — **Plus 50, Pro 80, Max 150 USD** (was 57/91/171).
+Monthly prices unchanged. Worst-case margin (a person using everything included, every month) on a yearly
+plan falls from about 37% to about 28%; monthly plans keep about 40%. Saved as "Tiết kiệm 17%".
+
+**Plans sheet (Claude's layout, our own drawings).**
+- Title "Các gói lớn lên cùng bạn". Under it a segmented control **Cá nhân · Nhóm** (Individual · Team) —
+  not month/year.
+- Individual: four cards, Free · Plus · Pro · Max (four columns when wide, two when medium, one on a phone).
+  Each card: a small line icon of our own (growing richer from Free to Max — not Anthropic's drawings), the
+  name, a one-line tagline, the price large with "/ tháng" and a second line ("thanh toán hằng tháng", or
+  "1.285.000 ₫ thanh toán hằng năm" on yearly), the button, then a divider and the list: Free lists its own
+  lines; Plus "Mọi thứ trong gói Miễn phí, và:"; Pro "Mọi thứ trong Plus, và:"; Max "Mọi thứ trong Pro, và:",
+  each line with a tick.
+- **Monthly / Yearly · Tiết kiệm 17%** is a small toggle inside each paid card, one state for all three cards.
+- Under a monthly button: "Không ràng buộc · Huỷ bất cứ lúc nào". Buttons: a light filled button with dark
+  text for paid plans, a dark one for Free (theme tokens, both themes).
+- **On a monthly plan** (owner, image 3): that plan's card shows an info box — "Bạn đang trả theo tháng. Trả
+  theo năm để tiết kiệm 17%." — and its button becomes "Chuyển sang <Plan> theo năm".
+- Under the cards: the pay-as-you-go line, then the one rate line.
+- **Team tab (owner: coming soon):** one card — "Gói nhóm sắp ra mắt", what it will bring (several people,
+  shared management, a price per seat), and **"Báo tôi khi mở"**, which records that this account wants to be
+  told (kept with the account's preferences, shown to administrators as a count on the Billing card), then
+  says "Đã ghi nhận — chúng tôi sẽ báo qua email."
+
+**Checkout (Claude's "Configure your plan").**
+- A back arrow, the title "Thiết lập gói của bạn".
+- Left: two radio cards — "<Plan> theo tháng · <price> · Thanh toán hằng tháng" and "<Plan> theo năm ·
+  <price> · Thanh toán hằng năm" with a "Tiết kiệm 17%" badge; then **Thông tin thanh toán** as an inline
+  form prefilled from the profile (Họ tên, Quốc gia, Địa chỉ, Tên doanh nghiệp (tuỳ chọn), Mã số thuế (tuỳ
+  chọn), Tên khác trên hoá đơn (tuỳ chọn)); then **Phương thức thanh toán**: VietQR bank transfer through
+  SePay, and "Dùng số dư (x ₫)" when there is a balance.
+- Right: a summary card — "Gói <Plan>", the line, any upgrade credit, Tạm tính, a tax line only if
+  `BILLING_TAX_RATE` is set, **Tổng cần thanh toán hôm nay**; an info box "Gói tự gia hạn ngày <date> từ số
+  dư; nếu số dư không đủ, chúng tôi gửi email kèm mã QR 3 ngày trước."; a consent checkbox (Synapsez takes
+  the amount above now and renews it each period until you cancel, under the Terms; you can cancel any time
+  in Settings → Billing) — the button **"Đăng ký"** stays disabled until it is ticked; then the QR step as
+  today.
+- Everything Tasks 9–10 of the billing plan built stays: locked renewal price, `later` periods unavailable,
+  late answers ignored, refunds, the live status line.
