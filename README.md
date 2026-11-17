@@ -60,7 +60,7 @@ internet ever connects inward to your machine.
 | **Connectors** | Google (Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks, Contacts) by signing in; GitHub, Notion, Slack, Telegram and more via a pasted token. |
 | **Interruptible** | Keep typing while it works. A new message is picked up at the next step, so you can change your mind mid-task. |
 | **Approval gate** | Ask before anything that changes your machine, auto-run everything, or read-only. Your call — from the control beside the send button. |
-| **Auto-compact** | Long conversations fold their older turns into a summary before the window fills. A ring in the header shows how full it is. |
+| **Auto-compact** | Long conversations fold their older turns into a summary before the window fills. A ring in the header shows how full it is; what it keeps word for word is measured by size, not by a count of turns (see "Long conversations"). |
 | **Live plan** | The assistant keeps a visible task list as it works through multi-step jobs. |
 | **Reasoning** | Streamed and collapsible, for models that expose it. |
 | **Memory** | Notes read back at the start of every conversation, project notes first, within a budget; `memory_search` for the rest. Identifiers are never saved and sensitive topics only if you allow it. Every note editable in Settings → Memory. |
@@ -1375,6 +1375,12 @@ because a fallback nobody can see is how somebody finds out their first key died
   the wrong provider's box, a key is kept under the right one; a connector's token is connected as that
   connector; and the toast says where it went. The connectors' boxes do the same the other way. A secret
   that fits no shape is refused in OpenRouter's, Google's and Anthropic's boxes, saying what one looks like.
+- **The getting-started guide takes keys one at a time.** One box takes one key; it is checked when pasted
+  (typed, after a pause or Enter) with "Checking the key…" while it runs. A good key shows ✓ Added, the box
+  locks and a new empty box appears; another provider's key is moved by the shape rule above and says so; a
+  refused one turns red with its provider's reason and no new box appears. The guide has seven steps, the
+  new one being Automations & Bot, and its tabs scroll sideways when they do not fit. Settings → Providers is
+  unchanged.
 - **Checked with its provider** before it is kept (`KEY_CHECKS=off` skips it): a refused key is said to be
   refused now, not on the first message; an outage never refuses one.
 - **One OpenRouter account, one key.** OpenRouter's `GET /api/v1/key` says whose key it is
@@ -1387,7 +1393,7 @@ because a fallback nobody can see is how somebody finds out their first key died
 
 ### The models suggested to everyone
 
-An administrator picks two in Settings → People → *Recommended models* (`server/recommend.js`): the best
+An administrator picks two in Settings → People → *Recommended models* (`server/recommend.js`), each saved the moment it is picked (there is no Save button; a pick made while another is saving waits for it, and a refused one returns to its old value with the reason under it): the best
 free one — Auto, OpenRouter's free router, by default and counted as free — and the best paid one; the
 server refuses a paid model as the free suggestion and the other way round. An account whose key pays
 through the paid model's provider is suggested the paid one; everyone else the free one, and only what
@@ -1453,6 +1459,21 @@ from that:
   and a quiet rule marks where the fold happened, with the summary itself behind it.
 - **It chains.** Folding again summarises the previous summary along with everything since, so the
   cost stays flat however long the conversation runs.
+
+**What stays word for word is measured in tokens, not turns.** The newest part of the conversation is
+kept whole: whole turns are added from the newest backwards while they fit in 10% of the model's window, at
+least 4,000 tokens, and everything older is summarised. A count of turns said nothing about their size: eight
+turns that held one large reply kept it whole and folded little. The latest question and everything after it
+are always kept, and a fold only happens when something older than that tail exists. While it summarises, the
+"Compacting the conversation…" line shows a percentage: the share of the summary written so far against how
+long it is expected to be (worked out from how much is being folded, and never more than the summary's token
+limit). It is held below 100 until the summary is saved, and never goes down.
+
+**Old tool output goes first.** Before a summary is needed, the server clears old tool output from what it
+sends: once what would be sent passes 60% of the window the gauge counts, results older than the three newest are replaced by a short stand-in, in batches (so the provider's prompt cache is not broken every step). Results under 1,000 tokens keep their words (their pictures go). A stand-in says how to get the result back:
+"call the tool again" for a read, and, for a click, a command or a send, that the step already ran and is
+not to be repeated just to see its output. Nothing is lost from the page you read. It follows the same
+switch as the summary: with auto-compact off, nothing is cleared.
 
 The fold never lands between a tool call and its result — every provider rejects a `tool` message
 whose call it cannot see, so a boundary in the wrong place turns a working conversation into a `400`.
@@ -2217,7 +2238,13 @@ assuming a fresh one, and that the serverless-only branches behave.
 
 Open the deployment. With no users yet, the gate offers to create the first account — **it becomes the
 administrator**. Everyone after that signs up the same way, with an email and a password.
-**Settings → People** lists who has joined, and lets an admin set per-person token limits, suspend an
+**Settings → People** is the Users page. It shows the top 10 by tokens this month (ties by name), and "See all"
+opens a full-screen list, 20 to a page, with ← and → buttons on both sides (the arrow keys too, when the cursor
+is not in a text field; Esc closes it). Paging is done in the database
+(`GET /api/admin/users?page=&size=`, 1 to 50 a page, default 20), so a deployment with many accounts reads
+one page, not all of them. Under the list are Administrators, Recommended models and Free allowances; the
+explanatory notes that used to sit above them are gone, and members still see their own monthly share in
+Settings → Usage. An admin can set per-person token limits, suspend an
 account, or remove one. Set `ALLOW_SIGNUP=false` to close registration once everyone is in.
 
 ### 6. Connect a computer (optional but the good part)
@@ -2742,7 +2769,23 @@ rate is read from Frankfurter, then Vietcombank's transfer rate, then open.er-ap
 the next one; with every source down the kept rate is used until it is 48 hours old, and after that a
 purchase is refused with a message rather than priced on a stale rate. Only open.er-api's rate shows
 its attribution link, because only its terms ask for one. An order locks its rate and price for the
-30 minutes its QR is good.
+30 minutes its QR is good. Checkout shows one rate line, "Tỷ giá cập nhật lúc HH:MM, DD/MM/YYYY" in Vietnam
+time, and no other rate line; the "Rates By Exchange Rate API" link shows only on a day that source is the one
+in use.
+
+**Checkout is "Thiết lập gói của bạn" (Configure your plan).** Month and year are radio cards, and the billing
+information is on the same page, with two optional fields: the business name and another name for the invoice.
+A consent box must be ticked before Đăng ký, and it clears whenever the amount changes (another plan or period),
+so what was agreed is always the amount shown. The renewal box and the consent promise a renewal only when
+auto-renew is on; otherwise they say the date the plan ends. A "Trong đó thuế GTGT r%" line (included in the
+price) shows only when `BILLING_TAX_RATE` is set.
+
+**A pending order is not lost by closing its QR.** Upgrade plan, the plans sheet, Settings → Billing and Add
+credits reopen the same QR with the clock still running, until the order is paid, cancelled or expires.
+Settings → Billing shows "Đơn đang chờ thanh toán" with "Xem mã QR", which goes when the order does; closing
+the QR leaves a quiet note. "Huỷ đơn này" sits bottom right, outlined in red, and asks first inside the app.
+Money that arrives after an order ended is still added to the balance. A renewal order is reopened through
+"Renew now", not through the card.
 
 | Plan | Monthly | Yearly | Included each month |
 |---|---|---|---|
@@ -2751,7 +2794,7 @@ its attribution link, because only its terms ask for one. An order locks its rat
 | Pro | 8 USD | 80 USD | 250 searches, 6 h, 5 GB |
 | Max | 15 USD | 150 USD | 450 searches, 12 h, 10 GB |
 
-A year costs ten months (17% less than twelve).
+A year costs ten months (17% less than twelve); the saving is worked out from the prices, not typed in.
 
 (The hours are of cloud computer; the gigabytes are of files.) Each plan is one person. The allowances are **a month's, usable on any day**: there is no daily limit,
 counter or display anywhere in billing. A Free account has none of the metered allowances.

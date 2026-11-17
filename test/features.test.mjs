@@ -2921,11 +2921,15 @@ section('billing: the sheet, the menu row, the mode and the release notes agree 
   const version = JSON.parse(read('package.json')).version;
   const log = JSON.parse(read('public/changelog.json')).entries;
   check("the changelog's newest entry is the package version", log[0].version === version, `${log[0].version} vs ${version}`);
-  check("1.30.0 is released, in both languages, as an administrators' preview", version === '1.30.0' && log[0].new.vi.length > 0 && log[0].new.en.length === log[0].new.vi.length && /administrators/i.test(log[0].new.en.join(' ')));
-  check('CHANGELOG.md carries the same version', read('CHANGELOG.md').includes('(1.30.0)'));
+  check("1.31.0 is released, in both languages", version === '1.31.0' && log[0].version === '1.31.0' && log[0].new.vi.length > 0 && log[0].new.en.length === log[0].new.vi.length && (log[0].improved?.vi.length ?? 0) === (log[0].improved?.en.length ?? 0));
+  check('CHANGELOG.md carries the same version', read('CHANGELOG.md').includes('(1.31.0)'));
+  // 1.30.0 stays in the file as the entry below the newest; its own claims are pinned against it.
+  const r130 = log.find((e) => e.version === '1.30.0');
+  check("1.30.0 stays released, in both languages, as an administrators' preview", !!r130 && r130.new.vi.length > 0 && r130.new.en.length === r130.new.vi.length && /administrators/i.test(r130.new.en.join(' ')));
+  check('CHANGELOG.md still carries 1.30.0', read('CHANGELOG.md').includes('(1.30.0)'));
   // What does apply to members from 1.30.0 is said where they read it (final review, 2026-11-15): the line the app shows
   // first named no limit at all, and the 0.5 GB file limit (storageQuota.js) applies to every account with no plan.
-  const [headEn, headVi] = [log[0].new.en[0], log[0].new.vi[0]];
+  const [headEn, headVi] = [r130.new.en[0], r130.new.vi[0]];
   check("  the app's first line for 1.30.0 names the 0.5 GB file limit, in both languages", /0\.5 GB/.test(headEn) && /0,5 GB/.test(headVi), `${headEn} | ${headVi}`);
   check('  and nowhere says no limit applies to members', !/no\s+limits?\s+(is\s+|are\s+)?enforced/i.test(log[0].new.en.join(' ')) && !/chưa có giới hạn nào/i.test(log[0].new.vi.join(' ')) && !/no\s+limit\s+is\s+enforced/i.test(billing) && !/no\s+limit\s+is\s+enforced/i.test(read('CHANGELOG.md').split('\n## ')[1] || ''));
   check('  the README says what applies to members: the file limit, the stand-in cap, the monthly share', /0\.5 GB/.test(billing) && /4\.5 CPU-hours/.test(billing) && /prorated|from the day/i.test(billing));
@@ -2936,6 +2940,22 @@ section('billing: the sheet, the menu row, the mode and the release notes agree 
     check(`README documents ${name} in the Billing section`, billing.includes(name));
   }
   check('the README says what is unverified live', billing.includes('Not verified live'));
+  // 1.31.0: the figures the README and the release notes repeat are the code's own, read from it (a number in prose is a claim).
+  const compactSrc = read('server/compact.js');
+  const keepShare = Number(/const KEEP_SHARE = ([\d.]+);/.exec(compactSrc)?.[1]);
+  const keepFloor = Number((/const KEEP_FLOOR = ([\d_]+);/.exec(compactSrc)?.[1] || '').replace(/_/g, ''));
+  const clearAt = Number(/const CLEAR_AT = ([\d.]+);/.exec(compactSrc)?.[1]);
+  const flat = readme.replace(/\s+/g, ' ');
+  check('the README states the compaction tail as compact.js has it: 10% of the window, at least 4,000 tokens', keepShare === 0.1 && keepFloor === 4000 && /10% of the model's window, at least 4,000 tokens/.test(flat), keepShare + ' ' + keepFloor);
+  check('  and the point where old tool output is cleared first: 60%', clearAt === 0.6 && /old tool output[^.]*60%/.test(flat), String(clearAt));
+  const topUsers = Number(/const TOP_USERS = (\d+);/.exec(read('public/js/app.js'))?.[1]);
+  const pageSize = Number(/const PAGE_SIZE = (\d+);/.exec(read('public/js/users-dialog.js'))?.[1]);
+  check('the README states the Users page as the code draws it: top 10 this month, See all at 20 a page', topUsers === 10 && pageSize === 20 && /top 10 by tokens this month/.test(flat) && /20 to a page/.test(flat), topUsers + ' ' + pageSize);
+  check('yearly prices are Plus 50, Pro 80, Max 150 USD, and the changelog says so in both languages', PLANS.plus.usdCents.year === 5000 && PLANS.pro.usdCents.year === 8000 && PLANS.max.usdCents.year === 15000 && /Plus 50, Pro 80 and Max 150 USD/.test(log[0].new.en.join(' ')) && /Plus 50, Pro 80 và Max 150 USD/.test(log[0].new.vi.join(' ')));
+  check('  no earlier figure for a year (57, 91, 171) is left in the README, and "Chốt tỷ giá" is gone from the app', !/\b(57|91|171) USD/.test(readme) && !/Chốt tỷ giá/.test(read('public/js/locales/vi.js')));
+  const fxSrc = read('server/billing/fx.js');
+  const order = ['frankfurter', 'vietcombank', 'erapi'].map((n) => fxSrc.indexOf("{ source: '" + n + "', pick"));
+  check('the README names Frankfurter first in the rate chain, as fx.js has it', order[0] > 0 && order[0] < order[1] && order[1] < order[2] && /Frankfurter, then Vietcombank/.test(billing));
 }
 
 console.log(failures === 0 ? '\n\x1b[32mAll feature checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);

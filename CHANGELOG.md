@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-11-17 — A leaner Users page, the guide, keys one at a time, compaction by size (1.31.0)
+
+**The Users page** keeps the 10 people who used the most tokens this month; "See all" opens a full-screen list, 20 to a page, with ← and → (also from the keyboard). Recommended models save as soon as one is picked, and the explanatory notes are gone.
+
+**The getting-started guide** has 7 steps, with a new "Automations & Bot" step, and its tabs scroll sideways. The key step plays real recordings of getting a key at OpenRouter, Google AI Studio and OrcaRouter. Keys go in one at a time and are checked as they are pasted; one key matches one account, and Google's newer `AQ.` keys are accepted.
+
+**Compaction keeps recent turns by size**: 10% of the model's window, at least 4,000 tokens, instead of a count of turns. The "Compacting the conversation…" line shows a live percentage. Before it summarises, old tool output is cleared from what is sent, starting at 60% full and keeping the newest results; a cleared result says how to get it back, and the switch for auto-compact turns this off too.
+
+**Billing (still an administrators' preview).** Checkout is "Configure your plan": monthly or yearly, billing information on the page (with an optional business name and another name for the invoice), and a consent box that must be ticked before subscribing and clears whenever the amount changes. The renewal box and the consent promise a renewal only when auto-renew is on; otherwise they give the end date. A VAT line shows only when `BILLING_TAX_RATE` is set. Yearly plans are Plus 50, Pro 80 and Max 150 USD (17% less than twelve months); monthly prices do not change. The rate comes from Frankfurter, then Vietcombank, then Exchange Rate API, read once a day at 06:00 Vietnam time, and the "Rates By Exchange Rate API" link shows only on a day that source is the one in use. There is no locked-rate line in checkout.
+
+**A pending order is not lost by closing its QR.** Upgrade plan, the plans sheet, Settings → Billing ("Đơn đang chờ thanh toán", "Xem mã QR") and Add credits reopen the same QR, with the clock still running, until the order is paid, cancelled or expires. "Cancel this order" asks first, in the app. Money that arrives late is still added to the balance. A renewal order is reopened through "Renew now", not through the card.
+
+**Smaller.** The Team tab says it is coming soon and offers "Tell me when it opens"; administrators see how many pressed it. Settings → Usage shows the free shares as bars. The earlier-steps chevron in the progress panel shows on hover or focus, and folding slides. Payment codes never start with 0, to match SePay's filter of `SZ` plus 10 digits.
+
+**Not verified live:** the new Vietnamese text, and the guide's recordings and key checks against the real providers.
+
 ## 2026-11-15 — Billing, as an administrators' preview (1.30.0)
 
 **Billing is built and switched on for administrators only.** To everyone else billing itself (plans, the balance, charges) stays hidden: every billing route answers `404` and nobody is charged until the owner switches `BILLING_MODE` to `live` (unset or unknown means `preview`). An administrator is counted only once they hold a plan or a balance, and even then a call is never refused: when nothing could be held it goes ahead as before and a "would refuse" counter goes up.
