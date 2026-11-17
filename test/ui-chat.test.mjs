@@ -1476,7 +1476,18 @@ section('Progress: the step it is on, a line down the list, no blue band');
   await page.emulateMedia({ reducedMotion: 'reduce' });
   s = await slide();
   check('with reduced motion both are instant', s.listTime.split(',').every((d) => parseFloat(d) < 0.001) && parseFloat(s.appTime) < 0.001, JSON.stringify(s));
+  // Closed, the panel is hidden after a 240 ms delay that waits for the slide; with no slide it must not wait.
+  const hideDelay = () => page.evaluate(() => {
+    const app = document.getElementById('app');
+    const was = app.classList.contains('is-detail');
+    app.classList.remove('is-detail');
+    const delays = getComputedStyle(document.querySelector('.detail')).transitionDelay;
+    if (was) app.classList.add('is-detail');
+    return delays;
+  });
+  check('  and the closed Progress panel is hidden at once, not after 240 ms', (await hideDelay()).split(',').every((d) => parseFloat(d) === 0), await hideDelay());
   await page.emulateMedia({ reducedMotion: 'no-preference' });
+  check('  while with motion the closed panel still waits for the slide to end', (await hideDelay()).split(',').some((d) => parseFloat(d) >= 0.2), await hideDelay());
 
   await pressFold();
   p = await progress();
@@ -1658,9 +1669,10 @@ data: ${JSON.stringify(data)}
   ].join('');
   await page.route('**/api/chats/cmp-hand/compact', (route) => route.fulfill({ status: 200, contentType: 'text/event-stream', body }));
   await page.evaluate(() => {
-    const seen = { pct: [] };
+    const seen = { pct: [], say: [] };
     /** @type {any} */ (window).__handSeen = seen;
     new MutationObserver((records) => records.forEach((r) => seen.pct.push(r.addedNodes[0]?.textContent ?? ''))).observe(document.getElementById('compact-bar-pct'), { childList: true });
+    new MutationObserver(() => seen.say.push(document.getElementById('compact-bar-say').textContent)).observe(document.getElementById('compact-bar-say'), { childList: true, characterData: true, subtree: true });
   });
   await page.click('#context-gauge');
   await page.waitForTimeout(400);
@@ -1669,6 +1681,7 @@ data: ${JSON.stringify(data)}
   const seen = await page.evaluate(() => /** @type {any} */ (window).__handSeen);
   const figures = seen.pct.map((n) => Number.parseInt(n, 10));
   check('pressing Compact now shows a figure that rises and ends at 100', figures.length >= 3 && figures.includes(20) && figures.includes(60) && figures.at(-1) === 100 && figures.every((n, i) => i === 0 || n >= figures[i - 1]), seen.pct.join(' '));
+  check('and the line says how many turns it folds, as the automatic run does', seen.say.some((s) => /Compacting 6 earlier messages/.test(s)), seen.say.join(' | '));
   await page.waitForFunction(() => document.getElementById('compact-bar').hidden, null, { timeout: 4000 });
   await page.unroute('**/api/chats/cmp-hand/compact');
 }

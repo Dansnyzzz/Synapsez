@@ -2931,7 +2931,7 @@ section('billing: the sheet, the menu row, the mode and the release notes agree 
   // first named no limit at all, and the 0.5 GB file limit (storageQuota.js) applies to every account with no plan.
   const [headEn, headVi] = [r130.new.en[0], r130.new.vi[0]];
   check("  the app's first line for 1.30.0 names the 0.5 GB file limit, in both languages", /0\.5 GB/.test(headEn) && /0,5 GB/.test(headVi), `${headEn} | ${headVi}`);
-  check('  and nowhere says no limit applies to members', !/no\s+limits?\s+(is\s+|are\s+)?enforced/i.test(log[0].new.en.join(' ')) && !/chưa có giới hạn nào/i.test(log[0].new.vi.join(' ')) && !/no\s+limit\s+is\s+enforced/i.test(billing) && !/no\s+limit\s+is\s+enforced/i.test(read('CHANGELOG.md').split('\n## ')[1] || ''));
+  check('  and nowhere says no limit applies to members', !/no\s+limits?\s+(is\s+|are\s+)?enforced/i.test(r130.new.en.join(' ')) && !/chưa có giới hạn nào/i.test(r130.new.vi.join(' ')) && !/no\s+limit\s+is\s+enforced/i.test(billing) && !/no\s+limit\s+is\s+enforced/i.test(read('CHANGELOG.md').split('\n## ').find((s) => s.includes('(1.30.0)')) || ''));
   check('  the README says what applies to members: the file limit, the stand-in cap, the monthly share', /0\.5 GB/.test(billing) && /4\.5 CPU-hours/.test(billing) && /prorated|from the day/i.test(billing));
   check('  the README counts people as the code does (this month and last, UTC), not "the last 30 days"', !/last\s+30\s+days/.test(billing) && /this\s+(UTC\s+)?month\s+(and|or|plus)\s+(the\s+)?last/i.test(billing));
   // acceptSepay parses JSON only and answers 400 to a form-encoded body, so the owner's step has to say so.
@@ -2955,6 +2955,15 @@ section('billing: the sheet, the menu row, the mode and the release notes agree 
   check('  no earlier figure for a year (57, 91, 171) is left in the README, and "Chốt tỷ giá" is gone from the app', !/\b(57|91|171) USD/.test(readme) && !/Chốt tỷ giá/.test(read('public/js/locales/vi.js')));
   const fxSrc = read('server/billing/fx.js');
   const order = ['frankfurter', 'vietcombank', 'erapi'].map((n) => fxSrc.indexOf("{ source: '" + n + "', pick"));
+  // Final fix round (2026-11-17): the rate line is on the plans sheet (billing-plans.js rateHtml), not the checkout; a Hobby cron fires within its
+  // hour, so the time is "around 06:00"; a cleared tool result says whether to read it again or that the step already ran (compact.js CLEARED_RAN).
+  const r131 = log.find((e) => e.version === '1.31.0');
+  const [en131, vi131] = [r131.new.en.join(' ') + ' ' + (r131.improved?.en ?? []).join(' '), r131.new.vi.join(' ') + ' ' + (r131.improved?.vi ?? []).join(' ')];
+  const changelog131 = read('CHANGELOG.md').split('\n## ').find((s) => s.includes('(1.31.0)')) || '';
+  check('the rate line is said to be on the plans sheet, in the changelog (both languages), CHANGELOG.md and the README', /the plans sheet shows when it was updated/.test(en131) && /bảng chọn gói ghi giờ cập nhật/.test(vi131) && !/checkout shows when/i.test(en131) && !/màn thanh toán ghi giờ/.test(vi131) && /The plans sheet shows one rate line/.test(readme) && !/Checkout shows one rate line/.test(readme));
+  check('  the plans sheet is where the line is drawn', /function rateHtml/.test(read('public/js/billing-plans.js')) && !/billing\.rate\.updated/.test(read('public/js/billing-checkout-view.js')));
+  check('the rate is read "around 06:00" (a Hobby cron fires within its hour), never "at 06:00"', /around 06:00/.test(en131) && /khoảng 06:00/.test(vi131) && /around 06:00/.test(changelog131) && !/\bat 06:00/.test(en131 + changelog131 + readme) && !/lúc 06:00/.test(vi131));
+  check('a cleared tool result is said to say whether to read it again or that the step already ran', /whether to read it again or that the step already ran/.test(en131) && /nên đọc lại hay bước đó đã chạy rồi/.test(vi131) && /whether to read it again or that the step already ran/.test(changelog131) && !/how to get it back/.test(en131 + changelog131) && !/ghi cách lấy lại/.test(vi131) && /CLEARED_RAN/.test(read('server/compact.js')));
   check('the README names Frankfurter first in the rate chain, as fx.js has it', order[0] > 0 && order[0] < order[1] && order[1] < order[2] && /Frankfurter, then Vietcombank/.test(billing));
 }
 

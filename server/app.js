@@ -559,8 +559,8 @@ export function createApp() {
 
   // ── daily model-library refresh ─────────────────────────────────────
   // Called by Vercel Cron, not a browser, so it authenticates with a secret.
-  // It runs at 06:00 Vietnam time, so it is also when the day's USD to VND rate is read: one cron
-  // rather than two (Hobby allows few). The two never hold each other up: a library that cannot
+  // It runs around 06:00 Vietnam time (a Hobby cron fires somewhere within its hour), so it is also when the day's USD to VND rate
+  // is read: the cron that already exists, not a second one. The two never hold each other up: a library that cannot
   // be read is still an error, as before, but only after the rate has had its turn.
   app.get(
     '/api/cron/refresh-models',

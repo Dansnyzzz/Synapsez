@@ -2765,11 +2765,11 @@ as before billing existed.
 
 Prices are set in US dollars and charged in đồng at the day's rate, rounded up to the next 1,000đ. The
 rate is read from Frankfurter, then Vietcombank's transfer rate, then open.er-api, once a day by the
-06:00 Vietnam time cron that also refreshes the model library, and kept (setting `billing_fx`) until
+cron that also refreshes the model library (it fires around 06:00 Vietnam time), and kept (setting `billing_fx`) until
 the next one; with every source down the kept rate is used until it is 48 hours old, and after that a
 purchase is refused with a message rather than priced on a stale rate. Only open.er-api's rate shows
 its attribution link, because only its terms ask for one. An order locks its rate and price for the
-30 minutes its QR is good. Checkout shows one rate line, "Tỷ giá cập nhật lúc HH:MM, DD/MM/YYYY" in Vietnam
+30 minutes its QR is good. The plans sheet shows one rate line, "Tỷ giá cập nhật lúc HH:MM, DD/MM/YYYY" in Vietnam
 time, and no other rate line; the "Rates By Exchange Rate API" link shows only on a day that source is the one
 in use.
 

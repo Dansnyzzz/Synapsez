@@ -9,7 +9,7 @@
           "Hướng dẫn làm quen nay có 7 bước, thêm bước \"Automations & Bot\". Các thẻ bước cuộn ngang khi không đủ chỗ. Bước lấy key có video quay thật cách lấy key ở OpenRouter, Google AI Studio và OrcaRouter.",
           "Key nhập từng cái một và được kiểm tra ngay khi dán, không cần nhấn thêm nút nào. Mỗi tài khoản chỉ một key (nhiều key của cùng một tài khoản dùng chung hạn mức), và key mới dạng AQ. của Google cũng được nhận.",
           "Màn thanh toán (bản xem trước cho quản trị viên) đổi thành \"Thiết lập gói của bạn\": chọn tháng hoặc năm, nhập thông tin xuất hoá đơn ngay trên trang, thêm hai ô tuỳ chọn là tên doanh nghiệp và tên khác trên hoá đơn, và phải tích ô đồng ý trước khi Đăng ký. Dòng thuế GTGT chỉ hiện khi đã đặt thuế suất.",
-          "Gói năm là Plus 50, Pro 80 và Max 150 USD, rẻ hơn 17% so với mười hai tháng; giá tháng không đổi. Tỷ giá lấy từ Frankfurter, rồi Vietcombank, rồi Exchange Rate API, đọc mỗi ngày một lần lúc 06:00 giờ Việt Nam, và màn thanh toán ghi giờ cập nhật.",
+          "Gói năm là Plus 50, Pro 80 và Max 150 USD, rẻ hơn 17% so với mười hai tháng; giá tháng không đổi. Tỷ giá lấy từ Frankfurter, rồi Vietcombank, rồi Exchange Rate API, đọc mỗi ngày một lần khoảng 06:00 giờ Việt Nam, và bảng chọn gói ghi giờ cập nhật.",
           "Đơn đang chờ thanh toán không bị mất khi bạn đóng mã QR: Nâng cấp gói, bảng chọn gói, Cài đặt → Thanh toán và Nạp tiền đều mở lại đúng mã đó, đồng hồ vẫn chạy, cho đến khi đơn được trả, huỷ hoặc hết hạn. Nút \"Huỷ đơn này\" luôn hỏi lại trước khi huỷ, và tiền chuyển muộn vẫn được cộng vào số dư.",
           "Tab Nhóm cho biết tính năng sắp ra mắt và có nút \"Báo tôi khi mở\"; quản trị viên thấy có bao nhiêu người đã nhấn."
         ],
@@ -18,7 +18,7 @@
           "The getting-started guide now has 7 steps, with a new \"Automations & Bot\" step. The step tabs scroll sideways when they do not fit. The key step has real recordings of getting a key at OpenRouter, Google AI Studio and OrcaRouter.",
           "Keys go in one at a time and are checked as you paste them, with no button to press. One key per account (several keys from one account share its limit), and Google's newer AQ. keys are accepted.",
           "Checkout (the administrators' billing preview) is now \"Configure your plan\": pick monthly or yearly, fill in billing information on the page, with two optional fields, a business name and another name for the invoice, and tick the consent box before subscribing. The VAT line appears only when a tax rate is set.",
-          "Yearly plans are Plus 50, Pro 80 and Max 150 USD, 17% less than twelve months; monthly prices do not change. The rate comes from Frankfurter, then Vietcombank, then Exchange Rate API, read once a day at 06:00 Vietnam time, and checkout shows when it was updated.",
+          "Yearly plans are Plus 50, Pro 80 and Max 150 USD, 17% less than twelve months; monthly prices do not change. The rate comes from Frankfurter, then Vietcombank, then Exchange Rate API, read once a day around 06:00 Vietnam time, and the plans sheet shows when it was updated.",
           "An order waiting for payment is no longer lost when you close its QR: Upgrade plan, the plans sheet, Settings → Billing and Add credits all reopen the same QR, with the clock still running, until the order is paid, cancelled or expires. \"Cancel this order\" always asks first, and money that arrives late is still added to your balance.",
           "The Team tab says it is coming soon and offers \"Tell me when it opens\"; administrators see how many people pressed it."
         ]
@@ -26,14 +26,14 @@
       "improved": {
         "vi": [
           "Khi hội thoại dài, phần giữ lại nguyên văn tính theo dung lượng thay vì số lượt: 10% cửa sổ ngữ cảnh của mô hình, tối thiểu 4.000 token. Dòng \"Đang nén cuộc trò chuyện…\" hiện phần trăm tiến độ theo thời gian thực.",
-          "Trước khi tóm tắt, kết quả công cụ cũ được xoá khỏi những gì gửi đi, bắt đầu từ mức đầy 60% và luôn giữ các kết quả mới nhất; chỗ đã xoá ghi cách lấy lại. Việc này nghe theo công tắc tự nén.",
+          "Trước khi tóm tắt, kết quả công cụ cũ được xoá khỏi những gì gửi đi, bắt đầu từ mức đầy 60% và luôn giữ các kết quả mới nhất; chỗ đã xoá ghi rõ nên đọc lại hay bước đó đã chạy rồi. Việc này nghe theo công tắc tự nén.",
           "Ở bảng tiến trình, mũi tên của \"N bước trước đó\" chỉ hiện khi rê chuột hoặc focus, và thu gọn/mở rộng trượt mượt thay vì nhảy.",
           "Cài đặt → Mức dùng: các dòng hạn mức miễn phí có thanh tiến độ, dòng giải thích \"Tính vào ngày 1\" đã bỏ.",
           "Mã thanh toán không bao giờ bắt đầu bằng 0, để khớp bộ lọc SePay gồm SZ và 10 chữ số."
         ],
         "en": [
           "In a long conversation the part kept word for word is now measured by size rather than a count of turns: 10% of the model's context window, at least 4,000 tokens. The \"Compacting the conversation…\" line shows a live percentage.",
-          "Before it summarises, old tool output is cleared from what is sent, starting when the window is 60% full and always keeping the newest results; a cleared result says how to get it back. This follows the auto-compact switch.",
+          "Before it summarises, old tool output is cleared from what is sent, starting when the window is 60% full and always keeping the newest results; a cleared result says whether to read it again or that the step already ran. This follows the auto-compact switch.",
           "In the progress panel the chevron on \"N earlier steps\" shows only on hover or keyboard focus, and folding slides open and shut instead of jumping.",
           "Settings → Usage: the free-share rows have bars, and the \"Worked out on the 1st\" explanation is gone.",
           "Payment codes never start with 0, so they match SePay's filter of SZ plus 10 digits."

@@ -7736,7 +7736,11 @@ $('context-gauge').addEventListener('click', () => {
         compactBar.start(0);
         try {
           const { summary, context } = await api.compactChat(chatId, (event, data) => {
-            if (event === 'status' && data.expected > 0 && typeof data.written === 'number') compactBar.progress(data.written, data.expected);
+            if (event === 'status') {
+              // The count of turns being folded arrives with the first status: the line says it as the automatic run's does.
+              if (data.folding) compactBar.start(data.folding);
+              if (data.expected > 0 && typeof data.written === 'number') compactBar.progress(data.written, data.expected);
+            }
           });
           // The ring is reset now, from the fold, not after the next reply.
           if (state.chatId === chatId) renderContext(context);
