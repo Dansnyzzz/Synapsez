@@ -2745,7 +2745,7 @@ Three limits came with it, and they **do apply to every account from this releas
 - **A monthly free share**: each person's share of metered searches and cloud computer time is worked
   out once a month instead of every day (see "Plans and pay as you go"). In this first month everyone's
   share is prorated from the day they first use it, because nobody has a count from last month yet.
-  Past the share a search uses the free engines only, and cloud computer work moves to the stand-in.
+  Past the share, for an account billing does not count, a search uses the free engines only, and cloud computer work moves to the stand-in.
 
 ### Modes
 
@@ -2789,15 +2789,25 @@ Money that arrives after an order ended is still added to the balance. A renewal
 
 | Plan | Monthly | Yearly | Included each month |
 |---|---|---|---|
-| Free | 0 | - | no metered allowance, 0.5 GB of files |
-| Plus | 5 USD | 50 USD | 150 searches, 4 h, 3 GB |
-| Pro | 8 USD | 80 USD | 250 searches, 6 h, 5 GB |
-| Max | 15 USD | 150 USD | 450 searches, 12 h, 10 GB |
+| Free | 0 | - | the free share (below), 0.5 GB of files |
+| Plus | 5 USD | 50 USD | 150 searches, 4 h, 3 GB, or the free share if larger |
+| Pro | 8 USD | 80 USD | 250 searches, 6 h, 5 GB, or the free share if larger |
+| Max | 15 USD | 150 USD | 450 searches, 12 h, 10 GB, or the free share if larger |
 
 A year costs ten months (17% less than twelve); the saving is worked out from the prices, not typed in.
 
 (The hours are of cloud computer; the gigabytes are of files.) Each plan is one person. The allowances are **a month's, usable on any day**: there is no daily limit,
-counter or display anywhere in billing. A Free account has none of the metered allowances.
+counter or display anywhere in billing. Every account has the free share (below), and a plan never has less than
+it: a paid plan's month for searches and cloud computer time is the **larger of the free share and the plan's own
+amount** (max(S, P), S being the account's free share this month and P the plan's own figures above). Free is S alone,
+so topping up does not take it away.
+
+**The order a call is paid from:** the plan's included month, then the free share, then the balance, and refused
+only in `live` when none of them can hold it. A plan's own amount is used before the share, so what the share adds
+for a plan is S minus P (nothing when P is the larger). The share is used only while the free keys of that service have
+room: when they run dry, a paying account's call is charged to its balance and may go to the paid key, never refused
+and never sent to a worse engine. The paid key is always the last one used. With `FREE_TIER_ONLY` off (the ceilings
+lifted) there is no share step, and billing works as before this release.
 
 Past an allowance, or with no plan, a charge comes from the balance, at these prices at the anchor
 rate of 25,656 đ/USD, which move with the rate like the plans do:
@@ -2826,7 +2836,9 @@ month or last (at least 10), between 30 and 900 a month; the cloud computer like
 people). 80% of the capacity is shared out and 20% held back for people who start later in the month:
 someone first counted after the 1st, with no count last month, gets the share for the days that are
 left. A share is held for the month, raised if a key is added and never lowered mid-month. Settings → Usage shows each person their figures
-and how they were worked out. An account with no plan may keep 0.5 GB of files, administrators
+and how they were worked out. What the paid plans in force are owed (150, 250 or 450 searches and 4, 6 or 12 hours each) is
+taken out of the free capacity before the even split, so the free keys are never promised twice; it is 0 when
+`BILLING_MODE` is `off`. The 34% cap on one account's cloud computer stays on the whole capacity. An account with no plan may keep 0.5 GB of files, administrators
 excepted, while files live in the database.
 
 ### What it needs

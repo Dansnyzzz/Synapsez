@@ -1,6 +1,30 @@
 {
   "entries": [
     {
+      "version": "1.32.0",
+      "date": "2026-11-17",
+      "new": {
+        "vi": [
+          "Gói Free giữ nguyên lượt tìm kiếm và thời gian máy tính đám mây miễn phí, kể cả sau khi bạn nạp tiền. Phần miễn phí được dùng trước, rồi mới đến số dư.",
+          "Gói trả phí luôn có ít nhất phần miễn phí: mỗi tháng bạn được số lớn hơn giữa phần miễn phí và phần của gói (Plus 150 lượt tìm kiếm và 4 giờ, Pro 250 và 6 giờ, Max 450 và 12 giờ), rồi mới đến số dư. Nếu phần miễn phí lớn hơn phần của gói, bạn được phần miễn phí.",
+          "Bảng chọn gói hiện số liệu thật: thẻ Free ghi phần miễn phí của riêng bạn trong tháng này, mỗi thẻ trả phí ghi số lớn hơn kèm \"(đã gồm phần miễn phí)\"."
+        ],
+        "en": [
+          "The Free plan keeps its free searches and cloud computer time, even after you top up. The free share is used first, then your balance.",
+          "A paid plan always gets at least the free share: each month you have the larger of the free share and your plan's own amount (Plus 150 searches and 4 h, Pro 250 and 6 h, Max 450 and 12 h), then your balance. If the free share is larger than your plan's amount, you get that.",
+          "The plans sheet shows the real figures: the Free card shows your own free share this month, and each paid card shows its larger figure, marked \"(the free share included)\"."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Lượt tìm kiếm và thời gian máy tính đám mây được trả bằng phần miễn phí chỉ dùng khi các khoá miễn phí còn chỗ. Khi hết chỗ, lượt gọi của tài khoản trả phí được tính vào số dư, không bị từ chối và không bị chuyển sang công cụ tìm kiếm kém hơn."
+        ],
+        "en": [
+          "Searches and cloud computer time that the free share covers are used only while the free keys still have room. When they run out, a paying account's call is charged to its balance and is never refused or sent to a worse search engine."
+        ]
+      }
+    },
+    {
       "version": "1.31.1",
       "date": "2026-11-17",
       "improved": {

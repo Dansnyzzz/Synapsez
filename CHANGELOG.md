@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-17 — Every plan gets the free share (1.32.0)
+
+**The Free plan keeps its free share, even with a balance.** Each month's free searches and cloud computer time are used first, then the balance; topping up no longer takes them away.
+
+**A paid plan gets the larger of the free share and its own amount.** Plus is 150 searches and 4 h, Pro 250 and 6 h, Max 450 and 12 h; where the month's free share is larger, that is what the plan has. The order is the plan's included month, then the free share, then the balance, and the paid key is always the last one used. The share is used only while that service's free keys have room: when they run dry, a paying account's call is charged to its balance and is never refused or sent to a worse engine. With the ceilings lifted (`FREE_TIER_ONLY` off) there is no share step and billing works as before.
+
+**What paid plans are owed is set aside first.** It is taken out of the free capacity before the even split, so the free keys are never promised twice.
+
+**The plans sheet shows the real figures.** The Free card shows the viewer's own free share this month (and leaves out the computer line when that share is 0 or unknown); each paid card shows the larger figure with "(the free share included)".
+
+**Not verified live:** the new Vietnamese text.
+
 ## 2026-11-17 — Exa keys from other accounts are let in (1.31.1)
 
 **A new Exa key is checked where it will be used.** Adding a key from another Exa account — each account its own team — was refused with "Exa refused this key." because the check asked Exa's Websets API, which answered 401 INVALID_API_KEY for a key that Exa's search takes (the owner's live report, 2026-11-17). Now a 401 from Websets is asked again, once, of `POST /search` with an empty body: Exa checks the key before the request, so an unknown key is still 401 (refused) and a known one is told the request is incomplete (let in) — no search is run and no credit spent. Search down or out of reach is "try again", never a refusal.

@@ -2924,7 +2924,9 @@ section('billing: the sheet, the menu row, the mode and the release notes agree 
   // Read by version, as the 1.30.0 pins are: a later release goes on top without moving this one.
   const released131 = log.find((e) => e.version === '1.31.0');
   check("1.31.0 is released, in both languages", !!released131 && released131.new.vi.length > 0 && released131.new.en.length === released131.new.vi.length && (released131.improved?.vi.length ?? 0) === (released131.improved?.en.length ?? 0));
-  check("1.31.1 is released, in both languages: Exa keys from other accounts", version === '1.31.1' && log[0].version === '1.31.1' && log[0].improved.vi.length > 0 && log[0].improved.en.length === log[0].improved.vi.length && /Exa/.test(log[0].improved.en[0]) && /Exa/.test(log[0].improved.vi[0]));
+  const released1311 = log.find((e) => e.version === '1.31.1');
+  check("1.31.1 is released, in both languages: Exa keys from other accounts", !!released1311 && released1311.improved.vi.length > 0 && released1311.improved.en.length === released1311.improved.vi.length && /Exa/.test(released1311.improved.en[0]) && /Exa/.test(released1311.improved.vi[0]));
+  check('CHANGELOG.md still carries 1.31.1', read('CHANGELOG.md').includes('(1.31.1)'));
   check('CHANGELOG.md carries the same version', read('CHANGELOG.md').includes('(1.31.0)'));
   // 1.30.0 stays in the file as the entry below the newest; its own claims are pinned against it.
   const r130 = log.find((e) => e.version === '1.30.0');
@@ -2968,6 +2970,34 @@ section('billing: the sheet, the menu row, the mode and the release notes agree 
   check('the rate is read "around 06:00" (a Hobby cron fires within its hour), never "at 06:00"', /around 06:00/.test(en131) && /khoảng 06:00/.test(vi131) && /around 06:00/.test(changelog131) && !/\bat 06:00/.test(en131 + changelog131 + readme) && !/lúc 06:00/.test(vi131));
   check('a cleared tool result is said to say whether to read it again or that the step already ran', /whether to read it again or that the step already ran/.test(en131) && /nên đọc lại hay bước đó đã chạy rồi/.test(vi131) && /whether to read it again or that the step already ran/.test(changelog131) && !/how to get it back/.test(en131 + changelog131) && !/ghi cách lấy lại/.test(vi131) && /CLEARED_RAN/.test(read('server/compact.js')));
   check('the README names Frankfurter first in the rate chain, as fx.js has it', order[0] > 0 && order[0] < order[1] && order[1] < order[2] && /Frankfurter, then Vietcombank/.test(billing));
+
+  // 1.32.0: the free share for every plan. The rules are read from the code that applies them, so the README cannot drift from it.
+  const meterSrc = read('server/billing/meter.js');
+  const sharesSrc = read('server/freeShares.js');
+  const at = (src, needle) => src.indexOf(needle);
+  const takeBody = meterSrc.slice(at(meterSrc, 'async function takeSearch'), at(meterSrc, 'function shareHold'));
+  const sandboxBody = meterSrc.slice(at(meterSrc, 'export async function holdSandbox'), at(meterSrc, '/* ── storage'));
+  const [inc, shr, bal] = [at(takeBody, "source: 'included'"), at(takeBody, 'searchRoom('), at(takeBody, "source: 'balance'")];
+  check('searches are paid in order: the included month, then the free share, then the balance', inc > 0 && inc < shr && shr < bal, [inc, shr, bal].join(' '));
+  const [sInc, sShr, sBal] = [at(sandboxBody, "source: 'included'"), at(sandboxBody, "source: 'share'"), at(sandboxBody, "source: 'balance'")];
+  check('cloud computer time is paid in the same order', sInc > 0 && sInc < sShr && sShr < sBal, [sInc, sShr, sBal].join(' '));
+  check('  the README says that order, and that the paid key is last', /included month, then the free share[^.]*then the balance/.test(flat) && /paid key is always the last/.test(flat));
+  const leftOfShare = /Math\.max\(0, share - own - used\)/g;
+  check('a paid plan gets max(S, P): what is left of the share is S minus its own amount P minus what it has used, searches and machine alike', (meterSrc.match(leftOfShare) || []).length === 2 && /PLANS\[plan\.plan\]\.searches/.test(meterSrc) && /PLANS\[plan\.plan\]\.sandboxMinutes \* MACHINE_MILLS_PER_HOUR/.test(meterSrc) && /plan\.plan === 'free' \? 0/.test(meterSrc));
+  check("  P is the plan's own figures (150, 250, 450 searches; 4, 6, 12 h), and the README states the rule", PLANS.plus.searches === 150 && PLANS.pro.searches === 250 && PLANS.max.searches === 450 && [PLANS.plus, PLANS.pro, PLANS.max].map((p) => p.sandboxMinutes / 60).join() === '4,6,12' && /max\(S, P\)/.test(flat) && /larger of the free share and the plan's own amount/.test(flat));
+  const roomSrc = meterSrc.slice(at(meterSrc, 'async function searchRoom'), at(meterSrc, 'function makeHold'));
+  check('with FREE_TIER_ONLY off there is no share step: both rooms are 0 before any share is read', (roomSrc.match(/if \(!freeTierOnly\(\)\) return 0;/g) || []).length === 2 && roomSrc.indexOf('freeTierOnly()') < roomSrc.indexOf('searchShareOf') && roomSrc.lastIndexOf('freeTierOnly()') < roomSrc.indexOf('machineShareOf'));
+  check('  and the README says billing then works as before', /FREE_TIER_ONLY` off[^.]*no share step[^.]*as before/.test(flat));
+  const committedSrc = sharesSrc.slice(at(sharesSrc, 'async function committedNow'), at(sharesSrc, 'function workOut'));
+  check('the set-aside is what paid plans in force are owed, 0 when billing is off', /billingMode\(\) === 'off'\) return \{ searches: 0, machineMills: 0 \}/.test(committedSrc) && /countLivePlans/.test(committedSrc) && /n \* PLANS\[plan\]\.searches/.test(committedSrc) && /PLANS\[plan\]\.sandboxMinutes \* MACHINE_MILLS_PER_HOUR/.test(committedSrc));
+  check('  it comes out of the capacity before the even split, and the 34% cap stays on the raw capacity', /capacity\.searches - committed\.searches/.test(sharesSrc) && /capacity\.machineMills - committed\.machineMills/.test(sharesSrc) && /capacity\.machineMills \* bounds\.machineMaxShare/.test(sharesSrc) && /taken out of the free capacity before the even split/.test(flat));
+  check('the README no longer says a Free account has no allowance or that a plan replaces the share', !/Free account has none of the metered allowances/.test(flat) && !/no metered allowance/.test(flat));
+  const r132 = log.find((e) => e.version === '1.32.0');
+  const en132 = r132 ? r132.new.en.concat(r132.improved?.en ?? []).join(' ') : '';
+  const vi132 = r132 ? r132.new.vi.concat(r132.improved?.vi ?? []).join(' ') : '';
+  check('1.32.0 is released, in both languages, and is the newest entry', !!r132 && version === '1.32.0' && log[0].version === '1.32.0' && r132.new.vi.length > 0 && r132.new.en.length === r132.new.vi.length && (r132.improved?.vi.length ?? 0) === (r132.improved?.en.length ?? 0));
+  check('  it says the Free plan keeps its share, a plan gets at least it, and the plans sheet shows the figures', /Free plan keeps/.test(en132) && /at least/.test(en132) && /plans sheet/.test(en132) && /[Gg]ói Free/.test(vi132) && /ít nhất/.test(vi132));
+  check('  and CHANGELOG.md carries it', read('CHANGELOG.md').includes('(1.32.0)'));
 }
 
 console.log(failures === 0 ? '\n\x1b[32mAll feature checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
