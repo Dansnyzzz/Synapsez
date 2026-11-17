@@ -197,6 +197,8 @@ section('"tell me when Team opens": kept once per account, counted for the admin
   const before = (await owner.j.call('GET', '/api/admin/billing')).json?.figures?.teamInterest;
   check('nobody has asked yet, and the account says so', before === 0 && (await owner.j.call('GET', '/api/billing')).json?.teamInterest === false, String(before));
   check('a member is refused like every other billing route', (await bob.j.call('POST', '/api/billing/team-interest')).status === 404);
+  // Another preference is already there: the press must add to the row, not replace it.
+  await store.mergeUserSetting(owner.id, 'prefs', { language: 'vi' });
   const first = await owner.j.call('POST', '/api/billing/team-interest');
   const kept = (await store.getUserSetting(owner.id, 'prefs'))?.teamInterest;
   check('the first press answers ok and stores a date in the preferences', first.status === 200 && first.json?.ok === true && Number.isFinite(Date.parse(kept)), JSON.stringify([first.status, first.json, kept]));
@@ -204,8 +206,12 @@ section('"tell me when Team opens": kept once per account, counted for the admin
   const second = await owner.j.call('POST', '/api/billing/team-interest');
   check('the second press answers ok and changes nothing', second.status === 200 && second.json?.ok === true && (await store.getUserSetting(owner.id, 'prefs'))?.teamInterest === kept);
   const both = await Promise.all([dan.j.call('POST', '/api/billing/team-interest'), dan.j.call('POST', '/api/billing/team-interest')]);
-  check('two presses at once store one date and both answer ok', both.every((r) => r.status === 200 && r.json?.ok === true) && Number.isFinite(Date.parse((await store.getUserSetting(dan.id, 'prefs'))?.teamInterest)));
-  check('the preferences it was merged into keep what they held', (await store.getUserSetting(owner.id, 'prefs')) !== null);
+  const danOnce = (await store.getUserSetting(dan.id, 'prefs'))?.teamInterest;
+  await sleep(20);
+  await dan.j.call('POST', '/api/billing/team-interest');
+  check('two presses at once both answer ok, a date is stored, and a later press leaves that date as it was', both.every((r) => r.status === 200 && r.json?.ok === true) && Number.isFinite(Date.parse(danOnce)) && (await store.getUserSetting(dan.id, 'prefs'))?.teamInterest === danOnce, String(danOnce));
+  const ownerPrefs = await store.getUserSetting(owner.id, 'prefs');
+  check('the preferences it was merged into keep what they held', ownerPrefs?.language === 'vi' && ownerPrefs?.teamInterest === kept, JSON.stringify(ownerPrefs));
   const card = await owner.j.call('GET', '/api/admin/billing');
   check('the administrator figures count the accounts, once each', card.json?.figures?.teamInterest === 2, String(card.json?.figures?.teamInterest));
   check('and the account now says it has asked', (await owner.j.call('GET', '/api/billing')).json?.teamInterest === true);

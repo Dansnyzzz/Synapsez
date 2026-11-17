@@ -186,6 +186,11 @@ section('the plans sheet');
   check('no daily figure anywhere (a month\'s allowance)', !/a day|per day|daily/i.test(sheet.all), '');
   check('the allowance is a month\'s: searches, computer hours, storage', /150 searches a month/.test(sheet.plus) && /4 h of computer time a month/.test(sheet.plus) && /3 GB storage/.test(sheet.plus), sheet.plus.replace(/\s+/g, ' '));
   check('the current plan\'s button is disabled "Current plan"', sheet.free === 'Current plan (disabled)', sheet.free);
+  const pct = await page.evaluate(async () => {
+    const { savePercent } = await import('/js/billing-plan-cards.js');
+    return [savePercent({ usdCents: { month: 1000, year: 9000 } }), savePercent({ usdCents: { month: 500, year: 5000 } }), savePercent({ usdCents: { month: 500, year: 6000 } }), savePercent({})];
+  });
+  check('the saving is worked out from the prices, not written down (1000/9000 → 25, 500/5000 → 17, no saving → 0)', pct.join() === '25,17,0,0', pct.join());
   check('Plus, on a free account, is "Get Plus"', byId.plus.button === 'Get Plus', byId.plus.button);
   check('the rate is one line in Vietnam time, 24-hour and DD/MM/YYYY', /^Rate updated at \d\d:\d\d, \d\d\/\d\d\/\d{4}/.test((sheet.rate || '').replace(/\s+/g, ' ').trim()), (sheet.rate || '').replace(/\s+/g, ' '));
   check('  with the Exchange Rate API link on the day that is its rate in use', /exchangerate-api\.com/.test(sheet.link || '') && /Rates By Exchange Rate API/.test(sheet.rate), sheet.link);
@@ -311,6 +316,47 @@ section('the Team tab: coming soon, and "Tell me when it opens" is kept once');
   page.off('request', watch);
   await page.click('#plans [data-audience="individual"]');
   check('Individual brings the four cards back', (await page.locator('#plans .plans__card').count()) === 4);
+  await page.keyboard.press('Escape');
+}
+
+section('a Team press whose answer comes after the sheet was closed and opened again');
+{
+  // The account is shown as not yet asked, and the answer is held back, so the sheet is closed and opened while it is on its way.
+  // The second opening reads the account slowly, so the Team answer lands while that sheet has no data yet.
+  let slow = false;
+  await page.route('**/api/billing', async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    if (slow) await new Promise((r) => setTimeout(r, 1800));
+    const res = await route.fetch();
+    await route.fulfill({ response: res, json: { ...(await res.json()), teamInterest: false } });
+  });
+  let sent = 0;
+  await page.route('**/api/billing/team-interest', async (route) => {
+    sent += 1;
+    await new Promise((r) => setTimeout(r, 1200));
+    await route.fulfill({ contentType: 'application/json', body: '{"ok":true}' });
+  });
+  const open = async () => {
+    await openMenu(page);
+    await page.click('.plusmenu--account [data-row="upgrade"]');
+    await page.waitForSelector('#plans .plans__card [data-pick]');
+    await page.click('#plans [data-audience="team"]');
+  };
+  // A toast is drawn inside the open dialog, and the sheet's next repaint wipes it: so errors are caught as they are added, not counted afterwards.
+  await page.evaluate(() => {
+    window.__errorToasts = [];
+    new MutationObserver((list) => list.forEach((m) => m.addedNodes.forEach((n) => n.classList?.contains('toast--error') && window.__errorToasts.push(n.textContent)))).observe(document.body, { childList: true, subtree: true });
+  });
+  const errorsBefore = page.errors.length;
+  await open();
+  await page.click('#plans [data-team-interest]');
+  slow = true;
+  await page.keyboard.press('Escape');
+  await open();
+  await page.waitForTimeout(800);
+  check('no error toast and no uncaught error, and the new sheet is not told it was answered', sent === 1 && (await page.evaluate(() => window.__errorToasts.length)) === 0 && page.errors.length === errorsBefore && (await page.textContent('#plans .plans__teamstatus')) === '', `sent ${sent} ${await page.evaluate(() => window.__errorToasts.join(' | '))} ${page.errors.slice(errorsBefore).join(' | ')}`);
+  await page.unroute('**/api/billing/team-interest');
+  await page.unroute('**/api/billing');
   await page.keyboard.press('Escape');
 }
 
@@ -562,6 +608,25 @@ section('short payment, expiry, cancel');
   await page.keyboard.press('Escape');
 }
 
+section('card columns: four when wide, two when medium, one on a phone');
+{
+  const lefts = () => page.evaluate(() => new Set([...document.querySelectorAll('#plans .plans__card')].map((c) => Math.round(c.getBoundingClientRect().left))).size);
+  await openMenu(page);
+  await page.click('.plusmenu--account [data-row="upgrade"]');
+  await page.waitForSelector('#plans .plans__card');
+  check('wide (1280 px): four columns', (await lefts()) === 4, String(await lefts()));
+  for (const width of [800, 700, 900]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.waitForTimeout(200);
+    check(`medium (${width} px): exactly two columns, never three plus one`, (await lefts()) === 2, String(await lefts()));
+  }
+  await page.setViewportSize({ width: 360, height: 740 });
+  await page.waitForTimeout(200);
+  check('phone (360 px): one column', (await lefts()) === 1, String(await lefts()));
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.keyboard.press('Escape');
+}
+
 section('narrow screens');
 {
   await page.setViewportSize({ width: 360, height: 740 });
@@ -651,6 +716,24 @@ for (const theme of ['light', 'dark']) {
   });
   // The primary buttons are white on the house gradient (see .btn--primary), which one measurement cannot describe, so they are left out.
   check(`text on the sheet reads at 4.5:1 or better in the ${theme} theme`, contrast.length > 8 && Math.min(...contrast) >= 4.5, contrast.map((c) => c.toFixed(1)).join());
+  // The resting state is measured above; hover has its own rules (.btn:hover once painted grey under text of the same lightness).
+  // color-mix() is reported as color(srgb 0.9 0.9 0.9), in 0..1, where rgb() is in 0..255.
+  const ratio = (c1, c2) => {
+    const lum = (c) => { const [r, g, b] = c.match(/[\d.]+/g).map(Number).slice(0, 3).map((v) => { v = c.startsWith('color(') ? v : v / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+    const a = lum(c1);
+    const b = lum(c2);
+    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  };
+  const hovered = {};
+  for (const kind of ['paid', 'free']) {
+    const sel = `#plans .plans__cta--${kind}:not(:disabled)`;
+    await page.hover(sel);
+    await page.waitForTimeout(300);
+    const s = await page.evaluate((q) => { const st = getComputedStyle(document.querySelector(q)); return { color: st.color, bg: st.backgroundColor }; }, sel);
+    hovered[kind] = Number(ratio(s.color, s.bg).toFixed(1));
+  }
+  await page.mouse.move(0, 0);
+  check(`the paid and Free buttons keep their label readable (4.5:1) on hover in the ${theme} theme`, hovered.paid >= 4.5 && hovered.free >= 4.5, JSON.stringify(hovered));
   await shot(theme);
   await page.keyboard.press('Escape');
 }

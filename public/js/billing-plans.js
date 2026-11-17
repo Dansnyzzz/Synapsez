@@ -237,7 +237,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     const pct = paid ? savePercent(p) : 0;
     const note = toYear ? `<p class="plans__note">${esc(t('billing.plans.monthlyNote', { pct }))}</p>` : '';
     // "No commitment" sits under a monthly buy button only; the card of the plan in force carries its own mark instead.
-    const terms = paid && period === 'month' && action === 'buy' ? `<p class="plans__terms">${esc(t('billing.plans.noCommitment'))}</p>` : '';
+    const terms = paid && period === 'month' && (action === 'buy' || action === 'renew') ? `<p class="plans__terms">${esc(t('billing.plans.noCommitment'))}</p>` : '';
     const mark = action === 'current' || toYear ? `<span class="plans__badge">${esc(t('billing.plans.current'))}</span>` : '';
     return `<article class="plans__card${lit ? ' is-current' : ''}" data-plan="${id}" aria-labelledby="plan-${id}-name">
       <div class="plans__head">${planIconHtml(id)}<h3 id="plan-${id}-name">${esc(planName(id))}</h3>${mark}</div>
@@ -290,9 +290,9 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   }
 
   /** Monthly | Yearly in the checkout, a radio group with one tab stop (arrow keys move inside it). The plans sheet has one in each paid card. */
-  function periodHtml(className, label, withSave, prices) {
+  function periodHtml(className, label, prices) {
     return `<div class="${className}" role="radiogroup" aria-label="${esc(label)}">${['month', 'year']
-      .map((p) => `<button type="button" role="radio" data-period="${p}" aria-checked="${p === period}" tabindex="${p === period ? 0 : -1}"${prices && laterQuote(p) ? ' disabled' : ''}><span>${esc(t(`billing.period.${p}`))}</span>${prices ? `<span class="plans__periodprice">${esc(prices[p])}</span>` : ''}${withSave && p === 'year' ? `<span class="plans__save">${esc(t('billing.plans.save', { pct: savePercent(planById(checkout?.plan)) }))}</span>` : ''}</button>`)
+      .map((p) => `<button type="button" role="radio" data-period="${p}" aria-checked="${p === period}" tabindex="${p === period ? 0 : -1}"${prices && laterQuote(p) ? ' disabled' : ''}><span>${esc(t(`billing.period.${p}`))}</span>${prices ? `<span class="plans__periodprice">${esc(prices[p])}</span>` : ''}</button>`)
       .join('')}</div>`;
   }
 
@@ -385,7 +385,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     return `<div class="checkout">
       <section class="checkout__main" aria-labelledby="co-plan">
         <h3 id="co-plan">${esc(planName(checkout.plan))}</h3>
-        ${periodHtml('checkout__period', t('billing.plans.period'), false, prices)}
+        ${periodHtml('checkout__period', t('billing.plans.period'), prices)}
         ${q.kind === 'later' ? `<p class="plans__muted" role="status">${esc(t('billing.checkout.later'))}</p>` : ''}
         <dl class="checkout__lines">${lines}</dl>
         ${rateLine}
@@ -682,13 +682,17 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     if (!data || teamBusy || data.account.teamInterest) return;
     teamBusy = true;
     const status = $('.plans__teamstatus');
+    const token = flow;
+    const mine = data;
     try {
       await api.billingTeamInterest();
+      // The sheet was closed or opened again meanwhile: the server has it, and the screen this answer is for is gone.
+      if (flow !== token || data !== mine) return;
       data.account.teamInterest = true;
       if (status) status.textContent = t('billing.team.noted');
       $('[data-team-interest]')?.setAttribute('aria-disabled', 'true');
     } catch (err) {
-      toast(err.message, 'error');
+      if (flow === token) toast(err.message, 'error');
     } finally {
       teamBusy = false;
     }
