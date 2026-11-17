@@ -391,9 +391,10 @@ const THIN_PAGE_CHARS = 200;
  */
 async function fetchedThroughExa(url, maxChars, why, { moreThan = 0, userId = null, held = null } = {}) {
   const limit = Math.min(Math.max(Number(maxChars) || PAGE_CHARS, 500), 200_000);
-  // A billable account's read is a held unit (billing/meter.js), kept when Exa read the page and given back when not.
+  // A billable account's read is a held unit (billing/meter.js), kept when Exa read the page and given back when not: the
+  // free share's while Exa has free room (then it counts against the share when kept), else the plan's or the balance's.
   // `held`: the web_search this read belongs to; its reads are covered by the search's own unit, kept or not.
-  const hold = held ? NO_OWN_HOLD : await holdSearch(userId);
+  const hold = held ? NO_OWN_HOLD : await holdSearch(userId, { service: 'exa' });
   let read = null;
   try {
     read = await readThroughExa(url, { maxChars: limit, paid: held ? held.paid : hold.paid });
@@ -416,18 +417,30 @@ async function fetchedThroughExa(url, maxChars, why, { moreThan = 0, userId = nu
  */
 async function fetchedThroughFirecrawl(url, maxChars, why, { moreThan = 0, userId = null, signal } = {}) {
   if (!firecrawlReady()) return null;
-  // A billable account's unit comes from its plan, then its free share (a NOT_BILLED hold, counted below as a member's), then its balance (billing/meter.js).
-  const hold = await holdSearch(userId);
-  const billed = hold.billed && !hold.refused && hold.source !== 'none';
+  // A billable account's unit comes from its plan, then its free share (a 'share' hold: free keys only, counted when it
+  // settles), then its balance (billing/meter.js). Any other account is a member's: its own share, counted below.
+  let hold = await holdSearch(userId, { service: 'firecrawl_scrape' });
   let units = 0;
   try {
-    if (hold.refused || (!billed && !(await mayMeter(userId)))) return null;
-    let read;
-    try {
-      read = await firecrawlScrape(url, { signal, paid: hold.paid });
-    } catch (err) {
-      log.info('web_fetch: Firecrawl could not read it', { error: String(err?.message || err).slice(0, 160) });
-      return null;
+    if (hold.refused) return null;
+    const scrape = async () => {
+      try {
+        return await firecrawlScrape(url, { signal, paid: hold.paid });
+      } catch (err) {
+        log.info('web_fetch: Firecrawl could not read it', { error: String(err?.message || err).slice(0, 160) });
+        return undefined;
+      }
+    };
+    let billed = hold.billed && hold.source !== 'none';
+    if (!billed && !(await mayMeter(userId))) return null;
+    let read = await scrape();
+    if (read === null && hold.source === 'share') {
+      // No free key had room after all: this read is the balance's, and may go on the paid key.
+      await hold.release();
+      hold = await holdSearch(userId, { share: false });
+      if (hold.refused) return null;
+      billed = hold.billed && hold.source !== 'none';
+      read = await scrape();
     }
     if (!read) return null;
     // By the pages read, not the document's total: a 300-page PDF is read to its fifth page (firecrawl.js PDF_PAGES).
@@ -719,8 +732,9 @@ async function webSearch({ query, count, depth, recency, sites, category }, cont
   // `userId` so the search is attributed in the log and counted against the
   // account's fair share of the deployment's free allowances (freeTier.js).
   // A billable account holds a unit first (billing/meter.js): kept when a metered engine answered, given back when a free
-  // one did or nothing did. For anybody else the hold is NOT_BILLED and this is the search it always was.
-  const hold = await holdSearch(userId);
+  // one did or nothing did. The free share pays for it while the pooled engines have free room (a 'share' hold: free keys
+  // only, counted when kept). For anybody else the hold is NOT_BILLED and this is the search it always was.
+  const hold = await holdSearch(userId, { service: 'search' });
   let found;
   try {
     found = await search(query, {
@@ -3494,18 +3508,19 @@ async function sitePagesTool({ op = 'map', url, search: term, limit, include_pat
   }
   await assertPublic(parsed);
   if (!firecrawlReady()) return 'Listing and crawling a site needs Firecrawl, which this deployment does not have. Use web_fetch on the pages instead.';
-  const hold = await holdSearch(userId);
-  const billed = hold.billed && !hold.refused && hold.source !== 'none';
+  let hold = await holdSearch(userId, { service: 'firecrawl_more' });
+  let billed = hold.billed && !hold.refused && hold.source !== 'none';
   if (hold.refused || (!billed && !(await mayMeter(userId)))) {
     await hold.release();
-    // Only a billable account sees billing; a member whose free share is used hears about the share, never a balance.
+    // Only a billable account sees billing (its share is a hold of its own, so it is here for a plan or a balance that is
+    // used up); a member whose free share is used hears about the share, never a balance.
     return hold.refused
       ? "This month's allowance and balance for metered web calls are used up. Use web_fetch on the pages instead."
       : "This account's share of this month's metered web calls is used. Use web_fetch on the pages instead.";
   }
   // What Firecrawl really charged: a map is one unit once it answered (even with no links), a crawl is by the pages read.
   let units = 0;
-  try {
+  const attempt = async () => {
     if (op === 'map') {
       const links = await firecrawlMap(parsed.href, { search: term, limit, signal, paid: hold.paid });
       units = 1;
@@ -3531,6 +3546,19 @@ async function sitePagesTool({ op = 'map', url, search: term, limit, include_pat
       return `${blocks.length} page${blocks.length === 1 ? '' : 's'} of ${parsed.host}${finished ? '' : ' (stopped where this run ran short of time — what was read so far)'}, the first ${CRAWL_PAGE_CHARS} characters of each:\n${untrusted(parsed.href, blocks.join('\n\n'))}\nweb_fetch one for the rest of it.`;
     }
     throw new Error('op is "map" or "crawl".');
+  };
+  try {
+    try {
+      return await attempt();
+    } catch (err) {
+      // Firecrawl stood aside for a call the free share was to pay: no free key had room after all. It is the balance's.
+      if (!(err?.skip && hold.source === 'share')) throw err;
+      await hold.release();
+      hold = await holdSearch(userId, { share: false });
+      billed = hold.billed && !hold.refused && hold.source !== 'none';
+      if (hold.refused) return "This month's allowance and balance for metered web calls are used up. Use web_fetch on the pages instead.";
+      return await attempt();
+    }
   } catch (err) {
     const aside = firecrawlAside(err, 'Use web_fetch on the pages instead.');
     if (aside) return aside;
@@ -3574,7 +3602,7 @@ export const CLOUD_IMPLEMENTATIONS = {
   // Claude's get_code_context_exa: code and documentation for a programming question,
   // as far as the reasoning level goes.
   code_context: async (input, { userId, signal }) => {
-    const hold = await holdSearch(userId);
+    const hold = await holdSearch(userId, { service: 'search' });
     let charged = 0;
     try {
       return await codeContextTool(input, {

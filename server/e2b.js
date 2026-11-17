@@ -237,9 +237,11 @@ const E2B_KEY = 'env';
  * from their share of the free month.
  *
  * A billable account's window is held first (billing/meter.js `holdSandbox`): from the plan's minutes, else from its free
- * share (`shareCost`; the hold is then NOT_BILLED and the share is spent below, with free keys only), else from the
- * balance, which makes the start a charged one (the paid key may serve it) and spares the share. It rides on the
- * receipt, so `giveBack` returns it. In preview a window nothing can hold goes on as it always did.
+ * share (`shareCost`: a 'share' hold, which counts nothing itself — the share is spent below, here, and given back by
+ * `giveBack`, so it is counted once; free keys only), else from the balance, which makes the start a charged one (the paid
+ * key may serve it) and spares the share. A share hold the free keys cannot serve after all (they ran dry between the
+ * check and the pick) is released and the window held again from the balance. It rides on the receipt, so `giveBack`
+ * returns it. In preview a window nothing can hold goes on as it always did.
  *
  * @param {{ cpu: number, memMb: number, paidUntil?: number }} record
  * @param {number} until
@@ -250,15 +252,31 @@ async function payUntil(record, until, userId, { paid = false } = {}) {
   const from = Math.max(Date.now(), Number(record.paidUntil) || 0);
   if (until <= from) return null;
   const cost = priceOf(record, from, until);
-  const hold = userId ? await holdSandbox(userId, Math.ceil((until - from) / 1000), { shareCost: cost }) : NOT_BILLED;
-  try {
-    if (hold.refused) throw new E2BOutOfCredit();
-    const billed = hold.billed && hold.source !== 'none';
-    const pick = await pickKey('e2b', cost, { paid: paid || (billed && hold.paid) });
-    if (!pick || pick.key.id !== E2B_KEY) throw new E2BOutOfCredit();
+  const seconds = Math.ceil((until - from) / 1000);
+  let hold = userId ? await holdSandbox(userId, seconds, { shareCost: cost }) : NOT_BILLED;
+  /** The key to pay on, and whose share it is drawn from; null when this hold cannot be served. */
+  const choose = async (held) => {
+    if (held.refused) return null;
+    const billed = held.billed && held.source !== 'none';
+    const pick = await pickKey('e2b', cost, { paid: paid || (billed && held.paid) });
+    if (!pick || pick.key.id !== E2B_KEY) return null;
+    // A window the share paid for is on a free key, or it is not the share's to pay.
+    if (held.source === 'share' && pick.paid) return null;
     // A window the plan or the balance paid for is not also drawn from the account's free share; one billing left to the share is.
-    const shared = userId && !pick.paid && !billed ? userId : undefined;
-    if (shared && cost > (await e2bAccountAllowance(shared)).left) throw new E2BOutOfCredit();
+    const shared = userId && !pick.paid && (!billed || held.source === 'share') ? userId : undefined;
+    if (shared && cost > (await e2bAccountAllowance(shared)).left) return null;
+    return { pick, shared };
+  };
+  try {
+    let chosen = await choose(hold);
+    if (!chosen && hold.source === 'share') {
+      // The share was there when billing looked and the free keys are not now: the window is the balance's, as it would have been.
+      await hold.release();
+      hold = await holdSandbox(userId, seconds);
+      chosen = await choose(hold);
+    }
+    if (!chosen) throw new E2BOutOfCredit();
+    const { pick, shared } = chosen;
     const counted = { keyId: E2B_KEY, paid: pick.paid };
     if (pick.paid) {
       if (!(await take('e2b', cost, undefined, counted))) throw new E2BOutOfCredit();

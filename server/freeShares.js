@@ -194,18 +194,24 @@ async function readAccount(store, arrival, counted, before) {
 
 const lastMonth = (now) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 15));
 
-/** An account's share of metered searches this month and what it has used. `joinedOn` is set for a newcomer who joined after the 1st. */
+/**
+ * An account's share of metered searches this month and what it has used. `joinedOn` is set for a newcomer who joined after the 1st.
+ * `unread`: the figures are a fallback (the account's count could not be read, or the month's share is last month's or the
+ * maxima). A member's path goes on with them, as always; billing charges the call instead (billing/meter.js).
+ */
 export async function searchShareOf(userId, now = new Date()) {
   const month = await monthShares({ now });
   let joinedOn = null;
   let used = 0;
+  let unread = !!month.fallback;
   try {
     ({ used, joinedOn } = await readAccount(getStore(), arrivalBucket('search', userId, now).bucket, searchBucket(userId, now).bucket, searchBucket(userId, lastMonth(now)).bucket));
   } catch {
     /* unreadable: the whole share, none used */
+    unread = true;
   }
   const share = joinedOn ? prorated(month.searches, joinedOn, daysIn(now), SHARE_BOUNDS().searchMin) : month.searches;
-  return { share, used, joinedOn: joinedOn > 1 ? joinedOn : null };
+  return { share, used, joinedOn: joinedOn > 1 ? joinedOn : null, unread };
 }
 
 /** The same for the cloud computer, in mills. */
@@ -213,13 +219,20 @@ export async function machineShareOf(userId, now = new Date()) {
   const month = await monthShares({ now });
   let joinedOn = null;
   let used = 0;
+  let unread = !!month.fallback;
   try {
     ({ used, joinedOn } = await readAccount(getStore(), arrivalBucket('machine', userId, now).bucket, machineBucket(userId, now).bucket, machineBucket(userId, lastMonth(now)).bucket));
   } catch {
     /* unreadable: the whole share, none used */
+    unread = true;
   }
   const share = !Number.isFinite(month.machineMills) ? Infinity : joinedOn ? prorated(month.machineMills, joinedOn, daysIn(now), SHARE_BOUNDS().machineMinMills) : month.machineMills;
-  return { share, used, joinedOn: joinedOn > 1 ? joinedOn : null };
+  return { share, used, joinedOn: joinedOn > 1 ? joinedOn : null, unread };
+}
+
+/** What the pooled search engines have left this month, in searches: whether the free keys can still pay a share (billing/meter.js). */
+export async function searchCapacityLeft(now = new Date()) {
+  return (await capacityNow(now)).left;
 }
 
 /** Everything the Usage card shows for one account. */

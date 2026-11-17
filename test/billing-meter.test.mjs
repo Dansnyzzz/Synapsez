@@ -10,7 +10,7 @@ process.env.SESSION_SECRET ||= 'billing-meter-test-session-secret';
 process.env.DDG_MIN_INTERVAL_MS = '1';
 process.env.EXA_API_KEY = 'exa-test-key';
 process.env.E2B_API_KEY = 'e2b_test_key';
-for (const name of ['DATABASE_URL', 'POSTGRES_URL', 'VERCEL', 'BILLING_MODE', 'SEARCH_ORDER', 'FREE_TIER_ONLY', 'TAVILY_API_KEY', 'BRAVE_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'FIRECRAWL_API_KEY']) delete process.env[name];
+for (const name of ['DATABASE_URL', 'POSTGRES_URL', 'VERCEL', 'BILLING_MODE', 'SEARCH_ORDER', 'FREE_TIER_ONLY', 'TAVILY_API_KEY', 'BRAVE_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'FIRECRAWL_API_KEY', 'FREE_TIER_USER_MONTHLY_MIN', 'FREE_TIER_USER_MONTHLY_MAX']) delete process.env[name];
 
 let failures = 0;
 const section = (name) => console.log(`\n\x1b[1m${name}\x1b[0m`);
@@ -305,11 +305,12 @@ section('every plan gets at least the free share (owner, 2026-11-17)');
   const sources = [];
   for (let i = 0; i < S; i += 1) {
     const h = await meter.holdSearch(free.id, { now: at(1) });
-    sources.push(h === meter.NOT_BILLED && !h.paid && !h.billed);
-    await countMetered(free.id, at(1));
+    sources.push(h.source === 'share' && h.billed && !h.paid && !h.refused);
+    await h.settle(1);
   }
-  check('Free with a balance: the first S searches are NOT_BILLED, paid false', sources.every(Boolean), JSON.stringify(sources));
+  check('Free with a balance: the first S searches are share holds (billed, paid false: free keys only)', sources.every(Boolean), JSON.stringify(sources));
   check('  the balance does not move and no usage row is written', (await balanceOf(free)) === 10_000 && (await usage(free, 'search')).u === 0);
+  check('  settling each counted it against the share, once', (await counter(shares.searchBucket(free.id, at(1)).bucket)) === S);
   const past = await meter.holdSearch(free.id, { now: at(1) });
   check('  the next one is billed from the balance, paid, at the pay-as-you-go price', past.billed && past.source === 'balance' && past.paid === true && (await balanceOf(free)) === 10_000 - price, `${past.source} ${await balanceOf(free)}`);
 
@@ -342,13 +343,13 @@ section('every plan gets at least the free share (owner, 2026-11-17)');
   const free3 = [];
   for (let i = 0; i < 3; i += 1) {
     const h = await meter.holdSearch(big.id, { now: at(2) });
-    free3.push(h === meter.NOT_BILLED);
-    await countMetered(big.id, at(2));
+    free3.push(h);
+    await h.settle(1);
   }
-  check('Plus with S = 153: 150 included, then S - 150 = 3 NOT_BILLED', first.source === 'included' && free3.every(Boolean) && (await balanceOf(big)) === 10_000, JSON.stringify(free3));
+  check('Plus with S = 153: 150 included, then S - 150 = 3 share holds', first.source === 'included' && free3.every((h) => h.source === 'share') && (await balanceOf(big)) === 10_000, JSON.stringify(free3.map((h) => h.source)));
   const then = await meter.holdSearch(big.id, { now: at(2) });
   check('  then the balance', then.billed && then.source === 'balance' && (await balanceOf(big)) === 10_000 - price);
-  check('  paid is true on included and balance holds, false on the share ones', first.paid === true && then.paid === true && meter.NOT_BILLED.paid === false);
+  check('  paid is true on the included and balance holds, false on each share one', first.paid === true && then.paid === true && free3.every((h) => h.paid === false && h.billed === true));
   await pin(S, 25);
 
   // With the ceilings lifted there is no share: a Free account with a balance is charged from the first search.
@@ -364,10 +365,13 @@ section('every plan gets at least the free share (owner, 2026-11-17)');
   const box = await makeUser();
   await withBalance(box, 10_000);
   const w1 = await meter.holdSandbox(box.id, 600, { now: at(1), shareCost: cost });
-  check('computer, Free with a balance: a window the share can pay is NOT_BILLED, paid false, nothing charged', w1 === meter.NOT_BILLED && !w1.paid && (await balanceOf(box)) === 10_000);
+  check('computer, Free with a balance: a window the share can pay is a share hold (billed, paid false), nothing charged', w1.source === 'share' && w1.billed && !w1.paid && (await balanceOf(box)) === 10_000);
+  await w1.settle(1);
+  await w1.release();
+  check('  its settle and release count nothing: payUntil spends the share', (await e2bAccountAllowance(box.id, at(1))).left === 25);
   await e2bAccountSpend(box.id, cost, at(1));
   const w2 = await meter.holdSandbox(box.id, 600, { now: at(1), shareCost: cost });
-  check('  the second also (15 left of 25)', w2 === meter.NOT_BILLED && (await e2bAccountAllowance(box.id, at(1))).left === 15);
+  check('  the second also (15 left of 25)', w2.source === 'share' && (await e2bAccountAllowance(box.id, at(1))).left === 15);
   await e2bAccountSpend(box.id, cost, at(1));
   const w3 = await meter.holdSandbox(box.id, 600, { now: at(1), shareCost: cost });
   check('  with 5 left it takes from the balance, 10 started minutes', w3.billed && w3.source === 'balance' && w3.paid === true && (await balanceOf(box)) === 10_000 - 10 * perMinute, `${w3.source} ${await balanceOf(box)}`);
@@ -375,6 +379,16 @@ section('every plan gets at least the free share (owner, 2026-11-17)');
   await withBalance(bare, 10_000);
   const w4 = await meter.holdSandbox(bare.id, 600, { now: at(1) });
   check('  with shareCost omitted the share is skipped and the balance pays', w4.billed && w4.source === 'balance' && (await balanceOf(bare)) === 10_000 - 10 * perMinute);
+
+  // With the ceilings lifted the machine has no share either.
+  process.env.FREE_TIER_ONLY = 'false';
+  const liftedBox = await makeUser();
+  await withBalance(liftedBox, 10_000);
+  const wl = await meter.holdSandbox(liftedBox.id, 600, { now: at(1), shareCost: cost });
+  check('FREE_TIER_ONLY=false: a window is charged to the balance, no share step', wl.billed && wl.source === 'balance' && (await balanceOf(liftedBox)) === 10_000 - 10 * perMinute);
+  delete process.env.FREE_TIER_ONLY;
+  const nothing = await meter.holdSandbox(liftedBox.id, 60, { now: at(1), shareCost: 0 });
+  check('a window that costs the share nothing takes no share step: the balance pays', nothing.billed && nothing.source === 'balance');
 
   // The computer, a paid plan: its hours, then the share beyond them, then the balance.
   await pin(S, 552);
@@ -388,9 +402,111 @@ section('every plan gets at least the free share (owner, 2026-11-17)');
   await e2bAccountSpend(plusBox.id, cost, at(2));
   const b1 = await meter.holdSandbox(plusBox.id, 600, { now: at(2), shareCost: cost });
   check('computer, Plus: 240 minutes included (paid), then 552 - 532 = 20 mills of share (two windows of 10), then the balance',
-    inc.source === 'included' && inc.paid && s1 === meter.NOT_BILLED && s2 === meter.NOT_BILLED && b1.source === 'balance' && b1.paid && (await balanceOf(plusBox)) === 10_000 - 10 * perMinute,
+    inc.source === 'included' && inc.paid && s1.source === 'share' && s2.source === 'share' && b1.source === 'balance' && b1.paid && (await balanceOf(plusBox)) === 10_000 - 10 * perMinute,
     `${inc.source} ${b1.source} ${await balanceOf(plusBox)}`);
   await pin(S, 25);
+}
+
+section('the share is only for free capacity that exists, and it counts what it pays for (fix round 1)');
+{
+  const shares = await import('../server/freeShares.js');
+  const tiers = await import('../server/freeTier.js');
+  const { paygPrices } = await import('../server/billing/plans.js');
+  const { meteringRate } = await import('../server/billing/fx.js');
+  const FIRST = new Date('2027-03-01T03:00:00Z');
+  const at = (h) => new Date(FIRST.getTime() + h * 3_600_000);
+  const pin = async (searches, machineMills) => {
+    await store.setSetting('free_shares:2027-03', { month: '2027-03', searches, machineMills, capacity: { searches: 1e12, machineMills: 1e12 }, people: { searches: 1, machines: 1 }, committed: { searches: 0, machineMills: 0 }, at: FIRST.toISOString() });
+    shares.__testing.forget();
+  };
+  const price = paygPrices(await meteringRate()).searchVnd;
+  const shareCount = async (user) => counter(shares.searchBucket(user.id, at(1)).bucket);
+  await pin(100, 25);
+
+  // What a share hold keeps: one unit against the share, the rest on the balance.
+  const four = await makeUser();
+  await withBalance(four, 10_000);
+  const h4 = await meter.holdSearch(four.id, { now: at(1) });
+  await h4.settle(4);
+  check('a share hold settled with 4: 1 counted against the share, 3 charged to the balance', h4.source === 'share' && (await shareCount(four)) === 1 && (await usage(four, 'search')).u === 3 && (await balanceOf(four)) === 10_000 - 3 * price, `${await shareCount(four)} ${(await usage(four, 'search')).u} ${await balanceOf(four)}`);
+  const none = await makeUser();
+  await withBalance(none, 10_000);
+  const h0 = await meter.holdSearch(none.id, { now: at(1) });
+  await h0.settle(0);
+  const hr = await meter.holdSearch(none.id, { now: at(1) });
+  await hr.release();
+  await hr.settle(1);
+  check('  settle(0) and release() count nothing, and a settle after a release is nothing', (await shareCount(none)) === 0 && (await balanceOf(none)) === 10_000 && (await usage(none, 'search')).u === 0);
+  check('  a share hold is frozen', Object.isFrozen(h4));
+
+  // The free keys must have room for the share to be used.
+  const drySearch = async (service) => {
+    const user = await makeUser();
+    await withBalance(user, 10_000);
+    meter.forgetFreePools();
+    return { user, hold: await meter.holdSearch(user.id, { now: at(1), service }) };
+  };
+  const wet = await drySearch('exa');
+  check('with Exa free room, a read asking for the Exa pool is a share hold', wet.hold.source === 'share');
+  await tiers.exhaust('exa', at(1));
+  const dryExa = await drySearch('exa');
+  check('Exa used up: the read is charged to the balance, paid, so the paid key may serve it', dryExa.hold.source === 'balance' && dryExa.hold.paid === true && (await balanceOf(dryExa.user)) === 10_000 - price);
+  const drySearchHold = await drySearch('search');
+  check('  the pooled search engines used up: a search is charged too', drySearchHold.hold.source === 'balance' && drySearchHold.hold.paid === true);
+  const noService = await drySearch(undefined);
+  check('  a hold that names no service takes the share without asking', noService.hold.source === 'share');
+  await query("DELETE FROM rate_limits WHERE bucket LIKE 'free:exa%'");
+  meter.forgetFreePools();
+
+  // The computer needs E2B's free month to hold the window too.
+  const box = await makeUser();
+  await withBalance(box, 10_000);
+  await tiers.exhaust('e2b', at(1));
+  const spentBox = await meter.holdSandbox(box.id, 600, { now: at(1), shareCost: 10 });
+  check('E2B used up: a window the share has room for is charged to the balance', spentBox.billed && spentBox.source === 'balance' && spentBox.paid === true);
+  await query("DELETE FROM rate_limits WHERE bucket LIKE 'free:e2b%' AND bucket NOT LIKE '%:user:%'");
+
+  // A share that cannot be read is no share.
+  const real = store.readCounters;
+  const lines = [];
+  const warnWas = console.warn;
+  console.warn = (...args) => { lines.push(args.join(' ')); };
+  const sick = await makeUser();
+  await withBalance(sick, 10_000);
+  store.readCounters = async () => { throw new Error('store is down'); };
+  let sickHold;
+  let sickBox;
+  try {
+    sickHold = await meter.holdSearch(sick.id, { now: at(1) });
+    sickBox = await meter.holdSandbox(sick.id, 600, { now: at(1), shareCost: 10 });
+  } finally {
+    store.readCounters = real;
+    console.warn = warnWas;
+  }
+  check('a count that cannot be read: the search and the window are charged to the balance', sickHold.source === 'balance' && sickBox.source === 'balance');
+  check('  one warning says so and names no account', lines.some((l) => /could not be read/.test(l)) && !lines.some((l) => l.includes(sick.id)), lines.join(' | '));
+
+  // The day a paid account first uses its month is the day it joined: a later share is not worked out for the days left.
+  await pin(153, 25);
+  const plus = await makeUser();
+  await withPlan(plus, 'plus', FIRST);
+  await withBalance(plus, 10_000);
+  await meter.holdSearch(plus.id, { units: 150, now: at(1) });
+  const tenth = new Date('2027-03-10T04:00:00Z');
+  const kept = [];
+  for (let i = 0; i < 3; i += 1) {
+    const h = await meter.holdSearch(plus.id, { now: tenth });
+    kept.push(h.source);
+    await h.settle(1);
+  }
+  const after = await meter.holdSearch(plus.id, { now: tenth });
+  check('Plus using its month from the 1st, reaching the share on the 10th: the whole S - 150 is there, not a prorated one', kept.every((s) => s === 'share') && after.source === 'balance', `${kept.join(',')} then ${after.source}`);
+  const plusBox = await makeUser();
+  await withPlan(plusBox, 'plus', FIRST);
+  await meter.holdSandbox(plusBox.id, 600, { now: at(1) });
+  const arrival = await counter(`free:arrive:machine:2027-03:user:${plusBox.id}`);
+  check('  and a window of the plan\'s hours notes the day the same way', arrival === 1, String(arrival));
+  await pin(4, 25);
 }
 
 /* ── search and the tools ───────────────────────────────────────────── */
@@ -623,6 +739,120 @@ section('a member out of their share is told about the share, not a balance');
   check('the share sentence, and never the word balance', /share of this month's metered web calls is used/.test(said) && !/balance/i.test(said), said);
   delete process.env.FIRECRAWL_API_KEY;
   await pool3.warmPools();
+}
+
+section('end to end: a share-paid call counts, and a dry free pool is the balance\'s (fix round 1)');
+{
+  const shares = await import('../server/freeShares.js');
+  const tiers = await import('../server/freeTier.js');
+  const { paygPrices } = await import('../server/billing/plans.js');
+  const { meteringRate } = await import('../server/billing/fx.js');
+  const price = paygPrices(await meteringRate()).searchVnd;
+  const thisMonth = tiers.periodOf('month').key;
+  const pinNow = async (searches, machineMills) => {
+    await store.setSetting(`free_shares:${thisMonth}`, { month: thisMonth, searches, machineMills, capacity: { searches: 1e12, machineMills: 1e12 }, people: { searches: 1, machines: 1 }, committed: { searches: 0, machineMills: 0 }, at: new Date().toISOString() });
+    shares.__testing.forget();
+    meter.forgetFreePools();
+  };
+  const shareOf = (user) => counter(shares.searchBucket(user.id, new Date()).bucket);
+  const machineShareCount = (user) => counter(shares.machineBucket(user.id, new Date()).bucket);
+  const fresh = async () => {
+    const user = await makeUser();
+    await withBalance(user, 10_000);
+    return user;
+  };
+  await pinNow(50, 1000);
+
+  // A read through Exa the share pays for is counted against the share (it was never counted at all).
+  const reader = await fresh();
+  search.clearSearchCache();
+  await heal();
+  stubWeb();
+  await CLOUD_IMPLEMENTATIONS.web_fetch({ url: refusedUrl }, { userId: reader.id });
+  check('an Exa read paid from the share moves the share counter, and not the balance', asked.some((u) => u.includes('api.exa.ai/contents')) && (await shareOf(reader)) === 1 && (await balanceOf(reader)) === 10_000, `${await shareOf(reader)} ${await balanceOf(reader)}`);
+
+  // Firecrawl: the pages pool is its smallest share, and runs dry first.
+  process.env.FIRECRAWL_API_KEY = 'fc-test-key';
+  const pool4 = await import('../server/keyPool.js');
+  await pool4.warmPools();
+  const scrapeStub = { 'api.exa.ai': () => json({}, 500), 'firecrawl.dev/v2/scrape': () => json({ success: true, data: { markdown: 'A long PDF. '.repeat(40), metadata: { statusCode: 200, totalPages: 300, numPages: 300, creditsUsed: 6 } } }) };
+  const pager = await fresh();
+  search.clearSearchCache();
+  stubWeb(scrapeStub);
+  const viaShare = await CLOUD_IMPLEMENTATIONS.web_fetch({ url: refusedUrl }, { userId: pager.id });
+  check('a Firecrawl read paid from the share: 1 unit counted against it, the other of its 2 units on the balance', /read through Firecrawl/.test(viaShare) && (await shareOf(pager)) === 1 && (await balanceOf(pager)) === 10_000 - price, `${viaShare.slice(0, 50)} ${await shareOf(pager)} ${await balanceOf(pager)}`);
+  // Every free key's credits spent: a charged read goes on the owner's paid key (a spent share alone would not open it: keyPool.js).
+  await tiers.exhaust('firecrawl');
+  meter.forgetFreePools();
+  await pool4.setPaidKey('firecrawl', 'env', 100_000);
+  const spent = await fresh();
+  search.clearSearchCache();
+  stubWeb(scrapeStub);
+  const viaBalance = await CLOUD_IMPLEMENTATIONS.web_fetch({ url: refusedUrl }, { userId: spent.id });
+  check('  the free credits used up: the read is charged to the balance, and read', /read through Firecrawl/.test(viaBalance) && (await shareOf(spent)) === 0 && (await balanceOf(spent)) === 10_000 - 2 * price, `${viaBalance.slice(0, 50)} ${await shareOf(spent)} ${await balanceOf(spent)}`);
+  await pool4.setPaidKey('firecrawl', null);
+  await query("DELETE FROM rate_limits WHERE bucket LIKE 'free:firecrawl%' OR bucket LIKE 'paid:firecrawl%'");
+  delete process.env.FIRECRAWL_API_KEY;
+  await pool4.warmPools();
+  meter.forgetFreePools();
+
+  // The cloud computer, through e2b.js payUntil.
+  const named = (name, message, extra = {}) => Object.assign(new Error(message), { name }, extra);
+  const state = { boxes: new Map(), next: 1, createError: null };
+  class Sandbox {
+    constructor(id, metadata) {
+      this.sandboxId = id;
+      this.metadata = metadata;
+      this.commands = { run: async () => ({ exitCode: 0, stdout: 'ok', stderr: '' }) };
+      this.files = { write: async () => {}, read: async () => new Uint8Array(), getInfo: async () => ({ size: 0 }) };
+    }
+    getHost(port) { return `${port}-${this.sandboxId}.e2b.app`; }
+    async setTimeout() {}
+    async getInfo() { return { cpuCount: 2, memoryMB: 1024 }; }
+    async pause() {}
+    async kill() { state.boxes.delete(this.sandboxId); }
+    static async kill(id) { state.boxes.delete(id); }
+    static async create(_template, opts) {
+      if (state.createError) throw state.createError;
+      const box = new Sandbox(`fb${state.next++}`, opts.metadata);
+      state.boxes.set(box.sandboxId, box);
+      return box;
+    }
+    static async connect(id) {
+      const box = state.boxes.get(id);
+      if (!box) throw named('SandboxNotFoundError', `404: sandbox ${id} not found`, { statusCode: 404 });
+      return box;
+    }
+    static list() { return { hasNext: false, nextItems: async () => [] }; }
+  }
+  const e2b = await import('../server/e2b.js');
+  e2b.__testing.useSdk({ Sandbox });
+  const poolMonth = () => counter(`free:e2b:${thisMonth}`);
+  const clearE2b = async () => query("DELETE FROM rate_limits WHERE bucket LIKE 'free:e2b%' OR bucket LIKE 'paid:e2b%' OR bucket LIKE 'bill:sandbox%'");
+  await clearE2b();
+
+  const onShare = await fresh();
+  await e2b.e2bMachineFor(onShare.id, 'synz-fb1');
+  const cost = await poolMonth();
+  check('a window the share pays for goes on a free key, and the share is spent once: the balance is untouched', cost > 0 && (await machineShareCount(onShare)) === cost && (await balanceOf(onShare)) === 10_000, `pool ${cost} share ${await machineShareCount(onShare)} balance ${await balanceOf(onShare)}`);
+
+  await tiers.exhaust('e2b');
+  await pool.setPaidKey('e2b', 'env', 1_000_000);
+  const onBalance = await fresh();
+  const started = await e2b.e2bMachineFor(onBalance.id, 'synz-fb2').then((m) => m.provider, (err) => err.name);
+  check('  E2B\'s free month used up: the share is not used, the window is charged to the balance and starts on the paid key', started === 'e2b' && (await machineShareCount(onBalance)) === 0 && (await balanceOf(onBalance)) < 10_000 && (await counter(`paid:e2b@env:${thisMonth}`)) > 0, `${started} ${await balanceOf(onBalance)}`);
+  await pool.setPaidKey('e2b', null);
+  await clearE2b();
+
+  // A share hold the free keys cannot serve after all is given back, and nothing stays counted.
+  const stuck = await fresh();
+  await pool.markKey('e2b', 'env', 'exhausted');
+  const refusedStart = await e2b.e2bMachineFor(stuck.id, 'synz-fb3').then(() => 'started', (err) => err.name);
+  await pool.markKey('e2b', 'env', 'ok');
+  check('  and a start no key can serve is refused with the balance and the share untouched', refusedStart === 'E2BOutOfCredit' && (await balanceOf(stuck)) === 10_000 && (await machineShareCount(stuck)) === 0, `${refusedStart} ${await balanceOf(stuck)}`);
+  e2b.__testing.useSdk(null);
+  await clearE2b();
+  await pinNow(4, 25);
 }
 
 refuser.close();
