@@ -105,38 +105,131 @@ Each finding is worded for the model, as today, with at most the existing `MAX_I
   automation or bot run), the first attempt is shown, as today.
 - A `diagram` input never takes the hidden path: it is shown at once.
 
-### Layer 3 — a built-in drawing and image skill
+### Layer 3 — a drawing guide with SVG recipes for many kinds of drawing (owner, 2026-11-17)
 
-There is a new built-in skill, `builtin:drawing` ("Drawing diagrams and making pictures"). Its description is about the
-situation: when asked to draw, sketch, diagram, map a flow or an architecture, chart something, or make a picture or
-an illustration. It is read only when that applies. Its instructions are short (at most about 70 lines):
+The owner asked for this to be like the Word document skill, with scripts for designing SVG, "vì sẽ có nhiều loại
+chứ không cố định" (because there will be many kinds, not a fixed one). So the structured `diagram` covers flows and
+architectures, and **four built-in skills** cover everything else. Each skill gives a recipe for one kind of drawing:
+an SVG skeleton to fill in, plus the arithmetic that places each item. That keeps the model from guessing coordinates.
+
+The skills follow the house style of `server/skills/craft.js`:
+- the description is about 170 characters and names the situation;
+- the instructions are about 4,000 characters, read only when the skill applies;
+- every figure is checkable (the contrast ratios are computed, not remembered).
+
+They are split so that a model reads only the family it needs.
+
+**`builtin:drawing`** — "Drawing diagrams and making pictures". Read first, whenever something is to be drawn.
 - **Which tool:**
-  - numbers go to `chart`;
-  - boxes and arrows go to `show_widget` with `diagram`;
-  - an illustration or anything free-form goes to `show_widget` with `svg`;
-  - a photo-like or artistic picture goes to `generate_image`;
-  - a document to keep goes to `create_file`.
-- **For a `diagram`:**
-  - one idea per box, a title of at most about 5 words, at most 4 short lines;
-  - 3–12 boxes is the sweet spot, and anything larger is split into two drawings;
-  - groups only for real layers;
-  - labels on edges only when they add something;
-  - every word in the person's language.
-- **For hand-written SVG:**
-  - a `viewBox`, `xmlns`, and `system-ui`;
-  - text at 12 px or more, with `<tspan>` for line breaks;
-  - arrows end on box edges, through one `<marker>`;
-  - labels beside lines, never on top of them;
-  - contrast at least 4.5:1;
-  - no external resources.
-- **For `generate_image`:**
-  - name the subject, the style, the composition and the light;
-  - say the aspect ratio for where it will be used;
-  - avoid text inside the picture (models misspell it), and add any words in the reply instead;
-  - write the prompt in English when the model in use draws better from English, but describe it back to the person
-    in their language.
+  - `chart` for numbers;
+  - `show_widget` with `diagram` for boxes and arrows;
+  - `show_widget` with `svg` for every other kind, using a recipe skill;
+  - `generate_image` for a photo-like or artistic picture;
+  - `create_file` for a document to keep.
+- **The design system every recipe uses.** These are constants the model copies:
+  - **Canvas:** `viewBox="0 0 W H"` with W 720–1200, a 24 px margin, `xmlns`, `font-family: system-ui, sans-serif`.
+  - **Type scale:** title 18 bold, heading 14 bold, body 12.5, caption 11. Nothing below 11.
+  - **Spacing grid:** 8 px. Gaps of 16, 24 or 40 px. Line height 1.35.
+  - **Palette:** ink #1F2937; muted ink #4B5563 (7.6:1 on white); lines #64748B; one accent per group from six tints,
+    each with its stroke colour. All the pairs meet 4.5:1 for text.
+  - **Strokes:** 1.5 px for lines, 1 px for box borders, corner radius 8.
+  - **Arrows:** one `<marker>` (the definition is given), and every arrow ends on a box edge, never at a centre.
+  - **Text that fits:** about `0.55 × font size` per letter (0.6 bold). Wrap with `<tspan x=… dy="1.35em">` before a
+    line passes its box.
+- **The checklist before sending:**
+  - everything is inside the `viewBox`;
+  - no text touches a line;
+  - arrows connect;
+  - every word is in the person's language;
+  - the check will be run, and a flawed drawing is redrawn once.
+- **Pictures** (`generate_image`):
+  - subject, style, composition and light;
+  - the aspect ratio for where it is used;
+  - no text in the picture;
+  - the prompt may be in English, but describe it back in the person's language.
 
-The `show_widget` description gains one sentence pointing at `diagram` and at this skill, so the menu stays cheap.
+**`builtin:svg-structures`** — trees and wholes. Recipes:
+- **Org chart / tree:** levels at fixed y; children spread evenly under their parent; elbow connectors.
+- **Mind map:** centre node; branches at angles `360/n`; text kept horizontal.
+- **Pyramid / funnel:** n bands, widths stepping by an equal amount.
+- **Cycle:** n nodes on a circle of radius R at angles `-90 + 360·i/n`; curved arrows between neighbours, ending on
+  the next node's edge.
+- **Venn:** two or three circles with 30–40 % overlap; labels outside the overlaps.
+
+**`builtin:svg-sequences`** — things in order. Recipes:
+- **Timeline / roadmap:** a horizontal axis; markers at `x_i = M + i·(W−2M)/(n−1)`; labels alternating above and
+  below so they never collide.
+- **Step-by-step process:** numbered circles joined by a line; each step's text under its number.
+- **Swimlane:** lanes as bands with the lane name at the left; boxes in lanes; arrows between lanes enter from the side.
+- **Sequence diagram:** participants across the top; lifelines; messages as horizontal arrows top to bottom, each
+  labelled above its line.
+- **Gantt-style plan:** rows as tasks; bars from start to end on a date scale.
+
+**`builtin:svg-layouts`** — comparisons and figures. Recipes:
+- **Comparison cards:** n columns of equal width `(W − 2M − (n−1)·g)/n`; the same rows in each.
+- **2×2 matrix / quadrant:** axes with labels; items placed by their two scores.
+- **Pros and cons / before and after:** two columns.
+- **KPI or stat cards:** a large number, a label and a small trend arrow.
+- **Labelled illustration:** a simple shape drawing with call-outs ending on what they name.
+
+Each recipe gives:
+- **When to use it**, in one line.
+- **The skeleton:** a short SVG with `{placeholders}`.
+- **The placement formula.**
+- **One pitfall**, for example a timeline's labels colliding when n is greater than 6, so put them on two rows.
+
+The `show_widget` description gains one sentence: use `diagram` for boxes and arrows, otherwise read `builtin:drawing` and
+the recipe for the kind of drawing. This keeps the always-paid tool menu cheap.
+
+**The line check (layer 2) knows these shapes.** An arrow may end on a `rect`, a `circle`, an `ellipse`, a closed
+`polygon` or `path` (taken by its bounding box), or a text. A cycle or a Venn diagram drawn from a recipe must check
+clean, and the tests draw one of each from the recipes to prove it.
+
+
+### Adaptive and professional (owner, 2026-11-17)
+
+The owner asked for this to be "flexible adaptive smartest beautiful, chuyên nghiệp, high advanced, đẹp, đầy đủ, chi
+tiết chuyên sâu nhất, cụ thể hóa". This section makes that concrete.
+
+**The structured diagram adapts.**
+- `direction` defaults to `"auto"`. Both directions are laid out, and the one whose box is closer to a 16:10 shape
+  wins, provided it fits 1,200 px wide without scaling below 0.8; otherwise the narrower one wins. `"right"` and
+  `"down"` still force a direction.
+- The drawing follows the conversation's canvas. `theme: "light"` (default) or `"dark"` switches the palette and ink;
+  each pair keeps 4.5:1.
+- The look:
+  - each group gets its own accent: a 6 % tint fill, a 1 px stroke in the accent, and the title in the accent's dark
+    shade;
+  - a node has a white card with a soft shadow (`feDropShadow` at 6 % opacity, 1 px down, 3 px blur) and an 8 px
+    radius;
+  - a `pill` is fully rounded, and a `note` has a dashed border and muted text;
+  - the title is 14 px semibold and the lines are 12.5 px muted ink;
+  - edges are 1.5 px slate with a 7 px arrowhead, and a dashed edge uses a 5/4 dash;
+  - edge labels are 11.5 px on a canvas-coloured backing with 4 px padding.
+- A node may carry `icon`: one of a small built-in set of line icons (user, server, database, cloud, cache, gear,
+  document, chat, lock, chart, search, bolt). Each is drawn as inline paths at 16 px in the group's accent. An unknown
+  icon is refused with the list of known ones.
+
+**The skills are full guides, not summaries.**
+- **Size.** Each recipe skill may run to about 9,000 characters, and `builtin:drawing` to about 7,000. Only the family
+  in use is read, so the size costs nothing on other turns. The description of each stays near 170 characters, because
+  it is in every prompt.
+- **What every recipe gives:**
+  - when to use it, and when to use another kind instead;
+  - a **complete, valid SVG skeleton** with `{placeholders}`, which renders correctly when filled;
+  - the **placement arithmetic** for n items;
+  - an **adaptive rule** for each case:
+    - many items (beyond the comfortable count, switch to the variant given, for example a timeline beyond 6 goes to
+      two rows, and beyond 12 goes vertical);
+    - long text (wrap rule and box growth);
+    - narrow screens (the vertical variant for a viewBox narrower than 720);
+    - dark canvas (the colour swap);
+  - **the polish**: hierarchy, alignment, one accent per meaning, shadows used once, numbering or icons where they help;
+  - **the pitfalls**, with how to avoid each.
+- **`builtin:svg-flows`** is added for flows that `diagram` does not express: decision branches with yes/no labels,
+  loops back, swimlanes and sequence diagrams. So the families are flows, structures, sequences and layouts.
+- **Tests fill every skeleton** with sample data at its comfortable size, at its adaptive extreme, and on a dark
+  canvas. Every filled skeleton must pass `checkDiagram` (including the line check) with no issues.
 
 ## Code shape
 
@@ -149,7 +242,7 @@ The `show_widget` description gains one sentence pointing at `diagram` and at th
   redraw-once rule for `svg`.
 - **`server/tools/definitions.js`:** the `diagram` schema (JSON Schema with `nodes`, `edges`, `groups`, `direction`)
   and the description sentence.
-- **`server/skills/builtin.js`:** `builtin:drawing`.
+- **`server/skills/craft.js`** (where the design skills live): `builtin:drawing`, `builtin:svg-flows`, `builtin:svg-structures`, `builtin:svg-sequences` and `builtin:svg-layouts`.
 - **`public/js`:** nothing new to draw: the widget is SVG as today. The step label "Đang kiểm tra hình vẽ…" is added in
   both locales if a hidden first attempt needs its own label. Reuse the existing `step.show_widget` mechanics.
 
@@ -175,8 +268,13 @@ The `show_widget` description gains one sentence pointing at `diagram` and at th
   - the second attempt is shown and kept;
   - a `diagram` is never hidden;
   - with no chat, it is shown at once.
-- **Skill:** it is on the menu with the right description, its instructions name the four tools, and a features pin
-  checks it.
+- **Skills:**
+  - all four are on the menu, with descriptions of about 170 characters and instructions of about 4,000 characters;
+  - `builtin:drawing` names the tools and the design constants;
+  - each recipe skill holds its recipes;
+  - **every recipe's skeleton, filled with sample data, renders and passes `checkDiagram` with no issues** (a test fills
+    and checks each one);
+  - a features pin checks the skills.
 - **UI:** the conversation shows only the final drawing for a redraw, never the flawed one.
 
 ## Release
