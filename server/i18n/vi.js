@@ -1688,4 +1688,43 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'This transfer is no longer waiting to be assigned.': 'Khoản chuyển khoản này không còn chờ được gán nữa.',
   'That code was not found.': 'Không tìm thấy mã này.',
   'Say which order to simulate a transfer for.': 'Hãy nói mô phỏng chuyển khoản cho đơn hàng nào.',
+
+  /* ── sơ đồ do server dàn trang (show_widget diagram) ── */
+  // Gửi cho mô hình để nó sửa rồi gửi lại; tên trường (nodes, edges, title…) giữ nguyên vì mô hình phải viết đúng như vậy.
+  'A diagram is an object: { direction, nodes, groups, edges }.': 'Sơ đồ phải là một đối tượng: { direction, nodes, groups, edges }.',
+  'direction is "{0}": use "right" or "down".': 'direction đang là "{0}": hãy dùng "right" hoặc "down".',
+  'A diagram needs nodes: a list of at least one { id, title }.': 'Sơ đồ cần có nodes: một danh sách gồm ít nhất một { id, title }.',
+  'A diagram has at most {0} nodes, and this one has {1}: merge some, or split it into two drawings.':
+    'Một sơ đồ có tối đa {0} nút, sơ đồ này có {1}: hãy gộp bớt, hoặc tách thành hai hình.',
+  'edges must be a list of { from, to }.': 'edges phải là một danh sách các { from, to }.',
+  'A diagram has at most {0} edges, and this one has {1}: keep the ones that matter, or split it into two drawings.':
+    'Một sơ đồ có tối đa {0} mũi tên, sơ đồ này có {1}: hãy giữ những mũi tên quan trọng, hoặc tách thành hai hình.',
+  'groups must be a list of { id, title }.': 'groups phải là một danh sách các { id, title }.',
+  'A diagram has at most {0} groups, and this one has {1}: merge some.': 'Một sơ đồ có tối đa {0} nhóm, sơ đồ này có {1}: hãy gộp bớt.',
+  'group {0} is not an object: write { id, title }.': 'Nhóm thứ {0} không phải là một đối tượng: hãy viết { id, title }.',
+  'group {0} has the id "{1}": an id is 1 to {2} letters, digits, "_" or "-".':
+    'Nhóm thứ {0} có id "{1}": id gồm 1 đến {2} ký tự là chữ cái, chữ số, "_" hoặc "-".',
+  'group {0} reuses the id "{1}": every group needs its own id.': 'Nhóm thứ {0} dùng lại id "{1}": mỗi nhóm cần một id riêng.',
+  'group "{0}" is inside another group: groups do not nest, so put its nodes in one group.':
+    'Nhóm "{0}" nằm trong một nhóm khác: các nhóm không lồng nhau được, hãy đặt các nút của nó vào một nhóm.',
+  'the title of group "{0}" has {1} characters: keep it to {2}.': 'Tiêu đề của nhóm "{0}" có {1} ký tự: hãy giữ trong {2} ký tự.',
+  'node {0} is not an object: write { id, title }.': 'Nút thứ {0} không phải là một đối tượng: hãy viết { id, title }.',
+  'node {0} has the id "{1}": an id is 1 to {2} letters, digits, "_" or "-".':
+    'Nút thứ {0} có id "{1}": id gồm 1 đến {2} ký tự là chữ cái, chữ số, "_" hoặc "-".',
+  'node {0} reuses the id "{1}": every node needs its own id.': 'Nút thứ {0} dùng lại id "{1}": mỗi nút cần một id riêng.',
+  'node "{0}" needs a title.': 'Nút "{0}" cần có tiêu đề (title).',
+  'the title of node "{0}" has {1} characters: keep it to {2}.': 'Tiêu đề của nút "{0}" có {1} ký tự: hãy giữ trong {2} ký tự.',
+  'lines of node "{0}" must be a list of short texts.': 'lines của nút "{0}" phải là một danh sách các dòng chữ ngắn.',
+  'node "{0}" has {1} lines: keep it to {2}, or split the box in two.': 'Nút "{0}" có {1} dòng: hãy giữ trong {2} dòng, hoặc tách hộp làm hai.',
+  'line {0} of node "{1}" has {2} characters: keep each line to {3}.': 'Dòng {0} của nút "{1}" có {2} ký tự: hãy giữ mỗi dòng trong {3} ký tự.',
+  'node "{0}" has kind "{1}": use "box", "pill" or "note".': 'Nút "{0}" có kind là "{1}": hãy dùng "box", "pill" hoặc "note".',
+  'node "{0}" is in group "{1}", which is not a group id: add it to groups, or leave group out.':
+    'Nút "{0}" thuộc nhóm "{1}", nhưng đó không phải id của nhóm nào: hãy thêm nhóm đó vào groups, hoặc bỏ group đi.',
+  'edge {0} is not an object: write { from, to }.': 'Mũi tên thứ {0} không phải là một đối tượng: hãy viết { from, to }.',
+  'edge {0} comes from "{1}", which is not a node id. Node ids: {2}.': 'Mũi tên thứ {0} đi từ "{1}", nhưng đó không phải id của nút nào. Các id nút: {2}.',
+  'edge {0} goes to "{1}", which is not a node id. Node ids: {2}.': 'Mũi tên thứ {0} đi tới "{1}", nhưng đó không phải id của nút nào. Các id nút: {2}.',
+  'edge {0} has style "{1}": use "solid" or "dashed".': 'Mũi tên thứ {0} có style là "{1}": hãy dùng "solid" hoặc "dashed".',
+  'the label of edge {0} must be text.': 'Nhãn của mũi tên thứ {0} phải là chữ.',
+  'the label of edge {0} has {1} characters: keep it to {2}.': 'Nhãn của mũi tên thứ {0} có {1} ký tự: hãy giữ trong {2} ký tự.',
+  'group "{0}" has no nodes: put "group": "{1}" on the nodes that belong in it.': 'Nhóm "{0}" chưa có nút nào: hãy ghi "group": "{1}" vào các nút thuộc nhóm đó.',
 };
