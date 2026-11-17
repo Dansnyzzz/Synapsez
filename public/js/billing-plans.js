@@ -97,9 +97,9 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   function paint(focus = 'title') {
     const d = ensure();
     keepTyped();
-    // The consent is to "the amount above": when what is due today is not what was ticked for (another period, a price that moved, the
+    // The consent is to "the amount above": when what was ticked for is not what is on screen (another period, a price that moved, the
     // balance used or not), the box is empty again and has to be ticked for the new figure.
-    if (view === 'checkout' && checkout?.quotes && checkout.consent && checkout.consentFor !== dueToday()) checkout.consent = false;
+    if (view === 'checkout' && checkout?.quotes && checkout.consent && checkout.consentFor !== consentKey()) checkout.consent = false;
     d.dataset.view = view;
     const body = { sheet: sheetHtml, checkout: checkoutHtml, pay: payHtml, done: doneHtml }[view]();
     d.innerHTML = `<div class="sheet__head"><h2 id="plans-title" tabindex="-1">${esc(titleOf())}</h2><button type="button" class="icon-btn" data-close aria-label="${esc(t('action.close'))}">✕</button></div><div class="sheet__body plans__body" data-view="${view}"><p class="plans__preview">${esc(t('billing.previewNote'))}</p>${body}</div>`;
@@ -342,6 +342,12 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     return Math.max(0, q.totalVnd - (useBalanceFor(q) ? Math.min(q.balanceVnd, q.totalVnd) : 0));
   }
 
+  /**
+   * What a ticked consent speaks for: the period, the plan's total and what is taken today. Two periods can both be due 0 ₫ when the
+   * balance covers them while the amount taken from the balance changes tenfold, so the amount due alone is not enough.
+   */
+  const consentKey = () => `${period}|${checkout.quotes[period].totalVnd}|${dueToday()}`;
+
   function checkoutHtml() {
     if (checkout.error) return `<p class="plans__error" role="alert">${esc(checkout.error)}</p><p><button type="button" class="btn" data-back>${esc(t('billing.back'))}</button></p>`;
     if (!checkout.quotes) return `<p class="plans__muted">${esc(t('common.loading'))}</p>`;
@@ -410,7 +416,12 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     const token = flow;
     if (!(await saveProfile())) return;
     // The box may have been unticked while the information was being saved: then no order is made.
-    if (!dialog.open || flow !== token || checkout !== mine || !checkout.consent) return;
+    if (!dialog.open || flow !== token || checkout !== mine) return;
+    if (!checkout.consent) {
+      // Drawn again: the back arrow was drawn disabled while the information was being saved, and nothing else would enable it.
+      paint(null);
+      return;
+    }
     await makeOrder({ kind: 'plan', plan: checkout.plan, period, useBalance: useBalanceFor(checkout.quotes[period]) }, 'plan');
   }
 
@@ -741,7 +752,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       $('[data-use-balance]')?.focus();
     } else if (el.hasAttribute?.('data-consent')) {
       checkout.consent = el.checked;
-      checkout.consentFor = el.checked ? dueToday() : null;
+      checkout.consentFor = el.checked ? consentKey() : null;
       paint(null);
       $('[data-consent]')?.focus();
     }

@@ -558,7 +558,12 @@ section('the saved information comes back, an edit is kept, and the box is ticke
   check('a second checkout is prefilled from the saved profile, email included', back.name === 'Nguyen Van A' && back.email === 'a@example.com' && back.country === 'VN' && back.address === '1 Le Loi, Ho Chi Minh City' && back.company === 'ABC Co' && back.tax === '0312345678' && back.invoiceName === 'ABC Accounts', JSON.stringify(back));
   check('  and the consent box is not ticked again just because it was before', !(await page.isChecked('#plans [data-consent]')));
   await page.check('#plans [data-consent]');
+  // Focus is read after the sheet's own reload has repainted it (the reload replaces the nodes, so a focus set before it is lost):
+  // wait for both answers the back arrow asks for, then a beat for the repaint that follows them.
+  const reloaded = Promise.all([page.waitForResponse((r) => r.url().endsWith('/api/billing')), page.waitForResponse((r) => r.url().endsWith('/api/billing/plans'))]);
   await page.click('#plans [data-back]');
+  await reloaded;
+  await page.waitForTimeout(150);
   await page.waitForSelector('#plans .plans__card [data-pick="pro"]:not([disabled])');
   check('the back arrow returns to the plans sheet, with focus on its title (not lost to the page)', (await page.locator('#plans .plans__cards').count()) === 1 && (await page.locator('#plans [data-view="sheet"]').count()) === 1 && (await page.evaluate(() => document.activeElement?.id)) === 'plans-title', await page.evaluate(() => document.activeElement?.id || document.activeElement?.tagName));
   await page.click('#plans [data-plan="pro"] [data-pick]');
@@ -583,6 +588,7 @@ section('the saved information comes back, an edit is kept, and the box is ticke
   await page.waitForTimeout(1500);
   await page.unroute('**/api/billing/profile');
   check('unticking the box while the information is being saved stops the order', puts.length === 1 && orders.length === 0 && (await page.locator('#plans .pay__qr').count()) === 0 && !(await page.isChecked('#plans [data-consent]')), JSON.stringify([puts.length, orders.length]));
+  check('  and the back arrow is usable again, without ticking anything (it was drawn disabled while the information was saved)', await page.locator('#plans [data-back]').isEnabled());
   page.off('request', seeOrders);
   await page.check('#plans [data-consent]');
   await page.click('#plans [data-continue]');
@@ -592,6 +598,30 @@ section('the saved information comes back, an edit is kept, and the box is ticke
   await page.click('#plans [data-cancel]');
   await page.waitForSelector('#plans .plans__card [data-pick="pro"]:not([disabled])');
   await page.keyboard.press('Escape');
+}
+
+section('the tick is for an amount: two periods the balance covers are still two amounts');
+{
+  // A balance that covers both periods makes both "due today" 0 ₫, while what is taken from the balance differs about tenfold: the
+  // tick must not follow the shared 0 from one period to the other. A second administrator, so the owner's balance stays as the later sections count it.
+  await store.createUser({ id: 'u-bill-rich', email: 'rich@test.local', name: 'Rich', username: 'bill.rich', passwordHash: await hashPassword(password), role: 'admin' });
+  await setPrefs('u-bill-rich', { language: 'en', onboarded: true });
+  await store.creditBalance('u-bill-rich', 5_000_000, { kind: 'topup', topup: true });
+  const richContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const rich = await signIn(richContext, 'rich@test.local');
+  await openMenu(rich);
+  await rich.click('.plusmenu--account [data-row="upgrade"]');
+  await rich.waitForSelector('#plans .plans__card [data-pick="plus"]:not([disabled])');
+  await rich.click('#plans [data-plan="plus"] [data-pick]');
+  await rich.waitForSelector('#plans [data-consent]');
+  const due = () => rich.evaluate(() => document.querySelector('#plans .checkout__total dd')?.textContent.replace(/\s+/g, ' ').trim() || '');
+  await rich.check('#plans [data-consent]');
+  const monthDue = await due();
+  await rich.click('#plans .checkout__period [data-period="year"]');
+  const yearDue = await due();
+  check('with the balance covering both, each period is due 0 ₫ today', /^0\s/.test(monthDue) && /^0\s/.test(yearDue), JSON.stringify([monthDue, yearDue]));
+  check('  yet choosing the other period clears the tick, and Subscribe goes off', !(await rich.isChecked('#plans [data-consent]')) && (await rich.getAttribute('#plans [data-continue]', 'disabled')) !== null);
+  await richContext.close();
 }
 
 section('the tax line, only when the seller sets a rate');
