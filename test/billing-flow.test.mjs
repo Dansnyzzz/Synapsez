@@ -184,6 +184,7 @@ section('quotes');
   check('  the quote carries the rate, its source and the balance', fresh.rate === 25655.85 && fresh.rateSource === 'erapi' && fresh.balanceVnd === 0 && fresh.startsAt === NOW.toISOString());
   // The checkout says the day the plan renews; it is worked out here (Vietnam time), never in the browser.
   check('  and the instant the new period ends, one month on from now', fresh.renewsAt === periodEnd(NOW, 'month').toISOString(), String(fresh.renewsAt));
+  check('  a new subscription renews by default (what the server does after this order)', fresh.autoRenew === true, String(fresh.autoRenew));
 
   const half = new Date('2026-11-16T12:00:00Z');
   await store.saveSubscription(subRow(u.id, { periodStart: new Date('2026-11-01T12:00:00Z'), periodEnd: new Date('2026-12-01T12:00:00Z') }));
@@ -213,6 +214,11 @@ section('quotes');
   check('  a renewal continues the old period: it renews one month after the old end', renew.renewsAt === '2026-12-01T12:00:00.000Z', String(renew.renewsAt));
   const dearer = await orders.quote(u.id, { plan: 'pro', period: 'month' }, { now: inGrace });
   check('  another plan in grace is still an upgrade, and the credit is 0 (nothing of the ended period is left)', dearer.kind === 'upgrade' && dearer.creditVnd === 0, JSON.stringify(dearer));
+  check('  the quote says auto-renew is on while the subscription has it on', renew.autoRenew === true && dearer.autoRenew === true);
+  await store.saveSubscription(subRow(u.id, { autoRenew: false, periodStart: new Date('2026-10-01T12:00:00Z'), periodEnd: new Date('2026-11-01T12:00:00Z') }));
+  const noAuto = await orders.quote(u.id, { plan: 'plus', period: 'month' }, { now: inGrace });
+  const noAutoUp = await orders.quote(u.id, { plan: 'pro', period: 'month' }, { now: inGrace });
+  check('  and off when the subscription has it off, for a renewal and for an upgrade (paying never turns it on)', noAuto.kind === 'renewal' && noAuto.autoRenew === false && noAutoUp.kind === 'upgrade' && noAutoUp.autoRenew === false, JSON.stringify([noAuto.autoRenew, noAutoUp.autoRenew]));
 
   // Round 1 (review): with a downgrade scheduled, the renewal is the scheduled plan, and the plan that ran is only a change.
   const proRow = (over = {}) => subRow(u.id, { plan: 'pro', paidVnd: 206000, periodStart: new Date('2026-10-01T12:00:00Z'), periodEnd: new Date('2026-11-01T12:00:00Z'), nextPlan: 'plus', nextPeriod: 'month', ...over });

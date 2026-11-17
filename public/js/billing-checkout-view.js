@@ -13,10 +13,10 @@ import { savePercent, rateStamp } from './billing-plan-cards.js';
 const BACK = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>';
 
 /** The fields of the billing form, in the order they are asked; `draft` and the saved profile name them by `key`. */
-const FIELDS = [
+export const PROFILE_FIELDS = [
   { id: 'name', key: 'name', label: 'name', extra: 'autocomplete="name" maxlength="120" required' },
   { id: 'email', key: 'email', label: 'email', extra: 'type="email" autocomplete="email" maxlength="254" required' },
-  { id: 'country', key: 'country', label: 'country', extra: 'autocomplete="country" maxlength="2" required aria-describedby="bill-country-hint" size="3"', hint: true },
+  { id: 'country', key: 'country', label: 'country', extra: 'autocomplete="country" maxlength="2" required size="3"', hint: true },
   { id: 'address', key: 'address', label: 'address', extra: 'autocomplete="street-address" maxlength="300"' },
   { id: 'company', key: 'companyName', label: 'company', extra: 'autocomplete="organization" maxlength="120"' },
   { id: 'tax', key: 'taxCode', label: 'tax', extra: 'inputmode="numeric" maxlength="20" autocomplete="off"' },
@@ -25,18 +25,18 @@ const FIELDS = [
 
 /** What the form holds, by input name, taken from a draft or a saved profile. */
 export function formValues(source) {
-  return Object.fromEntries(FIELDS.map((f) => [f.key, source?.[f.key] ?? '']));
+  return Object.fromEntries(PROFILE_FIELDS.map((f) => [f.key, source?.[f.key] ?? '']));
 }
 
 /** The form's keys with the inputs they are read from, so the page can read what was typed without knowing the markup. */
-export const FORM_FIELDS = FIELDS.map((f) => ({ key: f.key, input: f.id }));
+export const FORM_FIELDS = PROFILE_FIELDS.map((f) => ({ key: f.key, input: f.id }));
 
 function formHtml(values, formError) {
-  const field = (f) => `<div class="field"><label for="bill-${f.id}">${esc(t(`billing.profile.${f.label}`))}</label><input id="bill-${f.id}" name="${f.id}" value="${esc(values[f.key])}" ${f.extra}></div>${f.hint ? `<p id="bill-country-hint" class="plans__muted">${esc(t('billing.profile.countryHint'))}</p>` : ''}`;
+  const field = (f) => `<div class="field"><label for="bill-${f.id}">${esc(t(`billing.profile.${f.label}`))}</label><input id="bill-${f.id}" name="${f.id}" value="${esc(values[f.key])}" ${f.extra}${f.hint ? ' aria-describedby="bill-country-hint"' : ''}></div>${f.hint ? `<p id="bill-country-hint" class="plans__muted">${esc(t('billing.profile.countryHint'))}</p>` : ''}`;
   return `<section class="checkout__info" aria-labelledby="bill-heading"><h3 id="bill-heading">${esc(t('billing.profile.title'))}</h3>
       <form data-profile novalidate>
         <p class="plans__muted">${esc(t('billing.profile.why'))}</p>
-        ${FIELDS.map(field).join('')}
+        ${PROFILE_FIELDS.map(field).join('')}
         ${formError ? `<p class="plans__error" role="alert">${esc(formError)}</p>` : ''}
       </form></section>`;
 }
@@ -51,12 +51,14 @@ function periodCardsHtml({ checkout, period, plan, label }) {
     const off = q.kind === 'later';
     // A period that cannot be bought here says why in words, not only by being grey.
     const why = off ? `<span class="checkout__why" id="co-why-${x}">${esc(t(q.unavailable ? 'billing.checkout.periodUnavailable' : 'billing.checkout.periodLater'))}</span>` : '';
-    const badge = x === 'year' && pct ? `<span class="checkout__badge">${esc(t('billing.plans.save', { pct }))}</span>` : '';
-    return `<button type="button" role="radio" class="checkout__card" data-period="${x}" aria-checked="${x === period}" tabindex="${x === period ? 0 : -1}"${off ? ` disabled aria-describedby="co-why-${x}"` : ''}>
+    const badge = x === 'year' && pct ? `<span class="checkout__badge" id="co-badge-year">${esc(t('billing.plans.save', { pct }))}</span>` : '';
+    // Named by what the card is; the reason it cannot be chosen is its description, so a screen reader says it once.
+    const name = `co-title-${x} co-price-${x} co-billed-${x}${badge ? ` co-badge-${x}` : ''}`;
+    return `<button type="button" role="radio" class="checkout__card" data-period="${x}" aria-checked="${x === period}" tabindex="${x === period ? 0 : -1}" aria-labelledby="${name}"${off ? ` disabled aria-describedby="co-why-${x}"` : ''}>
         <span class="checkout__dot" aria-hidden="true"></span>
-        <span class="checkout__cardtext"><span class="checkout__cardtitle">${esc(t(x === 'year' ? 'billing.checkout.cardYear' : 'billing.checkout.cardMonth', { plan: label }))}</span>
-        <span class="checkout__cardprice">${esc(price)}</span>
-        <span class="checkout__cardbilled">${esc(t(x === 'year' ? 'billing.checkout.billedYear' : 'billing.checkout.billedMonth'))}</span>${why}</span>${badge}
+        <span class="checkout__cardtext"><span class="checkout__cardtitle" id="co-title-${x}">${esc(t(x === 'year' ? 'billing.checkout.cardYear' : 'billing.checkout.cardMonth', { plan: label }))}</span>
+        <span class="checkout__cardprice" id="co-price-${x}">${esc(price)}</span>
+        <span class="checkout__cardbilled" id="co-billed-${x}">${esc(t(x === 'year' ? 'billing.checkout.billedYear' : 'billing.checkout.billedMonth'))}</span>${why}</span>${badge}
       </button>`;
   });
   return `<div class="checkout__period" role="radiogroup" aria-label="${esc(t('billing.plans.period'))}">${cards.join('')}</div>`;
@@ -75,10 +77,10 @@ function methodHtml(checkout, q) {
 }
 
 /** The consent sentence with its Terms link; the words come from the locale with a marker where the link goes. */
-function consentHtml(checked) {
+function consentHtml(checked, renews) {
   const marker = '\u0001';
   const link = `<a href="/terms.html" target="_blank" rel="noopener">${esc(t('billing.checkout.terms'))}</a>`;
-  const text = esc(t('billing.checkout.consent', { terms: marker })).replace(marker, link);
+  const text = esc(t(renews ? 'billing.checkout.consent' : 'billing.checkout.consentOnce', { terms: marker })).replace(marker, link);
   return `<label class="checkout__consent"><input type="checkbox" data-consent${checked ? ' checked' : ''}> <span>${text}</span></label>`;
 }
 
@@ -101,7 +103,10 @@ export function checkoutHtml({ checkout, period, plan, label, profile, dueVnd, b
     row(t('billing.checkout.total'), vnd(dueVnd), 'checkout__total'),
   ].join('');
   const date = q.renewsAt ? rateStamp(q.renewsAt)?.date : '';
-  const renew = !later && date ? `<p class="checkout__renew">${esc(t('billing.checkout.renewInfo', { date }))}</p>` : '';
+  // A plan renews from the balance only when its auto-renew is on (the quote says what the server will do after this order); with it off
+  // the box says when the plan ends and where to turn renewal on, and the consent no longer speaks of a renewal.
+  const renews = q.autoRenew !== false;
+  const renew = !later && date ? `<p class="checkout__renew">${esc(t(renews ? 'billing.checkout.renewInfo' : 'billing.checkout.endInfo', { date }))}</p>` : '';
   // Why Subscribe is off, for anyone who cannot see it is grey: no tick yet, or a change that is not bought here.
   const why = later ? 'co-later' : !checkout.consent ? 'co-consent-hint' : '';
   const off = !checkout.consent || busy || later;
@@ -117,7 +122,7 @@ export function checkoutHtml({ checkout, period, plan, label, profile, dueVnd, b
         <h3 id="co-plan">${esc(t('billing.checkout.summary', { plan: label }))}</h3>
         <dl class="checkout__lines">${lines}</dl>
         ${renew}
-        ${consentHtml(checkout.consent)}
+        ${consentHtml(checkout.consent, renews)}
         ${checkout.orderError ? `<p class="plans__error" role="alert">${esc(checkout.orderError)}</p>` : ''}
         <button type="button" class="btn btn--primary checkout__subscribe" data-continue${off ? ' disabled' : ''}${off && why ? ` aria-describedby="${why}"` : ''}>${esc(t('billing.checkout.subscribe'))}</button>
         ${!checkout.consent ? `<p class="checkout__hint plans__muted" id="co-consent-hint">${esc(t('billing.checkout.consentHint'))}</p>` : ''}

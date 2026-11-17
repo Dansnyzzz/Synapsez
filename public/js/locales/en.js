@@ -3650,6 +3650,8 @@ export const en = {
   'billing.checkout.tax': 'Of which VAT {rate}%',
   'billing.checkout.renewInfo': 'Your plan renews on {date} from your balance. If the balance is short, we email you a QR code 3 days before.',
   'billing.checkout.consent': 'I agree to pay the amount above today. My plan renews each period from my balance until I cancel, under the {terms}. I can cancel any time in Settings → Billing.',
+  'billing.checkout.endInfo': 'Your plan ends on {date}. Turn on auto-renew in Settings → Billing to renew it from your balance.',
+  'billing.checkout.consentOnce': 'I agree to pay the amount above today, under the {terms}.',
   'billing.checkout.terms': 'Terms',
   'billing.checkout.consentHint': 'Tick the box above to subscribe.',
   'billing.profile.title': 'Billing information',

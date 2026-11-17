@@ -40,6 +40,7 @@ globalThis.fetch = async (url, options) => {
 const SHOTS = process.env.BILLING_SHOTS || null;
 const { initStore } = await import('../server/store/index.js');
 const { periodEnd, renewalEnd } = await import('../server/billing/period.js');
+const { addressGroup } = await import('../server/ratelimit.js');
 const store = await initStore();
 const { createApp } = await import('../server/app.js');
 const { hashPassword } = await import('../server/crypto.js');
@@ -131,6 +132,11 @@ const ready = async (timeout = 30000) => {
   await page.waitForSelector('#plans [data-consent]', { timeout });
   await page.check('#plans [data-consent]');
   await page.waitForSelector('#plans [data-continue]:not([disabled])', { timeout });
+};
+// Orders are limited to 10 an hour per account and per address (server/ratelimit.js), and this file makes more than that in its one hour:
+// a step that has to make an order after the many above clears the owner's two tallies first (the way test/http.test.mjs clears its own).
+const freshOrders = async () => {
+  for (const bucket of ['billing-order:id:u-bill-owner', `billing-order:ip:${addressGroup('127.0.0.1')}`, `billing-order:ip:${addressGroup('::1')}`]) await store.clearRateLimit(bucket);
 };
 const subscribe = async () => {
   await ready();
@@ -456,8 +462,9 @@ section('Get Plus: Configure your plan');
   check('an empty form says what is missing, saves nothing and makes no order', (await page.textContent('#plans form[data-profile] [role="alert"]')).length > 5 && orderPosts.length === 0 && puts.length === 0);
   await page.fill('#bill-name', 'Typed Name');
   await page.click('#plans .checkout__period [data-period="year"]');
-  check('what was typed survives choosing yearly, and so does the ticked box', (await page.inputValue('#bill-name')) === 'Typed Name' && (await page.isChecked('#plans [data-consent]')));
+  check('what was typed survives choosing yearly, but the box is cleared: it was ticked for another amount', (await page.inputValue('#bill-name')) === 'Typed Name' && !(await page.isChecked('#plans [data-consent]')) && (await page.getAttribute('#plans [data-continue]', 'disabled')) !== null);
   await page.click('#plans .checkout__period [data-period="month"]');
+  check('  and going back to the first amount does not bring the tick back', !(await page.isChecked('#plans [data-consent]')));
   await page.fill('#bill-name', 'Nguyen Van A');
   await page.fill('#bill-email', 'a@example.com');
   await page.fill('#bill-country', 'vn');
@@ -465,6 +472,7 @@ section('Get Plus: Configure your plan');
   await page.fill('#bill-company', 'ABC Co');
   await page.fill('#bill-tax', '0312345678');
   await page.fill('#bill-invoiceName', 'ABC Accounts');
+  await page.check('#plans [data-consent]');
   await shot('checkout');
   await page.click('#plans [data-continue]');
   await page.waitForSelector('#plans .pay__qr img');
@@ -552,11 +560,30 @@ section('the saved information comes back, an edit is kept, and the box is ticke
   await page.check('#plans [data-consent]');
   await page.click('#plans [data-back]');
   await page.waitForSelector('#plans .plans__card [data-pick="pro"]:not([disabled])');
-  check('the back arrow returns to the plans sheet', (await page.locator('#plans .plans__cards').count()) === 1 && (await page.locator('#plans [data-view="sheet"]').count()) === 1);
+  check('the back arrow returns to the plans sheet, with focus on its title (not lost to the page)', (await page.locator('#plans .plans__cards').count()) === 1 && (await page.locator('#plans [data-view="sheet"]').count()) === 1 && (await page.evaluate(() => document.activeElement?.id)) === 'plans-title', await page.evaluate(() => document.activeElement?.id || document.activeElement?.tagName));
   await page.click('#plans [data-plan="pro"] [data-pick]');
   await page.waitForSelector('#plans [data-consent]');
   check('a new checkout asks for the consent again', !(await page.isChecked('#plans [data-consent]')) && (await page.getAttribute('#plans [data-continue]', 'disabled')) !== null);
   await page.fill('#bill-address', '2 Tran Hung Dao, Hanoi');
+  // The box is unticked while the information is still being saved: no order may follow (the consent is read again after the wait).
+  const orders = [];
+  const seeOrders = (req) => {
+    if (req.method() === 'POST' && /\/api\/billing\/orders$/.test(req.url())) orders.push(req.url());
+  };
+  page.on('request', seeOrders);
+  await page.route('**/api/billing/profile', async (route) => {
+    await new Promise((r) => setTimeout(r, 900));
+    return route.continue();
+  });
+  await freshOrders();
+  await page.check('#plans [data-consent]');
+  await page.click('#plans [data-continue]');
+  await page.waitForTimeout(250);
+  await page.evaluate(() => document.querySelector('#plans [data-consent]').click());
+  await page.waitForTimeout(1500);
+  await page.unroute('**/api/billing/profile');
+  check('unticking the box while the information is being saved stops the order', puts.length === 1 && orders.length === 0 && (await page.locator('#plans .pay__qr').count()) === 0 && !(await page.isChecked('#plans [data-consent]')), JSON.stringify([puts.length, orders.length]));
+  page.off('request', seeOrders);
   await page.check('#plans [data-consent]');
   await page.click('#plans [data-continue]');
   await page.waitForSelector('#plans .pay__qr img');
@@ -580,9 +607,15 @@ section('the tax line, only when the seller sets a rate');
   const none = await lineFor();
   check('no BILLING_TAX_RATE: no tax line', none.tax === '', JSON.stringify(none));
   await page.keyboard.press('Escape');
+  const hadRate = process.env.BILLING_TAX_RATE;
   process.env.BILLING_TAX_RATE = '10';
-  const withTax = await lineFor();
-  delete process.env.BILLING_TAX_RATE;
+  let withTax;
+  try {
+    withTax = await lineFor();
+  } finally {
+    if (hadRate === undefined) delete process.env.BILLING_TAX_RATE;
+    else process.env.BILLING_TAX_RATE = hadRate;
+  }
   const sub = Number(withTax.subtotal.replace(/[^\d]/g, ''));
   const part = Math.round((sub * 10) / 110);
   check('BILLING_TAX_RATE=10: "Of which VAT 10%" with the tax inside the subtotal, as the receipt works it out', sub > 0 && withTax.tax.startsWith('Of which VAT 10%') && Number(withTax.tax.replace(/Of which VAT 10%/, '').replace(/[^\d]/g, '')) === part, JSON.stringify(withTax));
@@ -622,9 +655,10 @@ section('what the server only schedules, a late answer, a typed form, a double c
     cont: document.querySelector('#plans [data-continue]').disabled,
     total: document.querySelector('#plans .checkout__total dd').textContent,
     why: document.querySelector('#plans .checkout__period [data-period="month"]').textContent.replace(/\s+/g, ' '),
+    named: document.querySelector('#plans .checkout__period [data-period="month"]').getAttribute('aria-labelledby'),
     whyId: document.getElementById(document.querySelector('#plans .checkout__period [data-period="month"]').getAttribute('aria-describedby') || '__none__')?.textContent.trim(),
   }));
-  check('  and the disabled card says why, to everyone, not just by being grey', /Changes at renewal/.test(sched.why) && sched.whyId === 'Changes at renewal. Choose it from the plans.', JSON.stringify(sched));
+  check('  and the disabled card says why, to everyone, not just by being grey', /Changes at renewal/.test(sched.why) && sched.whyId === 'Changes at renewal. Choose it from the plans.' && !sched.named.includes('why'), JSON.stringify(sched));
   check('Plus monthly to yearly: the Monthly radio is off (the server only schedules it) and yearly is chosen', sched.month && sched.year === 'true', JSON.stringify(sched));
   check('  Continue is live, for a total that is not 0', !sched.cont && !/^0\s/.test(sched.total), JSON.stringify(sched));
   await page.click('#plans [data-back]');
@@ -870,8 +904,9 @@ await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'd
 const OWNER = 'u-bill-owner';
 // A wait that can fail without throwing, so the check after it counts instead of aborting the run.
 const ok = (promise) => promise.then(() => true, () => false);
-// Orders are limited to 10 an hour per account (server/ratelimit.js) and this whole file is one hour: the sections above make about 6,
-// the ones below about 3 more. A new step that makes an order has to count against that, or reset the limiter first.
+// Orders are limited to 10 an hour per account (server/ratelimit.js) and this whole file is one hour: the sections above make about 8 and
+// the ones below a few more, so the limiter is cleared (freshOrders) before the steps that need to make one. A new one counts against it.
+await freshOrders();
 const text = (selector) => page.evaluate((s) => (document.querySelector(s)?.textContent || '').replace(/\s+/g, ' ').trim(), selector);
 const gotoTab = async (p, tab) => {
   if (!(await p.evaluate(() => document.getElementById('settings').open))) {
@@ -1102,6 +1137,9 @@ section('a plan in grace: Renew now, the date instead of a clock, and no late ca
   page.on('request', watch);
   await page.click('[data-renew]');
   await ready();
+  // Auto-renew is off here: the page must not promise a renewal the server will not make, and says when the plan ends instead.
+  const offWords = await page.evaluate(() => ({ box: document.querySelector('#plans .checkout__renew')?.textContent.replace(/\s+/g, ' ').trim(), consent: document.querySelector('#plans .checkout__consent')?.textContent.replace(/\s+/g, ' ').trim() }));
+  check('with auto-renew off, the box says when the plan ends and where to turn renewal on, and the consent has no renewal clause', /^Your plan ends on \d\d\/\d\d\/\d{4}\. Turn on auto-renew in Settings → Billing to renew it from your balance\.$/.test(offWords.box) && offWords.consent === 'I agree to pay the amount above today, under the Terms.' && !/renew/.test(offWords.consent), JSON.stringify(offWords));
   check('before any renewal order exists, the checkout offers the choice of using the balance', (await page.locator('#plans [data-use-balance]').count()) === 1 && (await page.locator('#plans [data-fixed-balance]').count()) === 0);
   await page.click('#plans [data-continue]');
   await page.keyboard.press('Escape');

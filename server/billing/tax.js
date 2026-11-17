@@ -1,6 +1,7 @@
 /**
- * The VAT figure, in one place so the receipt and the checkout cannot disagree (owner, 2026-11-17). Prices here include the tax,
- * so the tax is the share of a total, not a surcharge on it. Nothing is stated unless the seller sets a rate: a guess would be a
+ * The VAT figure: one formula for the receipt, the checkout and the e-invoice, though not one base. The checkout and the e-invoice
+ * take the sale total; the receipt takes the amount actually transferred, which is less when the balance paid part of the order.
+ * Prices here include the tax, so the tax is the share of a total, not a surcharge on it. Nothing is stated unless the seller sets a rate: a guess would be a
  * tax statement nobody made.
  */
 

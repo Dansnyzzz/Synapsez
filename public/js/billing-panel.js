@@ -1,6 +1,7 @@
 import { t, localeTag } from './i18n.js';
 import { escapeHtml as esc } from './markdown.js';
 import { vnd, planName, minutes } from './billing-format.js';
+import { PROFILE_FIELDS } from './billing-checkout-view.js';
 
 /**
  * Settings → Billing (billing preview, 2026-11-15): the plan, the credits, the low-balance email, what this month used, the
@@ -223,13 +224,7 @@ export function createBillingPanel(host, { api, toast, plans }) {
       const f = ui.infoDraft || p || {};
       const field = (id, key, value, extra = '') => `<div class="field"><label for="bp-${id}">${esc(t(`billing.profile.${key}`))}</label><input id="bp-${id}" name="${id}" value="${esc(value ?? '')}" ${extra}></div>`;
       return `${head('info')}<form data-info-form novalidate>
-        ${field('name', 'name', f.name, 'autocomplete="name" maxlength="120" required')}
-        ${field('email', 'email', f.email, 'type="email" autocomplete="email" maxlength="254" required')}
-        ${field('country', 'country', f.country, 'autocomplete="country" maxlength="2" size="3" required')}
-        ${field('address', 'address', f.address, 'autocomplete="street-address" maxlength="300"')}
-        ${field('company', 'company', f.companyName, 'autocomplete="organization" maxlength="120"')}
-        ${field('tax', 'tax', f.taxCode, 'inputmode="numeric" maxlength="20" autocomplete="off"')}
-        ${field('invoiceName', 'invoiceName', f.invoiceName, 'maxlength="120" autocomplete="off"')}
+        ${PROFILE_FIELDS.map((p) => field(p.id, p.label, f[p.key], p.extra)).join('')}
         ${ui.infoError ? `<p class="plans__error" id="bp-err" role="alert" tabindex="-1">${esc(ui.infoError)}</p>` : ''}
         <p class="bill__actions"><button type="submit" class="btn btn--primary" data-save-info>${esc(t('billing.profile.save'))}</button> <button type="button" class="btn" data-cancel-info>${esc(t('billing.profile.cancel'))}</button></p>
       </form>`;
@@ -454,7 +449,8 @@ export function createBillingPanel(host, { api, toast, plans }) {
   async function saveInfo() {
     const form = /** @type {HTMLFormElement} */ ($('form[data-info-form]'));
     const value = (name) => /** @type {HTMLInputElement} */ (form.elements.namedItem(name)).value.trim();
-    const body = { name: value('name'), email: value('email'), country: value('country'), address: value('address'), taxCode: value('tax'), companyName: value('company'), invoiceName: value('invoiceName') };
+    // One list of the fields (the checkout's): the PUT replaces the whole profile, so a second copy would drop what it forgot.
+    const body = Object.fromEntries(PROFILE_FIELDS.map((p) => [p.key, value(p.id)]));
     ui.infoDraft = body;
     if (!body.name || !body.email || !body.country) {
       ui.infoError = t('billing.profile.required');

@@ -290,11 +290,18 @@ let ownerTopup;
   check('the eleventh order in an hour is a 429', statuses[10] === 429 && statuses.slice(0, 10).every((s) => s !== 429), statuses.join());
   const quoted = await owner.j.call('POST', '/api/billing/quote', { plan: 'pro', period: 'month' });
   check('a quote prices a plan and creates nothing', quoted.status === 200 && quoted.json.priceVnd === planVnd('pro', 'month', 25_500) && quoted.json.kind === 'new' && !('basis' in quoted.json), JSON.stringify(quoted.json));
+  check('  it says the plan renews (an account with no plan yet)', quoted.json.autoRenew === true);
   check('  it names the day the plan renews (a month on from when it starts)', quoted.json.renewsAt === addMonths(new Date(quoted.json.startsAt), 1).toISOString(), String(quoted.json.renewsAt));
   check('  and with no BILLING_TAX_RATE says no tax rate and states no tax', quoted.json.taxRate === null && quoted.json.taxVnd === null, JSON.stringify([quoted.json.taxRate, quoted.json.taxVnd]));
+  const hadRate = process.env.BILLING_TAX_RATE;
   process.env.BILLING_TAX_RATE = '10';
-  const taxed = await owner.j.call('POST', '/api/billing/quote', { plan: 'pro', period: 'month' });
-  delete process.env.BILLING_TAX_RATE;
+  let taxed;
+  try {
+    taxed = await owner.j.call('POST', '/api/billing/quote', { plan: 'pro', period: 'month' });
+  } finally {
+    if (hadRate === undefined) delete process.env.BILLING_TAX_RATE;
+    else process.env.BILLING_TAX_RATE = hadRate;
+  }
   check('  with BILLING_TAX_RATE=10 it carries the rate and the tax inside the total (as the receipt works it out)', taxed.json.taxRate === 10 && taxed.json.taxVnd === Math.round((taxed.json.totalVnd * 10) / 110) && taxed.json.totalVnd === quoted.json.totalVnd, JSON.stringify([taxed.json.taxRate, taxed.json.taxVnd, taxed.json.totalVnd]));
 }
 

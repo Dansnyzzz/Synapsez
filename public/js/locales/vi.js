@@ -3636,6 +3636,8 @@ export const vi = {
   'billing.checkout.tax': 'Trong đó thuế GTGT {rate}%',
   'billing.checkout.renewInfo': 'Gói tự gia hạn ngày {date} từ số dư; nếu số dư không đủ, chúng tôi gửi email kèm mã QR 3 ngày trước.',
   'billing.checkout.consent': 'Tôi đồng ý thanh toán số tiền trên hôm nay. Gói tự gia hạn mỗi kỳ từ số dư cho đến khi tôi huỷ, theo {terms}. Tôi có thể huỷ bất cứ lúc nào trong Cài đặt → Thanh toán.',
+  'billing.checkout.endInfo': 'Gói kết thúc ngày {date}. Bật tự gia hạn trong Cài đặt → Thanh toán để gia hạn từ số dư.',
+  'billing.checkout.consentOnce': 'Tôi đồng ý thanh toán số tiền trên hôm nay, theo {terms}.',
   'billing.checkout.terms': 'Điều khoản',
   'billing.checkout.consentHint': 'Hãy tích ô đồng ý ở trên để đăng ký.',
   'billing.profile.title': 'Thông tin thanh toán',

@@ -74,6 +74,8 @@ export async function quote(userId, { plan, period }, { now = new Date() } = {})
     dueVnd: open ? dueOf(open, state.balanceVnd) : null,
     startsAt: (kind === 'later' ? sub.periodEnd : now).toISOString(), basis: basisOf(sub, now),
     // A renewal continues the old period (as applyPaidOrder will); anything else starts a new one today.
+    // What the plan will do after this order is paid: a new subscription renews by default, an existing row keeps its own switch (paying never turns it on).
+    autoRenew: sub ? sub.autoRenew : true,
     renewsAt: kind === 'later' ? null : (kind === 'renewal' ? renewalEnd(sub.anchorAt ?? sub.periodStart, sub.periodEnd, period) : periodEnd(now, period)).toISOString(),
   };
 }

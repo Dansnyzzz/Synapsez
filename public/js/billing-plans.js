@@ -97,6 +97,9 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   function paint(focus = 'title') {
     const d = ensure();
     keepTyped();
+    // The consent is to "the amount above": when what is due today is not what was ticked for (another period, a price that moved, the
+    // balance used or not), the box is empty again and has to be ticked for the new figure.
+    if (view === 'checkout' && checkout?.quotes && checkout.consent && checkout.consentFor !== dueToday()) checkout.consent = false;
     d.dataset.view = view;
     const body = { sheet: sheetHtml, checkout: checkoutHtml, pay: payHtml, done: doneHtml }[view]();
     d.innerHTML = `<div class="sheet__head"><h2 id="plans-title" tabindex="-1">${esc(titleOf())}</h2><button type="button" class="icon-btn" data-close aria-label="${esc(t('action.close'))}">✕</button></div><div class="sheet__body plans__body" data-view="${view}"><p class="plans__preview">${esc(t('billing.previewNote'))}</p>${body}</div>`;
@@ -406,7 +409,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     const mine = checkout;
     const token = flow;
     if (!(await saveProfile())) return;
-    if (!dialog.open || flow !== token || checkout !== mine) return;
+    // The box may have been unticked while the information was being saved: then no order is made.
+    if (!dialog.open || flow !== token || checkout !== mine || !checkout.consent) return;
     await makeOrder({ kind: 'plan', plan: checkout.plan, period, useBalance: useBalanceFor(checkout.quotes[period]) }, 'plan');
   }
 
@@ -721,7 +725,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       pay = null;
       paint('title');
       await load();
-      if (view === 'sheet' && dialog.open) paint(null);
+      if (view === 'sheet' && dialog.open) paint('title');
       return;
     }
     if (el.hasAttribute('data-continue')) return void subscribe();
@@ -737,6 +741,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       $('[data-use-balance]')?.focus();
     } else if (el.hasAttribute?.('data-consent')) {
       checkout.consent = el.checked;
+      checkout.consentFor = el.checked ? dueToday() : null;
       paint(null);
       $('[data-consent]')?.focus();
     }
