@@ -570,7 +570,8 @@ export function createApp() {
       if (library.status === 'rejected') throw library.reason;
       const read = rate.status === 'fulfilled' ? rate.value : null;
       const off = billingMode() === 'off';
-      if (!off && !read) log.warn('billing: the rate of the day could not be read', { error: rate.status === 'rejected' ? String(rate.reason?.message || rate.reason).slice(0, 160) : 'no source answered' });
+      // `cause`, not `error`: a log field for the owner, never a message a person is shown (scripts/server-messages.js).
+      if (!off && !read) log.warn('billing: the rate of the day could not be read', { cause: rate.status === 'rejected' ? String(rate.reason?.message || rate.reason).slice(0, 160) : 'no source answered' });
       // "skipped" (billing is off, nothing was asked) is not "null" (every source was down).
       res.json({ ...library.value, rate: off ? { skipped: 'off' } : read ? { rate: read.rate, source: read.source, at: read.at } : null });
     }),
