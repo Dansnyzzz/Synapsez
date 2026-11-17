@@ -197,7 +197,7 @@ export async function editSkill(userId, { name, oldString, newString }) {
   const skill = wanted ? await store.getSkillByName(userId, wanted) : null;
   if (!skill) {
     if (findBuiltinSkill(wanted.toLowerCase())) {
-      throw new Error(`"${wanted}" is one of Synapsez's own skills, which cannot be changed. Save one of the person's own under a new name with skill_write.`);
+      throw new Error(`"${wanted}" is one of Ephapse's own skills, which cannot be changed. Save one of the person's own under a new name with skill_write.`);
     }
     const names = (await store.listSkills(userId)).map((s) => s.name);
     throw new Error(names.length ? `No skill of this account is called "${wanted}". Its skills: ${names.join(', ')}.` : 'This account has no skills of its own to change.');

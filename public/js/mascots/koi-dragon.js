@@ -6,7 +6,7 @@ import { ACCENTS, Mask } from './pixels.js';
  * scales caught by a wave of gold that rolls from head to tail; a dragon's two gold
  * horns, a row of gold spines down its back, gold whiskers curling from its snout,
  * long flowing fins, and a pearl in a flame floating over its tail with sparkles
- * about it. Drawn from scratch for Synapsez.
+ * about it. Drawn from scratch for Ephapse.
  *
  * Asleep, it lays its horns down under the nightcap.
  */

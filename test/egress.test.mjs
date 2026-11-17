@@ -425,7 +425,7 @@ section('market data reaches only its listed hosts, with only the symbols and co
   check('every host written in server/finance is on the list', strays.length === 0, strays.join(', '));
 
   process.env.FIN_PACE_SCALE = '0';
-  process.env.SEC_USER_AGENT = 'Synapsez ops@example.com';
+  process.env.SEC_USER_AGENT = 'Ephapse ops@example.com';
   const { marketData } = await import('../server/finance/index.js');
   const urls = [];
   const fetchImpl = async (url) => {

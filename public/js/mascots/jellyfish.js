@@ -5,7 +5,7 @@ import { ACCENTS, Mask } from './pixels.js';
  * hanging over its own arms, two frilled arms in the middle and thin threads at the
  * sides, the front one curled. It looks clear through flat colours only: a pale inside
  * inside a deeper rim, the arms showing through the lower bell, a lantern glowing in
- * its crown that brightens as the bell draws in. Drawn from scratch for Synapsez.
+ * its crown that brightens as the bell draws in. Drawn from scratch for Ephapse.
  *
  * It floats, but its arms reach the floor (row 58), so the shadow and the props line
  * up with every other creature. Its face is on the bell, symmetric about column 38.

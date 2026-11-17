@@ -139,7 +139,7 @@ export function createRanking({ host, toast, savePrefs }) {
   /** The server agrees what is worn: the creature on the writing box follows (app.js). */
   function wearing(id) {
     worn = id ?? null;
-    window.dispatchEvent(new window.CustomEvent('synapsez:title', { detail: worn }));
+    window.dispatchEvent(new window.CustomEvent('ephapse:title', { detail: worn }));
   }
 
   function chipHtml(title) {

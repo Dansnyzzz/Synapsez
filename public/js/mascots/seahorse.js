@@ -4,7 +4,7 @@ import { ACCENTS, Mask } from './pixels.js';
  * The bronze seahorse, worn for ten dollars spent (owner, 2026-11-08): upright, facing
  * left, a long snout, a small crown of knobs, a ringed pale belly, a fan of a dorsal fin
  * that flutters, and its tail curled under it on the floor. A coin spins beside it: the
- * first of the spending titles. Drawn from scratch for Synapsez.
+ * first of the spending titles. Drawn from scratch for Ephapse.
  *
  * It stands on its tail's curl (row 58). Squashed, its head drops and its belly widens;
  * the curl stays put.

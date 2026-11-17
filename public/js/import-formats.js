@@ -3,7 +3,7 @@
  *
  * Three sources, recognised by their structure rather than by a file name:
  *
- * - **Synapsez** — this app's own export (`format: "synapsez-export"`).
+ * - **Ephapse** — this app's own export (`format: "ephapse-export"`).
  * - **Claude** — `conversations.json` from claude.ai → Settings → Privacy →
  *   Export data: an array of `{ name, created_at, chat_messages: [{ sender,
  *   text | content[] }] }`.
@@ -128,7 +128,7 @@ function fromChatGPT(list) {
   });
 }
 
-function fromSynapsez(data) {
+function fromEphapse(data) {
   return (Array.isArray(data?.chats) ? data.chats : []).map((c) =>
     conversation({
       title: c?.title,
@@ -145,7 +145,7 @@ function fromSynapsez(data) {
 
 /** Which source this is, or null when it is none of them. */
 export function detectSource(data) {
-  if (data && !Array.isArray(data) && data.format === 'synapsez-export') return 'synapsez';
+  if (data && !Array.isArray(data) && (data.format === 'ephapse-export' || data.format === 'synapsez-export')) return 'ephapse'; // the old name still reads: a person's own file saved before 1.33.0
   if (Array.isArray(data) && data.length) {
     const sample = data.find((c) => c && typeof c === 'object');
     if (sample && Array.isArray(sample.chat_messages)) return 'claude';
@@ -158,7 +158,7 @@ export function detectSource(data) {
 /**
  * Read an export into `{ source, conversations, memory }`.
  *
- * `memory` is only ever the account's own notes from a Synapsez export: a
+ * `memory` is only ever the account's own notes from an Ephapse export: a
  * project's notes belong to a project id that means nothing on another account.
  *
  * @throws when the data is none of the known shapes
@@ -166,12 +166,12 @@ export function detectSource(data) {
 export function normaliseImport(data) {
   const source = detectSource(data);
   if (!source) {
-    throw new Error('This file is not a conversation export this app can read. Use conversations.json from Claude or ChatGPT, or a Synapsez export.');
+    throw new Error('This file is not a conversation export this app can read. Use conversations.json from Claude or ChatGPT, or an Ephapse export.');
   }
-  const read = source === 'claude' ? fromClaude(data) : source === 'chatgpt' ? fromChatGPT(data) : source === 'synapsez' ? fromSynapsez(data) : [];
+  const read = source === 'claude' ? fromClaude(data) : source === 'chatgpt' ? fromChatGPT(data) : source === 'ephapse' ? fromEphapse(data) : [];
   const conversations = read.filter(Boolean).slice(0, IMPORT_LIMITS.conversations);
   const memory =
-    source === 'synapsez' && Array.isArray(data.memory)
+    source === 'ephapse' && Array.isArray(data.memory)
       ? data.memory
           .filter((n) => n && n.scope === 'account' && typeof n.key === 'string' && typeof n.content === 'string')
           // Its kind and an event's end date travel with it (2026-11-12); the server checks both again.

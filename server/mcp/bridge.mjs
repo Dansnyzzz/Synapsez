@@ -186,7 +186,7 @@ async function greet(program, message, timeoutMs) {
 }
 
 /** What the bridge says when it has to greet a program itself. */
-const BRIDGE_HELLO = { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'synapsez-bridge', version: '1.0.0' } };
+const BRIDGE_HELLO = { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'ephapse-bridge', version: '1.0.0' } };
 
 /** One JSON-RPC message to one program; its answer, or `{ failed }`. */
 async function deliver(id, spec, message, timeoutMs) {

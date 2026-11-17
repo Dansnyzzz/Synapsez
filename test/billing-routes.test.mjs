@@ -16,7 +16,7 @@ process.env.DATA_DIR = path.join(os.tmpdir(), `ai-remote-billing-routes-test-${p
 for (const name of ['DATABASE_URL', 'POSTGRES_URL', 'VERCEL', 'BILLING_MODE', 'SEPAY_API_TOKEN', 'E2B_API_KEY', 'E2B_CONCURRENT_LIMIT', 'DATABASE_INCLUDED_GB', 'RESEND_API_KEY', 'GMAIL_USER', 'GMAIL_APP_PASSWORD']) delete process.env[name];
 process.env.SEPAY_BANK_ACCOUNT = '0123456789';
 process.env.SEPAY_BANK_CODE = 'MBBank';
-process.env.SEPAY_ACCOUNT_NAME = 'SYNAPSEZ TEST';
+process.env.SEPAY_ACCOUNT_NAME = 'EPHAPSE TEST';
 process.env.CRON_SECRET = 'billing-routes-cron-secret';
 process.env.SMTP_HOST = 'smtp.test.invalid';
 process.env.EMAIL_CONFIRMATION = 'off';
@@ -296,7 +296,7 @@ let ownerTopup;
   const o = ownerTopup.json?.order;
   check('a top-up order: a code, a total, an expiry and the QR to pay it', ownerTopup.status === 200 && /^SZ\d{10}$/.test(o?.code) && o.totalVnd === 100_000 && o.status === 'pending' && ownerTopup.json.paidNow === false && !!o.expiresAt, JSON.stringify(ownerTopup.json));
   const qr = ownerTopup.json?.due?.qr;
-  check('  the QR carries bank, account, holder, amount and the code as the content', ownerTopup.json?.due?.vnd === 100_000 && qr?.bank === 'MBBank' && qr.account === '0123456789' && qr.holder === 'SYNAPSEZ TEST' && qr.amount === 100_000 && qr.content === o.code && qr.image.includes(o.code), JSON.stringify(qr));
+  check('  the QR carries bank, account, holder, amount and the code as the content', ownerTopup.json?.due?.vnd === 100_000 && qr?.bank === 'MBBank' && qr.account === '0123456789' && qr.holder === 'EPHAPSE TEST' && qr.amount === 100_000 && qr.content === o.code && qr.image.includes(o.code), JSON.stringify(qr));
   check('  the response never carries another account\'s id or the rate source internals', !('userId' in o) && !('basis' in o));
 
   const seen = await owner.j.call('GET', `/api/billing/orders/${o.id}`);
@@ -660,7 +660,7 @@ section('mail: every kind, both languages');
   const data = {
     paid: { amountVnd: 129_000, what: { kind: 'plan', plan: 'pro', period: 'month' }, balanceVnd: 0, receiptNumber: 'SZR-2026-000012' },
     'plan-changed': { plan: 'plus', period: 'month', change: 'scheduled', effectiveAt: '2026-12-13T00:00:00Z' },
-    'renewal-soon': { plan: 'pro', period: 'month', amountVnd: 207_000, endsAt: '2026-12-13T00:00:00Z', code: 'SZ0123456789', balanceVnd: 5_000, qr: { image: 'https://qr.sepay.vn/img?acc=1&bank=MB&amount=202000&des=SZ0123456789', bank: 'MBBank', account: '0123456789', holder: 'SYNAPSEZ', amount: 202_000, content: 'SZ0123456789' } },
+    'renewal-soon': { plan: 'pro', period: 'month', amountVnd: 207_000, endsAt: '2026-12-13T00:00:00Z', code: 'SZ0123456789', balanceVnd: 5_000, qr: { image: 'https://qr.sepay.vn/img?acc=1&bank=MB&amount=202000&des=SZ0123456789', bank: 'MBBank', account: '0123456789', holder: 'EPHAPSE', amount: 202_000, content: 'SZ0123456789' } },
     renewed: { plan: 'pro', period: 'month', amountVnd: 207_000, endsAt: '2027-01-13T00:00:00Z' },
     grace: { plan: 'pro', endsAt: '2026-12-16T00:00:00Z', amountVnd: 207_000 },
     ended: { plan: 'pro' },

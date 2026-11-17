@@ -9,7 +9,7 @@ import { escapeHtml } from './markdown.js';
  * removes keys and chooses the paid one; an administrator with `free_tier` reads the same rows.
  *
  * Every figure says whose it is: "Tavily reports" is the provider's own answer, "counted here"
- * is what Synapsez counted. While the page is on screen and the tab is visible it asks again
+ * is what Ephapse counted. While the page is on screen and the tab is visible it asks again
  * every minute; otherwise it asks nothing.
  */
 

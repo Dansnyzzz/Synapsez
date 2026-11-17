@@ -248,7 +248,7 @@ try {
   check('a background program outlives the stream that watched it', (await alive.stdout()).trim() === 'alive', await said(alive));
 
   section('paused, and resumed with its memory');
-  const paused = await Sandbox.create(template, { apiKey: process.env.E2B_API_KEY, timeoutMs: 5 * 60_000, metadata: { app: 'synapsez', role: 'probe' }, lifecycle: { onTimeout: 'pause', autoResume: false } });
+  const paused = await Sandbox.create(template, { apiKey: process.env.E2B_API_KEY, timeoutMs: 5 * 60_000, metadata: { app: 'ephapse', role: 'probe' }, lifecycle: { onTimeout: 'pause', autoResume: false } });
   machines.push({ delete: () => paused.kill() });
   await paused.commands.run(__testing.CLOSE_MACHINE, { user: 'root' });
   await paused.commands.run('echo kept > /home/user/kept.txt; nohup sleep 900 >/dev/null 2>&1 &', { user: 'user' });
@@ -376,7 +376,7 @@ with sync_playwright() as p:
     await machine.writeFiles([{ path: 'probe-check.txt', content: Buffer.from('before') }]);
     const snapshot = await machine.box.createSnapshot();
     check('saved', !!snapshot?.snapshotId, snapshot?.snapshotId);
-    const fromIt = await Sandbox.create(snapshot.snapshotId, { apiKey: process.env.E2B_API_KEY, timeoutMs: 120_000, metadata: { app: 'synapsez', role: 'probe' } });
+    const fromIt = await Sandbox.create(snapshot.snapshotId, { apiKey: process.env.E2B_API_KEY, timeoutMs: 120_000, metadata: { app: 'ephapse', role: 'probe' } });
     machines.push({ delete: () => fromIt.kill() });
     const kept = await fromIt.commands.run('cat /home/user/probe-check.txt', { user: 'user' });
     check('a machine made from it finds the file', kept.stdout.trim() === 'before', kept.stdout.trim());

@@ -6,7 +6,7 @@ import { ACCENTS, Mask } from './pixels.js';
  * its back, stars that twinkle in it and a small spiral galaxy, a pale milky underside
  * below the line of its mouth, a swept dorsal fin and a crescent moon for a tail. A
  * ringed planet orbits it, passing behind its back and in front of its belly. Drawn
- * from scratch for Synapsez.
+ * from scratch for Ephapse.
  *
  * Not the golden whale in other colours: longer and lower, its tail lies back as a
  * crescent instead of rising in flukes, and it has a dorsal fin. Its eyes are pale,

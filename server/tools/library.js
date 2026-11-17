@@ -28,7 +28,7 @@ import { sourceLabel } from '../finance/http.js';
 
 import { REFERENCE_SOURCES } from './references.js';
 
-const UA = 'Synapsez/1.0 (+https://synapsez.vercel.app)';
+const UA = 'Ephapse/1.0 (+https://www.ephapse.net)';
 
 /**
  * JSON from a fixed public service, with a timeout and a readable failure —

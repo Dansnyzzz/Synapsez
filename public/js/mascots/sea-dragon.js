@@ -5,7 +5,7 @@ import { ACCENTS, Mask } from './pixels.js';
  * olive-gold body facing left, a long thin snout, violet bars across its back, its tail
  * curled under it on the floor, and lobed leaves all over it: on its head, along its
  * back, hanging from its belly and off its tail. The leaves sway, and a light runs
- * along them from head to tail. Drawn from scratch for Synapsez.
+ * along them from head to tail. Drawn from scratch for Ephapse.
  *
  * It rests on its belly leaves and its tail's curl (row 58); its face is on the head at
  * the left, the snout reaching to column 20.

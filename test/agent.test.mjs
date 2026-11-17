@@ -3311,7 +3311,7 @@ section('the gauge says what the window is spent on (owner, 2026-10-19)');
   const { promptParts, contextBreakdown, PART_KEYS } = await import('../server/contextParts.js');
   const skills = '- **docx** — Word documents\n- **pptx** — slides';
   const memory = '## Memory\n### Everywhere\n- **language** (2026-10-01): Answer in Vietnamese,\n  briefly.\n- **tea**: green';
-  const system = `You are Synapsez.\n\n## Skills they have taught you\n${skills}\n\n${memory}`;
+  const system = `You are Ephapse.\n\n## Skills they have taught you\n${skills}\n\n${memory}`;
   const tools = [
     { name: 'web_search', description: 'Search the web for anything at all', parameters: { type: 'object' } },
     { name: 'mcp__figma__get_file', description: 'Read a Figma file', parameters: { type: 'object' } },

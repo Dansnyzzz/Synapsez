@@ -173,7 +173,7 @@ const SHIM = `<script>
     Object.defineProperty(shim, 'length', { get: function () { return Object.keys(mem).length; } });
     try {
       Object.defineProperty(window, 'localStorage', { value: shim, configurable: true });
-      console.info('[Synapsez] localStorage is not available in a sandboxed artifact. ' +
+      console.info('[Ephapse] localStorage is not available in a sandboxed artifact. ' +
         'It has been replaced with an in-memory shim; use await window.storage.get/set for anything that must persist.');
     } catch (ignored) { /* frozen; nothing more to try */ }
     window.storage.list().then(function (all) {
@@ -183,7 +183,7 @@ const SHIM = `<script>
       // its stored values cannot be read. Saying nothing was not: the page then
       // looks like a first visit, and whoever wrote it has no way to tell that
       // apart from storage being broken.
-      console.warn('[Synapsez] Could not read stored values; this artifact is starting empty.', err);
+      console.warn('[Ephapse] Could not read stored values; this artifact is starting empty.', err);
     });
   }
 })();

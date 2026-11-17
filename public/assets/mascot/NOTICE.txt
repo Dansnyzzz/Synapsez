@@ -9,14 +9,14 @@ Deepy whale theme pack they drew.
 
 Taken from: https://github.com/Nwflower/dsh-claude-style (docs/gifs).
 
-Licence: Synapsez holds none for these pictures. That project's code is under the MIT
+Licence: Ephapse holds none for these pictures. That project's code is under the MIT
 licence, but its README says the whale's frames "ship with the plugin by the author's
 permission": a permission the artist gave to that plugin, not a licence that passes on
 to anyone who copies the files. An earlier version of this notice said the pictures
 came under the MIT licence; that was wrong, and is corrected here (2026-11-08).
 
-All rights in the whale art stay with the artist. The owner of Synapsez says the artist
-has allowed Synapsez to use these pictures (2026-11-09), and is asking for that
+All rights in the whale art stay with the artist. The owner of Ephapse (then Synapsez) says the artist
+has allowed Ephapse to use these pictures (2026-11-09), and is asking for that
 permission in writing; until it is in hand, it is recorded here as the owner's word,
 not as a written licence.
 
@@ -25,7 +25,7 @@ The title creatures
 ===================
 
 The creatures worn with a title (public/js/mascots/: the minnow, the electric ray, the
-golden whale and those that follow) are original to Synapsez, drawn in code for it in
+golden whale and those that follow) are original to Ephapse, drawn in code for it in
 November 2026. They share the general style of pixel mascots like the one above (flat
 colours, a one-pixel outline) but no pixel, shape, prop or frame was copied from these
 pictures.

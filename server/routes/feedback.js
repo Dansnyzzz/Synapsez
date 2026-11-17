@@ -199,7 +199,7 @@ export function feedbackMail(user, value, url) {
       markdown:
         `**${who}** flagged an answer — ${issue}.\n\n` +
         (words ? '```\n' + words + '\n```\n\n' : '') +
-        `Read it, with that answer as it ran, in Synapsez → Settings → Feedback: ${url}`,
+        `Read it, with that answer as it ran, in Ephapse → Settings → Feedback: ${url}`,
     };
   }
   return {
@@ -207,7 +207,7 @@ export function feedbackMail(user, value, url) {
     markdown:
       `**${who}** sent feedback — ${value.kind}, about ${value.topic}, affecting them: ${value.affect}.\n\n` +
       '```\n' + words + '\n```\n\n' +
-      `Read it, and any conversation they included, in Synapsez → Settings → People: ${url}`,
+      `Read it, and any conversation they included, in Ephapse → Settings → People: ${url}`,
   };
 }
 

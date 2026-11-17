@@ -32,7 +32,7 @@ const ORCAROUTER_BASE = 'https://api.orcarouter.ai/v1';
  */
 function routerHeaders() {
   const referer = process.env.PUBLIC_URL || 'https://github.com/';
-  return { 'HTTP-Referer': referer, 'X-Title': 'Synapsez' };
+  return { 'HTTP-Referer': referer, 'X-Title': 'Ephapse' };
 }
 
 /**
@@ -455,6 +455,7 @@ async function* streamAny(opts) {
    * so nothing can reach a model around it. See deidentify.js.
    */
   const shield = (opts.maskPersonal ?? (await maskPersonalFor(userId)))
+    // 'synapsez-local' keeps its old name on purpose: it derives the pseudonym key, so renaming it would orphan every pseudonym.
     ? createShield({ key: crypto.createHmac('sha256', signingRoot() || 'synapsez-local').update(`deidentify:${userId || ''}`).digest() })
     : null;
   const outgoing = shield ? shield.protect(rest) : rest;

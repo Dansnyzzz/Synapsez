@@ -8,7 +8,7 @@ import { take } from '../freeTier.js';
  * Every source adapter in `sources/` calls through here, never `fetch` itself, so
  * the rules for asking somebody else's server for data hold in one place:
  *
- *   - **Who is asking, honestly.** `Synapsez/<version> (+https://github.com/;
+ *   - **Who is asking, honestly.** `Ephapse/<version> (+https://github.com/;
  *     market data on request)` on every call. Never a browser User-Agent, never a
  *     Referer or Origin borrowed from the source's own site — a source that refuses
  *     an honest request is a "no", not a puzzle (research §2.19). Two exceptions:
@@ -152,7 +152,7 @@ export function userAgent(source) {
   const name = sourceOf(source);
   if (name === 'sec') return String(process.env.SEC_USER_AGENT || '').trim();
   if (name === 'yahoo') return 'Mozilla/5.0';
-  return `Synapsez/${appVersion()} (+https://github.com/; market data on request)`;
+  return `Ephapse/${appVersion()} (+https://github.com/; market data on request)`;
 }
 
 /** Wait for this source's next free slot, and take it. Concurrent calls queue one gap apart. */
@@ -187,7 +187,7 @@ export async function getResponse(source, url, { headers = {}, timeoutMs = 8000,
   const aside = standingAside(name);
   if (aside) throw new SourceError(name, `${label} refused a request recently, so it is left alone for about ${Math.max(1, minutes(aside - Date.now()))} more minutes.`, { standAside: true });
   const ua = userAgent(name);
-  if (!ua) throw new SourceError(name, 'SEC needs SEC_USER_AGENT ("Synapsez <contact email>") set on the deployment, so SEC was not asked.');
+  if (!ua) throw new SourceError(name, 'SEC needs SEC_USER_AGENT ("Ephapse <contact email>") set on the deployment, so SEC was not asked.');
   for (const tier of TIERS[name] || []) {
     if (!(await take(tier, 1))) throw new SourceError(name, `${label}'s shared allowance (${tier}) is used up for now, so it was not asked.`);
   }

@@ -122,7 +122,7 @@ export function e2bConfigured(env = process.env) {
  * MiB, where Chromium cannot start: every cloud browser call failed, for everybody,
  * for as long as nobody set a setting (owner's screenshots, 2026-11-05).
  */
-export const TEMPLATE_NAME = 'synapsez-computer';
+export const TEMPLATE_NAME = 'ephapse-computer';
 /**
  * The size that template is built at. Two gibibytes is what Chromium and a pandas
  * frame together fit in; there is swap on the disk behind it (`CLOSE_MACHINE`).
@@ -642,7 +642,7 @@ function machine(box, { userId, record, paid = false } = {}) {
       const wanted = this.listCheckpoints().find((c) => c.id === id);
       if (!wanted) throw new Error(`There is no checkpoint ${id} on this computer.`);
       const { Sandbox } = await loadSdk();
-      const next = await Sandbox.create(id, { ...connection(), timeoutMs: IDLE_MS, metadata: box.metadata || { app: 'synapsez', machine: record.name }, lifecycle: { onTimeout: 'pause', autoResume: false }, network: NETWORK });
+      const next = await Sandbox.create(id, { ...connection(), timeoutMs: IDLE_MS, metadata: box.metadata || { app: 'ephapse', machine: record.name }, lifecycle: { onTimeout: 'pause', autoResume: false }, network: NETWORK });
       await box.kill().catch(() => {});
       record.id = next.sandboxId;
       await getStore().setUserSetting(userId, SETTING, record);
@@ -726,7 +726,7 @@ async function makeBox(Sandbox, name) {
     const box = await Sandbox.create(from, {
       ...connection(),
       timeoutMs: IDLE_MS,
-      metadata: { app: 'synapsez', machine: name },
+      metadata: { app: 'ephapse', machine: name },
       lifecycle: { onTimeout: 'pause', autoResume: false },
       network: NETWORK,
     });
@@ -938,7 +938,7 @@ export async function e2bScratch({ ms = SCRATCH_MS, userId, internet = true, rol
   /** @type {{ cpu: number, memMb: number, paidUntil?: number }} */
   const record = { ...ASSUMED };
   const receipt = await payUntil(record, Date.now() + ms, userId, { paid });
-  const options = { ...connection(), timeoutMs: ms, metadata: { app: 'synapsez', role }, network: NETWORK, ...(internet ? {} : { allowInternetAccess: false }) };
+  const options = { ...connection(), timeoutMs: ms, metadata: { app: 'ephapse', role }, network: NETWORK, ...(internet ? {} : { allowInternetAccess: false }) };
   /** @type {any} */
   let box;
   try {

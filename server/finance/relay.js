@@ -65,7 +65,7 @@ export async function relayAnswer({ method, url, authorization, ua = '', secret 
   let res;
   try {
     res = await fetchImpl(String(url), {
-      headers: { Accept: 'application/json', 'User-Agent': String(ua || 'Synapsez (market data on request)').slice(0, 200) },
+      headers: { Accept: 'application/json', 'User-Agent': String(ua || 'Ephapse (market data on request)').slice(0, 200) },
       redirect: 'error',
       signal: AbortSignal.timeout(15_000),
     });

@@ -343,7 +343,8 @@ const USERNAME_RE = /^[a-z][a-z0-9._]{2,23}$/;
 /** Names that would read as the service itself speaking. */
 const RESERVED_USERNAMES = new Set([
   'admin', 'administrator', 'root', 'support', 'help', 'system', 'security', 'owner', 'staff', 'moderator',
-  'synapsez', 'api', 'www', 'mail', 'email', 'noreply', 'no_reply', 'null', 'undefined', 'anonymous',
+  // The old name stays reserved beside the new one: nobody can take either (rename 1.33.0).
+  'ephapse', 'synapsez', 'api', 'www', 'mail', 'email', 'noreply', 'no_reply', 'null', 'undefined', 'anonymous',
 ]);
 
 /**

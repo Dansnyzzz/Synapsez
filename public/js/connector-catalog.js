@@ -8,7 +8,7 @@
  * words a person reads are the locales' (`conn.<key>.tagline`, `.about`), and
  * where each stands — connected, its tools and which of them ask first — is the
  * server's (`/api/connectors/catalog`). Nothing here is a count or a rating:
- * Synapsez has no usage figures to rank by, and does not invent them.
+ * Ephapse has no usage figures to rank by, and does not invent them.
  *
  * @typedef {{
  *   id: string, key: string, name: string, by: string, byUrl: string, site: string,

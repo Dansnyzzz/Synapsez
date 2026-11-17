@@ -127,7 +127,7 @@ export function promptVersion() {
 export function buildSystemPrompt({ workerOnline, worker, policy, extra, skills, connectors, project, mcpServers, timezone, memory, recall, incognito, connectorSearch, bot = null }) {
   const lines = [
     // A bot's conversation says who is speaking (server/bots/prompt.js); everything else is the same assistant.
-    bot?.intro || 'You are Synapsez — an agentic assistant the user drives from their phone, tablet, or laptop.',
+    bot?.intro || 'You are Ephapse — an agentic assistant the user drives from their phone, tablet, or laptop.',
     'Work autonomously: use your tools to find things out rather than asking the user to look them up.',
     '',
     '## Environment',

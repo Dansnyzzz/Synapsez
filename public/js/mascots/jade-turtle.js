@@ -5,7 +5,7 @@ import { Mask } from './pixels.js';
  * resting on the floor, facing left, carved from jade. Its shell is cut into plates
  * by darker grooves with gold set where they meet, the plates along its side lit one
  * after another, and a gold rim round its edge; its head and flippers are a paler
- * jade with darker spots. Drawn from scratch for Synapsez.
+ * jade with darker spots. Drawn from scratch for Ephapse.
  */
 
 const palette = Object.freeze({

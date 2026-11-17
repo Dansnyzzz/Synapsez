@@ -56,6 +56,7 @@ export const SECURITY_HEADERS = {
  * DNS answer or a café's hijacking proxy has no plain-text page to hand back, and a
  * certificate it cannot get for this name stops it. `preload` lets the owner submit a
  * custom domain at hstspreload.org — a step that is slow to undo, so it is theirs; a
- * `.app` address such as synapsez.vercel.app is preloaded by its top-level domain already.
+ * `.app` address (the old platform address was one) is preloaded by its top-level domain
+ * already, whereas `www.ephapse.net` is not, so it only gets there by that submission.
  */
 export const HSTS = 'max-age=63072000; includeSubDomains; preload';

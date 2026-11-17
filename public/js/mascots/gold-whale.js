@@ -4,7 +4,7 @@ import { ACCENTS, Mask } from './pixels.js';
  * The golden whale, worn for a thousand dollars spent (owner, 2026-11-08): the most
  * ornate of the first three. Solid gold with a light catching its back, a crown with
  * three pearls and three stones, the grooves of a humpback's throat, a long fin and
- * sparkles that come and go around it. Drawn from scratch for Synapsez.
+ * sparkles that come and go around it. Drawn from scratch for Ephapse.
  *
  * Asleep, it takes the crown off for the nightcap.
  */

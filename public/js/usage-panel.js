@@ -12,7 +12,7 @@ import { machineTime, countOf, filesSize } from './free-share.js';
  * the money.
  *
  * Every figure says whose it is. "OpenRouter reports" is OpenRouter's own answer
- * about the account's own key; everything else is what Synapsez counted from its
+ * about the account's own key; everything else is what Ephapse counted from its
  * own records, and the page says that rather than dressing a count up as a
  * limit. Nothing here is invented: a provider that does not say what is left is
  * shown without a bar, and a link to where it does say.
@@ -127,7 +127,7 @@ export function createUsagePanel(host, deps) {
   /**
    * The bar for one limit: its name, when it resets, how much is used — amber from
    * 80%, red at the limit. One with no key is a provider's total, or OrcaRouter's
-   * workspace; a figure Synapsez counted says so, because it is not the provider's.
+   * workspace; a figure Ephapse counted says so, because it is not the provider's.
    */
   function limitBar(l) {
     const provider = l.provider || 'openrouter';
@@ -403,7 +403,7 @@ export function createUsagePanel(host, deps) {
       </svg>`;
   }
 
-  /** The money: what OpenRouter says each key spent and has left, and what Synapsez estimates for the rest. */
+  /** The money: what OpenRouter says each key spent and has left, and what Ephapse estimates for the rest. */
   function credits(scope) {
     const parts = [];
     const lives = (view.report.live?.openrouter || []).filter((live) => live.ok);

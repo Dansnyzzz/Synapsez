@@ -734,7 +734,7 @@ section('needs you, read marks, pins, pause, duplicate, export and import (spec 
 
   // Export, then import into another account.
   const file = (await alice.call('GET', '/api/bots/export')).body;
-  check('the team goes out as synapsez-bots/1', file.format === 'synapsez-bots/1' && file.bots.length >= 2 && file.bots.some((b) => b.main));
+  check('the team goes out as ephapse-bots/1', file.format === 'ephapse-bots/1' && file.bots.length >= 2 && file.bots.some((b) => b.main));
   check('  with no ids, chats or keys', !JSON.stringify(file).includes(aliceId) && !JSON.stringify(file).includes(own.chatId));
   const bobBefore = (await bob.call('GET', '/api/bots')).body;
   const plan = await bob.call('POST', '/api/bots/import', { data: file, dry: true });
@@ -744,18 +744,18 @@ section('needs you, read marks, pins, pause, duplicate, export and import (spec 
   check('the import adds the bots and the groups', done.status === 201 && bobAfter.bots.length === bobBefore.bots.length + file.bots.filter((b) => !b.main).length && bobAfter.groups.length === bobBefore.groups.length + file.groups.length, done.text.slice(0, 300));
   const again = await bob.call('POST', '/api/bots/import', { data: file, dry: true });
   check('  a name already there becomes "(2)"', again.body.items.filter((i) => i.kind === 'bot').every((i) => / \(2\)$/.test(i.as)), JSON.stringify(again.body.items.map((i) => i.as)));
-  const sneaky = { format: 'synapsez-bots/1', bots: [{ key: 'x', name: 'Leaky', role: 'r', instructions: 'Use key sk-ant-api03-' + 'a'.repeat(60), memory: [{ text: 'The password is hunter2hunter2 and sk-' + 'b'.repeat(48) }, { text: 'Likes tea.' }] }] };
+  const sneaky = { format: 'ephapse-bots/1', bots: [{ key: 'x', name: 'Leaky', role: 'r', instructions: 'Use key sk-ant-api03-' + 'a'.repeat(60), memory: [{ text: 'The password is hunter2hunter2 and sk-' + 'b'.repeat(48) }, { text: 'Likes tea.' }] }] };
   const leaky = (await bob.call('POST', '/api/bots/import', { data: sneaky })).body.items[0];
   const leakyBot = (await bob.call('GET', '/api/bots')).body.bots.find((b) => b.name === 'Leaky');
   const leakyMemory = (await bob.call('GET', `/api/bots/${leakyBot.id}/memory`)).body.entries.map((e) => e.text);
   check('a secret in imported memory is refused and listed', leaky.refused.length === 1 && leakyMemory.join() === 'Likes tea.', JSON.stringify(leaky));
   check('  without echoing the key back', !/sk-b{10}/.test(JSON.stringify(leaky)), JSON.stringify(leaky.refused));
   check('  and struck out of the instructions', !/sk-ant-api03-a{20}/.test(leakyBot.instructions), leakyBot.instructions);
-  const half = { format: 'synapsez-bots/1', bots: [{ key: 'ok', name: 'Fine', role: 'r' }], groups: [{ name: 'Nobody here', members: ['missing'] }] };
+  const half = { format: 'ephapse-bots/1', bots: [{ key: 'ok', name: 'Fine', role: 'r' }], groups: [{ name: 'Nobody here', members: ['missing'] }] };
   const halfDone = (await bob.call('POST', '/api/bots/import', { data: half })).body.items;
   check('a bad item is left out alone; the rest come in', halfDone.find((i) => i.kind === 'bot')?.added === true && halfDone.find((i) => i.kind === 'group')?.added === false && !(await bob.call('GET', '/api/bots')).body.groups.some((x) => x.name === 'Nobody here'), JSON.stringify(halfDone));
   check('another format is refused', (await bob.call('POST', '/api/bots/import', { data: { format: 'other/9', bots: [{ name: 'x' }] } })).status === 400);
-  const pasted = 'Here you go:\n```json\n{"format":"synapsez-bots/1","bots":[{"name":"Pasted","role":"Notes","memory":["Lives in Hà Nội."]}]}\n```';
+  const pasted = 'Here you go:\n```json\n{"format":"ephapse-bots/1","bots":[{"name":"Pasted","role":"Notes","memory":["Lives in Hà Nội."]}]}\n```';
   check('an answer pasted from another assistant reads', (await bob.call('POST', '/api/bots/import', { data: pasted })).body.items[0]?.added === true);
 }
 

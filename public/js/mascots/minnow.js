@@ -3,7 +3,7 @@ import { Mask } from './pixels.js';
 /**
  * The newcomer's minnow (owner, 2026-11-08): the first title anyone wears, so the
  * plainest creature. A small blue fish resting on its belly, facing left, a forked
- * tail behind, two fins and a lateral line. Drawn from scratch for Synapsez.
+ * tail behind, two fins and a lateral line. Drawn from scratch for Ephapse.
  *
  * Rows from the floor up: the body stands on row 58 (its outline), so the 64-pixel
  * square keeps rows 0 to 40 and the columns left of 21 free for the props.

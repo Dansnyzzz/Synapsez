@@ -74,7 +74,7 @@ const deliver = (body, { delivery = id(), ts = Math.floor(Date.now() / 1000), si
   const raw = Buffer.from(typeof body === 'string' ? body : JSON.stringify(body));
   const timestamp = String(ts);
   const signature = sig ?? hooks.signHook(sign, { timestamp, delivery, body: raw });
-  return hooks.acceptHook({ routeId: route.id, raw, headers: { 'x-synapsez-timestamp': timestamp, 'x-synapsez-delivery': delivery, 'x-synapsez-signature': signature }, start });
+  return hooks.acceptHook({ routeId: route.id, raw, headers: { 'x-ephapse-timestamp': timestamp, 'x-ephapse-delivery': delivery, 'x-ephapse-signature': signature }, start });
 };
 
 section('a request is checked on its bytes before it is read');
@@ -167,7 +167,7 @@ section('a secret that will not open refuses everything, and is never signed ove
     const raw = Buffer.from(JSON.stringify({ type: 'build.done' }));
     const timestamp = String(Math.floor(Date.now() / 1000));
     const delivery = id();
-    return hooks.acceptHook({ routeId: routeRowId, raw, headers: { 'x-synapsez-timestamp': timestamp, 'x-synapsez-delivery': delivery, 'x-synapsez-signature': forged(raw, timestamp, delivery) }, start });
+    return hooks.acceptHook({ routeId: routeRowId, raw, headers: { 'x-ephapse-timestamp': timestamp, 'x-ephapse-delivery': delivery, 'x-ephapse-signature': forged(raw, timestamp, delivery) }, start });
   };
   check('signatureMatches never matches for an empty secret', !hooks.signatureMatches('', { timestamp: '1', delivery: 'd', body: Buffer.from('x'), signature: hooks.signHook('', { timestamp: '1', delivery: 'd', body: Buffer.from('x') }) }));
   const before = started.length;
@@ -219,7 +219,7 @@ section('rate limits per route');
     const raw = Buffer.from(JSON.stringify({ type: 'tick' }));
     const timestamp = String(Math.floor(Date.now() / 1000));
     const delivery = `tick-${i}`;
-    last = await hooks.acceptHook({ routeId: r2.id, raw, headers: { 'x-synapsez-timestamp': timestamp, 'x-synapsez-delivery': delivery, 'x-synapsez-signature': hooks.signHook(s2, { timestamp, delivery, body: raw }) }, start: () => {} });
+    last = await hooks.acceptHook({ routeId: r2.id, raw, headers: { 'x-ephapse-timestamp': timestamp, 'x-ephapse-delivery': delivery, 'x-ephapse-signature': hooks.signHook(s2, { timestamp, delivery, body: raw }) }, start: () => {} });
   }
   check(`the ${hooks.HOOK_PER_MINUTE + 1}th request in a minute is refused`, last?.status === 429, JSON.stringify(last));
 }
@@ -255,7 +255,7 @@ section('waits: parked, capped, offered to the next run, closed');
 
 const outbox = await import('../server/outbox.js');
 const tg = await import('../server/telegramInbound.js');
-await store.saveConnector(uid, 'telegram', encryptSecret('123456:TEST-TOKEN', ['connector', uid, 'telegram']), '@synapsez_test_bot');
+await store.saveConnector(uid, 'telegram', encryptSecret('123456:TEST-TOKEN', ['connector', uid, 'telegram']), '@ephapse_test_bot');
 /** Telegram, faked: every address asked, and what it answers. */
 function fakeTelegram(answer = () => ({ ok: true, result: { message_id: 77 } })) {
   const calls = [];
@@ -298,7 +298,7 @@ section('the outbox sends once, retries what failed, drops what cannot go');
 
 section('Telegram to Chief: turned on, linked, gated, answered once');
 {
-  const fake = fakeTelegram((method) => (method === 'getMe' ? { ok: true, result: { username: 'synapsez_test_bot' } } : { ok: true, result: method === 'sendMessage' ? { message_id: 501 } : true }));
+  const fake = fakeTelegram((method) => (method === 'getMe' ? { ok: true, result: { username: 'ephapse_test_bot' } } : { ok: true, result: method === 'sendMessage' ? { message_id: 501 } : true }));
   let refused = '';
   try {
     await tg.enableTelegram(uid, { base: 'http://localhost:3000', fetchImpl: fake.fetchImpl });
@@ -331,7 +331,7 @@ section('Telegram to Chief: turned on, linked, gated, answered once');
   check('"/start <code>" links the person\'s own id, and says so', (await store.getTelegramInbound(uid)).allowed_ids[0] === '111' && fake.calls.some((c) => c.method === 'sendMessage' && /Linked/.test(c.body.text)));
   const groupNoMention = await send({ message_id: 5, from: { id: 111 }, chat: { id: -100, type: 'group' }, text: 'just chatting' });
   check('a group message that does not mention the bot is ignored', groupNoMention.status === 200 && turns.length === 0);
-  await send({ message_id: 6, from: { id: 111 }, chat: { id: -100, type: 'group' }, text: '@synapsez_test_bot what is on today?' });
+  await send({ message_id: 6, from: { id: 111 }, chat: { id: -100, type: 'group' }, text: '@ephapse_test_bot what is on today?' });
   check('  one that mentions it is taken', turns.length === 1 && /what is on today/.test(turns[0].text));
   const repeat = updateId;
   await send(dm('Plan my day'), { update: repeat });

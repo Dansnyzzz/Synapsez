@@ -1050,7 +1050,7 @@ async function exaSearchKnows(key) {
 /**
  * Whether a key is good, by its service's free call (Brave has none: it is checked on first
  * use). `refused`: the service turned it away; `unreachable`: it could not be asked, or was
- * busy — try again; `template`: an E2B account without the Synapsez template.
+ * busy — try again; `template`: an E2B account without the Ephapse template.
  *
  * @param {string} service
  * @param {string} key
@@ -1077,7 +1077,7 @@ export async function checkKey(service, key) {
   if (service === 'exa') {
     if (res.status === 401 || body?.tag === 'INVALID_API_KEY') {
       // Websets is a product of its own: a key from a new account, each its own team, was turned away there although
-      // search is what Synapsez uses it for (the owner's live report, 2026-11-17). Search is asked the same once.
+      // search is what Ephapse uses it for (the owner's live report, 2026-11-17). Search is asked the same once.
       const search = await exaSearchKnows(text);
       if (search !== 'refused') return search === 'known' ? { ok: true } : { ok: false, reason: 'unreachable' };
       log.info('key pool: a key was refused by its service', { service, hint: hintOf(text), status: res.status });

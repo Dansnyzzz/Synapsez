@@ -193,7 +193,7 @@ check(
  * a box that sat between their two lines; signing up asked for a name nobody
  * needed beside the username; and a paragraph about the app filled the foot of
  * the card, which Google's verification needs on the home page — so it is one
- * press away under "What is Synapsez?" rather than gone.
+ * press away under "What is Ephapse?" rather than gone.
  */
 {
   const gate = await page.evaluate(() => {
@@ -222,7 +222,7 @@ check(
     words: document.getElementById('gate-about').textContent.trim(),
     expanded: document.getElementById('gate-what').getAttribute('aria-expanded'),
   }));
-  check('  pressed, it says what Synapsez is', told.shown && told.expanded === 'true' && /Synapsez/.test(told.words), JSON.stringify(told));
+  check('  pressed, it says what Ephapse is', told.shown && told.expanded === 'true' && /Ephapse/.test(told.words), JSON.stringify(told));
 }
 await page.click('#gate-submit');
 await page.waitForTimeout(600);
@@ -266,7 +266,7 @@ section('a new account is shown the guide, once');
   /*
    * The owner's 2026-10-26 screenshot 2: the step's words showed through the
    * bar of buttons as they scrolled under it, the names of the steps were cut
-   * to "Synapsez là…", and the clip carried a caption the owner found redundant.
+   * to "Ephapse là…", and the clip carried a caption the owner found redundant.
    */
   const look = await page.evaluate(() => {
     const foot = document.querySelector('#onboarding .onb__foot');
@@ -457,7 +457,7 @@ section("the account at the foot of the sidebar, and its menu");
   await page.waitForTimeout(400);
   await page.click('.plusmenu--account [data-row="about"]');
   await page.waitForTimeout(300);
-  check('About Synapsez says what it is', /Synapsez/.test((await page.textContent('#about .about__what')) || '') && !!(await page.$('#about[open]')));
+  check('About Ephapse says what it is', /Ephapse/.test((await page.textContent('#about .about__what')) || '') && !!(await page.$('#about[open]')));
   await page.evaluate(() => document.getElementById('about').close());
 
   // The shortcuts the menu names work, and the list of them is one of them.
@@ -633,7 +633,7 @@ section('Usage, devices, feedback and what is new — from the account menu');
   // Near a limit: the bar turns amber, the line at the top says so, and the
   // composer carries Claude's banner until it is closed.
   report.live.openrouter[0].freeToday = { used: 46, limit: 50, remaining: 4 };
-  await page.evaluate(() => { try { for (const k of Object.keys(localStorage)) if (k.startsWith('synapsez.usageAlert')) localStorage.removeItem(k); } catch { /* none to clear */ } });
+  await page.evaluate(() => { try { for (const k of Object.keys(localStorage)) if (k.startsWith('ephapse.usageAlert')) localStorage.removeItem(k); } catch { /* none to clear */ } });
   await page.click('#usage-panel [data-refresh]');
   await page.waitForTimeout(500);
   const near = await page.evaluate(() => ({
@@ -647,7 +647,7 @@ section('Usage, devices, feedback and what is new — from the account menu');
   await page.evaluate(() => document.getElementById('settings').close());
   await page.click('#usage-alert [data-alert-close]');
   check('  closed, it stays closed', await page.isHidden('#usage-alert'));
-  check('  remembered for this account only, not the whole browser (PRV-019)', await page.evaluate(() => Object.keys(localStorage).some((k) => /^synapsez\.usageAlert:.+/.test(k)) && localStorage.getItem('synapsez.usageAlert') === null));
+  check('  remembered for this account only, not the whole browser (PRV-019)', await page.evaluate(() => Object.keys(localStorage).some((k) => /^ephapse\.usageAlert:.+/.test(k)) && localStorage.getItem('ephapse.usageAlert') === null));
   await page.evaluate(() => document.getElementById('settings').showModal());
   await page.click('#tab-usage');
   await page.waitForTimeout(300);
@@ -3833,9 +3833,9 @@ section('Skills: filter, sort, + Add — upload with a scan, create with a draft
   // cancelled on another device — the account has none now — is not brought back.
   await page.evaluate((mine) => {
     const foreign = JSON.stringify({ name: 'not-yours', description: 'x', instructions: 'their secret', files: [], savedAt: '2999-01-01T00:00:00.000Z' });
-    localStorage.setItem('synapsez.skillDraft', foreign);
-    localStorage.setItem('synapsez.skillDraft:someone-else', foreign);
-    localStorage.setItem(`synapsez.skillDraft:${mine}`, JSON.stringify({ name: 'cancelled-elsewhere', description: 'x', instructions: 'gone', files: [], savedAt: '2998-01-01T00:00:00.000Z', onAccount: true }));
+    localStorage.setItem('ephapse.skillDraft', foreign);
+    localStorage.setItem('ephapse.skillDraft:someone-else', foreign);
+    localStorage.setItem(`ephapse.skillDraft:${mine}`, JSON.stringify({ name: 'cancelled-elsewhere', description: 'x', instructions: 'gone', files: [], savedAt: '2998-01-01T00:00:00.000Z', onAccount: true }));
   }, me.id);
   await page.click('#tab-skills');
   await page.waitForTimeout(300);
@@ -3845,12 +3845,12 @@ section('Skills: filter, sort, + Add — upload with a scan, create with a draft
   const opened = await page.evaluate(() => ({
     name: /** @type {HTMLInputElement} */ (document.getElementById('skc-name')).value,
     text: /** @type {HTMLTextAreaElement} */ (document.getElementById('skc-text')).value,
-    legacy: localStorage.getItem('synapsez.skillDraft'),
+    legacy: localStorage.getItem('ephapse.skillDraft'),
   }));
   check("Create a skill never opens on another account's draft, and the ownerless one is dropped (PRV-017)", opened.name !== 'not-yours' && !/their secret/.test(opened.text) && opened.legacy === null, JSON.stringify(opened));
-  const stale = await page.evaluate((mine) => localStorage.getItem(`synapsez.skillDraft:${mine}`), me.id);
+  const stale = await page.evaluate((mine) => localStorage.getItem(`ephapse.skillDraft:${mine}`), me.id);
   check('  nor on a draft cancelled on another device: the copy here is dropped (PRV-020)', opened.name !== 'cancelled-elsewhere' && !/cancelled-elsewhere/.test(stale || ''), JSON.stringify({ name: opened.name, stale }));
-  await page.evaluate(() => localStorage.removeItem('synapsez.skillDraft:someone-else'));
+  await page.evaluate(() => localStorage.removeItem('ephapse.skillDraft:someone-else'));
   await page.fill('#skc-name', 'ui-draft-skill');
   await page.fill('#skc-desc', 'When testing drafts.');
   await page.click('#skc-text');
@@ -3867,7 +3867,7 @@ section('Skills: filter, sort, + Add — upload with a scan, create with a draft
   check('  Cancel with something written asks first, Keep editing ready', (await page.evaluate(() => /** @type {HTMLDialogElement} */ (document.getElementById('skc-discard')).open && document.activeElement?.id === 'skc-keep')) === true);
   await page.click('#skc-keep');
   await page.evaluate(() => {
-    for (const key of Object.keys(localStorage)) if (key.startsWith('synapsez.skillDraft')) localStorage.removeItem(key);
+    for (const key of Object.keys(localStorage)) if (key.startsWith('ephapse.skillDraft')) localStorage.removeItem(key);
     /** @type {HTMLDialogElement} */ (document.getElementById('skill-create')).close();
   });
   await page.click('#skill-add-open');
@@ -3879,7 +3879,7 @@ section('Skills: filter, sort, + Add — upload with a scan, create with a draft
   await page.waitForTimeout(200);
   await page.click('#skc-discard-yes');
   await page.waitForTimeout(500);
-  check('  Discard lets it go, everywhere', (await page.evaluate(async () => !(/** @type {HTMLDialogElement} */ (document.getElementById('skill-create')).open) && !Object.keys(localStorage).some((k) => k.startsWith('synapsez.skillDraft')) && !(await (await fetch('/api/skills/draft')).json()).draft)) === true);
+  check('  Discard lets it go, everywhere', (await page.evaluate(async () => !(/** @type {HTMLDialogElement} */ (document.getElementById('skill-create')).open) && !Object.keys(localStorage).some((k) => k.startsWith('ephapse.skillDraft')) && !(await (await fetch('/api/skills/draft')).json()).draft)) === true);
 
   // Create with Claude: a new conversation, the request written, skill-creator picked.
   await page.click('#skill-add-open');
@@ -3927,7 +3927,7 @@ section('Skills people share: Discover newest first, Add by reference, edits arr
   await page.click('#tab-skills');
   await page.waitForTimeout(800);
   const yours = await page.evaluate(() => document.getElementById('skill-list')?.textContent || '');
-  check("Yours no longer lists Synapsez's own skills", !/Writing a Word document|Building a spreadsheet/.test(yours), yours.slice(0, 160));
+  check("Yours no longer lists Ephapse's own skills", !/Writing a Word document|Building a spreadsheet/.test(yours), yours.slice(0, 160));
   await page.click('#panel-skills [data-cust-view="discover"]');
   await page.waitForTimeout(300);
   const discover = await page.evaluate(() => ({
@@ -4024,7 +4024,7 @@ section('Skills people share: Discover newest first, Add by reference, edits arr
   await page.waitForTimeout(900);
   check('  Add there adds it', (await store.listAddedSkills(me.id)).some((a) => a.skill_id === newer.id));
 
-  // Synapsez's own come back when the filter asks for them.
+  // Ephapse's own come back when the filter asks for them.
   await page.click('#panel-skills [data-cust-view="yours"]');
   await page.click('#skills-filter');
   await page.waitForTimeout(250);
@@ -4034,7 +4034,7 @@ section('Skills people share: Discover newest first, Add by reference, edits arr
   await page.locator('#settings .cmenu--sub .cmenu__item').nth(3).click();
   await page.waitForTimeout(300);
   const builtIns = await page.evaluate(() => document.getElementById('skill-list')?.textContent || '');
-  check('Created by › All, You, Others, Synapsez — and Synapsez brings the built-in ones back', createdBy.length === 4 && /Writing a Word document/.test(builtIns), JSON.stringify(createdBy));
+  check('Created by › All, You, Others, Ephapse — and Ephapse brings the built-in ones back', createdBy.length === 4 && /Writing a Word document/.test(builtIns), JSON.stringify(createdBy));
   await page.click('#skills-filter');
   await page.locator('#settings .cmenu .cmenu__item--sub').nth(1).hover();
   await page.waitForTimeout(300);
@@ -5402,7 +5402,7 @@ section('the file viewer');
     const copy = await page.evaluate(() => window.__printCopy);
     check('Save as PDF builds a copy of just the document', !!copy && !/class="sidebar|id="app"/.test(copy), copy ? `${copy.length} chars` : 'no copy');
     const titled = /<title>([^<]*)<\/title>/.exec(copy || '')?.[1] || '';
-    check('  named after the file, which is what the PDF is called', titled.length > 0 && !/Synapsez/.test(titled), titled);
+    check('  named after the file, which is what the PDF is called', titled.length > 0 && !/Ephapse/.test(titled), titled);
 
     let pdfText = '';
     if (copy) {
@@ -10076,7 +10076,7 @@ section('a bare ?continue= link is shown after signing in, never copied (SEC-050
     if (pressed) {
       // What the shared page's own button does before it sends the visitor here.
       await tab.goto(`http://127.0.0.1:${PORT}/share.html?t=${token}`, { waitUntil: 'domcontentloaded' });
-      await tab.evaluate((t) => sessionStorage.setItem('synapsez:continue-shared', t), token);
+      await tab.evaluate((t) => sessionStorage.setItem('ephapse:continue-shared', t), token);
     }
     await tab.goto(`http://127.0.0.1:${PORT}/?continue=${token}`, { waitUntil: 'domcontentloaded' });
     await tab.waitForTimeout(600);

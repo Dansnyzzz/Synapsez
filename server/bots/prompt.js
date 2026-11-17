@@ -73,7 +73,7 @@ export async function botPersona(userId, chat) {
     group ? store.listBots(userId) : [],
   ]);
   const role = bot.role ? ` Your role: ${bot.role}.` : '';
-  const intro = `You are ${bot.name}, one of the user's bots in Synapsez — an agentic assistant the user drives from their phone, tablet, or laptop.${role}`;
+  const intro = `You are ${bot.name}, one of the user's bots in Ephapse — an agentic assistant the user drives from their phone, tablet, or laptop.${role}`;
   const parts = [bot.is_main ? MAIN_RULES : '', TEAM_RULES, bot.is_main ? '' : MEMBER_RULES];
   if (bot.instructions?.trim()) parts.push(`## Instructions the user wrote for you, ${bot.name}\n${bot.instructions.trim()}`);
   if (group) {

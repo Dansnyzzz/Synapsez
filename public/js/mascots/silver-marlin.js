@@ -6,7 +6,7 @@ import { ACCENTS, Mask } from './pixels.js';
  * with pale blue bars, silver sides and a white belly; a tall sail of a fin with dark
  * rays, a crescent tail, a light that sweeps along its side, and two glints that come
  * and go. Less gold than first place, more shine than third. Drawn from scratch for
- * Synapsez.
+ * Ephapse.
  *
  * Its bill rises to its tip so it stays clear of the screen in front of it.
  */

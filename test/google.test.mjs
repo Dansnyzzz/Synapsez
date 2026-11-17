@@ -81,6 +81,7 @@ section('a deployment on ACCESS_TOKEN alone still signs with a secret (SEC-047)'
     const emptyKeyMac = (await import('node:crypto')).createHmac('sha256', '').update(payload).digest('base64url');
     check('on ACCESS_TOKEN alone the Google sign-in is signed with it, not an empty key', mac !== emptyKeyMac && google.readState(state, 'u-1', nonce).join() === 'gmail');
     const crypto = await import('node:crypto');
+    // The old constant is the one printed in the repository, so it is the one an attacker would try.
     const publicKey = crypto.createHmac('sha256', 'synapsez-dev-only').update('image-proxy-v1').digest();
     const forgeable = crypto.createHmac('sha256', publicKey).update('https://evil.example/x.png').digest('base64url').slice(0, 22);
     check('  and a picture address is not signed with the constant printed in this repository', imageSignature('https://evil.example/x.png') !== forgeable);

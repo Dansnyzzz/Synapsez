@@ -124,7 +124,7 @@ section('http.js: every call says who it is, and nothing else');
   const sent = fetchImpl.calls[0]?.headers || {};
   const ua = sent['User-Agent'];
   check('JSON comes back parsed', got?.ok === 1);
-  check('an honest User-Agent, with the app\'s version', /^Synapsez\/\d+\.\d+\.\d+ \(\+https:\/\/github\.com\/; market data on request\)$/.test(ua), ua);
+  check('an honest User-Agent, with the app\'s version', /^Ephapse\/\d+\.\d+\.\d+ \(\+https:\/\/github\.com\/; market data on request\)$/.test(ua), ua);
   check('  never a Referer or Origin, and never the caller\'s own UA', !Object.keys(sent).some((k) => /^(referer|origin)$/i.test(k)) && !/Chrome/.test(ua), JSON.stringify(sent));
   await http.getJson('yahoo', 'https://query1.finance.yahoo.com/x', { fetchImpl });
   check('Yahoo keeps the Mozilla/5.0 it has always been sent — and only Yahoo', fetchImpl.calls[1].headers['User-Agent'] === 'Mozilla/5.0');
@@ -132,9 +132,9 @@ section('http.js: every call says who it is, and nothing else');
   const secCalls = fakeFetch();
   const noUa = await refusal(http.getJson('sec', 'https://data.sec.gov/x', { fetchImpl: secCalls }));
   check('SEC without SEC_USER_AGENT is not asked, and the reason names the setting', noUa instanceof http.SourceError && /SEC_USER_AGENT/.test(noUa.message) && secCalls.calls.length === 0, noUa?.message);
-  process.env.SEC_USER_AGENT = 'Synapsez ops@example.com';
+  process.env.SEC_USER_AGENT = 'Ephapse ops@example.com';
   await http.getJson('sec', 'https://data.sec.gov/x', { fetchImpl: secCalls });
-  check('  with it, SEC gets exactly that', secCalls.calls[0]?.headers['User-Agent'] === 'Synapsez ops@example.com');
+  check('  with it, SEC gets exactly that', secCalls.calls[0]?.headers['User-Agent'] === 'Ephapse ops@example.com');
   delete process.env.SEC_USER_AGENT;
 }
 
@@ -185,8 +185,8 @@ section('Vietcap from Singapore: a relay only the deployment can use, only for V
   check('without the deployment\'s secret, nothing is asked', noKey.status === 401 && unset.status === 401 && asked.length === 0);
   check('  GET only, and only the listed addresses', post.status === 405 && elsewhere.status === 403 && asked.length === 0);
   check('  what the relay refuses says it is the relay\'s', [noKey, post, elsewhere].every((a) => a.headers['x-finance-relay'] === 'refused'));
-  const passed = await relay.relayAnswer({ method: 'GET', url: good, authorization: 'Bearer s3cret', ua: 'Synapsez/1 (test)', secret: 's3cret', fetchImpl: upstream });
-  check('with it, Vietcap\'s answer comes back as it was, marked passed, no redirects followed', passed.status === 200 && passed.body.toString() === '{"ok":1}' && passed.headers['x-finance-relay'] === 'passed' && asked[0].init.redirect === 'error' && asked[0].init.headers['User-Agent'] === 'Synapsez/1 (test)');
+  const passed = await relay.relayAnswer({ method: 'GET', url: good, authorization: 'Bearer s3cret', ua: 'Ephapse/1 (test)', secret: 's3cret', fetchImpl: upstream });
+  check('with it, Vietcap\'s answer comes back as it was, marked passed, no redirects followed', passed.status === 200 && passed.body.toString() === '{"ok":1}' && passed.headers['x-finance-relay'] === 'passed' && asked[0].init.redirect === 'error' && asked[0].init.headers['User-Agent'] === 'Ephapse/1 (test)');
 
   const keep = { VERCEL: process.env.VERCEL, VERCEL_REGION: process.env.VERCEL_REGION, CRON_SECRET: process.env.CRON_SECRET, PUBLIC_URL: process.env.PUBLIC_URL };
   process.env.VERCEL = '1';
@@ -644,7 +644,7 @@ section('7e sec.js: one value per period, and nothing without SEC_USER_AGENT');
   const ctx = { fetchImpl };
   const none = await refusal(sec.statements('AAPL', 'income', 'year', ctx));
   check('no SEC_USER_AGENT: SEC is not asked, and the answer says what to set', none instanceof http.SourceError && /SEC_USER_AGENT/.test(none.message) && fetchImpl.calls.length === 0, none?.message);
-  process.env.SEC_USER_AGENT = 'Synapsez ops@example.com';
+  process.env.SEC_USER_AGENT = 'Ephapse ops@example.com';
   const id = await sec.cik('aapl', ctx);
   check('ticker → CIK, ten digits', id.cik === '0000320193' && id.name === 'Apple Inc.');
   const income = await sec.statements('AAPL', 'income', 'year', ctx);
@@ -666,7 +666,7 @@ section('7e sec.js: one value per period, and nothing without SEC_USER_AGENT');
   const top = await sec.screen('assets', null, ctx, { now: new Date('2026-11-10T00:00:00Z') });
   const frameUrl = fetchImpl.calls.find((c) => c.url.includes('/frames/'))?.url || '';
   check('screen: one frames call — a balance figure at last year\'s end', /frames\/us-gaap\/Assets\/USD\/CY2025Q4I\.json$/.test(frameUrl) && top.rows.length === 5 && top.rows[0].value >= top.rows[1].value, frameUrl);
-  check('every SEC call carried the owner\'s contact', fetchImpl.calls.every((c) => c.headers['User-Agent'] === 'Synapsez ops@example.com'));
+  check('every SEC call carried the owner\'s contact', fetchImpl.calls.every((c) => c.headers['User-Agent'] === 'Ephapse ops@example.com'));
   delete process.env.SEC_USER_AGENT;
 }
 

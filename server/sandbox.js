@@ -371,7 +371,7 @@ async function machineFor(name, { signal } = {}) {
     // again next time — only the newest snapshot, kept a month after last use.
     persistent: true,
     keepLastSnapshots: { count: 1, expiration: SNAPSHOT_DAYS * 24 * 60 * 60 * 1000, deleteEvicted: true },
-    tags: { app: 'synapsez' },
+    tags: { app: 'ephapse' },
     // The browser's and the MCP bridge's ports, reachable as https://….vercel.run.
     // Machines made before either existed gain them in `portAddress`.
     ports: PORTS,
@@ -412,7 +412,7 @@ export async function scratchMachine({ signal } = {}) {
       resources: { vcpus: STAND_IN_VCPUS },
       networkPolicy: 'allow-all',
       persistent: false,
-      tags: { app: 'synapsez', role: 'mcp-check' },
+      tags: { app: 'ephapse', role: 'mcp-check' },
       ports: [MCP_PORT],
       signal,
     });

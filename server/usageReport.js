@@ -22,7 +22,7 @@ import { pacificDay } from './providerOutcomes.js';
  *     account has ever bought credit. Read for each of the account's own keys,
  *     never for the deployment's shared one: that key's figures are the whole
  *     deployment's, which is not this account's to read.
- *   - **What Synapsez counted.** Every model call is booked in `usage_events`
+ *   - **What Ephapse counted.** Every model call is booked in `usage_events`
  *     (usage.js `record`), so requests, tokens and the cost estimate are known
  *     for every provider, per hour, for as far back as the page draws. Google's
  *     Gemini API has no endpoint that reports what is left of a key's allowance,
@@ -32,7 +32,7 @@ import { pacificDay } from './providerOutcomes.js';
  *     (`/v1/dashboard/billing/usage`), the workspace's last thirty days
  *     (`/metrics/workspace`, for a key whose owner is an administrator of it), and
  *     nothing about its free requests: its docs say plainly that a window's
- *     remainder cannot be read. So its free bar is Synapsez's own count, against the
+ *     remainder cannot be read. So its free bar is Ephapse's own count, against the
  *     ceiling OrcaRouter publishes, and the page says whose number each one is.
  *
  * The browser draws the week, the heatmap and the pace from the hourly rows in

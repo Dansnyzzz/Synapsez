@@ -319,7 +319,7 @@ section("one machine per account, found again — and paid for before it runs");
   state.boxes.clear();
   state.afterCreate = async () => {
     state.afterCreate = null;
-    const other = new sdk.Sandbox('sbx-other', { app: 'synapsez', machine: 'synz-b' });
+    const other = new sdk.Sandbox('sbx-other', { app: 'ephapse', machine: 'synz-b' });
     other.startedAt = 0;
     state.boxes.set(other.sandboxId, other);
   };
@@ -748,7 +748,7 @@ section('a machine made from an older build moves, files and all (owner, 2026-11
   const { state, sdk } = fakeSdk();
   e2b.__testing.useSdk(sdk);
   await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
-  const old = await sdk.Sandbox.create('base', { metadata: { app: 'synapsez', machine: 'synz-d' } });
+  const old = await sdk.Sandbox.create('base', { metadata: { app: 'ephapse', machine: 'synz-d' } });
   await store.setUserSetting('u-e2b', e2b.__testing.SETTING, { id: old.sandboxId, cpu: 2, memMb: 512, closed: true });
   state.files[`/tmp/synz-move-${old.sandboxId}.tgz`] = 'packed';
   state.calls.length = 0;
@@ -769,7 +769,7 @@ section('a machine made from an older build moves, files and all (owner, 2026-11
   // Going wrong half way changes nothing.
   const { state: state2, sdk: sdk2 } = fakeSdk();
   e2b.__testing.useSdk(sdk2);
-  const old2 = await sdk2.Sandbox.create('base', { metadata: { app: 'synapsez', machine: 'synz-e' } });
+  const old2 = await sdk2.Sandbox.create('base', { metadata: { app: 'ephapse', machine: 'synz-e' } });
   await store.setUserSetting('u-e2b', e2b.__testing.SETTING, { id: old2.sandboxId, cpu: 2, memMb: 512, closed: true });
   state2.files[`/tmp/synz-move-${old2.sandboxId}.tgz`] = 'packed';
   state2.onRun = (cmd) => (String(cmd).includes('tar xzf') ? { exitCode: 2, stdout: '', stderr: 'broken' } : { exitCode: 0, stdout: 'ok', stderr: '' });
@@ -890,7 +890,7 @@ section('a machine that cannot get the template stays where it is');
   const { state, sdk } = fakeSdk();
   e2b.__testing.useSdk(sdk);
   await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
-  const old = await sdk.Sandbox.create('base', { metadata: { app: 'synapsez', machine: 'synz-stay' } });
+  const old = await sdk.Sandbox.create('base', { metadata: { app: 'ephapse', machine: 'synz-stay' } });
   await store.setUserSetting('u-e2b', e2b.__testing.SETTING, { id: old.sandboxId, cpu: 2, memMb: 512, closed: true, checkpoints: [{ id: 'snap-kept', at: Date.now() }] });
   state.files[`/tmp/synz-move-${old.sandboxId}.tgz`] = 'packed';
   const realCreate = sdk.Sandbox.create;

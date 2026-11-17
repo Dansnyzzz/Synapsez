@@ -7,7 +7,7 @@ import { BotError, LIMITS, createBot, createGroup, freeName, isCreature } from '
 import { remember } from './memory.js';
 
 /*
- * A team to and from a file (spec B.5): `synapsez-bots/1`, JSON.
+ * A team to and from a file (spec B.5): `ephapse-bots/1`, JSON.
  *
  * What goes out: each bot (name, role, creature, colour, instructions, memory review,
  * its memory and its scheduled tasks), each group (name, notice, members, admin, its
@@ -24,7 +24,14 @@ import { remember } from './memory.js';
  * one that fails part-way is taken back out, and the rest still come in.
  */
 
-export const FORMAT = 'synapsez-bots/1';
+export const FORMAT = 'ephapse-bots/1';
+
+/**
+ * The names a person's own older files carry: the product had another name until 1.33.0. This is their
+ * data in a file they saved, not an integration, so it still reads; an export writes only the new names.
+ */
+const LEGACY_FORMAT = 'synapsez-bots/1';
+const LEGACY_EXPORT = 'synapsez-export';
 
 /** At most this many memory entries come in for one bot or group: the migrate prompt asks for 60. */
 const IMPORT_ENTRIES = 120;
@@ -98,8 +105,8 @@ export function readTeamFile(data) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new BotError('That is not a team file.', 400, 'bad_file');
   // The account's one export carries the team under `team` (owner, 2026-11-12), so it reads back here too.
   const whole = /** @type {any} */ (value);
-  const file = whole.format === 'synapsez-export' && whole.team && typeof whole.team === 'object' ? whole.team : whole;
-  if (file.format && file.format !== FORMAT) throw new BotError(`This app reads ${FORMAT} files; that one is ${String(file.format).slice(0, 40)}.`, 400, 'bad_format');
+  const file = (whole.format === 'ephapse-export' || whole.format === LEGACY_EXPORT) && whole.team && typeof whole.team === 'object' ? whole.team : whole;
+  if (file.format && file.format !== FORMAT && file.format !== LEGACY_FORMAT) throw new BotError(`This app reads ${FORMAT} files; that one is ${String(file.format).slice(0, 40)}.`, 400, 'bad_format');
   const bots = Array.isArray(file.bots) ? file.bots.filter((b) => b && typeof b === 'object') : [];
   const groups = Array.isArray(file.groups) ? file.groups.filter((g) => g && typeof g === 'object') : [];
   if (!bots.length && !groups.length) throw new BotError('That file has no bots and no groups in it.', 400, 'empty_file');

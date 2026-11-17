@@ -59,7 +59,7 @@ export function startChatSpan({ provider, model, maxTokens, shared }) {
         ...(Number.isFinite(usage.output) ? { 'gen_ai.usage.output_tokens': usage.output } : {}),
         ...(Number.isFinite(usage.cacheRead) ? { 'gen_ai.usage.cache_read.input_tokens': usage.cacheRead } : {}),
         ...(error ? { 'error.type': errorType(error) } : aborted ? { 'error.type': 'cancelled' } : {}),
-        'synapsez.key': shared ? 'shared' : 'own',
+        'ephapse.key': shared ? 'shared' : 'own',
         duration_ms: since(started),
       };
       if (error) log.warn('gen_ai.span', fields);

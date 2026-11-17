@@ -678,7 +678,7 @@ function sheetName(name, taken) {
  * @param theme  a palette name (theme.js), a palette, or nothing — picked from the words
  * @returns a Buffer holding the whole package
  */
-export function writeXlsx({ sheets, title = 'Workbook', author = 'Synapsez', created = new Date(), theme = null } = {}) {
+export function writeXlsx({ sheets, title = 'Workbook', author = 'Ephapse', created = new Date(), theme = null } = {}) {
   const input = (Array.isArray(sheets) ? sheets : []).filter((sheet) => sheet && Array.isArray(sheet.rows));
   const list = input.length ? input : [{ name: 'Sheet1', rows: [[]] }];
   const words = list.map((s) => `${s.name}\n${(s.rows[0] || []).join(' ')}`).join('\n');

@@ -25,7 +25,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 /**
  * Only one bot of a team file, or one group with its members — the row menu's Export.
  *
- * @param {any} file  a synapsez-bots/1 export @param {'bot' | 'group'} kind @param {string} name
+ * @param {any} file  an ephapse-bots/1 export @param {'bot' | 'group'} kind @param {string} name
  */
 export function sliceTeamFile(file, kind, name) {
   const lower = String(name).toLowerCase();
@@ -40,7 +40,7 @@ export async function exportTeam(api, only = {}) {
   const file = await api.exportBots();
   const out = only.kind && only.name ? sliceTeamFile(file, only.kind, only.name) : file;
   const slug = only.name ? `-${String(only.name).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '')}` : '';
-  downloadJson(out, `synapsez-bots${slug}-${today()}.json`);
+  downloadJson(out, `ephapse-bots${slug}-${today()}.json`);
 }
 
 /** What an import would add, or added, one line each. */

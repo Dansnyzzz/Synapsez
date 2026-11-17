@@ -571,7 +571,7 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   "This service takes one key, from the server's settings.": 'Dịch vụ này chỉ nhận một key, lấy từ cài đặt của máy chủ.',
   'This service already has {0} keys.': 'Dịch vụ này đã có {0} key.',
   'You have tried a lot of keys in the last hour. Try again a little later.': 'Bạn đã thử rất nhiều key trong một giờ qua. Hãy thử lại sau một lúc.',
-  'The Synapsez template is not built in this E2B account.': 'Mẫu Synapsez chưa được dựng trong tài khoản E2B này.',
+  'The Ephapse template is not built in this E2B account.': 'Mẫu Ephapse chưa được dựng trong tài khoản E2B này.',
   '{0} could not be reached to check it — try again.': 'Không kết nối được {0} để kiểm tra key — hãy thử lại.',
   '{0} refused this key.': '{0} từ chối key này.',
   'No such key.': 'Không có key đó.',
@@ -666,10 +666,10 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'That server id belongs to another account.': 'Id máy chủ đó thuộc về tài khoản khác.',
   'Process {0} is already using the database at {1}. Two processes writing to one PGlite database corrupt it beyond repair, so this one is stopping before it starts. Stop the other one, or set DATA_DIR to somewhere else.':
     'Tiến trình {0} đang dùng cơ sở dữ liệu tại {1}. Hai tiến trình cùng ghi vào một cơ sở dữ liệu PGlite sẽ làm hỏng không sửa được, nên tiến trình này dừng trước khi chạy. Hãy dừng tiến trình kia, hoặc đặt DATA_DIR sang chỗ khác.',
-  'Another copy of Synapsez is already running on port {0} and using {1}. Two processes writing to one database will damage it, so this one is stopping. Close the other one — or set PORT and DATA_DIR to run a second instance properly.':
-    'Một bản Synapsez khác đang chạy ở cổng {0} và dùng {1}. Hai tiến trình cùng ghi vào một cơ sở dữ liệu sẽ làm hỏng nó, nên bản này dừng lại. Hãy đóng bản kia — hoặc đặt PORT và DATA_DIR để chạy bản thứ hai đúng cách.',
-  'The local database is not installed. Run `npm install` in this folder — @electric-sql/pglite is what Synapsez stores everything in when there is no DATABASE_URL. If you installed with --omit=dev or --production, install again without it.':
-    'Chưa cài cơ sở dữ liệu cục bộ. Chạy `npm install` trong thư mục này — Synapsez lưu mọi thứ vào @electric-sql/pglite khi không có DATABASE_URL. Nếu bạn đã cài với --omit=dev hoặc --production, hãy cài lại không kèm tuỳ chọn đó.',
+  'Another copy of Ephapse is already running on port {0} and using {1}. Two processes writing to one database will damage it, so this one is stopping. Close the other one — or set PORT and DATA_DIR to run a second instance properly.':
+    'Một bản Ephapse khác đang chạy ở cổng {0} và dùng {1}. Hai tiến trình cùng ghi vào một cơ sở dữ liệu sẽ làm hỏng nó, nên bản này dừng lại. Hãy đóng bản kia — hoặc đặt PORT và DATA_DIR để chạy bản thứ hai đúng cách.',
+  'The local database is not installed. Run `npm install` in this folder — @electric-sql/pglite is what Ephapse stores everything in when there is no DATABASE_URL. If you installed with --omit=dev or --production, install again without it.':
+    'Chưa cài cơ sở dữ liệu cục bộ. Chạy `npm install` trong thư mục này — Ephapse lưu mọi thứ vào @electric-sql/pglite khi không có DATABASE_URL. Nếu bạn đã cài với --omit=dev hoặc --production, hãy cài lại không kèm tuỳ chọn đó.',
 
   /* ── công cụ của trợ lý ────────────────────────────────────────── */
   'Give at least one task.': 'Hãy đưa ít nhất một việc.',
@@ -1595,7 +1595,7 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'No such hook.': 'Không có webhook này.',
   'This hook takes at most {0} requests a {1}.': 'Webhook này nhận tối đa {0} yêu cầu mỗi {1}.',
   'The timestamp is missing or more than five minutes off.': 'Thiếu dấu thời gian, hoặc lệch quá năm phút.',
-  'X-Synapsez-Delivery needs an id of letters, digits, ".", ":", "_" or "-".': 'X-Synapsez-Delivery cần một mã gồm chữ, số, ".", ":", "_" hoặc "-".',
+  'X-Ephapse-Delivery needs an id of letters, digits, ".", ":", "_" or "-".': 'X-Ephapse-Delivery cần một mã gồm chữ, số, ".", ":", "_" hoặc "-".',
   'A hook body is at most 64 KB.': 'Nội dung gửi tới webhook tối đa 64 KB.',
   'This hook cannot be checked. Rotate its secret.': 'Không kiểm tra được webhook này. Hãy đổi khoá bí mật.',
   'The signature does not match.': 'Chữ ký không khớp.',
@@ -1629,8 +1629,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'A folder is tidied from at most {0} files, so nothing was removed from the index.': 'Mỗi lần dọn một thư mục chỉ tính tối đa {0} tệp, nên chưa có gì bị gỡ khỏi chỉ mục.',
   'The skill "{0}" has {1} characters of instructions, and this would replace them with {2} — {3}% shorter. Change part of it with skill_edit, or send the whole procedure again; only if the person wants the shorter version, write it with replace: true.':
     'Kỹ năng "{0}" có {1} ký tự hướng dẫn, và lần ghi này sẽ thay bằng {2} — ngắn hơn {3}%. Hãy sửa một phần bằng skill_edit, hoặc gửi lại toàn bộ quy trình; chỉ khi người dùng muốn bản ngắn hơn, hãy ghi với replace: true.',
-  '"{0}" is one of Synapsez\'s own skills, which cannot be changed. Save one of the person\'s own under a new name with skill_write.':
-    '"{0}" là một kỹ năng có sẵn của Synapsez, không sửa được. Hãy lưu một kỹ năng riêng của người dùng dưới tên mới bằng skill_write.',
+  '"{0}" is one of Ephapse\'s own skills, which cannot be changed. Save one of the person\'s own under a new name with skill_write.':
+    '"{0}" là một kỹ năng có sẵn của Ephapse, không sửa được. Hãy lưu một kỹ năng riêng của người dùng dưới tên mới bằng skill_write.',
   'No skill of this account is called "{0}". Its skills: {1}.': 'Tài khoản này không có kỹ năng nào tên "{0}". Các kỹ năng của nó: {1}.',
   'This account has no skills of its own to change.': 'Tài khoản này chưa có kỹ năng riêng nào để sửa.',
   'That text is not in the instructions of "{0}". Read it with skill_read first — it must match exactly.': 'Đoạn này không có trong hướng dẫn của "{0}". Hãy đọc bằng skill_read trước — phải khớp chính xác.',

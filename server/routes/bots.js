@@ -200,13 +200,13 @@ export function mountBotRoutes(api, { wrap, origin = () => null }) {
     }),
   );
 
-  /** The team as a file, `synapsez-bots/1` (spec B.5): no conversations, no keys. */
+  /** The team as a file, `ephapse-bots/1` (spec B.5): no conversations, no keys. */
   api.get(
     '/bots/export',
     wrap(async (req, res) => {
       const file = await exportTeam(req.user.id);
       res.setHeader('Cache-Control', 'private, no-store');
-      res.setHeader('Content-Disposition', `attachment; filename="synapsez-bots-${new Date().toISOString().slice(0, 10)}.json"`);
+      res.setHeader('Content-Disposition', `attachment; filename="ephapse-bots-${new Date().toISOString().slice(0, 10)}.json"`);
       res.json(file);
     }),
   );

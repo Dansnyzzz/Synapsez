@@ -46,6 +46,7 @@ function signingKey() {
   // always has one of the three (SEC-047 — ACCESS_TOKEN alone used to land here).
   const secret = signingRoot();
   // Derived, so the image signature can never be used as anything else.
+  // The fallback text keeps its old name on purpose: it derives the signing key, so changing it would void every signed link.
   return crypto.createHmac('sha256', secret || 'synapsez-dev-only').update('image-proxy-v1').digest();
 }
 
@@ -105,7 +106,7 @@ export function allowedImageUrl(value) {
 }
 
 /** Wikimedia and OpenStreetMap both refuse anonymous clients; this names the app. */
-const UA = 'Synapsez/1.0 (+https://synapsez.vercel.app)';
+const UA = 'Ephapse/1.0 (+https://www.ephapse.net)';
 
 async function fetchRaster(url) {
   const res = await safeFetch(url, {

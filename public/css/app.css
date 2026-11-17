@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────────────────────
-   Synapsez — a dark, terminal-adjacent workspace.
+   Ephapse — a dark, terminal-adjacent workspace.
    Signal green for the assistant, amber for machine activity.
    ───────────────────────────────────────────────────────────── */
 
@@ -8501,7 +8501,7 @@ h3.spane__label:focus-visible { outline: 2px solid var(--accent); outline-offset
 .plusmenu--account { min-width: 264px; }
 .plusmenu--account .plusmenu__item > .plusmenu__icon:empty { display: none; }
 .plusmenu--account > .plusmenu__note:first-child { padding: 8px 10px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* About Synapsez, and the list of shortcuts — from Learn more. */
+/* About Ephapse, and the list of shortcuts — from Learn more. */
 .about { display: grid; justify-items: center; gap: 12px; text-align: center; }
 .about__mark { display: block; }
 .about__what { margin: 0; color: var(--text-dim); line-height: 1.6; }

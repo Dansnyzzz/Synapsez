@@ -91,7 +91,7 @@ export function createOnboarding({ providers, addKey, useModel, recommended, sug
 
   /**
    * The seven steps by name — a way to jump as well as a sense of how far there
-   * is to go. A short name each: the full titles were cut to "Synapsez là…" in
+   * is to go. A short name each: the full titles were cut to "Ephapse là…" in
    * a sixth of the sheet (owner, 2026-10-26). The short name is the button's
    * name, so "click Autonomy" finds it by voice (WCAG 2.5.3); the full title
    * heads the step below, and is the button's description on hover.
