@@ -329,6 +329,31 @@ section('the order still open: /api/billing carries it so the QR can be drawn ag
   check('paid: pending is null again', (simulated.status === 200 || (await store.getOrder(next.json.order.id)).status === 'paid') && (await read()) === null, `${simulated.status} ${JSON.stringify(await read())}`);
 }
 
+section('a part-paid order is never shut by starting another (409 backstop; final fix round, 2026-11-17)');
+{
+  const quinn = await account('quinn', { role: 'admin' });
+  const first = await quinn.j.call('POST', '/api/billing/orders', { kind: 'plan', plan: 'plus', period: 'month' });
+  const firstId = first.json?.order?.id;
+  check('a plan order is made', first.status === 200 && !!firstId, JSON.stringify(first.json));
+  const second = await quinn.j.call('POST', '/api/billing/orders', { kind: 'plan', plan: 'plus', period: 'month' });
+  const afterNone = await store.getOrder(firstId);
+  check('nothing received yet: a second plan order is made as before and the first is cancelled', second.status === 200 && second.json.order.id !== firstId && afterNone.status === 'cancelled', second.status + ' ' + afterNone.status);
+  const secondId = second.json.order.id;
+  await store.addOrderReceived(secondId, 40_000);
+  const third = await quinn.j.call('POST', '/api/billing/orders', { kind: 'plan', plan: 'pro', period: 'month' });
+  const kept = await store.getOrder(secondId);
+  check('part received: a second plan order is a 409 with a person-facing message', third.status === 409 && /partly paid/.test(third.json?.error || ''), JSON.stringify(third.json));
+  check('  the part-paid order is untouched: still pending, still holding the money', kept.status === 'pending' && kept.receivedVnd === 40_000, JSON.stringify(kept));
+  const topup = await quinn.j.call('POST', '/api/billing/orders', { kind: 'topup', amountVnd: 100_000 });
+  check('  a top-up is refused the same way', topup.status === 409, JSON.stringify(topup.json));
+  const vi = await quinn.j.call('POST', '/api/billing/orders', { kind: 'topup', amountVnd: 100_000 }, { headers: { 'x-language': 'vi' } });
+  check('  in Vietnamese the message is the one in server/i18n/vi.js', vi.status === 409 && /đã nhận một phần tiền/.test(vi.json?.error || ''), JSON.stringify(vi.json));
+  check('  the QR is still offered by /api/billing', (await quinn.j.call('GET', '/api/billing')).json?.pending?.id === secondId);
+  await sleep(1100);
+  await quinn.j.call('POST', '/api/billing/orders/' + secondId + '/cancel');
+  check('  once it is cancelled a new order is made', (await quinn.j.call('POST', '/api/billing/orders', { kind: 'topup', amountVnd: 100_000 })).status === 200);
+}
+
 section('the plan, paid by a (simulated) transfer, and what the owner may do with it');
 let planOrderId;
 {

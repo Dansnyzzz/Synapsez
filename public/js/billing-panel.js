@@ -9,8 +9,8 @@ import { POLL_MS } from './billing-pay-view.js';
  * billing information, the payment method, the ledger and the receipts. Claude's tab with OpenRouter's Credits card, drawn
  * for bank transfer: nothing here charges anything, money goes to the balance by a QR the plans sheet shows.
  *
- * Nothing polls. The tab is read when it is opened, after each thing done on it, and when the plans sheet says something
- * changed while this tab is on screen. Each card is drawn on its own, so a switch pressed redraws its card and not the page,
+ * The tab is read when it is opened, after each thing done on it, and when the plans sheet says something changed while this
+ * tab is on screen; only the pending order's card polls (every POLL_MS, until it ends). Each card is drawn on its own, so a switch pressed redraws its card and not the page,
  * and what is typed in another card is not lost. A card that is redrawn gives focus back to the control that had it.
  */
 
@@ -31,7 +31,7 @@ const signed = (n) => `${n < 0 ? '−' : '+'}${vnd(Math.abs(n))}`;
 
 /**
  * @param {HTMLElement} host
- * @param {{ api: any, toast: (message: string, kind?: string) => void, plans: { open: () => any, openCheckout: (plan: string, period: string) => any, openTopUp: (amount: number) => any } }} deps
+ * @param {{ api: any, toast: (message: string, kind?: string) => void, plans: { open: (options?: { fromPending?: boolean }) => any, openCheckout: (plan: string, period: string) => any, openTopUp: (amount: number) => any } }} deps
  */
 export function createBillingPanel(host, { api, toast, plans }) {
   /** @type {any} */ let account = null;
@@ -585,7 +585,9 @@ export function createBillingPanel(host, { api, toast, plans }) {
     const el = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('button'));
     if (!el) return;
     if (el.hasAttribute('data-retry')) return void read();
-    if (el.hasAttribute('data-adjust') || el.hasAttribute('data-pending-view')) return void plans.open();
+    // The card's own button asks for its order: no line explains why the QR is there. Adjust is a way to the plans, and says so when it finds one open.
+    if (el.hasAttribute('data-pending-view')) return void plans.open({ fromPending: true });
+    if (el.hasAttribute('data-adjust')) return void plans.open();
     if (el.hasAttribute('data-renew')) {
       const next = renewalOf(account.plan);
       return void plans.openCheckout(next.plan, next.period);

@@ -5521,6 +5521,8 @@ body.sharepage { min-height: 100dvh; overflow: auto; background: var(--bg); }
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+  /* The progress panel is hidden at once on close: its 240 ms visibility delay only waits for a slide that does not happen. */
+  .app:not(.is-detail) .detail { transition-delay: 0s !important; }
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -12905,6 +12907,9 @@ html[data-scene] .gate { background: var(--bg); }
 .plans__cta--free { background: var(--bg); color: var(--text); border-color: var(--line); }
 .plans__cta--paid:hover:not(:disabled), .plans__cta--paid:active:not(:disabled) { background: color-mix(in srgb, var(--text) 82%, var(--bg)); color: var(--bg); border-color: var(--text); }
 .plans__cta--free:hover:not(:disabled), .plans__cta--free:active:not(:disabled) { background: color-mix(in srgb, var(--text) 8%, var(--bg)); color: var(--text); border-color: var(--line); }
+/* A disabled button keeps its resting colours on hover: .btn:hover (0,2,0) would otherwise lighten the fill under the paid label's page-coloured text. */
+.plans__cta--paid:disabled:hover { background: var(--text); color: var(--bg); border-color: var(--text); }
+.plans__cta--free:disabled:hover { background: var(--bg); color: var(--text); border-color: var(--line); }
 .plans__cta:disabled { opacity: 0.55; cursor: default; }
 .plans__cta[aria-disabled='true'] { opacity: 0.55; cursor: default; }
 .plans__cta:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -12956,6 +12961,7 @@ html[data-scene] .gate { background: var(--bg); }
 .checkout__summary .checkout__hint { margin: 8px 0 0; }
 .pay { display: grid; gap: 14px; }
 .pay__lead, .pay__status, .pay__time { margin: 0; }
+.pay__note { margin: 0; color: var(--text-dim); font-size: 13px; line-height: 1.45; }
 .pay__status { font-weight: 600; }
 .pay__grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 20px; align-items: start; }
 /* White in both themes on purpose: a QR code needs a light quiet zone around it, or a dark page makes it unreadable to a scanner. */

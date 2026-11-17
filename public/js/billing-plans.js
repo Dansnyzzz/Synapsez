@@ -45,8 +45,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   let busy = false;
   /** A cancel is on its way: a second press of the confirmation must not send a second one. */
   let cancelling = false;
-  /** The amount of a top-up that failed, so "Try again" makes that top-up again and not the plans sheet. */
-  let retryTopUp = null;
+  /** What "Try again" runs: the entry the failed read or order came from (open, openCheckout, openTopUp), never an order made directly. */
+  let retry = null;
   // Bumped whenever the person leaves what an order was being made for (Esc, Back, a new open): an answer that comes
   // back afterwards is for a screen that is gone and must not start a clock or a poll on it (review, 2026-11-15).
   let flow = 0;
@@ -135,14 +135,44 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   }
 
   /* ── loading ──────────────────────────────────────────────────────── */
-  async function load() {
+
+  /** `withPlans` false reads the account only: a top-up asks nothing of the prices, so a failing /plans must not refuse one. */
+  async function load(withPlans = true) {
     failure = null;
     try {
-      const [plans, account] = await Promise.all([api.billingPlans(), api.billing()]);
-      data = { plans, account };
+      if (withPlans) {
+        const [plans, account] = await Promise.all([api.billingPlans(), api.billing()]);
+        data = { plans, account };
+      } else {
+        data = { plans: data?.plans ?? null, account: await api.billing() };
+      }
     } catch (err) {
       failure = err.message;
     }
+  }
+
+  /**
+   * The one way into an order (final fix round, 2026-11-17): read the account; if the read failed, refuse and say so with Try again
+   * (a read that failed has not shown whether an order is open, and carrying on could pay twice); if an order is open, show its QR
+   * with a line saying why; otherwise the caller may carry on. Returns true only for that last case, and false when the sheet moved on.
+   */
+  async function enter(token, { plans = true, note = true, changed = false } = {}) {
+    await load(plans);
+    if (!dialog.open || flow !== token) return false;
+    // A plan paid while the sheet was shut is on the line under the name at once.
+    if (changed) void onChanged();
+    if (failure) {
+      view = 'sheet';
+      checkout = null;
+      pay = null;
+      paint('[data-retry]');
+      return false;
+    }
+    if (pendingOf()) {
+      resume(pendingOf(), note);
+      return false;
+    }
+    return true;
   }
 
   /** The order this account is still paying, as GET /api/billing says (null when none is open). */
@@ -152,23 +182,24 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
    * Back to the QR of an order that is still open: the same code and amount, and the clock running from the order's own deadline, not
    * from zero. Closing the sheet never closed the order, and a reload forgets everything but what the server holds.
    */
-  function resume(p) {
+  function resume(p, note = false) {
     checkout = null;
     pay = {
       order: { id: p.id, kind: p.kind, plan: p.plan, period: p.period, code: p.code, totalVnd: p.totalVnd, expiresAt: p.expiresAt },
-      kind: p.kind === 'topup' ? 'topup' : 'plan', qr: p.qr, dueVnd: p.dueVnd, received: p.receivedVnd, total: p.totalVnd, expiresAt: Date.parse(p.expiresAt), state: 'waiting',
+      kind: p.kind === 'topup' ? 'topup' : 'plan', qr: p.qr, dueVnd: p.dueVnd, received: p.receivedVnd, total: p.totalVnd, expiresAt: Date.parse(p.expiresAt), state: 'waiting', note,
     };
     view = 'pay';
     paint('title');
     startTimers();
   }
 
-  async function open() {
+  /** `fromPending`: the Billing card's own "Show QR code" asked for this order, so no line explains why its QR is here. */
+  async function open({ fromPending = false } = {}) {
     ensure();
     stopTimers();
     flow += 1;
     const token = flow;
-    retryTopUp = null;
+    retry = null;
     view = 'sheet';
     period = 'month';
     audience = 'individual';
@@ -180,16 +211,12 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     data = null;
     paint('title');
     if (!dialog.open) dialog.showModal();
-    await load();
-    if (!dialog.open || flow !== token) return;
-    // A plan paid while the sheet was shut is on the line under the name at once.
-    void onChanged();
     // An order still open is what "Upgrade plan" goes back to, wherever it is pressed: buying something else would close it.
-    if (pendingOf()) return resume(pendingOf());
+    if (!(await enter(token, { note: !fromPending, changed: true }))) return;
     view = 'sheet';
     // The period the account is on is the one shown first, so "Current plan" is not hiding one click away.
     if (data?.plans?.current?.period === 'year') period = 'year';
-    paint(failure ? '[data-retry]' : '.plans__audience [aria-checked="true"]');
+    paint('.plans__audience [aria-checked="true"]');
   }
 
   async function openCheckout(plan, chosen = 'month') {
@@ -197,14 +224,16 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     stopTimers();
     if (!dialog.open) dialog.showModal();
     // Read again each time: the account may have changed since (a plan in grace, the billing information) and the
-    // Billing tab opens the checkout straight from its own copy.
-    retryTopUp = null;
+    // Billing tab opens the checkout straight from its own copy. An order still open is shown before anything is bought.
+    retry = () => openCheckout(plan, chosen);
     flow += 1;
     const token = flow;
-    await load();
-    if (!dialog.open || flow !== token) return;
-    if (pendingOf()) return resume(pendingOf());
-    await startCheckout(plan, chosen);
+    checkout = null;
+    pay = null;
+    view = 'sheet';
+    data = null;
+    paint('title');
+    if (await enter(token)) await startCheckout(plan, chosen);
   }
 
   /** A top-up has no plan to choose: the order is made at once and the QR shown. */
@@ -217,19 +246,16 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     pay = null;
     view = 'sheet';
     failure = null;
-    retryTopUp = null;
+    retry = () => openTopUp(amountVnd);
     // Nothing from an earlier screen is shown while the order is being made.
     data = null;
     paint('title');
     if (!dialog.open) dialog.showModal();
     // With an order already open its QR is what comes back: a second code would hide the first from every way back to it, and
-    // cancelling it is how a person starts something else. A read that fails does not stop the top-up.
+    // cancelling it is how a person starts something else. A read that fails refuses the top-up (Try again asks again); only the
+    // account is read, so prices that will not load do not.
     const token = flow;
-    await load();
-    if (!dialog.open || flow !== token) return;
-    failure = null;
-    if (pendingOf()) return resume(pendingOf());
-    await makeOrder({ kind: 'topup', amountVnd }, 'topup');
+    if (await enter(token, { plans: false })) await makeOrder({ kind: 'topup', amountVnd }, 'topup');
   }
 
   /* ── the plans ────────────────────────────────────────────────────── */
@@ -288,7 +314,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     const paid = id !== 'free';
     const pct = paid ? savePercent(p) : 0;
     const note = toYear ? `<p class="plans__note">${esc(t('billing.plans.monthlyNote', { pct }))}</p>` : '';
-    // "No commitment" sits under a monthly buy button only; the card of the plan in force carries its own mark instead.
+    // "No commitment" sits under a monthly buy or Renew button only; the card of the plan in force carries its own mark instead.
     const terms = paid && period === 'month' && (action === 'buy' || action === 'renew') ? `<p class="plans__terms">${esc(t('billing.plans.noCommitment'))}</p>` : '';
     const mark = action === 'current' || toYear ? `<span class="plans__badge">${esc(t('billing.plans.current'))}</span>` : '';
     return `<article class="plans__card${lit ? ' is-current' : ''}" data-plan="${id}" aria-labelledby="plan-${id}-name">
@@ -509,6 +535,17 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     } catch (err) {
       busy = false;
       if (!dialog.open || flow !== token || checkout !== mine) return;
+      // The server will not shut an order that has money on it: its QR is the way on, with what the server said.
+      if (err.status === 409) {
+        await load(false);
+        if (!dialog.open || flow !== token) return;
+        const open = !failure && pendingOf();
+        failure = null;
+        if (open) {
+          toast(err.message, 'error');
+          return resume(open, true);
+        }
+      }
       if (checkout) {
         checkout.orderError = err.message;
         // A price that moved under the person: ask again so the lines are today's.
@@ -516,7 +553,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
         else paint('[data-continue]');
       } else {
         failure = err.message;
-        if (body.kind === 'topup') retryTopUp = body.amountVnd;
+        if (body.kind === 'topup') retry = () => openTopUp(body.amountVnd);
         view = 'sheet';
         paint('[data-retry]');
         toast(err.message, 'error');
@@ -737,16 +774,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     if (el.dataset.audience) return chooseAudience(el.dataset.audience);
     if (el.hasAttribute('data-team-interest')) return void wantTeam();
     if (el.hasAttribute('data-retry')) {
-      if (retryTopUp != null) {
-        const amount = retryTopUp;
-        retryTopUp = null;
-        failure = null;
-        paint('title');
-        await makeOrder({ kind: 'topup', amountVnd: amount }, 'topup');
-        return;
-      }
-      await load();
-      paint(failure ? '[data-retry]' : 'title');
+      // The entry it came from, so an order that is open is looked for again before anything is made.
+      await (retry ?? open)();
       return;
     }
     if (el.dataset.pick) return pick(el.dataset.pick);
@@ -761,13 +790,15 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     if (el.hasAttribute('data-back')) {
       if (busy) return;
       flow += 1;
+      const token = flow;
       stopTimers();
       view = 'sheet';
       checkout = null;
       pay = null;
+      retry = null;
+      data = null;
       paint('title');
-      await load();
-      if (view === 'sheet' && dialog.open) paint('title');
+      if (await enter(token)) paint('title');
       return;
     }
     if (el.hasAttribute('data-continue')) return void subscribe();

@@ -325,6 +325,11 @@ export async function createOrder(userId, input, { now = new Date(), simulated =
   } else {
     const prior = kind === 'plan' ? await beforePlanOrder(userId, input, now) : null;
     if (prior) return { order: await store.getOrder(prior.id), paidNow: true, due: null };
+    // Money already received for an open order is never shut by starting another (a plan order cancels the older one, and the transfer
+    // would then land in the balance with the plan not started): the person finishes or cancels that order first. An order that has
+    // received nothing keeps the old way; the renewal is the period's own order and never counts here.
+    const partPaid = (await store.listOrders({ userId, status: 'pending', limit: 50 })).find((o) => o.kind !== 'renewal' && o.expiresAt > now && o.receivedVnd > 0);
+    if (partPaid) throw Object.assign(new Error('You have an order that has been partly paid — finish or cancel it first.'), { status: 409 });
     const draft = await draftOf(userId, kind, { ...input, useBalance: input.useBalance !== false }, now);
     // One open plan QR at a time: the older one would be quoted on a plan that this one is about to change.
     if (kind === 'plan') await store.cancelPendingPlanOrders(userId);

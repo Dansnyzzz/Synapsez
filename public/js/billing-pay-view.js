@@ -62,6 +62,7 @@ export function payHtml(pay) {
   const shown = deadline(pay);
   return `<div class="pay">
       <p class="pay__lead">${esc(t('billing.pay.lead'))}</p>
+      ${pay.note ? `<p class="pay__note" data-pay-note>${esc(t('billing.pay.alreadyOpen'))}</p>` : ''}
       <div class="pay__grid">
         <div class="pay__qr"><img src="${esc(q.image)}" alt="${esc(t('billing.pay.qrAlt', { amount: vnd(q.amount), content: q.content }))}" width="220" height="220"></div>
         <dl class="pay__rows">${Object.keys(COPY).map((k) => `<div><dt>${esc(labels[k])}</dt><dd id="pay-${k}">${esc(values[k])}</dd><button type="button" class="btn btn--small" data-copy="${k}" aria-label="${esc(t('billing.pay.copy', { what: labels[k] }))}">${esc(t('billing.pay.copyShort'))}</button></div>`).join('')}</dl>

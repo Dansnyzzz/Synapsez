@@ -772,7 +772,9 @@ section('short payment, expiry, cancel');
   check('the status line is the same node through short payment and expiry, and focus did not move', kept.same && kept.focus === 'content', JSON.stringify(kept));
   check('  the time left is gone and Back is offered', await page.evaluate(() => document.querySelector('#plans .pay__time').hidden && !!document.querySelector('#plans .pay__foot [data-back]')));
 
-  // Money taken and given back is its own ending, not "waiting" and not "expired".
+  // Money taken and given back is its own ending, not "waiting" and not "expired". The status above is a stand-in: the order is
+  // really still open on the server, and Back now looks for an open order first, so it is closed there the way a real expiry would.
+  await store.cancelOrder(await page.evaluate(() => document.getElementById('plans').dataset.order), 'u-bill-owner');
   answer = { status: 'refunded', receivedVnd: 0, dueVnd: 0, plan: 'pro' };
   await page.click('#plans [data-back]');
   await page.waitForSelector('#plans .plans__card [data-pick="pro"]:not([disabled])');
@@ -783,6 +785,7 @@ section('short payment, expiry, cancel');
   const refunded = await page.evaluate(() => ({ text: document.querySelector('#plans .pay__status').textContent, timer: document.querySelector('#plans .pay__time').hidden }));
   check('a refunded order ends the wait and says the money went to the balance', /added to your balance/.test(refunded.text) && !/Waiting|Expired/.test(refunded.text) && refunded.timer, refunded.text);
   await page.unroute('**/api/billing/orders/*');
+  await store.cancelOrder(await page.evaluate(() => document.getElementById('plans').dataset.order), 'u-bill-owner');
   await page.click('#plans [data-back]');
   await page.waitForSelector('#plans .plans__card');
   await page.click('#plans [data-plan="max"] [data-pick]');
@@ -931,6 +934,22 @@ for (const theme of ['light', 'dark']) {
   }
   await page.mouse.move(0, 0);
   check(`the paid and Free buttons keep their label readable (4.5:1) on hover in the ${theme} theme`, hovered.paid >= 4.5 && hovered.free >= 4.5, JSON.stringify(hovered));
+  // A disabled one keeps its resting fill and label on hover too (.btn:hover is (0,2,0) and used to lighten the fill under the paid label).
+  const heldOnHover = {};
+  for (const kind of ['paid', 'free']) {
+    const sel = `#plans .plans__cta--${kind}`;
+    const look = (q) => page.evaluate((s) => { const st = getComputedStyle(document.querySelector(s)); return `${st.color}|${st.backgroundColor}|${st.borderColor}`; }, q);
+    await page.evaluate((q) => { document.querySelector(q).disabled = true; }, sel);
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(300);
+    const rest = await look(sel);
+    await page.hover(sel);
+    await page.waitForTimeout(300);
+    heldOnHover[kind] = { rest, hover: await look(sel) };
+    await page.evaluate((q) => { document.querySelector(q).disabled = false; }, sel);
+  }
+  await page.mouse.move(0, 0);
+  check(`a disabled paid or Free button keeps its colours on hover in the ${theme} theme`, heldOnHover.paid.rest === heldOnHover.paid.hover && heldOnHover.free.rest === heldOnHover.free.hover, JSON.stringify(heldOnHover));
   await shot(theme);
   await page.keyboard.press('Escape');
 }
@@ -1164,6 +1183,118 @@ section('a top-up resumes the same way, and an order that ended opens the plans 
   check('with nothing open any more, "Upgrade plan" opens the plans sheet as it always did', (await page.locator('#plans .pay__qr').count()) === 0 && (await page.locator('#plans .plans__card').count()) === 4);
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !document.getElementById('plans').open);
+  await freshOrders();
+}
+
+section('one guarded way into an order: a failed read refuses, Try again resumes, /plans failing alone refuses nothing, the QR says why it is back');
+{
+  await freshOrders();
+  const posts = [];
+  const watch = (req) => { if (req.method() === 'POST' && new URL(req.url()).pathname === '/api/billing/orders') posts.push(req.postData()); };
+  const unreadable = (route) => (route.request().method() === 'GET' ? route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Billing is busy.' }) }) : route.fallback());
+  const pendingIds = async () => (await store.listOrders({ userId: OWNER, status: 'pending', limit: 50 })).map((o) => o.id);
+  const addCredits = async (amount) => {
+    await page.click('[data-add-credits]');
+    await page.fill('#bill-amount', String(amount));
+    await page.click('[data-topup-go]');
+  };
+  const closeSheet = async () => {
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.getElementById('plans').open);
+  };
+  const shown = () => page.evaluate(() => ({ code: document.querySelector('#plans #pay-content')?.textContent.trim() ?? null, order: document.getElementById('plans').dataset.order, note: document.querySelector('#plans [data-pay-note]')?.textContent.trim() ?? null }));
+  const NOTE = 'You already have an order waiting — pay or cancel it before starting a new one.';
+  await gotoTab(page, 'billing');
+  await billingReady();
+  page.on('request', watch);
+
+  // Nothing open, the account unreadable.
+  await page.route('**/api/billing', unreadable);
+  await addCredits(100000);
+  await page.waitForSelector('#plans[open] [data-retry]');
+  check('Add credits with the account unreadable refuses: the failure and Try again, and no order is made', posts.length === 0 && (await pendingIds()).length === 0 && /busy/.test(await text('#plans .plans__error')), `${posts.length}`);
+  await page.unroute('**/api/billing');
+  await page.click('#plans [data-retry]');
+  await page.waitForSelector('#plans .pay__qr img');
+  const first = await shown();
+  check('Try again goes through the same door and, with the read working, makes the one order (no line: nothing was open)', posts.length === 1 && (await pendingIds()).join() === first.order && first.note === null, JSON.stringify(first));
+  await closeSheet();
+
+  // An order open, the account unreadable: refuse, then Try again resumes the same QR.
+  await page.route('**/api/billing', unreadable);
+  await addCredits(200000);
+  await page.waitForSelector('#plans[open] [data-retry]');
+  check('with an order open and the account unreadable, Add credits refuses too: nothing new is made and the open order is untouched', posts.length === 1 && (await pendingIds()).join() === first.order && (await page.locator('#plans .pay__qr').count()) === 0);
+  await page.unroute('**/api/billing');
+  await page.click('#plans [data-retry]');
+  await page.waitForSelector('#plans .pay__qr img');
+  const again = await shown();
+  check('Try again goes to the QR of the order that is open: the same code, and no second order', again.order === first.order && again.code === first.code && posts.length === 1 && (await pendingIds()).length === 1, JSON.stringify(again));
+  check('  and says why it is back', again.note === NOTE, String(again.note));
+  await closeSheet();
+
+  // The prices failing alone refuse nothing: a top-up asks only for the account.
+  await page.route('**/api/billing/plans', unreadable);
+  await addCredits(200000);
+  await page.waitForSelector('#plans .pay__qr img');
+  const viaPrices = await shown();
+  check('with /plans failing alone, Add credits still goes to the open order', viaPrices.order === first.order && posts.length === 1 && viaPrices.note === NOTE, JSON.stringify(viaPrices));
+  await store.cancelOrder(first.order, OWNER);
+  await closeSheet();
+  await addCredits(100000);
+  await page.waitForSelector('#plans .pay__qr img');
+  const second = await shown();
+  check('  and with nothing open it still makes its order', posts.length === 2 && second.order !== first.order && second.note === null, JSON.stringify(second));
+  await page.unroute('**/api/billing/plans');
+  await closeSheet();
+
+  // Upgrade plan and the card's own button, with the order open.
+  await page.evaluate(() => document.getElementById('settings').close());
+  await openMenu(page);
+  await page.click('.plusmenu--account [data-row="upgrade"]');
+  await page.waitForSelector('#plans .pay__qr img');
+  const viaUpgrade = await shown();
+  check('Upgrade plan with an order open shows its QR and says why', viaUpgrade.order === second.order && viaUpgrade.note === NOTE, JSON.stringify(viaUpgrade));
+  await closeSheet();
+  await page.evaluate(() => document.getElementById('settings').close());
+  await page.route('**/api/billing', unreadable);
+  await openMenu(page);
+  await page.click('.plusmenu--account [data-row="upgrade"]');
+  await page.waitForSelector('#plans[open] [data-retry]');
+  check('Upgrade plan with the account unreadable shows the failure with Try again, not the plans', (await page.locator('#plans .plans__card').count()) === 0);
+  await page.unroute('**/api/billing');
+  await page.click('#plans [data-retry]');
+  await page.waitForSelector('#plans .pay__qr img');
+  check('  and Try again goes to the open order, not to the plans', (await shown()).order === second.order);
+  await closeSheet();
+  await gotoTab(page, 'billing');
+  await billingReady();
+  await page.waitForSelector('#billing-panel [data-sec="pending"]:not([hidden]) [data-pending-view]');
+  await page.click('#billing-panel [data-pending-view]');
+  await page.waitForSelector('#plans .pay__qr img');
+  const viaCard = await shown();
+  check('the Billing card\'s own "Show QR code" says nothing: it asked for this order', viaCard.order === second.order && viaCard.note === null, JSON.stringify(viaCard));
+  await closeSheet();
+
+  // The server's backstop: a part-paid order is never shut by a new one. The page hides the order from its first read, so the guard lets
+  // the order through and the 409 is what it meets; it then shows what the server said and offers the open order.
+  await store.addOrderReceived(second.order, 40000);
+  let hide = 1;
+  await page.route('**/api/billing', async (route) => {
+    if (route.request().method() !== 'GET' || hide <= 0) return route.fallback();
+    hide -= 1;
+    const res = await route.fetch();
+    return route.fulfill({ response: res, json: { ...(await res.json()), pending: null } });
+  });
+  const before = posts.length;
+  await addCredits(200000);
+  await page.waitForSelector('#plans .pay__qr img');
+  const viaConflict = await shown();
+  check('a part-paid order met as a 409: the open order\'s QR comes back, with the line, and nothing was made', posts.length === before + 1 && viaConflict.order === second.order && viaConflict.note === NOTE && (await pendingIds()).join() === second.order, JSON.stringify(viaConflict));
+  await page.unroute('**/api/billing');
+  await store.cancelOrder(second.order, OWNER);
+  await closeSheet();
+  page.off('request', watch);
   await freshOrders();
 }
 
@@ -1440,6 +1571,35 @@ section('a plan in grace: Renew now, the date instead of a clock, and no late ca
   await page.waitForFunction(() => document.querySelector('#plans [data-plan="plus"] [data-pick]')?.textContent.trim() === 'Renew');
   check('the sheet\'s button for the plan in force reads Renew, and is on', await page.evaluate(() => !document.querySelector('#plans [data-plan="plus"] [data-pick]').disabled));
   await page.keyboard.press('Escape');
+
+  // The one guarded way in, from a plan button (openCheckout): an order open elsewhere is shown first, with the line that says why, and a
+  // read that fails refuses instead of carrying on to the checkout.
+  await freshOrders();
+  const unreadable = (route) => (route.request().method() === 'GET' ? route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Billing is busy.' }) }) : route.fallback());
+  const orderPosts = [];
+  const countPosts = (req) => { if (req.method() === 'POST' && new URL(req.url()).pathname === '/api/billing/orders') orderPosts.push(req.postData()); };
+  const open = await page.evaluate(async () => (await (await fetch('/api/billing/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'topup', amountVnd: 100000 }) })).json()).order.id);
+  page.on('request', countPosts);
+  await page.route('**/api/billing', unreadable);
+  await page.click('[data-renew]');
+  await page.waitForSelector('#plans[open] [data-retry]');
+  check('a plan button with the account unreadable refuses: the failure and Try again, no checkout, no order', (await page.locator('#plans [data-view="checkout"]').count()) === 0 && orderPosts.length === 0 && /busy/.test(await text('#plans .plans__error')));
+  await page.unroute('**/api/billing');
+  await page.click('#plans [data-retry]');
+  await page.waitForSelector('#plans .pay__qr img');
+  check('Try again from it goes to the order that is open (not the checkout), with the line that says why', (await page.evaluate(() => document.getElementById('plans').dataset.order)) === open && /already have an order waiting/.test(await text('#plans [data-pay-note]')) && orderPosts.length === 0);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.getElementById('plans').open);
+  await store.cancelOrder(open, 'u-bill-owner');
+  await page.route('**/api/billing', unreadable);
+  await page.click('[data-renew]');
+  await page.waitForSelector('#plans[open] [data-retry]');
+  await page.unroute('**/api/billing');
+  await page.click('#plans [data-retry]');
+  check('with nothing open, Try again from a plan button opens the checkout it was for', await ok(page.waitForSelector('#plans [data-view="checkout"] [data-consent]', { timeout: 8000 })));
+  page.off('request', countPosts);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.getElementById('plans').open);
 
   // Esc while a renewal order is being made must not cancel it: it is the one the period shares.
   const calls = [];
