@@ -6,6 +6,7 @@ import { toast } from './render.js';
 import { counted, repeatsAs } from './format.js';
 import { preparedWithThumb } from './shrink.js';
 import { thumbnailFor } from './thumbnail.js';
+import { svgPicture } from './svg-picture.js';
 
 /**
  * One project, opened.
@@ -433,7 +434,33 @@ export function createProjectPage({
    */
   async function fillPeek(peek, file) {
     const ext = String(file.name).split('.').pop().toLowerCase();
-    if (ext === 'html' || ext === 'htm' || ext === 'svg') {
+    if (ext === 'svg') {
+      // Not the run route, which serves pages only (a 400 for a drawing): the markup is
+      // repaired and drawn as a picture, the way the Files shelf does it. Too big or not a
+      // drawing leaves the card as it was, with its kind on it.
+      if ((file.bytes || 0) > 2 * 1024 * 1024) return;
+      try {
+        const res = await fetch(`/api/attachments/${encodeURIComponent(file.id)}`);
+        const picture = res.ok ? await svgPicture(await res.text()) : null;
+        if (!picture) return;
+        const img = document.createElement('img');
+        img.className = 'outcard__img';
+        img.alt = '';
+        img.addEventListener('load', () => URL.revokeObjectURL(picture.url), { once: true });
+        img.addEventListener('error', () => {
+          URL.revokeObjectURL(picture.url);
+          img.remove();
+          peek.classList.remove('is-page');
+        }, { once: true });
+        img.src = picture.url;
+        peek.append(img);
+        peek.classList.add('is-page');
+      } catch {
+        // A drawing that cannot be fetched is a card with its kind on it.
+      }
+      return;
+    }
+    if (ext === 'html' || ext === 'htm') {
       const frame = document.createElement('iframe');
       frame.className = 'outcard__frame';
       frame.setAttribute('sandbox', 'allow-scripts');

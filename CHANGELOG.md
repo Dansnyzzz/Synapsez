@@ -12,6 +12,14 @@
 
 **Not verified live:** the new Vietnamese text.
 
+## 2026-11-17 — SVG drawings open as pictures, and copy as pictures (1.31.2)
+
+**SVG files are drawn.** The viewer answered "nothing to preview" for every SVG because the server filed it as a binary; it now hands the viewer the markup, and the browser repairs it (no `xmlns`, an HTML entity, a bare `&`, an unclosed tag), strips scripts, `foreignObject`, `on*` attributes and outside links, and draws it. The Files shelf card uses the same repair, and shows the code icon rather than a broken picture when the markup is no drawing.
+
+**Copy copies the picture.** For an SVG, Copy (on the Code tab too) puts a PNG on the clipboard, drawn on white at up to 2400 pixels across; Download still gives the `.svg`.
+
+**Markdown cards show their opening lines.** A file handed over from the cloud computer has no stored source, so its card had no peek; it is now read from the start of the file's contents (never sent to the browser as raw bytes).
+
 ## 2026-11-17 — Exa keys from other accounts are let in (1.31.1)
 
 **A new Exa key is checked where it will be used.** Adding a key from another Exa account — each account its own team — was refused with "Exa refused this key." because the check asked Exa's Websets API, which answered 401 INVALID_API_KEY for a key that Exa's search takes (the owner's live report, 2026-11-17). Now a 401 from Websets is asked again, once, of `POST /search` with an empty body: Exa checks the key before the request, so an unknown key is still 401 (refused) and a known one is told the request is incomplete (let in) — no search is run and no credit spent. Search down or out of reach is "try again", never a refusal.

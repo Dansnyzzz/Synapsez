@@ -773,6 +773,118 @@ section('a file too big for this host goes straight to the machine');
   check('and sits in the message like any other file', /big\.zip/.test(tile.text) && !tile.failed, JSON.stringify(tile));
 }
 
+section('a drawing is a picture, on the shelf, in the viewer and on the clipboard (owner, 2026-11-17)');
+{
+  const context = page.context();
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: `http://127.0.0.1:${PORT}` });
+  // No xmlns, an HTML entity and a bare ampersand: strict XML refuses all three, and so would an <img>.
+  const loose = '<svg viewBox="0 0 120 60"><rect width="120" height="60" fill="#cde"/><text x="5" y="30">A&nbsp;B & C</text></svg>';
+  const hostile = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" onload="window.__svgRan = 1"><script>window.__svgRan = 2</script><rect width="40" height="40" fill="red"/></svg>';
+  const give = (id, name, text, over = {}) =>
+    store.createAttachment(me.id, { id, name, mime: over.mime || '', kind: over.kind || 'binary', bytes: Buffer.byteLength(text), data: Buffer.from(text).toString('base64'), origin: 'generated', source: over.source ?? null });
+  await give('svg-loose', 'loose.svg', loose, { mime: 'image/svg+xml' });
+  await give('svg-hostile', 'hostile.svg', hostile, { mime: 'image/svg+xml' });
+  await give('svg-notsvg', 'not-a-drawing.svg', 'this is just words, not a drawing', { mime: 'image/svg+xml' });
+  // What create_file stores: the type is text/plain and the file is a 'text' one, with its source.
+  await give('svg-made', 'made.svg', loose, { mime: 'text/plain; charset=utf-8', kind: 'text', source: loose });
+  // Things an SVG can carry that are live in a page, whatever an <img> would do with them.
+  await give('svg-live', 'live.svg', '<svg xmlns="http://www.w3.org/2000/svg" xmlns:h="http://www.w3.org/1999/xhtml" width="30" height="30"><h:iframe srcdoc="<script>1</script>"></h:iframe><a href="javascript:alert(1)"><set attributeName="href" to="javascript:alert(2)"/><rect width="30" height="30"/></a></svg>', { mime: 'image/svg+xml' });
+  await give('md-handed', 'from-machine.md', '# Opening words\n\nThe rest of it.', { kind: 'text', mime: 'text/markdown' });
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  await page.click('#open-artifacts');
+  await page.waitForSelector('.card--artifact[data-file="svg-loose"]');
+  await page.waitForTimeout(1500);
+  const shelf = await page.evaluate(() => {
+    const card = (id) => document.querySelector(`.card--artifact[data-file="${id}"]`);
+    const img = (id) => card(id)?.querySelector('img');
+    return {
+      loose: img('svg-loose') ? { w: img('svg-loose').naturalWidth, complete: img('svg-loose').complete } : null,
+      hostile: img('svg-hostile') ? img('svg-hostile').naturalWidth : null,
+      notsvgImg: !!img('svg-notsvg'),
+      notsvgIcon: !!card('svg-notsvg')?.querySelector('.card__peek--empty svg'),
+      md: card('md-handed')?.querySelector('.card__peek')?.textContent || '',
+      ran: window.__svgRan || null,
+    };
+  });
+  check('an SVG with no xmlns, an entity and a bare & is drawn on its card', shelf.loose?.w > 0, JSON.stringify(shelf.loose));
+  check('one with a script and an onload is drawn, and neither ran', shelf.hostile > 0 && !shelf.ran, JSON.stringify(shelf));
+  check('markup that is no drawing shows the icon, never a broken picture', !shelf.notsvgImg && shelf.notsvgIcon, JSON.stringify(shelf));
+  check('a handed-over Markdown card shows its opening words', /Opening words/.test(shelf.md), shelf.md);
+
+  await page.locator('.card--artifact[data-file="svg-loose"]').click();
+  await page.waitForSelector('#viewer-body img[data-svg-view]');
+  await page.waitForTimeout(800);
+  const viewed = await page.evaluate(() => {
+    const img = document.querySelector('#viewer-body img[data-svg-view]');
+    return { w: img?.naturalWidth || 0, none: /nothing to preview/.test(document.getElementById('viewer-body').textContent) };
+  });
+  check('the same drawing is drawn in the viewer', viewed.w > 0 && !viewed.none, JSON.stringify(viewed));
+  await page.evaluate(() => navigator.clipboard.writeText('before'));
+  const label = await page.textContent('#viewer-do');
+  await page.click('#viewer-more');
+  const item = page.getByText('Copy picture', { exact: true }).first();
+  await item.click();
+  await page.waitForTimeout(1200);
+  const clip = await page.evaluate(async () => {
+    const items = await navigator.clipboard.read();
+    return items.map((i) => i.types.join('+'));
+  });
+  check('Copy puts a picture on the clipboard, not the code', clip.length === 1 && clip[0] === 'image/png', `${label} ${clip.join()}`);
+  await page.evaluate(() => document.getElementById('viewer-close')?.click());
+
+  // The probe: what svgPicture hands an <img> has none of the live parts left.
+  const probe = await page.evaluate(async () => {
+    const { svgPicture } = await import('/js/svg-picture.js');
+    const text = await (await fetch('/api/attachments/svg-live')).text();
+    // The page may not fetch a blob: URL, so what goes into the Blob is caught as it is made.
+    const RealBlob = window.Blob;
+    let xml = '';
+    window.Blob = class extends RealBlob { constructor(parts, options) { super(parts, options); if (options?.type === 'image/svg+xml') xml = String(parts[0]); } };
+    const picture = await svgPicture(text);
+    window.Blob = RealBlob;
+    if (picture) URL.revokeObjectURL(picture.url);
+    return xml;
+  });
+  check('an XHTML iframe, a javascript: link and a set of href are removed', probe.includes('<rect') && !/iframe|srcdoc|javascript|<set/i.test(probe), probe.slice(0, 200));
+
+  // An SVG the assistant wrote itself: stored as text, with a Source tab, and still a picture.
+  await page.locator('.card--artifact[data-file="svg-made"]').click();
+  await page.waitForSelector('#viewer-body img[data-svg-view]');
+  await page.waitForTimeout(600);
+  const made = await page.evaluate(() => ({ w: document.querySelector('#viewer-body img[data-svg-view]')?.naturalWidth || 0, tabs: [...document.querySelectorAll('#viewer-tabs [data-tab]')].map((b) => b.dataset.tab).join() }));
+  check('an SVG written by the assistant is drawn, with its Source tab beside it', made.w > 0 && /source/.test(made.tabs), JSON.stringify(made));
+  await page.click('#viewer-tabs [data-tab="source"]');
+  await page.evaluate(() => navigator.clipboard.writeText('before'));
+  // The main button opens it in an app on a machine that has one; the menu always has the picture.
+  await page.click('#viewer-more');
+  await page.getByText('Copy picture', { exact: true }).first().click();
+  await page.waitForTimeout(1200);
+  const madeClip = await page.evaluate(async () => (await navigator.clipboard.read()).map((i) => i.types.join('+')));
+  check('  and Copy on the Source tab copies the picture, not the code', madeClip.join() === 'image/png', `${madeClip.join()} ${await page.evaluate(() => [...document.querySelectorAll('.toast')].map((n) => n.textContent).join('|'))}`);
+  await page.evaluate(() => document.getElementById('viewer-close')?.click());
+}
+
+section('a drawing among the outputs of a project is drawn, not a 400 (owner, 2026-11-17)');
+{
+  await store.createProject(me.id, { id: 'p-svg', name: 'Drawings' });
+  await store.createChat(me.id, { id: 'c-proj-svg', title: 'In project', model: 'auto', projectId: 'p-svg' });
+  const svg = '<svg viewBox="0 0 90 40"><rect width="90" height="40" fill="#fed"/><text>A&nbsp;B</text></svg>';
+  await store.createAttachment(me.id, { id: 'svg-out', name: 'out.svg', mime: 'text/plain; charset=utf-8', kind: 'text', bytes: svg.length, data: Buffer.from(svg).toString('base64'), origin: 'generated', source: svg, chatId: 'c-proj-svg' });
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  const bad = [];
+  page.on('response', (res) => { if (/svg-out\/run/.test(res.url()) && res.status() >= 400) bad.push(res.status()); });
+  await page.click('#open-projects');
+  await page.waitForSelector('[data-project="p-svg"]');
+  await page.click('[data-project="p-svg"]');
+  await page.waitForSelector('[data-peek="svg-out"]');
+  await page.waitForTimeout(1500);
+  const out = await page.evaluate(() => {
+    const img = document.querySelector('[data-peek="svg-out"] img');
+    return { w: img?.naturalWidth || 0, frame: !!document.querySelector('[data-peek="svg-out"] iframe') };
+  });
+  check('its card is the picture, with no frame on the run route', out.w > 0 && !out.frame && bad.length === 0, JSON.stringify({ out, bad }));
+}
+
 await browser.close();
 server.close();
 realLog(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll file viewer checks passed.\x1b[0m\n');

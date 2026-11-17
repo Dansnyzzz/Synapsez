@@ -2611,13 +2611,31 @@ export function createPgStore(connectionString) {
      * conversation that was is the problem it exists to remove.
      */
     async listAllGeneratedFiles(userId, limit = 200) {
-      return q(
+      /**
+       * The first words of a file that was kept only as bytes, for its card on the shelf.
+       *
+       * What arrives is the front of the base64, cut wherever 800 characters ended: a base64
+       * group is four characters, and a Vietnamese letter is two or three bytes, so both cuts
+       * can land inside something. The half group is dropped before decoding and the half
+       * character that decoding turns into U+FFFD after it, rather than showing a lozenge.
+       */
+      const openingOf = (head) => {
+        const whole = String(head).slice(0, Math.floor(String(head).length / 4) * 4);
+        const text = Buffer.from(whole, 'base64').toString('utf8');
+        // By code point, so an emoji at the cut is whole or gone rather than half a surrogate pair.
+        return Array.from(text.at(-1) === String.fromCharCode(0xfffd) ? text.slice(0, -1) : text).slice(0, 400).join('');
+      };
+      const rows = await q(
         // The opening of the source, so the shelf can show a window onto each
         // artifact rather than a row of identical file icons. Clipped in SQL
         // because the alternative is moving every document to the browser to
         // throw away all but the first few lines of each.
+        //
+        // A file handed over from the cloud computer has no source, only bytes, so
+        // for those text rows the opening comes from the start of the bytes instead.
         `SELECT a.id, a.name, a.mime, a.kind, a.bytes, a.origin, a.chat_id, a.created_at,
-                c.title AS chat_title, left(a.source, 400) AS peek
+                c.title AS chat_title, left(a.source, 400) AS peek,
+                CASE WHEN a.source IS NULL AND a.kind = 'text' THEN left(a.data, 800) END AS data_head
            FROM attachments a
       LEFT JOIN chats c ON c.id = a.chat_id
           WHERE a.user_id = $1 AND a.origin = 'generated'
@@ -2625,6 +2643,7 @@ export function createPgStore(connectionString) {
           LIMIT $2`,
         [userId, Math.min(Math.max(Number(limit) || 200, 1), 500)],
       );
+      return rows.map(({ data_head: head, ...row }) => (head ? { ...row, peek: openingOf(head) } : row));
     },
     /** Throw one away. Only ever something the assistant made. */
     async deleteGeneratedFile(userId, id) {
