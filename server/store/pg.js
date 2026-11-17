@@ -6133,7 +6133,7 @@ export function createPgStore(connectionString) {
         (e.kind IN ('topup', 'assign') AND EXISTS (SELECT 1 FROM sepay_transfers t WHERE t.id::text = e.ref AND t.via = 'simulated'))
         OR (e.kind IN ('plan', 'refund') AND EXISTS (SELECT 1 FROM billing_orders o WHERE o.id = e.ref AND ${simulatedOrder}))
       )`;
-      const [kinds, paid, counts, held, size, einvoicesFailed] = await Promise.all([
+      const [kinds, paid, counts, held, size, einvoicesFailed, teamInterest] = await Promise.all([
         q(
           `SELECT e.kind, COALESCE(SUM(e.delta_vnd) FILTER (WHERE e.delta_vnd > 0), 0) AS in_vnd, COALESCE(-SUM(e.delta_vnd) FILTER (WHERE e.delta_vnd < 0), 0) AS out_vnd
              FROM balance_entries e WHERE e.created_at >= $1::timestamptz AND NOT ${simulatedEntry} GROUP BY e.kind`,
@@ -6147,6 +6147,7 @@ export function createPgStore(connectionString) {
                      LEFT JOIN balances b ON b.user_id = x.user_id) y`),
         q('SELECT pg_database_size(current_database()) AS n').catch(() => []),
         q("SELECT COUNT(*) AS n FROM einvoices WHERE status = 'failed'"),
+        q("SELECT COUNT(*) AS n FROM user_settings WHERE key = 'prefs' AND value ->> 'teamInterest' IS NOT NULL"),
       ]);
       const entries = {};
       for (const r of kinds) entries[r.kind] = { inVnd: Number(r.in_vnd), outVnd: Number(r.out_vnd) };
@@ -6161,7 +6162,23 @@ export function createPgStore(connectionString) {
         databaseBytes: size[0] ? Number(size[0].n) : null,
         // E-invoices given up on (unsettled 7 days after the payment): the owner has to see to these with SePay.
         einvoicesFailed: Number(einvoicesFailed[0].n),
+        // Accounts that pressed "tell me when Team opens" on the plans sheet.
+        teamInterest: Number(teamInterest[0].n),
       };
+    },
+    /**
+     * Keeps, once, that an account wants to hear when the Team plan opens. In one statement so two presses cannot race: a
+     * date already there is left as it was. Returns whether this call was the one that stored it.
+     */
+    async markTeamInterest(userId, at) {
+      const rows = await q(
+        `INSERT INTO user_settings (user_id, key, value) VALUES ($1, 'prefs', $2)
+         ON CONFLICT (user_id, key) DO UPDATE SET value = COALESCE(user_settings.value, '{}'::jsonb) || EXCLUDED.value
+           WHERE COALESCE(user_settings.value, '{}'::jsonb) ->> 'teamInterest' IS NULL
+         RETURNING 1 AS stored`,
+        [userId, toJson({ teamInterest: new Date(at).toISOString() })],
+      );
+      return rows.length > 0;
     },
     /** Accounts that asked for a low-balance email: the threshold, when the last one went, and the balance now. */
     async listLowBalanceAccounts(limit = 5000) {

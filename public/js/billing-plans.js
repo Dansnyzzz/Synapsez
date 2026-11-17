@@ -1,6 +1,7 @@
 import { t, currentLanguage, localeTag } from './i18n.js';
 import { escapeHtml as esc } from './markdown.js';
 import { vnd, usd, planName, minutes, clock } from './billing-format.js';
+import { planIconHtml, savePercent, priceHtml, cardToggleHtml, listHtml, teamCardHtml, rateStamp } from './billing-plan-cards.js';
 
 /**
  * The plans sheet and the checkout by SePay VietQR (billing preview, 2026-11-14) — one lazy
@@ -19,7 +20,6 @@ const FREE = { searches: 0, sandboxMinutes: 0, storageGb: 0.5 };
 /** One question every 5 s while the tab is visible; the server answers at most once a second per order. */
 const POLL_MS = 5000;
 const ATTRIBUTION = 'https://www.exchangerate-api.com';
-const SOURCES = { erapi: 'Exchange Rate API', vietcombank: 'Vietcombank', frankfurter: 'Frankfurter' };
 /** The rows of the QR view a person can copy, in order, and the words each is called by. */
 const COPY = { bank: 'billing.pay.bank', account: 'billing.pay.account', holder: 'billing.pay.holder', amount: 'billing.pay.amount', content: 'billing.pay.content' };
 /** A renewal order stays good until grace ends, days away: past this the deadline is a date and time, not a clock. */
@@ -35,6 +35,9 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   let dialog = null;
   let view = 'sheet';
   let period = 'month';
+  /** The segmented control: 'individual' (the four cards) or 'team' (the coming-soon card). */
+  let audience = 'individual';
+  let teamBusy = false;
   /** @type {any} */ let data = null; // { plans, account } once loaded
   /** @type {string | null} */ let failure = null;
   /** @type {{ id: string, period: string } | null} */ let confirming = null;
@@ -130,6 +133,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     retryTopUp = null;
     view = 'sheet';
     period = 'month';
+    audience = 'individual';
     confirming = null;
     checkout = null;
     pay = null;
@@ -145,7 +149,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     view = 'sheet';
     // The period the account is on is the one shown first, so "Current plan" is not hiding one click away.
     if (data?.plans?.current?.period === 'year') period = 'year';
-    paint(failure ? '[data-retry]' : '.plans__period [aria-checked="true"]');
+    paint(failure ? '[data-retry]' : '.plans__audience [aria-checked="true"]');
   }
 
   async function openCheckout(plan, chosen = 'month') {
@@ -202,14 +206,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     return id === cur.plan && period === cur.period ? 'current' : 'buy';
   }
 
-  function priceHtml(id) {
-    if (id === 'free') return `<p class="plans__price"><span class="plans__amount">${esc(currentLanguage() === 'vi' ? vnd(0) : usd(0))}</span></p>`;
-    const p = planById(id);
-    if (!p?.vnd) return `<p class="plans__price"><span class="plans__amount">—</span></p>`;
-    const per = esc(t(`billing.per.${period}`));
-    if (currentLanguage() === 'vi') return `<p class="plans__price"><span class="plans__amount">${esc(vnd(p.vnd[period]))}</span> <span class="plans__per">${per}</span></p>`;
-    return `<p class="plans__price"><span class="plans__amount">${esc(usd(p.usdCents[period]))}</span> <span class="plans__per">${per}</span></p><p class="plans__billed">${esc(t('billing.billedAs', { vnd: vnd(p.vnd[period]) }))}</p>`;
-  }
+  /** On a monthly plan, that plan's own card offers the year (spec: "Chuyển sang <Plan> theo năm"); in grace the card says Renew instead. */
+  const yearSwitch = (id) => id !== 'free' && current().plan === id && current().period === 'month' && !inGrace() && actionFor(id) === 'current';
 
   function cardHtml(id) {
     const p = id === 'free' ? FREE : planById(id) || FREE;
@@ -221,10 +219,12 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     else if (action === 'renew') label = t('billing.plans.renew');
     else if (action === 'scheduled') label = t('billing.plans.scheduled');
     else if (action === 'later') label = t('billing.plans.later');
-    else if (id === cur.plan) label = t('billing.plans.switchYearly');
+    else if (id === cur.plan) label = t('billing.plans.switchYearly', { plan: planName(id) });
     else label = t(cur.plan === 'free' ? 'billing.plans.get' : 'billing.plans.switch', { plan: planName(id) });
+    const toYear = yearSwitch(id);
+    if (toYear) label = t('billing.plans.switchYearly', { plan: planName(id) });
     // A renewal whose price is already locked needs no exchange rate; any other purchase does.
-    const disabled = action === 'current' || action === 'scheduled' || (noRate && (action === 'buy' || (action === 'renew' && !data.account.plan.renewalLocked)));
+    const disabled = (action === 'current' && !toYear) || action === 'scheduled' || (toYear && noRate) || (noRate && (action === 'buy' || (action === 'renew' && !data.account.plan.renewalLocked)));
     // One card is lit: the plan in force, or in grace the renewal's terms (the plan that ran is then plain).
     const lit = action === 'renew' || (action === 'current' && !ORDER.some((x) => actionFor(x) === 'renew'));
     const lines = [
@@ -233,20 +233,31 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       t('billing.plans.storage', { gb: number(p.storageGb) }),
       t('billing.plans.people'),
     ];
+    const paid = id !== 'free';
+    const pct = paid ? savePercent(p) : 0;
+    const note = toYear ? `<p class="plans__note">${esc(t('billing.plans.monthlyNote', { pct }))}</p>` : '';
+    // "No commitment" sits under a monthly buy button only; the card of the plan in force carries its own mark instead.
+    const terms = paid && period === 'month' && action === 'buy' ? `<p class="plans__terms">${esc(t('billing.plans.noCommitment'))}</p>` : '';
+    const mark = action === 'current' || toYear ? `<span class="plans__badge">${esc(t('billing.plans.current'))}</span>` : '';
     return `<article class="plans__card${lit ? ' is-current' : ''}" data-plan="${id}" aria-labelledby="plan-${id}-name">
-      <h3 id="plan-${id}-name">${esc(planName(id))}</h3>
-      ${noRate ? '' : priceHtml(id)}
-      <button type="button" class="btn${action === 'buy' || action === 'renew' ? ' btn--primary' : ''}" data-pick="${id}" data-action="${action}"${disabled ? ' disabled' : ''}>${esc(label)}</button>
-      <ul class="plans__lines">${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>
+      <div class="plans__head">${planIconHtml(id)}<h3 id="plan-${id}-name">${esc(planName(id))}</h3>${mark}</div>
+      <p class="plans__tagline">${esc(t(`billing.plans.tagline.${id}`))}</p>
+      ${paid ? cardToggleHtml(id, period, pct) : ''}
+      ${noRate ? '' : priceHtml(id, p, period)}
+      <button type="button" class="btn plans__cta ${paid ? 'plans__cta--paid' : 'plans__cta--free'}" data-pick="${id}" data-action="${toYear ? 'switch-year' : action}"${disabled ? ' disabled' : ''}>${esc(label)}</button>
+      ${terms}${note}
+      ${listHtml(id, lines)}
     </article>`;
   }
 
   function rateHtml() {
     const rate = data.plans.rate;
     if (!rate) return `<p class="plans__rate" role="status">${esc(t('billing.ratesDown'))}</p>`;
-    const at = new Intl.DateTimeFormat(localeTag(), { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(rate.at));
+    const stamp = rateStamp(rate.at);
+    if (!stamp) return '';
+    // Exchange Rate API's terms ask for a link on any day its rate is the one in use; Frankfurter and Vietcombank ask for none.
     const link = rate.source === 'erapi' ? ` <a href="${ATTRIBUTION}" target="_blank" rel="noopener noreferrer">${esc(t('billing.rate.attribution'))}</a>` : '';
-    return `<p class="plans__rate">${esc(t('billing.rate', { rate: number(rate.rate), source: SOURCES[rate.source] || rate.source, at }))}${link}</p>`;
+    return `<p class="plans__rate">${esc(t('billing.rate.updated', stamp))}${link}</p>`;
   }
 
   function paygHtml() {
@@ -269,14 +280,19 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       const text = confirming.id === 'free' ? t('billing.plans.confirmEnd', { date: when }) : t('billing.plans.confirmLater', { plan: planName(confirming.id), period: t(`billing.period.${confirming.period}`).toLowerCase(), date: when });
       ask = `<div class="plans__confirm" role="alert"><p>${esc(text)}</p><p class="plans__actions"><button type="button" class="btn btn--primary" data-confirm>${esc(t('billing.plans.confirm'))}</button> <button type="button" class="btn" data-keep>${esc(t('billing.plans.keepCurrent'))}</button></p></div>`;
     }
-    return `${keep}${ask}${periodHtml('plans__period', t('billing.plans.period'), true)}
+    const seg = ['individual', 'team']
+      .map((a) => `<button type="button" role="radio" data-audience="${a}" aria-checked="${a === audience}" tabindex="${a === audience ? 0 : -1}">${esc(t(`billing.plans.${a}`))}</button>`)
+      .join('');
+    const choose = `<div class="plans__audience" role="radiogroup" aria-label="${esc(t('billing.plans.audience'))}">${seg}</div>`;
+    if (audience === 'team') return `${keep}${ask}${choose}<div class="plans__cards plans__cards--team">${teamCardHtml({ noted: !!data.account.teamInterest, busy: teamBusy })}</div>`;
+    return `${keep}${ask}${choose}
       <div class="plans__cards">${ORDER.map(cardHtml).join('')}</div>${paygHtml()}${rateHtml()}`;
   }
 
-  /** Monthly | Yearly, a radio group with one tab stop (arrow keys move inside it). */
+  /** Monthly | Yearly in the checkout, a radio group with one tab stop (arrow keys move inside it). The plans sheet has one in each paid card. */
   function periodHtml(className, label, withSave, prices) {
     return `<div class="${className}" role="radiogroup" aria-label="${esc(label)}">${['month', 'year']
-      .map((p) => `<button type="button" role="radio" data-period="${p}" aria-checked="${p === period}" tabindex="${p === period ? 0 : -1}"${prices && laterQuote(p) ? ' disabled' : ''}><span>${esc(t(`billing.period.${p}`))}</span>${prices ? `<span class="plans__periodprice">${esc(prices[p])}</span>` : ''}${withSave && p === 'year' ? `<span class="plans__save">${esc(t('billing.plans.save'))}</span>` : ''}</button>`)
+      .map((p) => `<button type="button" role="radio" data-period="${p}" aria-checked="${p === period}" tabindex="${p === period ? 0 : -1}"${prices && laterQuote(p) ? ' disabled' : ''}><span>${esc(t(`billing.period.${p}`))}</span>${prices ? `<span class="plans__periodprice">${esc(prices[p])}</span>` : ''}${withSave && p === 'year' ? `<span class="plans__save">${esc(t('billing.plans.save', { pct: savePercent(planById(checkout?.plan)) }))}</span>` : ''}</button>`)
       .join('')}</div>`;
   }
 
@@ -638,7 +654,11 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   }
 
   /* ── events ───────────────────────────────────────────────────────── */
-  function choosePeriod(next, focus = true) {
+
+  /** The plan whose card holds the pressed control: all three toggles show one state, but the person's focus stays in the card they pressed. */
+  const cardOf = (el) => /** @type {HTMLElement | null} */ (el.closest('[data-plan]'))?.dataset.plan || '';
+
+  function choosePeriod(next, focus = true, card = '') {
     if (next === period || (view === 'checkout' && laterQuote(next))) return;
     period = next;
     if (view === 'checkout') paint(null);
@@ -646,7 +666,32 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       confirming = null;
       paint(null);
     }
-    if (focus) $(`[data-period="${next}"]`)?.focus();
+    if (focus) $(`${card ? `[data-plan="${card}"] ` : ''}[data-period="${next}"]`)?.focus();
+  }
+
+  function chooseAudience(next) {
+    if (next === audience) return;
+    audience = next;
+    confirming = null;
+    paint(null);
+    $(`[data-audience="${next}"]`)?.focus();
+  }
+
+  /** Records, once, that this account wants to hear when Team opens; the status line is changed in place so it is announced. */
+  async function wantTeam() {
+    if (!data || teamBusy || data.account.teamInterest) return;
+    teamBusy = true;
+    const status = $('.plans__teamstatus');
+    try {
+      await api.billingTeamInterest();
+      data.account.teamInterest = true;
+      if (status) status.textContent = t('billing.team.noted');
+      $('[data-team-interest]')?.setAttribute('aria-disabled', 'true');
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      teamBusy = false;
+    }
   }
 
   async function onClick(event) {
@@ -654,7 +699,9 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     const el = /** @type {HTMLElement | null} */ (target.closest('button, a'));
     if (!el || el.tagName === 'A') return;
     if (el.hasAttribute('data-close') || el.hasAttribute('data-done')) return void dialog.close();
-    if (el.dataset.period) return choosePeriod(el.dataset.period);
+    if (el.dataset.period) return choosePeriod(el.dataset.period, true, cardOf(el));
+    if (el.dataset.audience) return chooseAudience(el.dataset.audience);
+    if (el.hasAttribute('data-team-interest')) return void wantTeam();
     if (el.hasAttribute('data-retry')) {
       if (retryTopUp != null) {
         const amount = retryTopUp;
@@ -723,13 +770,18 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     const dir = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
     if (!dir) return;
     event.preventDefault();
-    choosePeriod(period === 'month' ? 'year' : 'month');
+    // Two choices in each group, so any arrow is "the other one".
+    if (el.dataset.audience) return chooseAudience(audience === 'individual' ? 'team' : 'individual');
+    choosePeriod(period === 'month' ? 'year' : 'month', true, cardOf(el));
   }
 
   function pick(id) {
     if (!data) return;
     const action = actionFor(id);
-    if (action === 'buy' || action === 'renew') {
+    // The plan in force, paid by the month: its card's button moves it to the year (the checkout opens on yearly).
+    if (yearSwitch(id)) {
+      void startCheckout(id, 'year');
+    } else if (action === 'buy' || action === 'renew') {
       void startCheckout(id, period);
     } else if (action === 'later') {
       confirming = { id, period };

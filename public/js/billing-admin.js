@@ -68,6 +68,7 @@ export function createBillingAdmin(host, { api, toast, armed }) {
         ${row(t('billing.admin.payg'), esc(vnd(e.usage.outVnd)))}
         ${row(t('billing.admin.topups'), esc(vnd(e.topup.inVnd + e.assign.inVnd)))}
         ${row(t('billing.admin.held'), esc(t('billing.admin.heldValue', { vnd: vnd(figures.balancesHeldVnd), n: figures.accounts })))}
+        ${row(t('billing.admin.teamInterest'), esc(String(figures.figures?.teamInterest ?? 0)), ' data-adm="team-interest"')}
       </dl>
       <h4 class="adm__h">${esc(t('billing.admin.month'))}</h4>
       <dl class="adm__facts">

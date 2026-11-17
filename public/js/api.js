@@ -127,6 +127,7 @@ export const api = {
    */
   billing: () => request('GET', '/api/billing'),
   billingPlans: () => request('GET', '/api/billing/plans'),
+  billingTeamInterest: () => request('POST', '/api/billing/team-interest'),
   billingQuote: (body) => request('POST', '/api/billing/quote', body),
   billingOrder: (body) => request('POST', '/api/billing/orders', body),
   billingOrderStatus: (id) => request('GET', `/api/billing/orders/${encodeURIComponent(id)}`),

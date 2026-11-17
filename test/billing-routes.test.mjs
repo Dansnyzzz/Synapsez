@@ -125,6 +125,7 @@ const ROUTES_USER = [
   ['POST', '/api/billing/orders', { kind: 'topup', amountVnd: 100_000 }], ['GET', '/api/billing/orders/nope'], ['POST', '/api/billing/orders/nope/cancel'],
   ['PUT', '/api/billing/subscription', { autoRenew: false }], ['PUT', '/api/billing/profile', { name: 'A', email: 'a@b.co', country: 'VN' }],
   ['PUT', '/api/billing/alerts', { lowBalanceVnd: 50_000 }], ['POST', '/api/billing/promo', { code: 'ABCDEFGH' }], ['GET', '/api/billing/transactions'], ['GET', '/api/billing/receipts'],
+  ['POST', '/api/billing/team-interest'],
 ];
 
 section('who can see billing at all');
@@ -135,7 +136,7 @@ section('who can see billing at all');
   const seen = await owner.j.call('GET', '/api/billing');
   check('an administrator gets 200', seen.status === 200 && seen.json?.mode === 'preview', `${seen.status}`);
   const keys = Object.keys(seen.json || {}).sort().join();
-  check('  with plan, balance, usage, profile, alerts and the top-up bounds', keys === 'alerts,balance,bounds,mode,plan,profile,usage', keys);
+  check('  with plan, balance, usage, profile, alerts and the top-up bounds', keys === 'alerts,balance,bounds,mode,plan,profile,teamInterest,usage', keys);
   check('  a free account: plan free, no balance, no profile, the bounds are the code\'s', seen.json.plan.plan === 'free' && seen.json.balance.vnd === 0 && seen.json.balance.expiresAt === null && seen.json.profile === null && seen.json.bounds.minNoPlan === TOPUP.minNoPlan, JSON.stringify(seen.json.plan));
 
   const ownerMe = await owner.j.call('GET', '/api/bootstrap');
@@ -189,6 +190,25 @@ section('the plans, with and without a rate');
   check("the plans in đồng at the day's rate", ok.status === 200 && plus?.vnd?.month === planVnd('plus', 'month', 25_500) && plus?.vnd?.year === planVnd('plus', 'year', 25_500) && plus.usdCents.month === 500 && plus.searches === 150 && plus.sandboxMinutes === 240 && plus.storageGb === 3, JSON.stringify(plus));
   check('  the rate, its source and its attribution', ok.json?.rate?.rate === 25_500 && ok.json.rate.source === 'erapi' && /exchangerate-api/.test(ok.json.rate.attribution) && !!ok.json.rate.at, JSON.stringify(ok.json?.rate));
   check("  pay as you go and the caller's plan", ok.json?.payg?.prices?.searchVnd > 0 && ok.json?.current?.plan === 'free', JSON.stringify([ok.json?.payg, ok.json?.current]));
+}
+
+section('"tell me when Team opens": kept once per account, counted for the administrator');
+{
+  const before = (await owner.j.call('GET', '/api/admin/billing')).json?.figures?.teamInterest;
+  check('nobody has asked yet, and the account says so', before === 0 && (await owner.j.call('GET', '/api/billing')).json?.teamInterest === false, String(before));
+  check('a member is refused like every other billing route', (await bob.j.call('POST', '/api/billing/team-interest')).status === 404);
+  const first = await owner.j.call('POST', '/api/billing/team-interest');
+  const kept = (await store.getUserSetting(owner.id, 'prefs'))?.teamInterest;
+  check('the first press answers ok and stores a date in the preferences', first.status === 200 && first.json?.ok === true && Number.isFinite(Date.parse(kept)), JSON.stringify([first.status, first.json, kept]));
+  await sleep(20);
+  const second = await owner.j.call('POST', '/api/billing/team-interest');
+  check('the second press answers ok and changes nothing', second.status === 200 && second.json?.ok === true && (await store.getUserSetting(owner.id, 'prefs'))?.teamInterest === kept);
+  const both = await Promise.all([dan.j.call('POST', '/api/billing/team-interest'), dan.j.call('POST', '/api/billing/team-interest')]);
+  check('two presses at once store one date and both answer ok', both.every((r) => r.status === 200 && r.json?.ok === true) && Number.isFinite(Date.parse((await store.getUserSetting(dan.id, 'prefs'))?.teamInterest)));
+  check('the preferences it was merged into keep what they held', (await store.getUserSetting(owner.id, 'prefs')) !== null);
+  const card = await owner.j.call('GET', '/api/admin/billing');
+  check('the administrator figures count the accounts, once each', card.json?.figures?.teamInterest === 2, String(card.json?.figures?.teamInterest));
+  check('and the account now says it has asked', (await owner.j.call('GET', '/api/billing')).json?.teamInterest === true);
 }
 
 section('billing information');

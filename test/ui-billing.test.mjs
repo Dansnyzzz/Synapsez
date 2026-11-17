@@ -148,37 +148,66 @@ section('the plans sheet');
       labelled: document.getElementById(d.getAttribute('aria-labelledby'))?.textContent.trim(),
       cards: [...d.querySelectorAll('.plans__card')].map((c) => c.dataset.plan),
       note: d.querySelector('.plans__preview')?.textContent.trim(),
-      radios: [...d.querySelectorAll('.plans__period [role="radio"]')].map((r) => `${r.dataset.period}:${r.getAttribute('aria-checked')}`),
-      group: d.querySelector('.plans__period')?.getAttribute('role'),
+      radios: [...d.querySelectorAll('.plans__audience [role="radio"]')].map((r) => `${r.dataset.audience}:${r.textContent.trim()}:${r.getAttribute('aria-checked')}`),
+      group: d.querySelector('.plans__audience')?.getAttribute('role'),
+      periodAtTop: !!d.querySelector('.plans__body > [data-period], .plans__body > .plans__period'),
+      cardParts: [...d.querySelectorAll('.plans__card')].map((c) => ({
+        id: c.dataset.plan,
+        icon: !!c.querySelector('svg.plans__icon[aria-hidden="true"]') && c.querySelector('svg.plans__icon')?.getAttribute('stroke') === 'currentColor',
+        shapes: c.querySelector('svg.plans__icon')?.querySelectorAll('circle, path').length,
+        tagline: c.querySelector('.plans__tagline')?.textContent.trim(),
+        price: c.querySelector('.plans__price')?.textContent.replace(/\s+/g, ' ').trim(),
+        billed: [...c.querySelectorAll('.plans__billed')].map((b) => b.textContent.trim()).join(' | '),
+        ticks: c.querySelectorAll('.plans__lines li svg[aria-hidden="true"]').length,
+        lead: c.querySelector('.plans__lead')?.textContent.trim() || '',
+        toggle: !!c.querySelector('.plans__toggle[role="radiogroup"]'),
+        terms: c.querySelector('.plans__terms')?.textContent.trim() || '',
+        button: c.querySelector('[data-pick]').textContent.trim(),
+      })),
       plus: d.querySelector('[data-plan="plus"]').textContent,
       free: d.querySelector('[data-plan="free"] [data-pick]').textContent.trim() + (d.querySelector('[data-plan="free"] [data-pick]').disabled ? ' (disabled)' : ''),
       rate: d.querySelector('.plans__rate')?.textContent,
       link: d.querySelector('.plans__rate a')?.href,
       all: d.textContent,
+      save: [...d.querySelectorAll('.plans__toggle [data-period="year"] .plans__save')].map((x) => x.textContent.trim()),
     };
   });
   check('titled "Plans that grow with you", named by aria-labelledby', sheet.labelled === 'Plans that grow with you', sheet.labelled);
   check('four cards: Free, Plus, Pro, Max', sheet.cards.join() === 'free,plus,pro,max', sheet.cards.join());
   check('the preview note is at the top', sheet.note === 'Preview — only administrators see this.', sheet.note);
-  check('Monthly | Yearly is a radio group, monthly first', sheet.group === 'radiogroup' && sheet.radios.join() === 'month:true,year:false', sheet.radios.join());
+  check('Individual | Team is the segmented control, Individual first; no month/year at the top', sheet.group === 'radiogroup' && sheet.radios.join() === 'individual:Individual:true,team:Team:false' && !sheet.periodAtTop, sheet.radios.join());
+  const byId = Object.fromEntries(sheet.cardParts.map((c) => [c.id, c]));
+  check('each card has an icon of its own (line drawing, currentColor, hidden from readers) that grows richer from Free to Max', sheet.cardParts.every((c) => c.icon) && byId.free.shapes < byId.plus.shapes && byId.plus.shapes < byId.pro.shapes && byId.pro.shapes < byId.max.shapes, sheet.cardParts.map((c) => `${c.id}:${c.shapes}`).join());
+  check('  and a tagline, a ticked list and the "Everything in … and:" lead-ins', sheet.cardParts.every((c) => c.tagline.length > 8 && c.ticks >= 4) && byId.free.lead === '' && byId.plus.lead === 'Everything in Free, and:' && byId.pro.lead === 'Everything in Plus, and:' && byId.max.lead === 'Everything in Pro, and:', sheet.cardParts.map((c) => `${c.id}:${c.ticks}:${c.lead}`).join(' '));
+  check('the toggle is inside each paid card and not the Free one, with the saving worked out from the prices', !byId.free.toggle && byId.plus.toggle && byId.pro.toggle && byId.max.toggle && sheet.save.length === 3 && sheet.save.every((s) => s === 'Save 17%'), sheet.save.join());
+  check('monthly: the price per month, then "billed monthly" and the đồng it is billed as', /^\$5 \/ month$/.test(byId.plus.price) && /^billed monthly \| billed as 128,000/.test(byId.plus.billed), `${byId.plus.price} / ${byId.plus.billed}`);
+  check('"No commitment · Cancel any time" is under the monthly buttons of the paid plans only', byId.plus.terms === 'No commitment · Cancel any time' && byId.pro.terms === byId.plus.terms && byId.max.terms === byId.plus.terms && byId.free.terms === '', JSON.stringify(sheet.cardParts.map((c) => c.terms)));
   check('English shows USD large and "billed as" in đồng beneath', /\$5\b/.test(sheet.plus) && /billed as 128,000/.test(sheet.plus), sheet.plus.replace(/\s+/g, ' '));
   check('no daily figure anywhere (a month\'s allowance)', !/a day|per day|daily/i.test(sheet.all), '');
   check('the allowance is a month\'s: searches, computer hours, storage', /150 searches a month/.test(sheet.plus) && /4 h of computer time a month/.test(sheet.plus) && /3 GB storage/.test(sheet.plus), sheet.plus.replace(/\s+/g, ' '));
   check('the current plan\'s button is disabled "Current plan"', sheet.free === 'Current plan (disabled)', sheet.free);
-  check('the rate, its source and the time sit under the cards', /25,500/.test(sheet.rate) && /open\.er-api|Exchange Rate/i.test(sheet.rate), (sheet.rate || '').replace(/\s+/g, ' '));
-  check('  with the ExchangeRate-API attribution link', /exchangerate-api\.com/.test(sheet.link || ''), sheet.link);
+  check('Plus, on a free account, is "Get Plus"', byId.plus.button === 'Get Plus', byId.plus.button);
+  check('the rate is one line in Vietnam time, 24-hour and DD/MM/YYYY', /^Rate updated at \d\d:\d\d, \d\d\/\d\d\/\d{4}/.test((sheet.rate || '').replace(/\s+/g, ' ').trim()), (sheet.rate || '').replace(/\s+/g, ' '));
+  check('  with the Exchange Rate API link on the day that is its rate in use', /exchangerate-api\.com/.test(sheet.link || '') && /Rates By Exchange Rate API/.test(sheet.rate), sheet.link);
   check('the pay-as-you-go prices follow', /400/.test(sheet.all) && /1 person/.test(sheet.all));
   await shot('plans');
 
-  await page.click('#plans .plans__period [data-period="year"]');
-  const yearly = await page.evaluate(() => ({
-    plus: document.querySelector('#plans [data-plan="plus"] .plans__price').textContent.replace(/\s+/g, ' '),
-    checked: document.querySelector('#plans .plans__period [data-period="year"]').getAttribute('aria-checked'),
-    save: document.querySelector('#plans .plans__period [data-period="year"]').textContent,
-  }));
-  check('Yearly changes the prices', /\$50\b/.test(yearly.plus) && yearly.checked === 'true', yearly.plus);
-  check('  and says "save 17%"', /17%/.test(yearly.save), yearly.save);
-  await page.click('#plans .plans__period [data-period="month"]');
+  await page.click('#plans [data-plan="pro"] .plans__toggle [data-period="year"]');
+  const yearly = await page.evaluate(() => {
+    const card = (id) => document.querySelector(`#plans [data-plan="${id}"]`);
+    return {
+      plus: card('plus').querySelector('.plans__price').textContent.replace(/\s+/g, ' '),
+      plusBilled: [...card('plus').querySelectorAll('.plans__billed')].map((b) => b.textContent.trim()).join(' | '),
+      checked: ['plus', 'pro', 'max'].map((id) => card(id).querySelector('.plans__toggle [data-period="year"]').getAttribute('aria-checked')).join(),
+      focusIn: document.activeElement?.closest('[data-plan]')?.dataset.plan + ':' + document.activeElement?.dataset.period,
+      terms: document.querySelectorAll('#plans .plans__terms').length,
+    };
+  });
+  check('choosing Yearly in one card switches all three, and the price lines', yearly.checked === 'true,true,true' && /^\$4\.17 \/ month$/.test(yearly.plus) && /^\$50 billed yearly \| billed as 1,275,000/.test(yearly.plusBilled), `${yearly.checked} ${yearly.plus} ${yearly.plusBilled}`);
+  check('  focus stays in the card that was pressed', yearly.focusIn === 'pro:year', yearly.focusIn);
+  check('  and "No commitment" goes with the month', yearly.terms === 0, String(yearly.terms));
+  await page.click('#plans [data-plan="plus"] .plans__toggle [data-period="month"]');
+  check('Monthly switches them back', (await page.getAttribute('#plans [data-plan="max"] .plans__toggle [data-period="month"]', 'aria-checked')) === 'true');
 }
 
 section('keyboard');
@@ -201,13 +230,88 @@ section('keyboard');
   check('Tab never leaves the dialog', outside === 0, String(outside));
   check('  and reaches every control in it, exactly once each', reached === wanted, `${reached} of ${wanted}`);
   // The radios are one tab stop; arrows move between them.
-  await page.focus('#plans .plans__period [aria-checked="true"]');
+  await page.focus('#plans [data-plan="plus"] .plans__toggle [aria-checked="true"]');
   await page.keyboard.press('ArrowRight');
-  check('arrow keys move between Monthly and Yearly', (await page.getAttribute('#plans .plans__period [data-period="year"]', 'aria-checked')) === 'true');
+  check('arrow keys move between Monthly and Yearly, in the card that has focus', (await page.getAttribute('#plans [data-plan="plus"] .plans__toggle [data-period="year"]', 'aria-checked')) === 'true' && (await page.evaluate(() => document.activeElement?.closest('[data-plan]')?.dataset.plan + ':' + document.activeElement?.dataset.period)) === 'plus:year');
+  await page.keyboard.press('ArrowLeft');
+  await page.focus('#plans .plans__audience [aria-checked="true"]');
+  await page.keyboard.press('ArrowRight');
+  check('and between Individual and Team', (await page.getAttribute('#plans [data-audience="team"]', 'aria-checked')) === 'true' && (await page.evaluate(() => document.activeElement?.dataset.audience)) === 'team');
   await page.keyboard.press('ArrowLeft');
   await page.keyboard.press('Escape');
   await page.waitForTimeout(100);
   check('Escape closes the sheet', !(await page.evaluate(() => document.getElementById('plans').open)));
+}
+
+section('the rate line: one line, no link unless Exchange Rate API is the source');
+{
+  const withRate = async (rate) => {
+    await page.route('**/api/billing/plans', async (route) => {
+      const res = await route.fetch();
+      const body = await res.json();
+      await route.fulfill({ response: res, json: { ...body, rate } });
+    });
+    await openMenu(page);
+    await page.click('.plusmenu--account [data-row="upgrade"]');
+    await page.waitForFunction(() => document.querySelectorAll('#plans .plans__card').length === 4 && !!document.querySelector('#plans .plans__rate'));
+    const got = await page.evaluate(() => ({ text: document.querySelector('#plans .plans__rate').textContent.replace(/\s+/g, ' ').trim(), links: document.querySelectorAll('#plans .plans__rate a').length }));
+    await page.unroute('**/api/billing/plans');
+    await page.keyboard.press('Escape');
+    return got;
+  };
+  // 23:00 UTC is 06:00 the next day in Vietnam, whatever the clock of the machine reading it.
+  const frankfurter = await withRate({ rate: 25_736, source: 'frankfurter', at: '2026-11-16T23:00:00.000Z' });
+  check('Frankfurter: "Rate updated at 06:00, 17/11/2026", no link', frankfurter.text === 'Rate updated at 06:00, 17/11/2026' && frankfurter.links === 0, JSON.stringify(frankfurter));
+  const bank = await withRate({ rate: 25_400, source: 'vietcombank', at: '2026-01-05T17:30:00.000Z' });
+  check('Vietcombank: the 24-hour clock across midnight, still no link', bank.text === 'Rate updated at 00:30, 06/01/2026' && bank.links === 0, JSON.stringify(bank));
+  const erapi = await withRate({ rate: 25_500, source: 'erapi', at: '2026-11-16T23:00:00.000Z', attribution: 'x' });
+  check('Exchange Rate API: the same line, with its link', erapi.text === 'Rate updated at 06:00, 17/11/2026 Rates By Exchange Rate API' && erapi.links === 1, JSON.stringify(erapi));
+}
+
+section('the Team tab: coming soon, and "Tell me when it opens" is kept once');
+{
+  const posts = [];
+  const watch = (req) => {
+    if (req.method() === 'POST' && /\/api\/billing\/team-interest/.test(req.url())) posts.push(req.url());
+  };
+  page.on('request', watch);
+  await openMenu(page);
+  await page.click('.plusmenu--account [data-row="upgrade"]');
+  await page.waitForSelector('#plans .plans__card [data-pick]');
+  await page.click('#plans [data-audience="team"]');
+  const team = await page.evaluate(() => ({
+    cards: document.querySelectorAll('#plans .plans__card').length,
+    individual: document.querySelectorAll('#plans [data-plan]').length,
+    title: document.querySelector('#plans .plans__card--team h3')?.textContent.trim(),
+    button: document.querySelector('#plans [data-team-interest]')?.textContent.trim(),
+    status: document.querySelector('#plans .plans__teamstatus')?.getAttribute('role'),
+    said: document.querySelector('#plans .plans__teamstatus')?.textContent.trim(),
+    seg: document.querySelector('#plans [data-audience="team"]')?.getAttribute('aria-checked'),
+    rate: !!document.querySelector('#plans .plans__rate'),
+  }));
+  check('the Team tab is one card, "Team plans are coming soon", with "Tell me when it opens"', team.cards === 1 && team.individual === 0 && team.title === 'Team plans are coming soon' && team.button === 'Tell me when it opens' && team.seg === 'true' && !team.rate, JSON.stringify(team));
+  check('  and its status line is a live region that starts empty', team.status === 'status' && team.said === '');
+  await shot('team');
+  await page.click('#plans [data-team-interest]');
+  await page.waitForFunction(() => /Noted/.test(document.querySelector('#plans .plans__teamstatus')?.textContent || ''), null, { timeout: 5000 }).catch(() => {});
+  check('pressing it says "Noted — we will tell you by email." in that same status line', (await page.textContent('#plans .plans__teamstatus')) === 'Noted — we will tell you by email.', await page.textContent('#plans .plans__teamstatus'));
+  check('  one request, and focus stays on the button', posts.length === 1 && (await page.evaluate(() => document.activeElement?.hasAttribute('data-team-interest'))), String(posts.length));
+  // aria-disabled keeps focus where it is; Playwright counts it as disabled, so the press is forced.
+  await page.click('#plans [data-team-interest]', { force: true });
+  await page.waitForTimeout(300);
+  check('a second press makes no second request', posts.length === 1, String(posts.length));
+  const kept = await page.evaluate(async () => (await (await fetch('/api/billing')).json()).teamInterest);
+  check('the account keeps it', kept === true);
+  await page.keyboard.press('Escape');
+  await openMenu(page);
+  await page.click('.plusmenu--account [data-row="upgrade"]');
+  await page.waitForSelector('#plans .plans__card [data-pick]');
+  await page.click('#plans [data-audience="team"]');
+  check('on a later visit it already says so', (await page.textContent('#plans .plans__teamstatus')) === 'Noted — we will tell you by email.');
+  page.off('request', watch);
+  await page.click('#plans [data-audience="individual"]');
+  check('Individual brings the four cards back', (await page.locator('#plans .plans__card').count()) === 4);
+  await page.keyboard.press('Escape');
 }
 
 section('Get Plus: the first time asks who is buying');
@@ -333,8 +437,21 @@ section('what the server only schedules, a late answer, a typed form, a double c
   });
   await openMenu(page);
   await page.click('.plusmenu--account [data-row="upgrade"]');
-  await page.waitForFunction(() => document.querySelector('#plans [data-plan="plus"] [data-pick]')?.textContent.trim() === 'Current plan');
-  await page.click('#plans .plans__period [data-period="year"]');
+  await page.waitForFunction(() => document.querySelector('#plans [data-plan="plus"] [data-pick]')?.textContent.trim() === 'Switch to Plus yearly');
+  const monthly = await page.evaluate(() => ({
+    note: document.querySelector('#plans [data-plan="plus"] .plans__note')?.textContent.trim(),
+    notes: document.querySelectorAll('#plans .plans__note').length,
+    badge: document.querySelector('#plans [data-plan="plus"] .plans__badge')?.textContent.trim(),
+    action: document.querySelector('#plans [data-plan="plus"] [data-pick]').dataset.action,
+    off: document.querySelector('#plans [data-plan="plus"] [data-pick]').disabled,
+  }));
+  check('a member on Plus monthly: the Plus card marks it, shows the info box and offers "Switch to Plus yearly" (not disabled)', monthly.note === 'You pay monthly. Pay yearly to save 17%.' && monthly.notes === 1 && monthly.badge === 'Current plan' && monthly.action === 'switch-year' && !monthly.off, JSON.stringify(monthly));
+  await page.click('#plans [data-plan="plus"] [data-pick]');
+  await page.waitForSelector('#plans .checkout__lines');
+  check('  and the button opens the checkout on yearly', (await page.getAttribute('#plans .checkout__period [data-period="year"]', 'aria-checked')) === 'true' && /Yearly/.test(await page.textContent('#plans .checkout__lines')) === true);
+  await page.click('#plans [data-back]');
+  await page.waitForSelector('#plans .plans__card [data-pick="pro"]');
+  await page.click('#plans [data-plan="plus"] .plans__toggle [data-period="year"]');
   await page.click('#plans [data-plan="plus"] [data-pick]');
   await page.waitForSelector('#plans .checkout__lines');
   const sched = await page.evaluate(() => ({
@@ -394,8 +511,8 @@ section('short payment, expiry, cancel');
   // A lower plan is changed at renewal, after a confirm: the sheet says so and nothing is charged.
   await openMenu(page);
   await page.click('.plusmenu--account [data-row="upgrade"]');
-  await page.waitForFunction(() => document.querySelector('#plans [data-plan="plus"] [data-pick]')?.textContent.trim() === 'Current plan');
-  check('the plan in force reads "Current plan"; Free offers the change at renewal', (await page.textContent('#plans [data-plan="free"] [data-pick]')).trim() === 'Changes at renewal');
+  await page.waitForFunction(() => document.querySelector('#plans [data-plan="plus"] [data-pick]')?.textContent.trim() === 'Switch to Plus yearly');
+  check('the plan in force is marked "Current plan"; Free offers the change at renewal', (await page.textContent('#plans [data-plan="free"] [data-pick]')).trim() === 'Changes at renewal');
   await page.click('#plans [data-plan="pro"] [data-pick]');
   await page.waitForSelector('#plans [data-view="checkout"]');
   const quoted = await page.textContent('#plans .checkout__lines');
@@ -463,6 +580,13 @@ section('narrow screens');
   });
   check('the sheet does not scroll sideways at 360 px', narrow.page && narrow.dialog && narrow.body, JSON.stringify(narrow));
   check('  the cards stack', narrow.stacked, JSON.stringify(narrow));
+  await page.click('#plans [data-audience="team"]');
+  const narrowTeam = await page.evaluate(() => {
+    const body = document.querySelector('#plans .sheet__body');
+    return { page: document.documentElement.scrollWidth <= window.innerWidth, body: body.scrollWidth <= body.clientWidth + 1 };
+  });
+  check('  nor does the Team tab', narrowTeam.page && narrowTeam.body, JSON.stringify(narrowTeam));
+  await page.click('#plans [data-audience="individual"]');
   await page.click('#plans [data-plan="pro"] [data-pick]');
   await page.waitForSelector('#plans [data-view="checkout"]');
   const checkout = await page.evaluate(() => {
@@ -499,9 +623,10 @@ section('no exchange rate: nothing can be bought');
   await page.keyboard.press('Escape');
 }
 
-section('light theme');
-{
-  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
+// Both themes: the new text and the two button fills come from theme tokens, so each has to be measured in each.
+for (const theme of ['light', 'dark']) {
+  section(`${theme} theme`);
+  await page.evaluate((name) => document.documentElement.setAttribute('data-theme', name), theme);
   await openMenu(page);
   await page.click('.plusmenu--account [data-row="upgrade"]');
   await page.waitForSelector('#plans .plans__card');
@@ -518,15 +643,15 @@ section('light theme');
       }
       return [255, 255, 255];
     };
-    return [...document.querySelectorAll('#plans .plans__preview, #plans .plans__price, #plans .plans__per, #plans .plans__billed, #plans .plans__lines li, #plans .plans__rate, #plans .plans__payg, #plans [data-pick]:not(:disabled):not(.btn--primary)')].map((el) => {
+    return [...document.querySelectorAll('#plans .plans__preview, #plans .plans__tagline, #plans .plans__terms, #plans .plans__note, #plans .plans__badge, #plans .plans__lead, #plans [role="radio"], #plans .plans__price, #plans .plans__per, #plans .plans__billed, #plans .plans__lines li, #plans .plans__rate, #plans .plans__payg, #plans [data-pick]:not(:disabled):not(.btn--primary)')].map((el) => {
       const a = lum(parse(getComputedStyle(el).color).slice(0, 3));
       const b = lum(backdrop(el));
       return ((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05));
     });
   });
   // The primary buttons are white on the house gradient (see .btn--primary), which one measurement cannot describe, so they are left out.
-  check('text on the sheet reads at 4.5:1 or better in the light theme', contrast.length > 8 && Math.min(...contrast) >= 4.5, contrast.map((c) => c.toFixed(1)).join());
-  await shot('light');
+  check(`text on the sheet reads at 4.5:1 or better in the ${theme} theme`, contrast.length > 8 && Math.min(...contrast) >= 4.5, contrast.map((c) => c.toFixed(1)).join());
+  await shot(theme);
   await page.keyboard.press('Escape');
 }
 
@@ -846,6 +971,7 @@ section('Receipts and the PDF');
   await page.click('#tab-admin');
   await page.waitForFunction(() => document.querySelectorAll('#admin-billing [data-transfer]').length === 2, null, { timeout: 8000 });
   const card = await text('#admin-billing');
+  check('it counts the accounts that asked to hear when Team opens', (await text('#admin-billing [data-adm="team-interest"]')).includes('1'), await text('#admin-billing [data-adm="team-interest"]'));
   check('the card shows the mode and the rate', /preview/i.test(await text('#admin-billing [data-adm="mode"]')) && /25,500/.test(await text('#admin-billing [data-adm="rate"]')), await text('#admin-billing [data-adm="rate"]'));
   check('the money in the last 30 days, the month\'s cost and margin are drawn', /Plans/.test(card) && /Pay as you go/.test(card) && /Top-ups/.test(card) && /Real cost/.test(card) && /Margin/.test(card) && /Balances held/.test(card), card.slice(0, 300));
   check('the unmatched content is shown as text, not as markup', (await page.locator('#admin-billing [data-transfer] b').count()) === 0 && /<b>nha<\/b>/.test(card));

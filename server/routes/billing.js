@@ -161,7 +161,7 @@ export function mountBillingRoutes(api, admin, { wrap }) {
   api.get('/billing', settle, route(async (req, res) => {
     const now = new Date();
     const store = getStore();
-    const [plan, state, usage, row] = await Promise.all([planView(req.user.id, now), store.billingState(req.user.id), periodUsage(req.user.id, { now }), store.getBillingProfile(req.user.id)]);
+    const [plan, state, usage, row, prefs] = await Promise.all([planView(req.user.id, now), store.billingState(req.user.id), periodUsage(req.user.id, { now }), store.getBillingProfile(req.user.id), store.getUserSetting(req.user.id, 'prefs')]);
     res.json({
       mode: billingMode(),
       plan,
@@ -170,7 +170,15 @@ export function mountBillingRoutes(api, admin, { wrap }) {
       profile: openProfile(req.user.id, row?.sealed),
       alerts: { lowBalanceVnd: row?.lowBalanceVnd ?? null },
       bounds: TOPUP,
+      // So the Team card says "noted" on a later visit, not only in the visit that pressed it.
+      teamInterest: !!prefs?.teamInterest,
     });
+  }));
+
+  // "Tell me when Team opens": one date per account, the first press; the rest change nothing and answer the same.
+  api.post('/billing/team-interest', route(async (req, res) => {
+    await getStore().markTeamInterest(req.user.id, new Date());
+    res.json({ ok: true });
   }));
 
   api.get('/billing/plans', settle, route(async (req, res) => {
