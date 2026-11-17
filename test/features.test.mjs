@@ -407,13 +407,13 @@ section('page views and speed: on Vercel only, the path only, never against the 
   check('  including "/\\\\host" and a tab or newline after the slash', ['/\\evil.example/s.js', '/\t/evil.example/s.js', '/\n/evil.example/s.js'].every((p) => sameOriginClientConfig(JSON.stringify({ analytics: { scriptSrc: p } })) === null));
 
   const { pathOnly, analyticsFilter, speedFilter, trackingRefused } = await import('../public/js/insights.js');
-  check('only origin and path leave — tokens in the query and the hash do not', pathOnly('https://synapsez.vercel.app/?reset=SECRET&t=TOKEN#chat') === 'https://synapsez.vercel.app/');
+  check('only origin and path leave — tokens in the query and the hash do not', pathOnly('https://www.ephapse.net/?reset=SECRET&t=TOKEN#chat') === 'https://www.ephapse.net/');
   const filter = analyticsFilter();
-  const first = filter({ type: 'pageview', url: 'https://synapsez.vercel.app/?continue=TOKEN' });
-  check('a page view is sent with the path only', first?.url === 'https://synapsez.vercel.app/', JSON.stringify(first));
-  check('  and the same page rewriting its own address is not another view', filter({ type: 'pageview', url: 'https://synapsez.vercel.app/' }) === null);
-  check('  while a different page is', filter({ type: 'pageview', url: 'https://synapsez.vercel.app/share.html?t=X' })?.url === 'https://synapsez.vercel.app/share.html');
-  check('a speed measurement is cut to its path too', speedFilter()({ type: 'vital', url: 'https://synapsez.vercel.app/?chat=abc', value: 1 })?.url === 'https://synapsez.vercel.app/');
+  const first = filter({ type: 'pageview', url: 'https://www.ephapse.net/?continue=TOKEN' });
+  check('a page view is sent with the path only', first?.url === 'https://www.ephapse.net/', JSON.stringify(first));
+  check('  and the same page rewriting its own address is not another view', filter({ type: 'pageview', url: 'https://www.ephapse.net/' }) === null);
+  check('  while a different page is', filter({ type: 'pageview', url: 'https://www.ephapse.net/share.html?t=X' })?.url === 'https://www.ephapse.net/share.html');
+  check('a speed measurement is cut to its path too', speedFilter()({ type: 'vital', url: 'https://www.ephapse.net/?chat=abc', value: 1 })?.url === 'https://www.ephapse.net/');
   check('Global Privacy Control or Do Not Track turns it off', trackingRefused({ globalPrivacyControl: true }, {}) && trackingRefused({ doNotTrack: '1' }, {}) && trackingRefused({}, { doNotTrack: '1' }) && !trackingRefused({ doNotTrack: '0' }, {}));
 
   // The vendored copies are the installed packages, and stay inside the page's policy.
@@ -480,7 +480,7 @@ section('a link cannot copy a stranger\'s conversation into a signed-in account 
   // SEC-050: signed out, the URL alone never earns a copy — only the share page's own button does.
   check('a signed-out ?continue= is kept for a copy only when the shared page wrote it first', !/sessionStorage\.setItem\(CONTINUE_KEY, carry\)/.test(boot) && /if \(sessionStorage\.getItem\(CONTINUE_KEY\) !== carry\) \{\s*sessionStorage\.removeItem\(CONTINUE_KEY\);\s*sessionStorage\.setItem\(SHOW_KEY, carry\);/.test(boot));
   const view = fs.readFileSync(new URL('../public/js/share-view.js', import.meta.url), 'utf8');
-  check('  and the shared page\'s button writes it, under the key the app reads', /sessionStorage\.setItem\('synapsez:continue-shared', token\)/.test(view) && /const CONTINUE_KEY = 'synapsez:continue-shared';/.test(src) && !/location\.href = `\/\?continue=/.test(view.replace(/function signInToCarryOn[\s\S]*?\n\}/, '')));
+  check('  and the shared page\'s button writes it, under the key the app reads', /sessionStorage\.setItem\('ephapse:continue-shared', token\)/.test(view) && /const CONTINUE_KEY = 'ephapse:continue-shared';/.test(src) && !/location\.href = `\/\?continue=/.test(view.replace(/function signInToCarryOn[\s\S]*?\n\}/, '')));
 }
 
 section('the viewer says a link it makes is public, and offers it only for made files (SEC-046)');
@@ -1430,9 +1430,9 @@ section('a published link uses the address the person is on');
   const { appOrigin } = await import('../server/tools/cloud.js');
   const vercel = { VERCEL_PROJECT_PRODUCTION_URL: 'ai-remote-amber.vercel.app' };
   // The report: the link was built on the project's old domain, which answered
-  // DEPLOYMENT_NOT_FOUND, while the app was in use at synapsez.vercel.app.
-  check('the request\'s own address wins over the project\'s domain', appOrigin('https://synapsez.vercel.app', vercel) === 'https://synapsez.vercel.app');
-  check('a stated PUBLIC_URL wins over both', appOrigin('https://synapsez.vercel.app', { ...vercel, PUBLIC_URL: 'https://synapse.example/' }) === 'https://synapse.example');
+  // DEPLOYMENT_NOT_FOUND, while the app was in use at www.ephapse.net.
+  check('the request\'s own address wins over the project\'s domain', appOrigin('https://www.ephapse.net', vercel) === 'https://www.ephapse.net');
+  check('a stated PUBLIC_URL wins over both', appOrigin('https://www.ephapse.net', { ...vercel, PUBLIC_URL: 'https://synapse.example/' }) === 'https://synapse.example');
   check('with no request, the project domain is the last resort', appOrigin(null, vercel) === 'https://ai-remote-amber.vercel.app');
   check('an origin that is not an origin is ignored', appOrigin('javascript:alert(1)', vercel) === 'https://ai-remote-amber.vercel.app' && appOrigin('https://a.b/path', vercel) === 'https://ai-remote-amber.vercel.app');
 }
@@ -1509,7 +1509,7 @@ section('a drawing whose opening tag became the argument\'s name is put back tog
   const { CLOUD_IMPLEMENTATIONS } = await import('../server/tools/cloud.js');
   const schema = TOOLS_BY_NAME.show_widget.parameters;
   const call = {
-    title: 'Quy trình làm việc của Synapsez',
+    title: 'Quy trình làm việc của Ephapse',
     'svg viewBox="0 0 640 240" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, sans-serif"':
       '<defs><marker id="a"><path d="M0,0 L0,6 L9,3 z"/></marker></defs><rect x="16" y="60" width="104" height="62" rx="10"/><text x="68" y="86">Bạn đặt yêu cầu</text>',
   };
@@ -1743,8 +1743,8 @@ section("feedback's email to the administrators: the sender's words as words");
   const { feedbackMail } = await import('../server/routes/feedback.js');
   const { composeMessage } = await import('../server/mailTemplate.js');
   const value = { kind: 'bug', topic: 'other', topicOther: '[Verify your account](https://evil.example/login)', affect: 'blocks', body: 'Broken.\n```\n# Urgent\n[Reset password](https://evil.example/reset)\n![x](https://evil.example/p.png)' };
-  const mail = feedbackMail({ id: 'u1', username: null, name: 'Support Team\r\nBcc: everyone@example.com' }, value, 'https://synapsez.example');
-  const { html } = composeMessage({ brand: 'Synapsez', subject: mail.subject, markdown: mail.markdown, kind: 'announcement', language: 'en' });
+  const mail = feedbackMail({ id: 'u1', username: null, name: 'Support Team\r\nBcc: everyone@example.com' }, value, 'https://ephapse.example');
+  const { html } = composeMessage({ brand: 'Ephapse', subject: mail.subject, markdown: mail.markdown, kind: 'announcement', language: 'en' });
   check('nothing they wrote becomes a link, a picture or a heading', !html.includes('href="https://evil.example') && !html.includes('src="https://evil.example') && !/<h\d[^>]*>[^<]*Urgent/.test(html) && html.includes('Reset password'), html.slice(0, 200));
   check('  who sent it is the checked username, never the free-form name', !mail.subject.includes('Support') && !/[\r\n]/.test(mail.subject) && mail.subject.startsWith('Feedback from An account'));
   check('  and with a username, that name', feedbackMail({ username: 'lan.pham' }, value, 'u').subject.startsWith('Feedback from lan.pham:'));
@@ -2027,8 +2027,8 @@ section('the getting-started guide says only what is true');
     check(`${lang}: in a group its admin answers first, and @ calls a bot`, /admin|quản trị/i.test(dict['bots.emptyGroup']) && dict['bots.emptyGroup'].includes('@') && six('f').includes('@') && /admin|quản trị/i.test(six('f')), six('f'));
     check(`${lang}: every bot answers on the model chosen in the top bar`, /Every bot answers on the model the user picked in the app\\'s top bar/.test(promptSource) && /top bar|thanh trên/.test(dict['bots.f.modelNote']) && /top bar|thanh trên/.test(six('model')), six('model'));
     check(`${lang}: seven tabs, Automations & Bot sixth, First task last`, [1, 2, 3, 4, 5, 6, 7].every((n) => dict[`onb.${n}.tab`]) && /Automations|Tự động/.test(dict['onb.6.tab']) && /First task|Việc đầu tiên/.test(dict['onb.7.tab']), `${dict['onb.6.tab']} / ${dict['onb.7.tab']}`);
-    // Every video says it is the real page as of November 2026, and has its accessible name.
-    check(`${lang}: the provider videos are captioned as the real page, as of November 2026`, /2026/.test(dict['onb.keys.clip'] || '') && /{provider}/.test(dict['onb.keys.clip'] || '') && /{provider}/.test(dict['onb.keys.clipLabel'] || ''), dict['onb.keys.clip']);
+    // Every video has its accessible name, and none has a visible caption (owner, 2026-11-17).
+    check(`${lang}: the provider videos have an accessible name and no visible caption`, /{provider}/.test(dict['onb.keys.clipLabel'] || '') && !('onb.keys.clip' in dict) && !/figcaption|onbk__sample/.test(read('../public/js/onboarding-keys.js')), dict['onb.keys.clipLabel']);
   }
   check('the guide counts seven steps', /const TOTAL = 7;/.test(fs.readFileSync(new URL('../public/js/onboarding.js', import.meta.url), 'utf8')));
   {
@@ -2998,7 +2998,7 @@ section('billing: the sheet, the menu row, the mode and the release notes agree 
   const r132 = log.find((e) => e.version === '1.32.0');
   const en132 = r132 ? r132.new.en.concat(r132.improved?.en ?? []).join(' ') : '';
   const vi132 = r132 ? r132.new.vi.concat(r132.improved?.vi ?? []).join(' ') : '';
-  check('1.32.0 is released, in both languages, and is the newest entry', !!r132 && version === '1.32.0' && log[0].version === '1.32.0' && r132.new.vi.length > 0 && r132.new.en.length === r132.new.vi.length && (r132.improved?.vi.length ?? 0) === (r132.improved?.en.length ?? 0));
+  check('1.32.0 is released, in both languages', !!r132 && r132.new.vi.length > 0 && r132.new.en.length === r132.new.vi.length && (r132.improved?.vi.length ?? 0) === (r132.improved?.en.length ?? 0));
   check('  it says the Free plan keeps its share, a plan gets at least it, and the plans sheet shows the figures', /Free plan keeps/.test(en132) && /at least/.test(en132) && /plans sheet/.test(en132) && /[Gg]ói Free/.test(vi132) && /ít nhất/.test(vi132));
   check('  and CHANGELOG.md carries it', read('CHANGELOG.md').includes('(1.32.0)'));
 
@@ -3016,6 +3016,75 @@ section('billing: the sheet, the menu row, the mode and the release notes agree 
     }
   }
   check('every holdSearch call names its service or passes share: false', callSites.length >= 8 && callSites.every((c) => /\bservice\b|share: false/.test(c.args)), callSites.filter((c) => !/\bservice\b|share: false/.test(c.args)).map((c) => `${c.file}(${c.args})`).join(' | ') || String(callSites.length));
+}
+
+section('the product is Ephapse: the old name is nowhere but where it must stay (1.33.0)');
+{
+  const { execSync } = await import('node:child_process');
+  const root = new URL('../', import.meta.url);
+  const read = (p) => fs.readFileSync(new URL(p, root), 'utf8');
+  // The old name is built, not written, so this file does not trip its own scan.
+  const OLD = 'syna' + 'psez';
+  const any = new RegExp(OLD, 'i');
+  const rule = (file, src, reason) => ({ file, line: new RegExp(src.split('@').join(OLD), 'i'), reason });
+  const ALLOWED = [
+    rule(/^server\/deidentify\.js$/, "'@-deidentify'", 'derives the masking key: renaming it would orphan every pseudonym'),
+    rule(/^server\/providers\/index\.js$/, "'@-local'", 'derives the account pseudonym key when no secret is set: same reason'),
+    rule(/^server\/imageProxy\.js$/, "'@-dev-only'", 'derives the image-link signing key: renaming it would void signed links'),
+    rule(/^test\/google\.test\.mjs$/, "'@-dev-only'", 'the printed constant an attacker would try against the image signature'),
+    rule(/^server\/bots\/porting\.js$/, "'@-(bots/1|export)'", "a person's own older team or export file still imports"),
+    rule(/^public\/js\/import-formats\.js$/, "'@-export'", "a person's own older export file still imports"),
+    rule(/^server\/auth\.js$/, "'@'", 'the old name stays a reserved username beside the new one'),
+    rule(/^public\/assets\/mascot\/NOTICE\.txt$/, 'Ephapse .then @.', "the permission statement names the owner's product as it was"),
+    rule(/^public\/(privacy|terms|usage-policy)\.html$/, '@ (nay đổi tên thành|is now) Ephapse', 'the one rename line each legal page carries'),
+    rule(/^public\/changelog\.json$/, '@ (nay là|is now) Ephapse', 'the 1.33.0 release note says what the name was'),
+    rule(/^audit\/(CONTRACT|ISSUE_LEDGER)\.md$/, 'Dansnyzzz/@', 'the repository address, until the owner renames the repository'),
+  ];
+  const files = execSync('git ls-files -z', { cwd: root, maxBuffer: 1 << 28 }).toString('utf8').split('\0').filter(Boolean);
+  const BINARY = /\.(png|jpe?g|gif|webp|webm|mp4|ico|pdf|woff2?|ttf|otf|zip|gz|docx|xlsx|pptx)$/i;
+  const hits = [];
+  let scanned = 0;
+  for (const file of files) {
+    if (BINARY.test(file)) continue;
+    const buf = fs.readFileSync(new URL(file, root));
+    if (buf.includes(0)) continue;
+    scanned += 1;
+    let inRelease = false;
+    buf.toString('utf8').split(/\r?\n|\r/).forEach((line, i) => {
+      if (file === 'CHANGELOG.md' && line.startsWith('## ')) inRelease = line.includes('(1.33.0)');
+      if (!any.test(line)) return;
+      if (inRelease) return; // the 1.33.0 section of CHANGELOG.md says what the name was
+      if (ALLOWED.some((a) => a.file.test(file) && a.line.test(line))) return;
+      hits.push(`${file}:${i + 1}`);
+    });
+  }
+  check('the scan read the tracked text files', scanned > 700, String(scanned));
+  check('the old name appears in no tracked text file outside the listed exceptions', hits.length === 0, hits.slice(0, 12).join(', ') + (hits.length > 12 ? ` … (${hits.length})` : ''));
+  check('  every exception is still used (a stale one would hide a new miss)', ALLOWED.every((a) => files.some((f) => a.file.test(f) && !BINARY.test(f) && read(f).split(/\r?\n/).some((l) => a.line.test(l)))));
+
+  const { LEGAL } = await import('../server/legal.js');
+  check('the legal version ids are unchanged: nobody is asked to agree again', LEGAL.notice === 'privacy-2026-11-12' && LEGAL.terms === 'terms-2026-11-03' && LEGAL.usage === 'usage-2026-10-26', JSON.stringify(LEGAL));
+  for (const page of ['privacy', 'terms', 'usage-policy']) {
+    const html = read(`public/${page}.html`);
+    check(`  ${page}.html says the name changed, in both languages, with the date`, html.includes(`${OLD[0].toUpperCase()}${OLD.slice(1)} nay đổi tên thành Ephapse (www.ephapse.net)`) && html.includes(`${OLD[0].toUpperCase()}${OLD.slice(1)} is now Ephapse (www.ephapse.net)`) && html.includes('Đổi tên: 17/11/2026') && html.includes('Renamed: 17 November 2026'));
+  }
+
+  const { readTeamFile, FORMAT } = await import('../server/bots/porting.js');
+  const { normaliseImport, detectSource } = await import('../public/js/import-formats.js');
+  const team = { bots: [{ name: 'A' }] };
+  check('a team file saved under the old name still reads, and the new name reads', readTeamFile({ format: `${OLD}-bots/1`, ...team }).bots.length === 1 && readTeamFile({ format: 'ephapse-bots/1', ...team }).bots.length === 1 && FORMAT === 'ephapse-bots/1');
+  check("  and so does the team inside an old account export", readTeamFile({ format: `${OLD}-export`, team: { format: `${OLD}-bots/1`, ...team } }).bots.length === 1);
+  check("an old account export is still recognised as this app's own, and a new one too", detectSource({ format: `${OLD}-export`, chats: [] }) === 'ephapse' && detectSource({ format: 'ephapse-export', chats: [] }) === 'ephapse' && normaliseImport({ format: `${OLD}-export`, chats: [] }).conversations.length === 0);
+  const { normaliseUsername } = await import('../server/auth.js');
+  check('both the new and the old name stay reserved as usernames', [OLD, 'ephapse'].every((n) => { try { normaliseUsername(n); return false; } catch (e) { return /reserved/.test(e.message); } }));
+  const account = read('server/routes/account.js') + read('server/routes/bots.js');
+  check('exports are written under the new names only', /ephapse-export-\$\{stamp\}/.test(account) && /ephapse-bots-\$\{/.test(account) && /"format":"ephapse-export"/.test(account) && !any.test(account));
+  const pkg = JSON.parse(read('package.json'));
+  check('package.json keeps its name and says Ephapse in its description', pkg.name === 'ai-remote' && /Ephapse/.test(pkg.description) && !any.test(read('package.json')));
+  const { TEMPLATE_NAME } = await import('../server/e2b.js');
+  check('the cloud computer template is ephapse-computer, in the code and in the script that builds it', TEMPLATE_NAME === 'ephapse-computer' && /TEMPLATE_NAME/.test(read('scripts/e2b-template.mjs')));
+  const log133 = JSON.parse(read('public/changelog.json')).entries.find((e) => e.version === '1.33.0');
+  check('1.33.0 is released in both languages, says the old name once, and CHANGELOG.md carries it', !!log133 && log133.new.vi.length === log133.new.en.length && log133.improved.vi.length === log133.improved.en.length && /www\.ephapse\.net/.test(log133.new.en.join(' ')) && /www\.ephapse\.net/.test(log133.new.vi.join(' ')) && /X-Ephapse-Signature/.test(log133.improved.en.join(' ')) && read('CHANGELOG.md').includes('(1.33.0)'));
 }
 
 console.log(failures === 0 ? '\n\x1b[32mAll feature checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
