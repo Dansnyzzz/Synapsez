@@ -204,7 +204,7 @@ Trên đường đi, probe tìm ra ba điều mà spec ban đầu không lườn
 - **E2B để `/usr/local` ở mode 777 khi máy chạy**, bất kể template đặt quyền gì. Hệ quả:
   - helper không bao giờ chạy dưới root trên E2B, mà chạy dưới quyền tài khoản, đúng thiết kế của
     `shellFor`. Cập nhật 2026-11-03 (SBX-006): template `ephapse-computer` chép node của image vào
-    `/opt/synz-node` (chỉ root ghi được, live probe xác nhận quyền giữ nguyên khi máy chạy), nên trên
+    `/opt/eph-node` (chỉ root ghi được, live probe xác nhận quyền giữ nguyên khi máy chạy), nên trên
     template này helper chạy dưới root. Cùng ngày (SBX-011): app đóng `/usr/local` và bỏ `sudo` của tài
     khoản ngay khi gặp máy lần đầu, vì đóng trong lúc build không giữ được còn đóng khi máy chạy thì giữ
     được qua pause/resume;

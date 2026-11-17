@@ -3526,7 +3526,7 @@ export function looksDestructive(command) {
  * everything, including what the profile's permissions would have kept out.
  *
  * Another program's starting environment or memory (`/proc/<pid>/environ`,
- * `/mem`) and the services' own variables (`SYNZ_…`) ask too (SEC-061): on E2B
+ * `/mem`) and the services' own variables (`EPH_…`) ask too (SEC-061): on E2B
  * the cloud browser runs as the account, and its key is what drives the
  * person's signed-in browser from anywhere.
  *
@@ -3534,7 +3534,7 @@ export function looksDestructive(command) {
  * name — base64, a variable — is not recognised.
  */
 const SANDBOX_PRIVATE =
-  /\.synz-browser|\b(?:Cookies|Login Data|Local State|Web Data)\b|(?:^|[\s/~'"=:])\.(?:bash_profile|bash_login|bashrc|profile|zshrc|zprofile)\b|\/etc\/(?:profile|bash\.bashrc|environment)\b|\/proc\/[^\n]{0,80}?\b(?:environ|mem)\b|\bSYNZ_\w*/;
+  /\.eph-browser|\b(?:Cookies|Login Data|Local State|Web Data)\b|(?:^|[\s/~'"=:])\.(?:bash_profile|bash_login|bashrc|profile|zshrc|zprofile)\b|\/etc\/(?:profile|bash\.bashrc|environment)\b|\/proc\/[^\n]{0,80}?\b(?:environ|mem)\b|\bEPH_\w*/;
 
 /**
  * Python that sends something out, or carries a shell line that destroys.

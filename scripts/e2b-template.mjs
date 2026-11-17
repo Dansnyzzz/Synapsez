@@ -16,7 +16,7 @@
  *     closes those when it first meets a machine (server/e2b.js `CLOSE_MACHINE`);
  *   - a node only root can change (SBX-006): the image's own node and npm,
  *     copied at build time — before anything of the account's has run — into
- *     /opt/synz-node, owned by root and written by nobody else, which holds
+ *     /opt/eph-node, owned by root and written by nobody else, which holds
  *     even on a machine that could not be closed. shellFor uses it when /opt
  *     and the whole folder are root's, and the cloud browser's helper runs as
  *     root with it, the sign-ins out of reach;
@@ -112,17 +112,17 @@ const template = Template()
       `/usr/bin/python3 -m pip install -q --no-cache-dir --break-system-packages ${PYTHON.join(' ')} || /usr/bin/python3 -m pip install -q --no-cache-dir ${PYTHON.join(' ')}`,
       ONE_PIP,
       // For every command: /etc/profile reads this folder, and is what a command's shell reads (shellFor).
-      `printf 'export PLAYWRIGHT_BROWSERS_PATH=${BROWSERS}\\n' > /etc/profile.d/synz-browsers.sh && chmod 644 /etc/profile.d/synz-browsers.sh`,
+      `printf 'export PLAYWRIGHT_BROWSERS_PATH=${BROWSERS}\\n' > /etc/profile.d/eph-browsers.sh && chmod 644 /etc/profile.d/eph-browsers.sh`,
       `PLAYWRIGHT_BROWSERS_PATH=${BROWSERS} /usr/bin/python3 -m playwright install --with-deps chromium && chmod -R a+rX ${BROWSERS}`,
       rootNode,
       `npm install -g --no-audit --no-fund --loglevel=error ${AGENTS.join(' ')}`,
     ],
     { user: 'root' },
   )
-  .runCmd(`PATH=${ROOT_NODE_DIR}/bin:/usr/bin:/bin && ${warm('/tmp/synz-warm-root')}`, { user: 'root' })
-  .runCmd(warm('/tmp/synz-warm-user'), { user: 'user' })
+  .runCmd(`PATH=${ROOT_NODE_DIR}/bin:/usr/bin:/bin && ${warm('/tmp/eph-warm-root')}`, { user: 'root' })
+  .runCmd(warm('/tmp/eph-warm-user'), { user: 'user' })
   // Its first start writes a profile and a font cache, about ten seconds that every conversion would otherwise wait.
-  .runCmd("cd /tmp && echo warm > synz-warm.txt && soffice --headless --convert-to pdf synz-warm.txt >/dev/null 2>&1; rm -f synz-warm.txt synz-warm.pdf; true", { user: 'user' });
+  .runCmd("cd /tmp && echo warm > eph-warm.txt && soffice --headless --convert-to pdf eph-warm.txt >/dev/null 2>&1; rm -f eph-warm.txt eph-warm.pdf; true", { user: 'user' });
 
 console.log(`\n  Building ${NAME} (${cpuCount} vCPU, ${memoryMB} MiB) from E2B's base…\n`);
 const built = await Template.build(template, NAME, { apiKey: process.env.E2B_API_KEY, cpuCount, memoryMB, onBuildLogs: defaultBuildLogger() });

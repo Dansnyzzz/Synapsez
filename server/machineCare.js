@@ -213,11 +213,11 @@ export async function restorePackages(userId, machine, shellFor) {
   ];
   try {
     if (steps.length) {
-      await machine.runCommand({ ...shellFor(`(${steps.join('; ')}) > /tmp/synz-restore.log 2>&1`, {}, { userBin: true }), detached: true });
+      await machine.runCommand({ ...shellFor(`(${steps.join('; ')}) > /tmp/eph-restore.log 2>&1`, {}, { userBin: true }), detached: true });
     }
     if (rootSteps.length) {
       await machine.runCommand({
-        ...shellFor(`(${rootSteps.join('; ')}) > /tmp/synz-restore-root.log 2>&1`, {}, { root: true }),
+        ...shellFor(`(${rootSteps.join('; ')}) > /tmp/eph-restore-root.log 2>&1`, {}, { root: true }),
         sudo: true,
         detached: true,
       });
@@ -298,8 +298,8 @@ export function tidyPlan({ percent, last = null, now = Date.now() }) {
 
 /**
  * The tidy for one tier, as a script run as the account. Its last lines say how full the
- * disk was before and after (`synz-disk`, percent and kilobytes used, twice), and at the
- * top tier what is largest (`synz-big`, kilobytes, a tab, the path).
+ * disk was before and after (`eph-disk`, percent and kilobytes used, twice), and at the
+ * top tier what is largest (`eph-big`, kilobytes, a tab, the path).
  *
  * @param {number} tier
  * @param {{ tmp?: string }} [options]  `tmp`: a test points it at a folder of its own
@@ -324,7 +324,7 @@ export function tidyScript(tier, { tmp = '/tmp' } = {}) {
     `find . -xdev \\( -path ./.local -o ${KEPT_CACHES} \\) -prune -o -type d \\( -name __pycache__ -o -name .ipynb_checkpoints -o -name .pytest_cache \\) -user "$me" -prune -exec rm -rf -- {} + 2>/dev/null`,
     // Only real core dumps, which are ELF files, and never among what was sent or brought here (security review, 2026-11-09).
     `find . -maxdepth 3 -xdev \\( -path ./.local -o -path ./uploads -o -path ./incoming -o -path ./downloads -o ${KEPT_CACHES} \\) -prune -o -type f \\( -name core -o -name 'core.[0-9]*' \\) -user "$me" -exec sh -c 'for f do [ "$(head -c 4 -- "$f" 2>/dev/null)" = "$(printf '"'"'\\177ELF'"'"')" ] && rm -f -- "$f"; done' sh {} + 2>/dev/null`,
-    `find ${scraps} -xdev -mindepth 1 -maxdepth 1 -user "$me" -mmin +20 ! -name 'synz*' ! -name '.*' -exec rm -rf -- {} + 2>/dev/null`,
+    `find ${scraps} -xdev -mindepth 1 -maxdepth 1 -user "$me" -mmin +20 ! -name 'eph*' ! -name '.*' -exec rm -rf -- {} + 2>/dev/null`,
     // What was sent straight here and left a month. Its row says the file is gone, in those words.
     'find uploads -xdev -type f -user "$me" -mtime +30 -delete 2>/dev/null; find uploads -xdev -mindepth 1 -type d -empty -user "$me" -delete 2>/dev/null',
   ];
@@ -337,27 +337,27 @@ export function tidyScript(tier, { tmp = '/tmp' } = {}) {
       // Logs this machine's own helpers write, trimmed to their last megabyte in place; a log of the
       // person's own, anywhere in their folders, is theirs (review, 2026-11-09).
       `find . -maxdepth 1 -xdev -type f -name nohup.out -size +10M -user "$me" -exec sh -c 'for f do t="$(mktemp)" || continue; tail -c 1048576 -- "$f" > "$t" && cat -- "$t" > "$f"; rm -f -- "$t"; done' sh {} + 2>/dev/null`,
-      `find ${scraps} -maxdepth 1 -xdev -type f -name 'synz-*.log' -size +10M -user "$me" -exec sh -c 'for f do t="$(mktemp)" || continue; tail -c 1048576 -- "$f" > "$t" && cat -- "$t" > "$f"; rm -f -- "$t"; done' sh {} + 2>/dev/null`,
+      `find ${scraps} -maxdepth 1 -xdev -type f -name 'eph-*.log' -size +10M -user "$me" -exec sh -c 'for f do t="$(mktemp)" || continue; tail -c 1048576 -- "$f" > "$t" && cat -- "$t" > "$f"; rm -f -- "$t"; done' sh {} + 2>/dev/null`,
       // Copies of the conversation's files, which `bring` puts back.
       `find incoming -xdev -type f -user "$me" ${DAY_OLD} -delete 2>/dev/null; find incoming -xdev -mindepth 1 -type d -empty -user "$me" -delete 2>/dev/null`,
       /*
        * What the cloud browser downloaded, untouched for a week — but never a file a card in a
-       * conversation points at: `SYNZ_KEEP` lists those, one path a line, as the rows say them
+       * conversation points at: `EPH_KEEP` lists those, one path a line, as the rows say them
        * (owner, 2026-11-09: left alone, downloads filled the disk). A file handed over from here
        * is moved to handed/ first since that day (sandbox.js `keptAside`), so the list is for
        * the ones handed over before.
        */
-      `[ -d downloads ] && [ ! -L downloads ] && find downloads -xdev -type f -user "$me" -mmin +10080 -amin +10080 -print0 2>/dev/null | while IFS= read -r -d '' f; do printf '%s\\n' "\${SYNZ_KEEP-}" | grep -Fxq -e "$f" -e "$PWD/$f" -e "./$f" || rm -f -- "$f"; done; [ -d downloads ] && [ ! -L downloads ] && find downloads -xdev -mindepth 1 -type d -empty -user "$me" -delete 2>/dev/null`,
+      `[ -d downloads ] && [ ! -L downloads ] && find downloads -xdev -type f -user "$me" -mmin +10080 -amin +10080 -print0 2>/dev/null | while IFS= read -r -d '' f; do printf '%s\\n' "\${EPH_KEEP-}" | grep -Fxq -e "$f" -e "$PWD/$f" -e "./$f" || rm -f -- "$f"; done; [ -d downloads ] && [ ! -L downloads ] && find downloads -xdev -mindepth 1 -type d -empty -user "$me" -delete 2>/dev/null`,
     );
   }
   if (level >= 3) {
     // Not one still being written: deleting it would free nothing until it closed, and lose it.
     // Large files in /tmp are listed with the largest things, not deleted: one can be a file a conversation still points at.
   }
-  lines.push('echo "synz-disk $before $(disk)"');
+  lines.push('echo "eph-disk $before $(disk)"');
   if (level >= 3) {
     // Folders two deep and files over 10 MB, largest first.
-    lines.push(`{ du -xk -d 2 . 2>/dev/null | awk -F '\\t' '$2 != "."'; find . -xdev -type f -size +10M -user "$me" -printf '%k\\t%p\\n' 2>/dev/null; } | sort -rn | head -10 | sed 's/^/synz-big /'`);
+    lines.push(`{ du -xk -d 2 . 2>/dev/null | awk -F '\\t' '$2 != "."'; find . -xdev -type f -size +10M -user "$me" -printf '%k\\t%p\\n' 2>/dev/null; } | sort -rn | head -10 | sed 's/^/eph-big /'`);
   }
   return lines.join('\n');
 }
@@ -371,12 +371,12 @@ export function tidyScript(tier, { tmp = '/tmp' } = {}) {
  */
 export function readTidy(out) {
   const lines = String(out || '').split('\n').map((line) => line.replace(/\r$/, ''));
-  const said = /^synz-disk (\d+) (\d+) (\d+) (\d+)\s*$/.exec(lines.find((line) => line.startsWith('synz-disk ')) || '');
+  const said = /^eph-disk (\d+) (\d+) (\d+) (\d+)\s*$/.exec(lines.find((line) => line.startsWith('eph-disk ')) || '');
   if (!said) return null;
   const [before, usedBefore, after, usedAfter] = said.slice(1).map(Number);
   const biggest = [];
   for (const line of lines) {
-    const big = /^synz-big (\d+)\t(.+)$/.exec(line);
+    const big = /^eph-big (\d+)\t(.+)$/.exec(line);
     if (big && biggest.length < 10) biggest.push({ bytes: Number(big[1]) * 1024, path: big[2].replace(/^\.\//, '').slice(0, 160) });
   }
   // Something else may have written meanwhile: never less than nothing.
@@ -475,7 +475,7 @@ export async function tidyIfDue(userId, machine, shellFor, { signal, now = Date.
     record.tier = plan.tier;
     // The files cards point at, which a tidy never deletes, as a value and never inside the script.
     const keep = plan.tier > 1 ? keptPaths(await getStore().machineFilePaths(userId).catch(() => [])) : '';
-    const done = await machine.runCommand({ ...shellFor(tidyScript(plan.tier), keep ? { SYNZ_KEEP: keep } : {}, { userBin: true }), timeoutMs: plan.tier > 1 ? 45_000 : 20_000, signal });
+    const done = await machine.runCommand({ ...shellFor(tidyScript(plan.tier), keep ? { EPH_KEEP: keep } : {}, { userBin: true }), timeoutMs: plan.tier > 1 ? 45_000 : 20_000, signal });
     const result = readTidy(await done.stdout());
     if (result) {
       record.percent = result.after;

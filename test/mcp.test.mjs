@@ -538,7 +538,7 @@ const freePort = () =>
 const bridgePort = await freePort();
 const bridgeKey = 'bridge-test-key-'.padEnd(32, 'k');
 const bridge = spawn(process.execPath, [path.join(import.meta.dirname, '..', 'server', 'mcp', 'bridge.mjs')], {
-  env: { ...process.env, SYNZ_MCP_KEY: bridgeKey, PORT: String(bridgePort) },
+  env: { ...process.env, EPH_MCP_KEY: bridgeKey, PORT: String(bridgePort) },
   stdio: ['ignore', 'ignore', 'ignore'],
 });
 // Whatever happens below, the bridge does not outlive the suite.

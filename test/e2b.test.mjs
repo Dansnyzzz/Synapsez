@@ -166,7 +166,7 @@ section('a command on E2B runs as root, and drops to the account itself (HAR-001
   await resetCounters();
   const { state, sdk } = fakeSdk();
   e2b.__testing.useSdk(sdk);
-  const machine = await e2b.e2bMachineFor('u-e2b', 'synz-test');
+  const machine = await e2b.e2bMachineFor('u-e2b', 'eph-test');
   const done = await machine.runCommand({ ...shellFor("echo 'it''s'", {}, { userBin: true }), timeoutMs: 30_000 });
   // The last: the first is the machine being closed, which has a section of its own.
   const run = state.calls.filter((c) => c.kind === 'run').at(-1);
@@ -253,16 +253,16 @@ section("one machine per account, found again — and paid for before it runs");
   await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
   const { state, sdk } = fakeSdk();
   e2b.__testing.useSdk(sdk);
-  const first = await e2b.e2bMachineFor('u-e2b', 'synz-a');
+  const first = await e2b.e2bMachineFor('u-e2b', 'eph-a');
   const create = state.calls.find((c) => c.kind === 'create');
-  check('made from the template, named for the account, pausing when idle', create.template === e2b.TEMPLATE_NAME && create.opts.metadata.machine === 'synz-a' && create.opts.lifecycle?.onTimeout === 'pause' && create.opts.timeoutMs === 240_000, JSON.stringify({ ...create.opts, apiKey: undefined }));
+  check('made from the template, named for the account, pausing when idle', create.template === e2b.TEMPLATE_NAME && create.opts.metadata.machine === 'eph-a' && create.opts.lifecycle?.onTimeout === 'pause' && create.opts.timeoutMs === 240_000, JSON.stringify({ ...create.opts, apiKey: undefined }));
   check("  its ports open to the person's browser, which cannot send E2B's traffic token (owner, 2026-11-02)", create.opts.network?.allowPublicTraffic === true);  const record = await store.getUserSetting('u-e2b', e2b.__testing.SETTING);
   check('  and written down with its size', record?.id === first.sandboxId && record.cpu === 2 && record.memMb === 1024, JSON.stringify(record));
   const paid = await store.readCounter(`free:e2b:${new Date().toISOString().slice(0, 7)}`);
   check('  its first ten minutes paid for, at the price for its size', paid > 0 && paid <= Math.ceil(600 * (2 * 0.014 + 2 * 0.0045)), String(paid));
 
   state.calls.length = 0;
-  const again = await e2b.e2bMachineFor('u-e2b', 'synz-a');
+  const again = await e2b.e2bMachineFor('u-e2b', 'eph-a');
   check('the next call resumes the same machine', again.sandboxId === first.sandboxId && state.calls.some((c) => c.kind === 'connect') && !state.calls.some((c) => c.kind === 'create'));
   check('  without paying twice for time already paid', (await store.readCounter(`free:e2b:${new Date().toISOString().slice(0, 7)}`)) - paid <= 1);
 
@@ -281,7 +281,7 @@ section("one machine per account, found again — and paid for before it runs");
     state.boxes.clear();
     const before = await store.readCounter(month);
     state.createError = named('RateLimitError', 'Rate limit exceeded', { statusCode: 429 });
-    const busy = await e2b.e2bMachineFor('u-e2b', 'synz-a').then(() => '', (e) => e.name);
+    const busy = await e2b.e2bMachineFor('u-e2b', 'eph-a').then(() => '', (e) => e.name);
     state.createError = null;
     check('a start that does not happen costs nothing: what it paid is given back (HAR-010)', busy === 'RateLimitError' && (await store.readCounter(month)) === before, `${busy} ${before} → ${await store.readCounter(month)}`);
 
@@ -294,24 +294,24 @@ section("one machine per account, found again — and paid for before it runs");
     process.env.E2B_ACCOUNT_SHARE = '0.001';
     await freshShares();
     try {
-      const greedy = await e2b.e2bMachineFor('u-e2b-greedy', 'synz-greedy').then(() => '', (e) => e.name);
+      const greedy = await e2b.e2bMachineFor('u-e2b-greedy', 'eph-greedy').then(() => '', (e) => e.name);
       check('an account past its share of the month is not given more of the pool (HAR-007)', greedy === 'E2BOutOfCredit', greedy || 'started');
     } finally {
       delete process.env.E2B_ACCOUNT_SHARE;
       await freshShares();
     }
-    const fair = await e2b.e2bMachineFor('u-e2b-greedy', 'synz-greedy').then((m) => m.provider, (e) => e.name);
+    const fair = await e2b.e2bMachineFor('u-e2b-greedy', 'eph-greedy').then((m) => m.provider, (e) => e.name);
     check('  while within its share it starts as before', fair === 'e2b', fair);
   }
 
   state.boxes.clear();
   state.calls.length = 0;
-  const remade = await e2b.e2bMachineFor('u-e2b', 'synz-a');
+  const remade = await e2b.e2bMachineFor('u-e2b', 'eph-a');
   check('a machine that no longer exists is made again', remade.sandboxId !== first.sandboxId && state.calls.some((c) => c.kind === 'create'));
 
   await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
   state.calls.length = 0;
-  const found = await e2b.e2bMachineFor('u-e2b', 'synz-a');
+  const found = await e2b.e2bMachineFor('u-e2b', 'eph-a');
   check('with no record, a machine of that name is found rather than made', found.sandboxId === remade.sandboxId && !state.calls.some((c) => c.kind === 'create'));
 
   // Two instances making the same account's machine at once.
@@ -319,18 +319,18 @@ section("one machine per account, found again — and paid for before it runs");
   state.boxes.clear();
   state.afterCreate = async () => {
     state.afterCreate = null;
-    const other = new sdk.Sandbox('sbx-other', { app: 'ephapse', machine: 'synz-b' });
+    const other = new sdk.Sandbox('sbx-other', { app: 'ephapse', machine: 'eph-b' });
     other.startedAt = 0;
     state.boxes.set(other.sandboxId, other);
   };
-  const raced = await e2b.e2bMachineFor('u-e2b', 'synz-b');
+  const raced = await e2b.e2bMachineFor('u-e2b', 'eph-b');
   check('two made at once: the older is kept, the newer killed', raced.sandboxId === 'sbx-other' && state.calls.some((c) => c.kind === 'kill' && c.id !== 'sbx-other'), raced.sandboxId);
 
   await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
   state.boxes.clear();
   state.calls.length = 0;
   await tiers.exhaust('e2b');
-  const refused = await e2b.e2bMachineFor('u-e2b', 'synz-c').then(() => null, (err) => err);
+  const refused = await e2b.e2bMachineFor('u-e2b', 'eph-c').then(() => null, (err) => err);
   check("with this month's credit spent, no machine is made at all", refused instanceof e2b.E2BOutOfCredit && !state.calls.some((c) => c.kind === 'create'), String(refused?.message));
   e2b.__testing.useSdk(null);
   await resetCounters();
@@ -622,7 +622,7 @@ section('a machine is closed once, before anything of the account\'s runs on it 
   };
   const runs = () => state.calls.filter((c) => c.kind === 'run');
   const closing = (c) => /chmod -R go-w \/usr\/local/.test(c.cmd);
-  const machine = await e2b.e2bMachineFor('u-e2b-close', 'synz-close');
+  const machine = await e2b.e2bMachineFor('u-e2b-close', 'eph-close');
   const first = runs()[0];
   check('the first thing to run on a new machine closes it, as root', closing(first) && first.opts.user === 'root', first?.cmd?.slice(0, 80));
   check('  and with no login shell, already', shimmedFirst === true);
@@ -637,13 +637,13 @@ section('a machine is closed once, before anything of the account\'s runs on it 
 
   state.calls.length = 0;
   await machine.runCommand({ ...shellFor('true', {}, { userBin: true }), timeoutMs: 5_000 });
-  await e2b.e2bMachineFor('u-e2b-close', 'synz-close');
+  await e2b.e2bMachineFor('u-e2b-close', 'eph-close');
   check('  so it is not done again, on a command or on a resume', !runs().some(closing));
 
   // A machine made before this, whose account has already had the run of it.
   await store.setUserSetting('u-e2b-close', e2b.__testing.SETTING, { ...record, closed: undefined });
   state.calls.length = 0;
-  await e2b.e2bMachineFor('u-e2b-close', 'synz-close');
+  await e2b.e2bMachineFor('u-e2b-close', 'eph-close');
   check('a machine made before this is closed when it is next opened', runs().some(closing) && (await store.getUserSetting('u-e2b-close', e2b.__testing.SETTING))?.closed === true);
 
   // A failure leaves the machine usable, and is tried again.
@@ -652,11 +652,11 @@ section('a machine is closed once, before anything of the account\'s runs on it 
     if (/go-w \/usr\/local/.test(cmd)) throw new Error('no room');
     return { exitCode: 0, stdout: 'ok', stderr: '' };
   };
-  const stillThere = await e2b.e2bMachineFor('u-e2b-close', 'synz-close');
+  const stillThere = await e2b.e2bMachineFor('u-e2b-close', 'eph-close');
   check('one that could not be closed still opens, and is not remembered as closed', typeof stillThere.runCommand === 'function' && !(await store.getUserSetting('u-e2b-close', e2b.__testing.SETTING))?.closed);
   state.onRun = null;
   state.calls.length = 0;
-  await e2b.e2bMachineFor('u-e2b-close', 'synz-close');
+  await e2b.e2bMachineFor('u-e2b-close', 'eph-close');
   check('  so the next time it is opened, it is tried again', runs().some(closing) && (await store.getUserSetting('u-e2b-close', e2b.__testing.SETTING))?.closed === true);
 
   state.calls.length = 0;
@@ -716,7 +716,7 @@ section('a machine comes from the template, with nothing to set (owner, 2026-11-
   e2b.__testing.useSdk(sdk);
   e2b.__testing.forgetMissingTemplate();
   await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
-  const machine = await e2b.e2bMachineFor('u-e2b', 'synz-b');
+  const machine = await e2b.e2bMachineFor('u-e2b', 'eph-b');
   check('from the template by its own name, with no setting at all', state.calls.find((c) => c.kind === 'create').template === e2b.TEMPLATE_NAME);
   check('  said to be new, so the account\'s packages come back', machine.fresh === true);
   check('  and it knows its size, so what will not fit can be said at once', machine.memMb === 1024 && machine.cpu === 2);
@@ -732,7 +732,7 @@ section('a machine comes from the template, with nothing to set (owner, 2026-11-
     if (template !== 'base') throw named('NotFoundError', `template ${template} not found`, { statusCode: 404 });
     return before.call(missing.sdk.Sandbox, template, opts);
   };
-  const fallback = await e2b.e2bMachineFor('u-e2b', 'synz-c');
+  const fallback = await e2b.e2bMachineFor('u-e2b', 'eph-c');
   check('a template E2B does not have is no reason to go without a machine', !!fallback.sandboxId);
   const noted = await store.getUserSetting('u-e2b', e2b.__testing.SETTING);
   check('  and that machine is written down as base', noted.base === 0, JSON.stringify(noted));
@@ -748,11 +748,11 @@ section('a machine made from an older build moves, files and all (owner, 2026-11
   const { state, sdk } = fakeSdk();
   e2b.__testing.useSdk(sdk);
   await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
-  const old = await sdk.Sandbox.create('base', { metadata: { app: 'ephapse', machine: 'synz-d' } });
+  const old = await sdk.Sandbox.create('base', { metadata: { app: 'ephapse', machine: 'eph-d' } });
   await store.setUserSetting('u-e2b', e2b.__testing.SETTING, { id: old.sandboxId, cpu: 2, memMb: 512, closed: true });
-  state.files[`/tmp/synz-move-${old.sandboxId}.tgz`] = 'packed';
+  state.files[`/tmp/eph-move-${old.sandboxId}.tgz`] = 'packed';
   state.calls.length = 0;
-  const moved = await e2b.e2bMachineFor('u-e2b', 'synz-d');
+  const moved = await e2b.e2bMachineFor('u-e2b', 'eph-d');
   check('it is on a new machine', moved.sandboxId !== old.sandboxId, moved.sandboxId);
   check('  made from the current template', state.calls.find((c) => c.kind === 'create')?.template === e2b.TEMPLATE_NAME);
   const lines = state.calls.filter((c) => c.kind === 'run').map((c) => String(c.cmd));
@@ -769,18 +769,18 @@ section('a machine made from an older build moves, files and all (owner, 2026-11
   // Going wrong half way changes nothing.
   const { state: state2, sdk: sdk2 } = fakeSdk();
   e2b.__testing.useSdk(sdk2);
-  const old2 = await sdk2.Sandbox.create('base', { metadata: { app: 'ephapse', machine: 'synz-e' } });
+  const old2 = await sdk2.Sandbox.create('base', { metadata: { app: 'ephapse', machine: 'eph-e' } });
   await store.setUserSetting('u-e2b', e2b.__testing.SETTING, { id: old2.sandboxId, cpu: 2, memMb: 512, closed: true });
-  state2.files[`/tmp/synz-move-${old2.sandboxId}.tgz`] = 'packed';
+  state2.files[`/tmp/eph-move-${old2.sandboxId}.tgz`] = 'packed';
   state2.onRun = (cmd) => (String(cmd).includes('tar xzf') ? { exitCode: 2, stdout: '', stderr: 'broken' } : { exitCode: 0, stdout: 'ok', stderr: '' });
   const paidBefore = await store.readCounter(`free:e2b:${new Date().toISOString().slice(0, 7)}`);
-  const stayed = await e2b.e2bMachineFor('u-e2b', 'synz-e');
+  const stayed = await e2b.e2bMachineFor('u-e2b', 'eph-e');
   check('a move that fails half way leaves the old machine in use', stayed.sandboxId === old2.sandboxId && state2.boxes.has(old2.sandboxId));
   check('  and the half-made one gone', state2.boxes.size === 1, String(state2.boxes.size));
   const paidAfter = await store.readCounter(`free:e2b:${new Date().toISOString().slice(0, 7)}`);
   check('  and what it was paid for given back', paidAfter - paidBefore <= 20, `${paidBefore} → ${paidAfter}`);
   state2.calls.length = 0;
-  await e2b.e2bMachineFor('u-e2b', 'synz-e');
+  await e2b.e2bMachineFor('u-e2b', 'eph-e');
   check('  and it is not tried again on the next call', !state2.calls.some((c) => c.kind === 'create'));
   e2b.__testing.useSdk(null);
 }
@@ -841,7 +841,7 @@ section('a big file goes straight to the machine, on a link for one path (owner,
   const gone = await call('DELETE', `/api/data/uploads/${done.json.attachment.id}`);
   const removal = state.calls.slice(before).find((c) => c.kind === 'run' && /rm -f/.test(c.cmd));
   check('deleting it takes the row', gone.status === 200 && !(await store.getAttachment(me.id, done.json.attachment.id)));
-  check('  and the bytes on the machine, with the path as a value and not as a command', !!removal && !removal.cmd.includes('Báo cáo') && removal.opts?.envs?.SYNZ_FILE === started.json.path, JSON.stringify({ cmd: removal?.cmd?.slice(0, 120), envs: removal?.opts?.envs }));
+  check('  and the bytes on the machine, with the path as a value and not as a command', !!removal && !removal.cmd.includes('Báo cáo') && removal.opts?.envs?.EPH_FILE === started.json.path, JSON.stringify({ cmd: removal?.cmd?.slice(0, 120), envs: removal?.opts?.envs }));
   await store.createAttachment(me.id, { id: 'made-on-machine', name: 'report.zip', mime: 'application/zip', kind: 'binary', bytes: 9, data: '', origin: 'machine', source: 'out/report.zip', chatId: null, thumb: null });
   check('something a command made is not this route\'s to delete', (await call('DELETE', '/api/data/uploads/made-on-machine')).status === 404);
 
@@ -857,7 +857,7 @@ section('a long command does not pause under itself');
   const { state, sdk } = fakeSdk();
   e2b.__testing.useSdk(sdk);
   await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
-  const machine = await e2b.e2bMachineFor('u-e2b', 'synz-long');
+  const machine = await e2b.e2bMachineFor('u-e2b', 'eph-long');
   state.calls.length = 0;
   await machine.runCommand({ ...shellFor('sleep 1', {}, { userBin: true }), timeoutMs: 10_000 });
   check('a short one leaves the machine as it was', !state.calls.some((c) => c.kind === 'setTimeout'));
@@ -872,7 +872,7 @@ section('a machine goes with its account');
   const { state, sdk } = fakeSdk();
   e2b.__testing.useSdk(sdk);
   await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
-  const machine = await e2b.e2bMachineFor('u-e2b', 'synz-gone');
+  const machine = await e2b.e2bMachineFor('u-e2b', 'eph-gone');
   const saved = await machine.saveCheckpoint('a note');
   state.calls.length = 0;
   await e2b.e2bForgetAccount('u-e2b');
@@ -890,20 +890,20 @@ section('a machine that cannot get the template stays where it is');
   const { state, sdk } = fakeSdk();
   e2b.__testing.useSdk(sdk);
   await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
-  const old = await sdk.Sandbox.create('base', { metadata: { app: 'ephapse', machine: 'synz-stay' } });
+  const old = await sdk.Sandbox.create('base', { metadata: { app: 'ephapse', machine: 'eph-stay' } });
   await store.setUserSetting('u-e2b', e2b.__testing.SETTING, { id: old.sandboxId, cpu: 2, memMb: 512, closed: true, checkpoints: [{ id: 'snap-kept', at: Date.now() }] });
-  state.files[`/tmp/synz-move-${old.sandboxId}.tgz`] = 'packed';
+  state.files[`/tmp/eph-move-${old.sandboxId}.tgz`] = 'packed';
   const realCreate = sdk.Sandbox.create;
   sdk.Sandbox.create = async function create(template, opts) {
     if (template !== 'base') throw Object.assign(new Error('404: template not found'), { name: 'NotFoundError', statusCode: 404 });
     return realCreate.call(this, template, opts);
   };
-  const stayed = await e2b.e2bMachineFor('u-e2b', 'synz-stay');
+  const stayed = await e2b.e2bMachineFor('u-e2b', 'eph-stay');
   check('moving to the same small machine is not a move', stayed.sandboxId === old.sandboxId, stayed.sandboxId);
   sdk.Sandbox.create = realCreate;
   e2b.__testing.forgetMissingTemplate();
   await store.setUserSetting('u-e2b', e2b.__testing.SETTING, { id: old.sandboxId, cpu: 2, memMb: 512, closed: true, checkpoints: [{ id: 'snap-kept', at: Date.now() }] });
-  const moved = await e2b.e2bMachineFor('u-e2b', 'synz-stay');
+  const moved = await e2b.e2bMachineFor('u-e2b', 'eph-stay');
   const record = await store.getUserSetting('u-e2b', e2b.__testing.SETTING);
   check('a real move keeps its checkpoints', moved.sandboxId !== old.sandboxId && record.checkpoints?.[0]?.id === 'snap-kept', JSON.stringify(record.checkpoints));
   e2b.__testing.useSdk(null);
@@ -915,7 +915,7 @@ section('a month on, a file sent straight to the machine goes, row and bytes');
   const { state, sdk } = fakeSdk();
   e2b.__testing.useSdk(sdk);
   await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
-  await e2b.e2bMachineFor('u-e2b', 'synz-month');
+  await e2b.e2bMachineFor('u-e2b', 'eph-month');
   const row = async (id, source, days) => {
     await store.createAttachment('u-e2b', { id, name: 'a.zip', mime: 'application/zip', kind: 'binary', bytes: 9, data: '', origin: 'machine', source, chatId: null, thumb: null });
     await memory.query(`UPDATE attachments SET created_at = NOW() - INTERVAL '${days} days' WHERE id = '${id}'`);
@@ -926,7 +926,7 @@ section('a month on, a file sent straight to the machine goes, row and bytes');
   state.calls.length = 0;
   const { expireMachineUploads } = await import('../server/sandbox.js');
   await expireMachineUploads(store);
-  const removed = state.calls.filter((c) => c.kind === 'run' && /rm -f/.test(c.cmd)).map((c) => c.opts?.envs?.SYNZ_FILE);
+  const removed = state.calls.filter((c) => c.kind === 'run' && /rm -f/.test(c.cmd)).map((c) => c.opts?.envs?.EPH_FILE);
   check('the old one is off the machine', removed.join() === 'uploads/aaaaaaaa/a.zip', removed.join());
   check('  and its row gone', !(await store.getAttachment('u-e2b', 'up-old')));
   check('a recent one stays', !!(await store.getAttachment('u-e2b', 'up-new')));
@@ -940,7 +940,7 @@ section('a checkpoint');
   const { state, sdk } = fakeSdk();
   e2b.__testing.useSdk(sdk);
   await store.setUserSetting('u-e2b', e2b.__testing.SETTING, null);
-  const machine = await e2b.e2bMachineFor('u-e2b', 'synz-f');
+  const machine = await e2b.e2bMachineFor('u-e2b', 'eph-f');
   const first = await machine.saveCheckpoint('before the upgrade');
   check('saved, with what it is', !!first.id && first.note === 'before the upgrade');
   await machine.saveCheckpoint('b');
@@ -1027,11 +1027,11 @@ section('E2B: one key, counted through the pool on the environment\'s (spec A, o
   state.boxes.clear();
   const before = await counted();
   state.createError = named('RateLimitError', 'Rate limit exceeded', { statusCode: 429 });
-  const busy = await e2b.e2bMachineFor('u-e2b', 'synz-paid', { paid: true }).then(() => '', (err) => err.name);
+  const busy = await e2b.e2bMachineFor('u-e2b', 'eph-paid', { paid: true }).then(() => '', (err) => err.name);
   state.createError = null;
   const given = await counted();
   check('a charged start that does not happen is given back — its paid count and the credit (HAR-010)', busy === 'RateLimitError' && given.paid === before.paid && given.credit === before.credit && given.month === before.month, JSON.stringify({ before, given }));
-  const mine = await e2b.e2bMachineFor('u-e2b', 'synz-paid', { paid: true }).catch((err) => ({ provider: err.name, extendTimeout: async () => {} }));
+  const mine = await e2b.e2bMachineFor('u-e2b', 'eph-paid', { paid: true }).catch((err) => ({ provider: err.name, extendTimeout: async () => {} }));
   const started = await counted();
   await mine.extendTimeout(15 * 60_000);
   const kept = await counted();

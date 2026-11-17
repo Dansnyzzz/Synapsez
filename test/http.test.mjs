@@ -1516,11 +1516,11 @@ section('a username to sign in with, or the email');
    * fifteen minutes. A browser that once signed in to the account with the right
    * password is remembered, and the account-wide ceiling does not stop it.
    */
-  const devices = (res) => (res.headers.getSetCookie?.() || []).find((c) => c.startsWith('synz_known=')) || '';
+  const devices = (res) => (res.headers.getSetCookie?.() || []).find((c) => c.startsWith('eph_known=')) || '';
   await store.clearRateLimit?.(account);
   const own = await jar().call('POST', '/api/login', { email: 'dana@example.com', password, remember: true }, { headers: { 'x-real-ip': '10.34.0.1' } });
   const note = devices(own).split(';')[0];
-  check('signing in with the right password remembers this browser, HttpOnly', own.status === 200 && /^synz_known=[^;]+$/.test(note) && /HttpOnly/i.test(devices(own)), `${own.status} ${devices(own).slice(0, 80)}`);
+  check('signing in with the right password remembers this browser, HttpOnly', own.status === 200 && /^eph_known=[^;]+$/.test(note) && /HttpOnly/i.test(devices(own)), `${own.status} ${devices(own).slice(0, 80)}`);
   const borrowed = await jar().call('POST', '/api/login', { email: 'dana@example.com', password, remember: false }, { headers: { 'x-real-ip': '10.34.0.2' } });
   check('  but not when it was asked not to remember', borrowed.status === 200 && devices(borrowed) === '', `${borrowed.status}`);
   await store.addToCounter(account, 101 - (await counted()), Date.now() + 15 * 60_000);
@@ -1531,7 +1531,7 @@ section('a username to sign in with, or the email');
   check('  and a note that was tampered with counts for nothing', forged.status === 429, `${forged.status}`);
   const other = await jar().call('POST', '/api/login', { email: 'alice@example.com', password: 'nope-not-it' }, { headers: { 'x-real-ip': '10.34.0.6', Cookie: note } });
   check('  nor does it reach another account', other.status === 401 || other.status === 429, `${other.status}`);
-  const sessionFromNote = await jar().call('GET', '/api/bootstrap', null, { headers: { Cookie: `ai_remote_session=${note.slice('synz_known='.length)}` } });
+  const sessionFromNote = await jar().call('GET', '/api/bootstrap', null, { headers: { Cookie: `ai_remote_session=${note.slice('eph_known='.length)}` } });
   check('  and it is never a session', sessionFromNote.status === 401, `${sessionFromNote.status}`);
   await store.clearRateLimit?.(account);
 

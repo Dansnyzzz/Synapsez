@@ -44,9 +44,9 @@ import { untrusted } from '../tools/untrusted.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SETTING = 'cloudBrowser';
-const DIR = '.synz-browser';
+const DIR = '.eph-browser';
 /** Where the service lives when it runs as root, out of the account's reach. */
-const ROOT_DIR = '/opt/synz';
+const ROOT_DIR = '/opt/eph';
 /** The service's packages, pinned — exported so the E2B template (scripts/e2b-template.mjs) can warm the same ones. */
 export const DEPS = ['playwright-core@1.63.0', '@sparticuz/chromium@153.0.0', 'ws@8.21.1'];
 const FIRST_START_MS = 180_000;
@@ -111,7 +111,7 @@ const installLines = (build) => [
  * The script that brings the helper service up, as root or as the account.
  *
  * **As root** (`root: true`) the service, its dependencies and the browser
- * profile live in /opt/synz, owned by root: the profile is readable by nobody
+ * profile live in /opt/eph, owned by root: the profile is readable by nobody
  * else, and nothing the account's own commands can write is ever run by root —
  * so an ordinary command talked into it by a web page can neither read the
  * sign-ins nor plant code the service would run with its key. On E2B the account
@@ -124,7 +124,7 @@ const installLines = (build) => [
  * it as the owner of the working folder.
  *
  * **As the account** — where the platform will not run it as root — it is what
- * it always was: everything in `.synz-browser` in the working folder, the
+ * it always was: everything in `.eph-browser` in the working folder, the
  * profile guarded by `assessRisk` (SEC-036) rather than by the file system.
  *
  * Either way the old service is stopped by the pid it wrote, never by name —
@@ -138,31 +138,31 @@ const installLines = (build) => [
  */
 export function startScript(build, { root = false, moveProfile = true } = {}) {
   const write = [
-    'printf %s "$SYNZ_SERVICE" | base64 -d > service.mjs',
-    'printf %s "$SYNZ_KERNEL" | base64 -d > kernel.py',
+    'printf %s "$EPH_SERVICE" | base64 -d > service.mjs',
+    'printf %s "$EPH_KERNEL" | base64 -d > kernel.py',
     /*
      * The key goes over in a file only its owner can read, which the service
      * deletes, and not in node's starting environment (SEC-061, service.mjs
      * `readKey`) — and out of this shell's before anything is installed
      * (SBX-006), so what an install runs does not simply inherit it.
      */
-    '( umask 077; printf %s "$SYNZ_KEY" > service.key )',
-    'unset SYNZ_KEY',
+    '( umask 077; printf %s "$EPH_KEY" > service.key )',
+    'unset EPH_KEY',
   ];
   const run = (where) => [
     'if [ -f service.pid ]; then kill "$(cat service.pid)" 2>/dev/null || true; sleep 0.3; fi',
     'echo $$ > service.pid',
     `echo "starting $(date -u +%FT%TZ) node $(node -v) at $(command -v node) ${where}" > service.log`,
-    'exec env SYNZ_KEY_FILE="$PWD/service.key" node service.mjs >> service.log 2>&1',
+    'exec env EPH_KEY_FILE="$PWD/service.key" node service.mjs >> service.log 2>&1',
   ];
   if (!root) {
     return [
       'set -e',
-      'export SYNZ_WORKDIR="$PWD"',
+      'export EPH_WORKDIR="$PWD"',
       `mkdir -p ${DIR} && cd ${DIR}`,
       ...write,
       ...installLines(build),
-      'export SYNZ_PROFILE="$PWD/profile" SYNZ_KERNEL_PATH="$PWD/kernel.py"',
+      'export EPH_PROFILE="$PWD/profile" EPH_KERNEL_PATH="$PWD/kernel.py"',
       ...run('as the account'),
     ].join('\n');
   }
@@ -170,9 +170,9 @@ export function startScript(build, { root = false, moveProfile = true } = {}) {
     'set -e',
     'if [ "$(id -u)" != 0 ]; then echo "not root" >&2; exit 3; fi',
     'WORK="$PWD"',
-    'export SYNZ_WORKDIR="$WORK"',
-    'export SYNZ_RUN_UID="$(stat -c %u "$WORK")" SYNZ_RUN_GID="$(stat -c %g "$WORK")"',
-    'export SYNZ_RUN_HOME="$(awk -F: -v u="$SYNZ_RUN_UID" \'$3==u{print $6; exit}\' /etc/passwd)"',
+    'export EPH_WORKDIR="$WORK"',
+    'export EPH_RUN_UID="$(stat -c %u "$WORK")" EPH_RUN_GID="$(stat -c %g "$WORK")"',
+    'export EPH_RUN_HOME="$(awk -F: -v u="$EPH_RUN_UID" \'$3==u{print $6; exit}\' /etc/passwd)"',
     'umask 022',
     `mkdir -p ${ROOT_DIR} && chown root:root ${ROOT_DIR} && chmod 755 ${ROOT_DIR} && cd ${ROOT_DIR}`,
     ...write,
@@ -203,7 +203,7 @@ export function startScript(build, { root = false, moveProfile = true } = {}) {
         ]
       : []),
     'mkdir -p profile && chmod 700 profile && chown -R root:root profile',
-    `export SYNZ_PROFILE=${ROOT_DIR}/profile SYNZ_KERNEL_PATH=${ROOT_DIR}/kernel.py`,
+    `export EPH_PROFILE=${ROOT_DIR}/profile EPH_KERNEL_PATH=${ROOT_DIR}/kernel.py`,
     /*
      * A temporary folder of root's own. @sparticuz/chromium unpacks the browser
      * to `<tmp>/chromium` and runs whatever it finds there without a check —
@@ -214,7 +214,7 @@ export function startScript(build, { root = false, moveProfile = true } = {}) {
     // A service the account started before this listens on the same port. Its pid
     // file is the account's to write, so only a process the account owns is stopped.
     `OLD="$(cat "$WORK/${DIR}/service.pid" 2>/dev/null || true)"`,
-    'case "$OLD" in ""|*[!0-9]*) ;; *) if [ "$(stat -c %u /proc/$OLD 2>/dev/null)" = "$SYNZ_RUN_UID" ]; then kill "$OLD" 2>/dev/null || true; sleep 0.3; fi ;; esac',
+    'case "$OLD" in ""|*[!0-9]*) ;; *) if [ "$(stat -c %u /proc/$OLD 2>/dev/null)" = "$EPH_RUN_UID" ]; then kill "$OLD" 2>/dev/null || true; sleep 0.3; fi ;; esac',
     ...run('as root'),
   ].join('\n');
 }
@@ -278,7 +278,7 @@ async function call(conn, route, body, { timeout = ACT_MS, signal } = {}) {
      */
     const res = await fetch(`${conn.url}${route}`, {
       method: body === undefined ? 'GET' : 'POST',
-      headers: { 'x-synz-key': conn.key, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+      headers: { 'x-eph-key': conn.key, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
       body: body === undefined ? undefined : JSON.stringify(body),
       redirect: 'manual',
       signal: AbortSignal.any(signals),
@@ -301,9 +301,9 @@ async function startAs(machine, userId, url, mode, { signal, firstTime, port = B
   const { source, kernel, build } = service();
   const conn = { url, key: key(), build, extendedAt: Date.now(), mode, isolated: false };
   const env = {
-    SYNZ_SERVICE: source.toString('base64'),
-    SYNZ_KERNEL: kernel.toString('base64'),
-    SYNZ_KEY: conn.key,
+    EPH_SERVICE: source.toString('base64'),
+    EPH_KERNEL: kernel.toString('base64'),
+    EPH_KEY: conn.key,
     PORT: String(port),
     /*
      * Tells @sparticuz/chromium it is on an AL2023-compatible host, so it
@@ -315,7 +315,7 @@ async function startAs(machine, userId, url, mode, { signal, firstTime, port = B
     VERCEL: '1',
     AWS_LAMBDA_JS_RUNTIME: 'nodejs22.x',
     // Trackers are unresolvable in the cloud browser unless the operator says otherwise.
-    ...(process.env.CLOUD_BROWSER_BLOCK_TRACKERS === '0' ? { SYNZ_TRACKERS: '0' } : {}),
+    ...(process.env.CLOUD_BROWSER_BLOCK_TRACKERS === '0' ? { EPH_TRACKERS: '0' } : {}),
   };
   // No login profile first (HAR-001, shellFor): the service's key is in this environment.
   const command = await machine.runCommand({

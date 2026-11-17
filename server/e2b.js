@@ -358,7 +358,7 @@ const onMachine = (file) => {
   return raw.startsWith('/') ? raw : path.posix.join(HOME, raw);
 };
 
-const NO_LOGIN_SHELL = Symbol('synz.noLoginShell');
+const NO_LOGIN_SHELL = Symbol('eph.noLoginShell');
 
 /**
  * Commands on this machine start without a login shell (SBX-008).
@@ -774,7 +774,7 @@ async function moveMachine(Sandbox, userId, name, record, old, { paid = false } 
   let receipt = null;
   /** @type {any} */
   let box = null;
-  const file = `/tmp/synz-move-${old.sandboxId}.tgz`;
+  const file = `/tmp/eph-move-${old.sandboxId}.tgz`;
   try {
     const packed = await old.runCommand({
       cmd: 'bash',
@@ -799,8 +799,8 @@ async function moveMachine(Sandbox, userId, name, record, old, { paid = false } 
     const arrived = machine(box, { userId, record: next, paid });
     const unpacked = await arrived.runCommand({
       cmd: 'bash',
-      args: ['--noprofile', '--norc', '-c', `curl -fsS --max-time ${Math.floor(MOVE_STEP_MS / 1000) - 5} "$SYNZ_FROM" | tar xzf - -C ${HOME}`],
-      env: { SYNZ_FROM: await old.downloadUrl(file) },
+      args: ['--noprofile', '--norc', '-c', `curl -fsS --max-time ${Math.floor(MOVE_STEP_MS / 1000) - 5} "$EPH_FROM" | tar xzf - -C ${HOME}`],
+      env: { EPH_FROM: await old.downloadUrl(file) },
       timeoutMs: MOVE_STEP_MS,
     });
     if (unpacked.exitCode !== 0) throw new Error(`unpacking ended with ${unpacked.exitCode}`);

@@ -23,7 +23,7 @@ import { networkOf, agentOf } from './audit.js';
 const COOKIE = 'ai_remote_session';
 const MAX_AGE_SEC = 30 * 24 * 60 * 60;
 /** The accounts this browser has signed in to with the right password (`knownDevice`). */
-const DEVICE_COOKIE = 'synz_known';
+const DEVICE_COOKIE = 'eph_known';
 const DEVICE_MAX_AGE_SEC = 365 * 24 * 60 * 60;
 /** How many accounts one browser is remembered for. */
 const DEVICE_ACCOUNTS = 5;

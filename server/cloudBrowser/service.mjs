@@ -9,16 +9,16 @@
  *
  * It listens on one port that Vercel exposes as an https address:
  *
- *   POST /act     the assistant's browser actions (open, click, type…)   SYNZ_KEY
- *   POST /input   a person's gestures, relayed by the server             SYNZ_KEY
- *   POST /py      a cell for a conversation's Python session            SYNZ_KEY
- *   GET  /health  alive?                                                SYNZ_KEY
- *   POST /close   stop everything                                       SYNZ_KEY
- *   GET  /meta    title, address and tabs                   SYNZ_KEY or a panel token
+ *   POST /act     the assistant's browser actions (open, click, type…)   EPH_KEY
+ *   POST /input   a person's gestures, relayed by the server             EPH_KEY
+ *   POST /py      a cell for a conversation's Python session            EPH_KEY
+ *   GET  /health  alive?                                                EPH_KEY
+ *   POST /close   stop everything                                       EPH_KEY
+ *   GET  /meta    title, address and tabs                   EPH_KEY or a panel token
  *   GET  /stream  the screen as MJPEG — the fallback        a view token, in the URL
  *   WS   /live    the screen, and a person driving it       a panel token, sent first
  *
- * **One key, kept on the server.** `SYNZ_KEY` drives everything and never
+ * **One key, kept on the server.** `EPH_KEY` drives everything and never
  * leaves the server. The person's panel gets short-lived tokens signed with it
  * (`tokenScope`): a `view` token that may sit in a URL, because all it opens is
  * the picture, and a `drive` token that is only ever sent inside the socket,
@@ -71,8 +71,8 @@ import { WebSocketServer, WebSocket } from 'ws';
  * from `process.env`; so the start script hands it over in a file instead.
  */
 function readKey() {
-  const file = process.env.SYNZ_KEY_FILE;
-  if (!file) return process.env.SYNZ_KEY || '';
+  const file = process.env.EPH_KEY_FILE;
+  if (!file) return process.env.EPH_KEY || '';
   try {
     return fs.readFileSync(file, 'utf8').trim();
   } catch {
@@ -83,18 +83,18 @@ function readKey() {
 }
 const KEY = readKey();
 const PORT = Number(process.env.PORT) || 3000;
-const PROFILE = process.env.SYNZ_PROFILE || path.resolve('profile');
+const PROFILE = process.env.EPH_PROFILE || path.resolve('profile');
 /** The account's working folder — where sandbox_run's commands run — shared with the browser's downloads. */
-const WORKDIR = path.resolve(process.env.SYNZ_WORKDIR || '..');
+const WORKDIR = path.resolve(process.env.EPH_WORKDIR || '..');
 const DOWNLOADS = path.join(WORKDIR, 'downloads');
 /** The account's own user, when this runs as root: the owner of what it hands over, and who Python runs as. */
-const RUN_UID = Number(process.env.SYNZ_RUN_UID) || null;
-const RUN_GID = Number(process.env.SYNZ_RUN_GID) || RUN_UID;
-const RUN_HOME = process.env.SYNZ_RUN_HOME || '';
-const PYTHON = process.env.SYNZ_PYTHON || 'python3';
-const KERNEL = path.resolve(process.env.SYNZ_KERNEL_PATH || 'kernel.py');
-const LOCALE = process.env.SYNZ_LOCALE || 'vi-VN';
-const blockTrackers = process.env.SYNZ_TRACKERS !== '0';
+const RUN_UID = Number(process.env.EPH_RUN_UID) || null;
+const RUN_GID = Number(process.env.EPH_RUN_GID) || RUN_UID;
+const RUN_HOME = process.env.EPH_RUN_HOME || '';
+const PYTHON = process.env.EPH_PYTHON || 'python3';
+const KERNEL = path.resolve(process.env.EPH_KERNEL_PATH || 'kernel.py');
+const LOCALE = process.env.EPH_LOCALE || 'vi-VN';
+const blockTrackers = process.env.EPH_TRACKERS !== '0';
 const WIDTH = 1280;
 const HEIGHT = 800;
 const IDLE_MS = 15 * 60 * 1000;
@@ -111,11 +111,11 @@ const MAX_TEXT = 400_000;
 const WINDOW = 3;
 
 if (KEY.length < 32) {
-  console.error('SYNZ_KEY must be set.');
+  console.error('EPH_KEY must be set.');
   process.exit(1);
 }
 // Nothing this starts — Chromium, Python, a shell line inside a cell — inherits the key.
-for (const name of Object.keys(process.env)) if (name.startsWith('SYNZ_')) delete process.env[name];
+for (const name of Object.keys(process.env)) if (name.startsWith('EPH_')) delete process.env[name];
 
 const same = (a, b) => {
   const x = Buffer.from(String(a || ''));
@@ -150,7 +150,7 @@ let lastUse = Date.now();
  * Hosts whose whole business is following people from site to site, made
  * unresolvable inside this browser. Kept to analytics, advertising and
  * session-recording hosts that no page needs in order to work: a sign-in
- * button or an embedded video is never on this list. SYNZ_TRACKERS=0 turns it off.
+ * button or an embedded video is never on this list. EPH_TRACKERS=0 turns it off.
  */
 const TRACKERS = [
   'google-analytics.com', 'analytics.google.com', 'googletagmanager.com', 'doubleclick.net', 'googlesyndication.com',
@@ -364,7 +364,7 @@ async function describe({ stamp = true } = {}) {
       const root = document.scrollingElement || document.documentElement;
       const position = { x: Math.round(root.scrollLeft), y: Math.round(root.scrollTop), width: root.scrollWidth, height: root.scrollHeight, viewWidth: innerWidth, viewHeight: innerHeight };
       if (!stamp) return { elements: [], text, position };
-      for (const node of document.querySelectorAll('[data-synz-ref]')) node.removeAttribute('data-synz-ref');
+      for (const node of document.querySelectorAll('[data-eph-ref]')) node.removeAttribute('data-eph-ref');
       const lines = [];
       let n = 0;
       const selector =
@@ -377,7 +377,7 @@ async function describe({ stamp = true } = {}) {
         if (style.visibility === 'hidden' || style.display === 'none' || Number(style.opacity) === 0) continue;
         if (box.bottom < -innerHeight || box.top > innerHeight * 3) continue;
         n += 1;
-        el.setAttribute('data-synz-ref', String(n));
+        el.setAttribute('data-eph-ref', String(n));
         const tag = el.tagName.toLowerCase();
         const type = el.getAttribute('type');
         const label = (
@@ -483,7 +483,7 @@ async function report({ part = 1, textOnly = false, did = null, notRun = 0 } = {
 
 const locatorFor = async ({ ref, text, selector }) => {
   if (ref != null && ref !== '') {
-    const target = page.locator(`[data-synz-ref="${Number(ref)}"]`).first();
+    const target = page.locator(`[data-eph-ref="${Number(ref)}"]`).first();
     if (!(await target.count())) throw new Error(`There is no element [${ref}] on the page now — look again for fresh numbers.`);
     return target;
   }
@@ -1269,7 +1269,7 @@ function send(res, status, value) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://local');
-  const key = req.headers['x-synz-key'] || '';
+  const key = req.headers['x-eph-key'] || '';
   try {
     if (url.pathname === '/health') {
       if (!same(key, KEY)) return send(res, 401, { error: 'no' });

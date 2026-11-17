@@ -38,7 +38,7 @@ import { clientError } from '../util/clientError.js';
  */
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
-const SHARE_COOKIE = 'synz_share';
+const SHARE_COOKIE = 'eph_share';
 
 export const newChatShareToken = () => crypto.randomBytes(32).toString('base64url');
 export const chatSharePath = (token) => `/share.html?t=${token}`;

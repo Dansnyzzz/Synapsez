@@ -203,7 +203,7 @@ try {
   await asRoot('true');
   const afterRoot = await rootRan();
   check('  nor does a root command (SBX-007, SBX-008, SBX-010)', afterRoot === '', afterRoot);
-  const started = await machine.runCommand({ ...shellFor(startScript(`probe-${Date.now()}`, { root: true }), { SYNZ_SERVICE: Buffer.from('process.exit(0)').toString('base64'), SYNZ_KERNEL: '', SYNZ_KEY: 'probe' }, { root: true }), sudo: true, timeoutMs: 180_000 });
+  const started = await machine.runCommand({ ...shellFor(startScript(`probe-${Date.now()}`, { root: true }), { EPH_SERVICE: Buffer.from('process.exit(0)').toString('base64'), EPH_KERNEL: '', EPH_KEY: 'probe' }, { root: true }), sudo: true, timeoutMs: 180_000 });
   const afterStart = await rootRan();
   // The template's node is root's whatever happens to /usr/local; on base root then trusts no node, and stops before its install.
   check(template === 'base' ? "  nor does the cloud browser's root start, which finds no node it trusts and stops (SBX-009)" : "  nor does the cloud browser's real root start, its install included (SBX-009)", afterStart === '' && started.exitCode === (template === 'base' ? 127 : 0), `exit ${started.exitCode}${afterStart ? ` · ${afterStart}` : ''}`);
