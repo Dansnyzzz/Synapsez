@@ -5957,6 +5957,12 @@ export function createPgStore(connectionString) {
       return (await q(`SELECT user_id FROM subscriptions WHERE status IN ('active', 'grace') ORDER BY user_id`)).map((r) => r.user_id);
     },
 
+    /** How many plans are in force, by plan: what the free keys are set aside for before the even split (freeShares.js). */
+    async countLivePlans() {
+      const rows = await q(`SELECT plan, COUNT(*)::int AS n FROM subscriptions WHERE status IN ('active', 'grace') GROUP BY plan`);
+      return Object.fromEntries(rows.map((r) => [r.plan, Number(r.n)]));
+    },
+
     async getBillingProfile(userId) {
       const r = (await q('SELECT sealed, low_balance_vnd, low_alert_sent_at FROM billing_profiles WHERE user_id = $1', [String(userId)]))[0];
       return r ? { sealed: r.sealed ?? null, lowBalanceVnd: r.low_balance_vnd == null ? null : Number(r.low_balance_vnd), lowAlertSentAt: asDate(r.low_alert_sent_at) } : null;

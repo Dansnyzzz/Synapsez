@@ -3,6 +3,8 @@ import { log } from './util/trace.js';
 import { allowance, e2bAccountShare } from './freeTier.js';
 import { keysFor, keysVersion } from './keyPool.js';
 import { periodOf, freeTierOnly, numIn, noDatabase } from './freeTierPeriod.js';
+import { billingMode } from './billing/mode.js';
+import { PLANS, PAID_PLANS } from './billing/plans.js';
 
 /**
  * Each account's free share, a month's and worked out (owner, 2026-11-13: "limit users by the
@@ -100,13 +102,27 @@ async function peopleNow(now) {
   };
 }
 
-function workOut(capacity, people, env = process.env) {
+/** What the paid plans in force are owed this month, in searches and machine mills: theirs before anybody's even share (owner, 2026-11-17). */
+async function committedNow() {
+  if (billingMode() === 'off') return { searches: 0, machineMills: 0 };
+  const counts = await getStore().countLivePlans();
+  let searches = 0;
+  let machineMills = 0;
+  for (const plan of PAID_PLANS) {
+    const n = Number(counts[plan]) || 0;
+    searches += n * PLANS[plan].searches;
+    machineMills += n * Math.round((PLANS[plan].sandboxMinutes * MACHINE_MILLS_PER_HOUR) / 60);
+  }
+  return { searches, machineMills };
+}
+
+function workOut(capacity, people, env = process.env, committed = { searches: 0, machineMills: 0 }) {
   const bounds = SHARE_BOUNDS(env);
   const kept = 1 - shareReserve(env);
-  const searches = clamp(Math.floor((capacity.searches * kept) / Math.max(bounds.searchPeopleFloor, people.searches)), bounds.searchMin, Math.max(bounds.searchMin, bounds.searchMax));
+  const searches = clamp(Math.floor((Math.max(0, capacity.searches - committed.searches) * kept) / Math.max(bounds.searchPeopleFloor, people.searches)), bounds.searchMin, Math.max(bounds.searchMin, bounds.searchMax));
   const machineHigh = Math.floor(capacity.machineMills * bounds.machineMaxShare);
   // The share cap wins over the floor: an owner who sets E2B_ACCOUNT_SHARE very low means it.
-  const machineMills = Math.min(machineHigh, Math.max(bounds.machineMinMills, Math.floor((capacity.machineMills * kept) / Math.max(bounds.machinePeopleFloor, people.machines))));
+  const machineMills = Math.min(machineHigh, Math.max(bounds.machineMinMills, Math.floor((Math.max(0, capacity.machineMills - committed.machineMills) * kept) / Math.max(bounds.machinePeopleFloor, people.machines))));
   return { searches, machineMills };
 }
 
@@ -145,10 +161,15 @@ export async function monthShares({ now = new Date() } = {}) {
     if (!Number.isFinite(cap.searches) || !Number.isFinite(cap.machineMills)) return await maxima(now);
     if (!figure || cap.searches > figure.capacity.searches || cap.machineMills > figure.capacity.machineMills) {
       const people = await peopleNow(now);
-      const worked = workOut(cap, people);
+      // A count that cannot be read sets nothing aside rather than blocking the share.
+      const committed = await committedNow().catch((err) => {
+        log.warn('free shares: plans in force not counted, setting nothing aside', { error: String(err?.message || err).slice(0, 160) });
+        return { searches: 0, machineMills: 0 };
+      });
+      const worked = workOut(cap, people, process.env, committed);
       // Written in one statement that keeps the larger of each figure (owner, 2026-11-13: never lowered mid-month),
       // so another instance working it out from other counts at the same moment cannot lower it; what is stored is what we use.
-      figure = await store.raiseSetting(settingOf(month), { month, searches: worked.searches, machineMills: worked.machineMills, capacity: { searches: cap.searches, machineMills: cap.machineMills }, people, at: now.toISOString() });
+      figure = await store.raiseSetting(settingOf(month), { month, searches: worked.searches, machineMills: worked.machineMills, capacity: { searches: cap.searches, machineMills: cap.machineMills }, people, committed, at: now.toISOString() });
     }
     memo = { month, at: Date.now(), version, value: figure };
     return figure;

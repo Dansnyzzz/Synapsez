@@ -343,5 +343,66 @@ section('shown to the person and to the administrators');
   check('  a returning account or one joined on the 1st has no joined-late sentence', (await shares.accountShares('u9', on(2))).joinedOn === null && (await shares.accountShares('never', on(2))).joinedOn === null);
 }
 
+section('paid plans are set aside before the even split');
+{
+  let made = 0;
+  const subscribe = async (plan, status = 'active') => {
+    made += 1;
+    const user = await store.createUser({ id: `fs-sub${made}`, email: `fs-sub${made}@example.test`, passwordHash: 'x', role: 'user' });
+    const start = new Date(Date.now() - 3_600_000);
+    return store.createSubscription({ userId: user.id, plan, period: 'year', status, periodStart: start, periodEnd: new Date(start.getTime() + 365 * 86_400_000), paidVnd: 1000, anchorAt: start });
+  };
+  const fresh = async () => {
+    await reset();
+    await exaOnly(10_000);
+    process.env.E2B_API_KEY = 'e2b_env_7777_gggg';
+    await refreshPool();
+    await people(20);
+  };
+  const plain = async () => {
+    await sql.query("DELETE FROM settings WHERE key LIKE 'free_shares:%'");
+    shares.__testing.forget();
+    return shares.monthShares({ now: on(1) });
+  };
+  await sql.query('DELETE FROM subscriptions');
+
+  await fresh();
+  const none = await shares.monthShares({ now: on(1) });
+  check('no plans: the share is the even split of the whole, 400', none.searches === 400 && none.committed.searches === 0, JSON.stringify([none.searches, none.committed]));
+  const mills = (minutes) => Math.round((minutes * 133) / 60);
+  await subscribe('plus');
+  await subscribe('plus');
+  await subscribe('max');
+  const owed = 2 * 150 + 450;
+  const owedMills = 2 * mills(240) + mills(720);
+  const set = await plain();
+  check('two Plus and a Max are set aside first: the figure falls by exactly the floor difference', set.searches === Math.floor(((10_000 - owed) * 0.8) / 20) && set.searches < none.searches, `${set.searches} vs ${none.searches}`);
+  check('  the stored figure carries what was set aside', set.committed.searches === owed && set.committed.machineMills === owedMills, JSON.stringify(set.committed));
+  const limit = (await tiers.allowance('e2b', on(1))).limit;
+  const want = (committed) => Math.min(Math.floor(limit * 0.34), Math.max(133, Math.floor(((limit - committed) * 0.8) / 3)));
+  check('  the machine share drops the same way', set.machineMills === want(owedMills) && set.machineMills < none.machineMills, `${set.machineMills} vs ${none.machineMills}, want ${want(owedMills)} (limit ${limit})`);
+
+  await subscribe('pro', 'grace');
+  await subscribe('plus', 'ended');
+  const live = await store.countLivePlans();
+  check('countLivePlans counts active and grace, and ignores ended', live.plus === 2 && live.max === 1 && live.pro === 1 && Object.values(live).reduce((a, b) => a + b, 0) === 4, JSON.stringify(live));
+
+  process.env.BILLING_MODE = 'off';
+  const off = await plain();
+  check('with BILLING_MODE=off nothing is set aside: the share equals the no-plan figure', off.searches === none.searches && off.machineMills === none.machineMills && off.committed.searches === 0, JSON.stringify([off.searches, off.committed]));
+  delete process.env.BILLING_MODE;
+
+  const before = await plain();
+  await subscribe('max');
+  await subscribe('max');
+  await addKey('exa', 'exa-extra-8888-yyyy', 15);
+  await refreshPool();
+  const after = await shares.monthShares({ now: on(2) });
+  check('a plan bought after the figure is stored never lowers it, even when it is worked out again', after.capacity.searches > before.capacity.searches && after.searches >= before.searches && after.machineMills >= before.machineMills, JSON.stringify([before.searches, after.searches]));
+
+  await sql.query('DELETE FROM subscriptions');
+  delete process.env.E2B_API_KEY;
+}
+
 console.log(failures ? `\n\x1b[31m${failures} failed\x1b[0m` : '\n\x1b[32mall passed\x1b[0m');
 process.exit(failures ? 1 : 0);
