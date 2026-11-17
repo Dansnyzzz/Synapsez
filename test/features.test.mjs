@@ -149,7 +149,7 @@ section('the cloud computer: offered only where it can start, and fenced to its 
   check('and can be switched off', !sandboxConfigured({ VERCEL: '1', SANDBOX_DISABLED: '1' }));
   check('an E2B key alone is enough (owner, 2026-11-02)', sandboxConfigured({ E2B_API_KEY: 'e2b_x' }) && !sandboxConfigured({ E2B_API_KEY: 'e2b_x', SANDBOX_DISABLED: '1' }));
   check('one machine per account, the same from every conversation', sandboxName('u') === sandboxName('u') && sandboxName('u') !== sandboxName('v'));
-  check('its name gives nothing away', !sandboxName('user-123').includes('user') && /^synz-[0-9a-f]{32}$/.test(sandboxName('a')));
+  check('its name gives nothing away', !sandboxName('user-123').includes('user') && /^eph-[0-9a-f]{32}$/.test(sandboxName('a')));
   // The reported failure: every command ran in a hard-coded /vercel/sandbox
   // that the current image does not have. Paths are now left to the session.
   check('a relative path stays relative, for the session to resolve', workPath('out/r.pdf') === 'out/r.pdf');
@@ -247,7 +247,7 @@ section('a shared conversation opens with no account, and shows only its own fil
     const cookie = (page.headers.get('set-cookie') || '').split(';')[0];
     check('the conversation opens with no account', page.status === 200 && body.title === 'Lịch trình Đà Nẵng' && body.messages.length === 1);
     check('  and says the visitor is not signed in', body.viewer?.signedIn === false);
-    check('  setting a cookie scoped to the API, unreadable by script', /^synz_share=/.test(cookie) && /HttpOnly/.test(page.headers.get('set-cookie') || '') && /Path=\/api/.test(page.headers.get('set-cookie') || ''));
+    check('  setting a cookie scoped to the API, unreadable by script', /^eph_share=/.test(cookie) && /HttpOnly/.test(page.headers.get('set-cookie') || '') && /Path=\/api/.test(page.headers.get('set-cookie') || ''));
 
     const mine = await fetch(`${base}/api/attachments/in-chat`, { headers: { cookie } });
     check('a file the conversation shows is served to the visitor', mine.status === 200 && (await mine.text()) === 'png!');
@@ -255,7 +255,7 @@ section('a shared conversation opens with no account, and shows only its own fil
     check('a file of the owner\'s that is not in it is not', other.status === 401);
     const noCookie = await fetch(`${base}/api/attachments/in-chat`);
     check('and nothing is served without the link', noCookie.status === 401);
-    const forged = await fetch(`${base}/api/attachments/in-chat`, { headers: { cookie: 'synz_share=forgedforgedforgedforgedforgedforgedforged1' } });
+    const forged = await fetch(`${base}/api/attachments/in-chat`, { headers: { cookie: 'eph_share=forgedforgedforgedforgedforgedforgedforged1' } });
     check('nor with a made-up token', forged.status === 401);
 
     // CODE-031: somebody signed in to their own account reads the link too.
@@ -909,7 +909,7 @@ section('deleting stored files across every account is asked for first (CODE-044
   const { spawnSync } = await import('node:child_process');
   const { fileURLToPath } = await import('node:url');
   const { createPgliteStore } = await import('../server/store/pglite.js');
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'synz-storage-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'eph-storage-'));
   const seed = await createPgliteStore(dir);
   await seed.init();
   const owner = await seed.createUser({ id: 'u-st', email: 'st@example.com', passwordHash: 'x', name: 'S', role: 'user' });
@@ -938,7 +938,7 @@ section('deleting stored files across every account is asked for first (CODE-044
     preview.status === 0 && /\(pglite \(local file\)\)/.test(preview.stdout) && /Of a deleted conversation\s+1 ·/.test(preview.stdout);
   check('the script, run from the test, is on the temporary database and no other', onTemp, `${preview.status} ${preview.stdout.slice(0, 300)} ${preview.stderr.slice(-200)}`);
   // And the guard tells: pointed at any other database, it does not pass.
-  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'synz-storage-other-'));
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'eph-storage-other-'));
   const other = spawnSync(process.execPath, [script], { env: { ...env, DATA_DIR: elsewhere }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 120_000 });
   check('  a database without that one file does not pass the guard', !/Of a deleted conversation\s+1 ·/.test(other.stdout), other.stdout.slice(0, 200));
   fs.rmSync(elsewhere, { recursive: true, force: true });
@@ -997,8 +997,8 @@ section('every setting the server and worker read is in the README (CODE-047)');
   const NOT_SETTINGS = new Set([
     'COMPUTERNAME', 'HOSTNAME', 'SHELL', 'DISPLAY', 'WAYLAND_DISPLAY', 'XDG_DATA_HOME', 'NODE_ENV',
     'VERCEL_OIDC_TOKEN', 'VERCEL_PROJECT_PRODUCTION_URL', 'VERCEL_URL', 'VERCEL_REGION', 'VERCEL_AUTOMATION_BYPASS_SECRET', 'VERCEL_OBSERVABILITY_CLIENT_CONFIG',
-    'CHROME_PATH', 'SYNZ_KEY', 'SYNZ_KEY_FILE', 'SYNZ_PROFILE', 'SYNZ_LOCALE', 'SYNZ_MCP_KEY', 'SYNZ_MCP_KEY_FILE', 'SYNZ_WORKDIR', 'SYNZ_RUN_UID',
-    'SYNZ_RUN_GID', 'SYNZ_RUN_HOME', 'SYNZ_PYTHON', 'SYNZ_KERNEL_PATH', 'SYNZ_TRACKERS', 'HOME', 'PATH', 'TMPDIR',
+    'CHROME_PATH', 'EPH_KEY', 'EPH_KEY_FILE', 'EPH_PROFILE', 'EPH_LOCALE', 'EPH_MCP_KEY', 'EPH_MCP_KEY_FILE', 'EPH_WORKDIR', 'EPH_RUN_UID',
+    'EPH_RUN_GID', 'EPH_RUN_HOME', 'EPH_PYTHON', 'EPH_KERNEL_PATH', 'EPH_TRACKERS', 'HOME', 'PATH', 'TMPDIR',
     // Set by the cloud browser service for the Python session: where the template's browsers are.
     'PLAYWRIGHT_BROWSERS_PATH',
   ]);
@@ -3025,7 +3025,9 @@ section('the product is Ephapse: the old name is nowhere but where it must stay 
   const read = (p) => fs.readFileSync(new URL(p, root), 'utf8');
   // The old name is built, not written, so this file does not trip its own scan.
   const OLD = 'syna' + 'psez';
-  const any = new RegExp(OLD, 'i');
+  // The old short form, too (a plain substring, so it also catches it inside an escape such as a newline before it).
+  const SHORT = 'sy' + 'nz';
+  const any = new RegExp(`${OLD}|${SHORT}`, 'i');
   const rule = (file, src, reason) => ({ file, line: new RegExp(src.split('@').join(OLD), 'i'), reason });
   const ALLOWED = [
     rule(/^server\/deidentify\.js$/, "'@-deidentify'", 'derives the masking key: renaming it would orphan every pseudonym'),
@@ -3039,6 +3041,11 @@ section('the product is Ephapse: the old name is nowhere but where it must stay 
     rule(/^public\/(privacy|terms|usage-policy)\.html$/, '@ (nay đổi tên thành|is now) Ephapse', 'the one rename line each legal page carries'),
     rule(/^public\/changelog\.json$/, '@ (nay là|is now) Ephapse', 'the 1.33.0 release note says what the name was'),
     rule(/^audit\/(CONTRACT|ISSUE_LEDGER)\.md$/, 'Dansnyzzz/@', 'the repository address, until the owner renames the repository'),
+    // The 1.33.0 section of CHANGELOG.md: only the paragraphs that name the old name, not the whole section.
+    rule(/^CHANGELOG[.]md$/, '^## 2026-11-17 — @ is now Ephapse [(]1[.]33[.]0[)]$', 'the heading of the 1.33.0 section'),
+    rule(/^CHANGELOG[.]md$/, '^[*][*]The product is renamed, at its own domain[.][*][*] @ is now Ephapse', 'the 1.33.0 paragraph that says what the name was'),
+    rule(/^CHANGELOG[.]md$/, '^[*][*]What people will notice once[.][*][*] .*X-@-', 'the 1.33.0 paragraph on the old webhook headers'),
+    rule(/^CHANGELOG[.]md$/, '^[*][*]What deliberately keeps the old name[.][*][*]', 'the 1.33.0 paragraph on what keeps the old name'),
   ];
   const files = execSync('git ls-files -z', { cwd: root, maxBuffer: 1 << 28 }).toString('utf8').split('\0').filter(Boolean);
   const BINARY = /\.(png|jpe?g|gif|webp|webm|mp4|ico|pdf|woff2?|ttf|otf|zip|gz|docx|xlsx|pptx)$/i;
@@ -3049,11 +3056,8 @@ section('the product is Ephapse: the old name is nowhere but where it must stay 
     const buf = fs.readFileSync(new URL(file, root));
     if (buf.includes(0)) continue;
     scanned += 1;
-    let inRelease = false;
     buf.toString('utf8').split(/\r?\n|\r/).forEach((line, i) => {
-      if (file === 'CHANGELOG.md' && line.startsWith('## ')) inRelease = line.includes('(1.33.0)');
       if (!any.test(line)) return;
-      if (inRelease) return; // the 1.33.0 section of CHANGELOG.md says what the name was
       if (ALLOWED.some((a) => a.file.test(file) && a.line.test(line))) return;
       hits.push(`${file}:${i + 1}`);
     });

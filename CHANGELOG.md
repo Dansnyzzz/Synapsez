@@ -6,6 +6,10 @@
 
 **What people will notice once.** Settings kept in the browser on a device (the scene, drafts, the skills view) start fresh. Webhooks are signed and delivered with `X-Ephapse-Timestamp`, `X-Ephapse-Signature` and `X-Ephapse-Delivery`, and the old `X-Synapsez-*` headers are no longer read. Exports are named `ephapse-export-…json` and `ephapse-bots-…json` (format `ephapse-export`, `ephapse-bots/1`); a file saved under the old names still imports. The TOTP issuer is Ephapse; an authenticator entry already set up keeps its old label, which changes nothing. The cloud computer template is `ephapse-computer`, and sandboxes are tagged `app: ephapse`.
 
+**Deploy order.** The cloud computer and the cloud browser do not start until the template is rebuilt as `ephapse-computer` (`npm run e2b:template`), or `E2B_TEMPLATE` is set to the old template. After the rebuild every cloud computer starts fresh, and files kept on the old machines can no longer be opened. The short internal name used inside the machine (its folders, service key header, environment names and machine names) and in two cookies is renamed too, so remembered devices and shared-link sessions reset once.
+
+**Telemetry.** The model-call span attribute `ephapse.key` replaces the old attribute of the same shape; a dashboard that filters on the old name needs updating.
+
 **What deliberately keeps the old name.** Three strings that derive a key or a signature (the masking key, its local fallback and the image-link fallback), because changing them would orphan every pseudonym and void every signed link; the reserved username `synapsez` (`ephapse` is reserved too); the repository address, until the repository is renamed; and this paragraph, the mascot notice and the one rename line on each legal page, which say what the name was.
 
 **The legal pages are not re-accepted.** Their text carries the new name and one line saying the name changed; their version ids are unchanged, so nobody is asked to agree again.

@@ -647,7 +647,7 @@ not there, the model can install, and what an account installs is put back on a 
   to the chat leaves the machine, and the model is told when the disk passes 80%. The tidy has three
   tiers by how full the disk is (below 70%, 70–85%, above): caches that fill themselves again go an
   entry at a time and never through a link, only real (ELF) core dumps go, what the cloud browser
-  downloaded goes after a week untouched — never a file a card points at (`SYNZ_KEEP`) — and large
+  downloaded goes after a week untouched — never a file a card points at (`EPH_KEEP`) — and large
   files in `/tmp` are listed with the largest things, never deleted for their size. A file too large
   for the conversation stays on the machine, moved out of `/tmp`, `incoming/` or `downloads/` to
   `~/handed/` first so its card keeps working (`tidyScript`, `keptAside`).
@@ -2231,6 +2231,8 @@ assuming a fresh one, and that the serverless-only branches behave.
 | `ALLOW_MCP_STDIO` | `true` lets stdio MCP servers (`npx -y gitnexus@latest mcp`) run as programs beside the server, on a single-owner machine. Off by default, and never on Vercel: on a shared server that is running a command somebody typed, with every account's keys in reach. Without it, stdio servers run on each account's own cloud computer (on E2B, or the Vercel Sandbox, so `SANDBOX_DISABLED` switches them off too): started only when a tool is called, and checked once on a scratch machine the first time anybody adds a command, so the next account to add the same one has it at once. |
 | `LOG_LEVEL` / `LOG_FORMAT` | `debug` adds debug lines. `json` or `text` overrides the format, which is JSON on Vercel and readable text elsewhere. Every model call is one `gen_ai.span` line with the OpenTelemetry GenAI attributes (`gen_ai.request.model`, `gen_ai.usage.input_tokens`, `error.type`, `duration_ms`…) beside the request's trace id — never any content — so a collector that reads JSON logs can lift them as spans. |
 | `REPO_URL` | The repository the "connect a computer" command clones. Default this project's; set it on a fork. |
+
+> **Deploying 1.33.0 (the rename to Ephapse): rebuild the cloud computer template first.** The machines, the cloud browser and the MCP checks run from a template named `ephapse-computer`, and its internal names changed with the product. Run `npm run e2b:template` before (or right after) deploying, or set `E2B_TEMPLATE` to the old template name to keep the old machines for now. Until one of those is done the cloud computer and the cloud browser do not start. After the rebuild every account's cloud computer starts fresh, and files kept on the old machines can no longer be opened. Remembered devices and shared-link sessions (their cookies were renamed) reset once.
 
 </details>
 

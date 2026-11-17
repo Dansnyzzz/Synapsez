@@ -17,14 +17,18 @@
           "Webhook giờ dùng các tiêu đề X-Ephapse-Timestamp, X-Ephapse-Signature và X-Ephapse-Delivery; bên gửi cần đổi tên tiêu đề.",
           "Tệp xuất có tên mới (ephapse-export-… và ephapse-bots-…); tệp xuất cũ vẫn nhập được.",
           "Ứng dụng xác thực đã cài sẵn giữ nhãn cũ; nhãn đó không ảnh hưởng gì.",
-          "Video hướng dẫn lấy key không còn dòng chú thích bên dưới."
+          "Video hướng dẫn lấy key không còn dòng chú thích bên dưới.",
+          "Máy tính đám mây bắt đầu lại từ đầu sau khi đổi tên; tệp để trên máy cũ không còn mở được.",
+          "Thiết bị đã nhớ và phiên liên kết chia sẻ được đặt lại một lần."
         ],
         "en": [
           "Browser settings saved on this device (the scene, drafts, the skills view) reset once.",
           "Webhooks now use the X-Ephapse-Timestamp, X-Ephapse-Signature and X-Ephapse-Delivery headers; senders need to rename the headers.",
           "Exports have new file names (ephapse-export-… and ephapse-bots-…); old export files still import.",
           "Authenticator apps already set up keep the old label; the label changes nothing.",
-          "The guide's provider videos no longer carry a caption."
+          "The guide's provider videos no longer carry a caption.",
+          "Cloud computers start fresh after the rename; files kept on the old machines can no longer be opened.",
+          "Remembered devices and shared-link sessions reset once."
         ]
       }
     },
