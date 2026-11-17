@@ -466,27 +466,24 @@ export function createUsagePanel(host, deps) {
 
   /**
    * This month's free share (server/freeShares.js, owner 2026-11-13): what the account has used
-   * of it, when it starts again, and one plain sentence on how it was worked out. On the
-   * overview only; absent when the ceilings are off or the server could not work it out.
+   * of it, as a bar for each of searches, files and the cloud computer (owner, 2026-11-17: the
+   * same bar, colours and thresholds as every other usage row), and when it starts again. How
+   * the share was worked out is not explained here any more. On the overview only; absent when
+   * the ceilings are off or the server could not work it out.
    */
   function freeShareCard() {
     const share = view.scope === 'all' ? view.report.freeShare : null;
     // The files line stands apart from the ceilings: files are limited whether or not they are on.
     const storage = view.scope === 'all' ? view.report.storage : null;
-    const filesLine = storage && storage.limitBytes != null ? `<p class="usage__strong" data-storage>${escapeHtml(t('usage.share.files', { used: filesSize(storage.usedBytes), limit: filesSize(storage.limitBytes) }))}</p>` : '';
-    if (!share || !share.enforced) return filesLine ? `<section class="usage__credit" data-free-share><h4>${escapeHtml(t('usage.share.title'))}</h4>${filesLine}</section>` : '';
+    const filesBar = storage && storage.limitBytes != null ? `<div data-storage>${bar({ label: t('usage.share.files', { used: filesSize(storage.usedBytes), limit: filesSize(storage.limitBytes) }), used: storage.usedBytes, limit: storage.limitBytes })}</div>` : '';
+    if (!share || !share.enforced) return filesBar ? `<section class="usage__credit" data-free-share><h4>${escapeHtml(t('usage.share.title'))}</h4><div class="usage__limits">${filesBar}</div></section>` : '';
     const date = when(new Date(share.endsAt), { day: 'numeric', month: 'long', timeZone: 'UTC' });
-    const lines = [
-      `<p class="usage__strong">${escapeHtml(t('usage.share.searches', { used: countOf(share.searches.used), share: countOf(share.searches.share) }))}</p>`,
-    ];
-    if (filesLine) lines.push(filesLine);
-    if (share.machine.shareMills != null) lines.push(`<p class="usage__strong">${escapeHtml(t('usage.share.machine', { used: machineTime(share.machine.usedMills), share: machineTime(share.machine.shareMills) }))}</p>`);
-    lines.push(`<p class="usage__muted">${escapeHtml(t('usage.share.starts', { date }))}</p>`);
+    const bars = [bar({ label: t('usage.share.searches', { used: countOf(share.searches.used), share: countOf(share.searches.share) }), used: share.searches.used, limit: share.searches.share })];
+    if (filesBar) bars.push(filesBar);
+    if (share.machine.shareMills != null) bars.push(bar({ label: t('usage.share.machine', { used: machineTime(share.machine.usedMills), share: machineTime(share.machine.shareMills) }), used: share.machine.usedMills, limit: share.machine.shareMills }));
+    const lines = [`<div class="usage__limits">${bars.join('')}</div>`, `<p class="usage__muted">${escapeHtml(t('usage.share.starts', { date }))}</p>`];
     if (share.dry) lines.push(`<p class="usage__note">${escapeHtml(t('usage.share.dry', { date }))}</p>`);
     if (share.joinedOn > 1) lines.push(`<p class="usage__muted">${escapeHtml(t('usage.share.late', { day: String(share.joinedOn), days: String(share.daysInMonth), left: String(share.daysInMonth - share.joinedOn + 1) }))}</p>`);
-    if (share.capacity?.searches != null) {
-      lines.push(`<p class="usage__muted">${escapeHtml(t('usage.share.how', { capacity: countOf(share.capacity.searches), reserve: pct(share.reserve), people: countOf(share.people.searches), min: String(share.bounds.searchMin), max: String(share.bounds.searchMax) }))}</p>`);
-    }
     return `<section class="usage__credit" data-free-share><h4>${escapeHtml(t('usage.share.title'))}</h4>${lines.join('')}</section>`;
   }
 

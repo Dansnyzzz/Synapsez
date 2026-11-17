@@ -1,6 +1,6 @@
 import { t, localeTag } from './i18n.js';
 import { escapeHtml as esc } from './markdown.js';
-import { vnd, planName, minutes } from './billing-format.js';
+import { vnd, planName, minutes, clock } from './billing-format.js';
 import { PROFILE_FIELDS } from './billing-checkout-view.js';
 
 /**
@@ -20,7 +20,7 @@ const MAX_PAGES = 25;
 const GRACE_MS = 3 * 86_400_000;
 const LOW_DEFAULT = 50_000;
 const LOW_MAX = 100_000_000;
-const SECTIONS = ['plan', 'credits', 'alerts', 'period', 'info', 'payment', 'tx', 'receipts'];
+const SECTIONS = ['pending', 'plan', 'credits', 'alerts', 'period', 'info', 'payment', 'tx', 'receipts'];
 const KIND_WORDS = { topup: 'topup', plan: 'plan', usage: 'usage', promo: 'promo', assign: 'assign', expire: 'expire', forfeit: 'forfeit', adjust: 'adjust', refund: 'refund' };
 
 /** @param {string | number | Date} value @param {'full' | 'long' | 'medium' | 'short'} [style] */
@@ -46,6 +46,8 @@ export function createBillingPanel(host, { api, toast, plans }) {
   const drawn = new Map();
   // The newest read wins: an answer that comes back after a newer one was asked for is for a screen that has moved on.
   let latest = 0;
+  // The one-second clock on the pending-order card; it runs only while that card is on screen.
+  let pendingTimer = 0;
 
   const $ = (selector) => /** @type {HTMLElement | null} */ (host.querySelector(selector));
   const section = (name) => $(`[data-sec="${name}"]`);
@@ -82,12 +84,54 @@ export function createBillingPanel(host, { api, toast, plans }) {
       node.hidden = !account;
       if (!account) continue;
       const key = focusKey(node);
-      const html = { plan: planHtml, credits: creditsHtml, alerts: alertsHtml, period: periodHtml, info: infoHtml, payment: paymentHtml, tx: txHtml, receipts: receiptsHtml }[name]();
+      const html = { pending: pendingHtml, plan: planHtml, credits: creditsHtml, alerts: alertsHtml, period: periodHtml, info: infoHtml, payment: paymentHtml, tx: txHtml, receipts: receiptsHtml }[name]();
+      // Only while an order waits for its transfer is there a card at all.
+      if (name === 'pending') node.hidden = !html;
       if (drawn.get(name) === html) continue;
       drawn.set(name, html);
       node.innerHTML = html;
       if (key) /** @type {HTMLElement | null} */ (node.querySelector(key))?.focus();
     }
+    syncPendingClock();
+  }
+
+  /* ── the order that is still waiting ──────────────────────────────── */
+
+  /**
+   * "Order waiting for payment": what it is for, what is left to transfer, the time it has and the way back to its QR. The time is
+   * not in the markup (it changes every second and would make every read look like a new card); syncPendingClock writes it.
+   */
+  function pendingHtml() {
+    const p = account.pending;
+    if (!p) return '';
+    const what = p.kind === 'topup' ? t('billing.panel.pendingTopup') : `${planName(p.plan)} · ${t(`billing.period.${p.period}`)}`;
+    return `${head('pending')}<div class="bill__pending"><div class="bill__pending-what"><p>${esc(what)} · ${esc(vnd(p.dueVnd))}</p><p class="plans__muted bill__pending-left" data-pending-left></p></div><button type="button" class="btn btn--primary" data-pending-view data-focus="pending-view">${esc(t('billing.panel.pendingView'))}</button></div>`;
+  }
+
+  function pendingLeftText() {
+    const left = Date.parse(account.pending.expiresAt) - Date.now();
+    return t('billing.panel.pendingLeft', { time: left > 3_600_000 ? minutes(left / 1000) : clock(left) });
+  }
+
+  /** Starts the clock while the card is on screen, writes the time now, and ends the card when the time is up (the server stops offering it too). */
+  function syncPendingClock() {
+    clearInterval(pendingTimer);
+    pendingTimer = 0;
+    if (!active || !account?.pending) return;
+    const tick = () => {
+      const node = $('[data-pending-left]');
+      if (!node || !account?.pending) return;
+      if (Date.parse(account.pending.expiresAt) <= Date.now()) {
+        clearInterval(pendingTimer);
+        pendingTimer = 0;
+        void read();
+        return;
+      }
+      const text = pendingLeftText();
+      if (node.textContent !== text) node.textContent = text;
+    };
+    tick();
+    pendingTimer = window.setInterval(tick, 1000);
   }
 
   /** @param {string} name */
@@ -319,6 +363,8 @@ export function createBillingPanel(host, { api, toast, plans }) {
   function leave() {
     active = false;
     latest += 1;
+    clearInterval(pendingTimer);
+    pendingTimer = 0;
   }
 
   /** The plans sheet says something changed: read again, but only for a tab that is on screen. */
@@ -496,7 +542,7 @@ export function createBillingPanel(host, { api, toast, plans }) {
     const el = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (event.target).closest('button'));
     if (!el) return;
     if (el.hasAttribute('data-retry')) return void read();
-    if (el.hasAttribute('data-adjust')) return void plans.open();
+    if (el.hasAttribute('data-adjust') || el.hasAttribute('data-pending-view')) return void plans.open();
     if (el.hasAttribute('data-renew')) {
       const next = renewalOf(account.plan);
       return void plans.openCheckout(next.plan, next.period);

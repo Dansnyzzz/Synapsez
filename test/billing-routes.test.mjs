@@ -136,7 +136,7 @@ section('who can see billing at all');
   const seen = await owner.j.call('GET', '/api/billing');
   check('an administrator gets 200', seen.status === 200 && seen.json?.mode === 'preview', `${seen.status}`);
   const keys = Object.keys(seen.json || {}).sort().join();
-  check('  with plan, balance, usage, profile, alerts and the top-up bounds', keys === 'alerts,balance,bounds,mode,plan,profile,teamInterest,usage', keys);
+  check('  with plan, balance, usage, profile, alerts, the top-up bounds and the order still open', keys === 'alerts,balance,bounds,mode,pending,plan,profile,teamInterest,usage', keys);
   check('  a free account: plan free, no balance, no profile, the bounds are the code\'s', seen.json.plan.plan === 'free' && seen.json.balance.vnd === 0 && seen.json.balance.expiresAt === null && seen.json.profile === null && seen.json.bounds.minNoPlan === TOPUP.minNoPlan, JSON.stringify(seen.json.plan));
 
   const ownerMe = await owner.j.call('GET', '/api/bootstrap');
@@ -303,6 +303,30 @@ let ownerTopup;
     else process.env.BILLING_TAX_RATE = hadRate;
   }
   check('  with BILLING_TAX_RATE=10 it carries the rate and the tax inside the total (as the receipt works it out)', taxed.json.taxRate === 10 && taxed.json.taxVnd === Math.round((taxed.json.totalVnd * 10) / 110) && taxed.json.totalVnd === quoted.json.totalVnd, JSON.stringify([taxed.json.taxRate, taxed.json.taxVnd, taxed.json.totalVnd]));
+}
+
+section('the order still open: /api/billing carries it so the QR can be drawn again, and only for its owner');
+{
+  const piper = await account('piper', { role: 'admin' });
+  const read = async (who = piper) => (await who.j.call('GET', '/api/billing')).json?.pending;
+  check('an account with no order open has pending null', (await read()) === null, JSON.stringify(await read()));
+  const made = await piper.j.call('POST', '/api/billing/orders', { kind: 'topup', amountVnd: 100_000 });
+  const open = await read();
+  check('a pending, unexpired order comes back with its id, kind, code, amount, expiry and the QR the order answered with', open?.id === made.json.order.id && open.kind === 'topup' && open.code === made.json.order.code && open.totalVnd === 100_000 && open.dueVnd === 100_000 && open.receivedVnd === 0 && open.expiresAt === made.json.order.expiresAt && JSON.stringify(open.qr) === JSON.stringify(made.json.due.qr), JSON.stringify(open));
+  check('  and nothing that belongs to the account or the rate', !('userId' in open) && !('basis' in open) && !('rate' in open));
+  check('another account never sees it', (await read(dan)) === null && (await read(owner))?.id !== open.id);
+  await store.addOrderReceived(open.id, 40_000);
+  const part = await read();
+  check('part of it received: the QR asks for what is left, and says what has come', part?.receivedVnd === 40_000 && part.dueVnd === 60_000 && part.qr.amount === 60_000 && part.totalVnd === 100_000, JSON.stringify(part));
+  await sleep(1100);
+  await piper.j.call('POST', `/api/billing/orders/${open.id}/cancel`);
+  check('cancelled: pending is null again', (await read()) === null);
+  const old = await orders.createOrder(piper.id, { kind: 'topup', amountVnd: 60_000 }, { now: new Date(Date.now() - 2 * 3_600_000) });
+  check('an order whose time has passed (not yet swept) is not offered', (await store.getOrder(old.order.id)).status === 'pending' && (await read()) === null);
+  const next = await piper.j.call('POST', '/api/billing/orders', { kind: 'topup', amountVnd: 50_000 });
+  check('with an old and a new one the newest unexpired is the one offered', (await read())?.id === next.json.order.id);
+  const simulated = await owner.j.call('POST', '/api/admin/billing/simulate', { orderId: next.json.order.id });
+  check('paid: pending is null again', (simulated.status === 200 || (await store.getOrder(next.json.order.id)).status === 'paid') && (await read()) === null, `${simulated.status} ${JSON.stringify(await read())}`);
 }
 
 section('the plan, paid by a (simulated) transfer, and what the owner may do with it');

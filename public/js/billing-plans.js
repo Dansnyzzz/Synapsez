@@ -3,6 +3,7 @@ import { escapeHtml as esc } from './markdown.js';
 import { vnd, planName, minutes, clock } from './billing-format.js';
 import { planIconHtml, savePercent, priceHtml, cardToggleHtml, listHtml, teamCardHtml, rateStamp } from './billing-plan-cards.js';
 import { checkoutHtml as checkoutViewHtml, FORM_FIELDS } from './billing-checkout-view.js';
+import { COPY, CLOCK_MAX_MS, deadline, statusText, footHtml, askHtml, payHtml } from './billing-pay-view.js';
 
 /**
  * The plans sheet and the checkout by SePay VietQR (billing preview, 2026-11-14) — one lazy
@@ -21,10 +22,6 @@ const FREE = { searches: 0, sandboxMinutes: 0, storageGb: 0.5 };
 /** One question every 5 s while the tab is visible; the server answers at most once a second per order. */
 const POLL_MS = 5000;
 const ATTRIBUTION = 'https://www.exchangerate-api.com';
-/** The rows of the QR view a person can copy, in order, and the words each is called by. */
-const COPY = { bank: 'billing.pay.bank', account: 'billing.pay.account', holder: 'billing.pay.holder', amount: 'billing.pay.amount', content: 'billing.pay.content' };
-/** A renewal order stays good until grace ends, days away: past this the deadline is a date and time, not a clock. */
-const CLOCK_MAX_MS = 3_600_000;
 
 const number = (n) => new Intl.NumberFormat(localeTag(), { maximumFractionDigits: 1 }).format(n);
 
@@ -48,6 +45,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   let clockTimer = 0;
   let polling = false;
   let busy = false;
+  /** A cancel is on its way: a second press of the confirmation must not send a second one. */
+  let cancelling = false;
   /** The amount of a top-up that failed, so "Try again" makes that top-up again and not the plans sheet. */
   let retryTopUp = null;
   // Bumped whenever the person leaves what an order was being made for (Esc, Back, a new open): an answer that comes
@@ -74,6 +73,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     dialog.setAttribute('aria-labelledby', 'plans-title');
     document.body.append(dialog);
     dialog.addEventListener('close', () => {
+      // Closing keeps the order (the money may already be on its way); it is said once, quietly, with the time that is really left.
+      const left = view === 'pay' && pay?.state === 'waiting' ? pay.expiresAt - Date.now() : 0;
       flow += 1;
       busy = false;
       stopTimers();
@@ -81,6 +82,13 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       checkout = null;
       confirming = null;
       delete dialog.dataset.order;
+      if (left > 0) toast(t('billing.pay.closedNote', { time: left > CLOCK_MAX_MS ? minutes(left / 1000) : clock(left) }));
+    });
+    // Esc while the cancel confirmation is open answers that question only: the QR sheet stays, and so does the order.
+    dialog.addEventListener('cancel', (event) => {
+      if (!$('[data-ask]')) return;
+      event.preventDefault();
+      closeAsk();
     });
     dialog.addEventListener('click', onClick);
     dialog.addEventListener('change', onChange);
@@ -101,7 +109,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     // balance used or not), the box is empty again and has to be ticked for the new figure.
     if (view === 'checkout' && checkout?.quotes && checkout.consent && checkout.consentFor !== consentKey()) checkout.consent = false;
     d.dataset.view = view;
-    const body = { sheet: sheetHtml, checkout: checkoutHtml, pay: payHtml, done: doneHtml }[view]();
+    const body = { sheet: sheetHtml, checkout: checkoutHtml, pay: () => payHtml(pay), done: doneHtml }[view]();
     d.innerHTML = `<div class="sheet__head"><h2 id="plans-title" tabindex="-1">${esc(titleOf())}</h2><button type="button" class="icon-btn" data-close aria-label="${esc(t('action.close'))}">✕</button></div><div class="sheet__body plans__body" data-view="${view}"><p class="plans__preview">${esc(t('billing.previewNote'))}</p>${body}</div>`;
     if (pay?.order) d.dataset.order = pay.order.id;
     if (focus === 'title') $('#plans-title')?.focus();
@@ -131,10 +139,29 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     }
   }
 
+  /** The order this account is still paying, as GET /api/billing says (null when none is open). */
+  const pendingOf = () => data?.account?.pending ?? null;
+
+  /**
+   * Back to the QR of an order that is still open: the same code and amount, and the clock running from the order's own deadline, not
+   * from zero. Closing the sheet never closed the order, and a reload forgets everything but what the server holds.
+   */
+  function resume(p) {
+    checkout = null;
+    pay = {
+      order: { id: p.id, kind: p.kind, plan: p.plan, period: p.period, code: p.code, totalVnd: p.totalVnd, expiresAt: p.expiresAt },
+      kind: p.kind === 'topup' ? 'topup' : 'plan', qr: p.qr, dueVnd: p.dueVnd, received: p.receivedVnd, total: p.totalVnd, expiresAt: Date.parse(p.expiresAt), state: 'waiting',
+    };
+    view = 'pay';
+    paint('title');
+    startTimers();
+  }
+
   async function open() {
     ensure();
     stopTimers();
     flow += 1;
+    const token = flow;
     retryTopUp = null;
     view = 'sheet';
     period = 'month';
@@ -148,9 +175,11 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     paint('title');
     if (!dialog.open) dialog.showModal();
     await load();
-    if (!dialog.open) return;
+    if (!dialog.open || flow !== token) return;
     // A plan paid while the sheet was shut is on the line under the name at once.
     void onChanged();
+    // An order still open is what "Upgrade plan" goes back to, wherever it is pressed: buying something else would close it.
+    if (pendingOf()) return resume(pendingOf());
     view = 'sheet';
     // The period the account is on is the one shown first, so "Current plan" is not hiding one click away.
     if (data?.plans?.current?.period === 'year') period = 'year';
@@ -166,6 +195,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     retryTopUp = null;
     await load();
     if (!dialog.open) return;
+    if (pendingOf()) return resume(pendingOf());
     await startCheckout(plan, chosen);
   }
 
@@ -173,6 +203,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   async function openTopUp(amountVnd) {
     ensure();
     stopTimers();
+    // A sheet that was still opening must not paint over this one when its answer comes.
+    flow += 1;
     checkout = null;
     pay = null;
     view = 'sheet';
@@ -457,6 +489,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       view = 'pay';
       paint('title');
       startTimers();
+      // The Billing tab behind the sheet learns there is an order now, so its card is there when the sheet is shut.
+      void onChanged();
     } catch (err) {
       busy = false;
       if (!dialog.open || flow !== token || checkout !== mine) return;
@@ -483,17 +517,11 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     document.addEventListener('visibilitychange', onVisible);
   }
 
-  /** What the time left reads as: a clock for the last hour, the date and time of the deadline when it is days away. */
-  function deadline() {
-    const left = pay.expiresAt - Date.now();
-    if (left > CLOCK_MAX_MS) return { label: t('billing.pay.goodUntil'), text: new Intl.DateTimeFormat(localeTag(), { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(pay.expiresAt)) };
-    return { label: t('billing.pay.timeLeft'), text: clock(left) };
-  }
 
   function tickClock() {
     if (!pay || view !== 'pay') return;
     const left = pay.expiresAt - Date.now();
-    const shown = deadline();
+    const shown = deadline(pay);
     const label = $('.pay__timelabel');
     if (label && label.textContent !== shown.label) label.textContent = shown.label;
     const timer = $('.pay__timer');
@@ -577,37 +605,6 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     void onChanged();
   }
 
-  function statusText() {
-    if (pay.state === 'expired') return t('billing.pay.expired');
-    if (pay.state === 'cancelled') return t('billing.pay.cancelled');
-    if (pay.state === 'refunded') return t('billing.pay.refunded');
-    // In terms of what is left to transfer: with the balance used the order's total is not what the bank sees.
-    if (pay.received > 0) return t('billing.pay.short', { received: vnd(pay.received), left: vnd(pay.dueVnd) });
-    return t('billing.pay.waiting');
-  }
-
-  function footHtml() {
-    return pay.state === 'waiting' ? `<button type="button" class="btn" data-cancel>${esc(t('billing.pay.cancel'))}</button>` : `<button type="button" class="btn btn--primary" data-back>${esc(t('billing.back'))}</button>`;
-  }
-
-  function payHtml() {
-    const q = pay.qr;
-    const labels = Object.fromEntries(Object.entries(COPY).map(([k, key]) => [k, t(key)]));
-    const values = { bank: q.bank, account: q.account, holder: q.holder, amount: vnd(q.amount), content: q.content };
-    const waiting = pay.state === 'waiting';
-    const status = statusText();
-    const shown = deadline();
-    return `<div class="pay">
-      <p class="pay__lead">${esc(t('billing.pay.lead'))}</p>
-      <div class="pay__grid">
-        <div class="pay__qr"><img src="${esc(q.image)}" alt="${esc(t('billing.pay.qrAlt', { amount: vnd(q.amount), content: q.content }))}" width="220" height="220"></div>
-        <dl class="pay__rows">${Object.keys(COPY).map((k) => `<div><dt>${esc(labels[k])}</dt><dd id="pay-${k}">${esc(values[k])}</dd><button type="button" class="btn btn--small" data-copy="${k}" aria-label="${esc(t('billing.pay.copy', { what: labels[k] }))}">${esc(t('billing.pay.copyShort'))}</button></div>`).join('')}</dl>
-      </div>
-      <p class="pay__time"${waiting ? '' : ' hidden'}><span class="pay__timelabel">${esc(shown.label)}</span> <span class="pay__timer" role="timer" aria-live="off">${esc(shown.text)}</span></p>
-      <p class="pay__status" role="status" tabindex="-1">${esc(status)}</p>
-      <div class="plans__foot pay__foot">${footHtml()}</div>
-    </div>`;
-  }
 
   /**
    * Changes the QR view where it stands: the status line keeps its node (so it is announced), the picture its element
@@ -616,7 +613,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   function updatePay() {
     if (view !== 'pay' || !pay) return;
     const status = $('.pay__status');
-    if (status) status.textContent = statusText();
+    if (status) status.textContent = statusText(pay);
     const img = /** @type {HTMLImageElement | null} */ ($('.pay__qr img'));
     if (img) {
       if (img.getAttribute('src') !== pay.qr.image) img.setAttribute('src', pay.qr.image);
@@ -627,7 +624,22 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     const time = $('.pay__time');
     if (time) time.hidden = pay.state !== 'waiting';
     const foot = $('.pay__foot');
-    if (foot && !!foot.querySelector('[data-cancel]') !== (pay.state === 'waiting')) foot.innerHTML = footHtml();
+    if (foot && !!foot.querySelector('[data-cancel]') !== (pay.state === 'waiting')) foot.innerHTML = footHtml(pay);
+    // The wait is over (paid elsewhere, expired): there is nothing left to confirm cancelling.
+    if (pay.state !== 'waiting') closeAsk(false);
+  }
+
+  /** "Cancel this order" asks once more, in the page: the safe answer first and focused, the order untouched until the other one. */
+  function askCancel() {
+    if (!pay || pay.state !== 'waiting' || $('[data-ask]')) return;
+    $('.pay__foot')?.insertAdjacentHTML('afterend', askHtml());
+    $('[data-ask-keep]')?.focus();
+  }
+
+  /** Puts the question away; focus goes back to the button that asked it, unless the caller says where it goes itself. */
+  function closeAsk(refocus = true) {
+    $('[data-ask]')?.remove();
+    if (refocus) $('[data-cancel]')?.focus();
   }
 
   function doneHtml() {
@@ -741,7 +753,9 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     }
     if (el.hasAttribute('data-continue')) return void subscribe();
     if (el.dataset.copy) return void copy(el.dataset.copy);
-    if (el.hasAttribute('data-cancel')) return void cancelOrder();
+    if (el.hasAttribute('data-cancel')) return void askCancel();
+    if (el.hasAttribute('data-ask-keep')) return closeAsk();
+    if (el.hasAttribute('data-ask-confirm')) return void cancelOrder();
   }
 
   function onChange(event) {
@@ -761,6 +775,21 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   /** Arrow keys move inside a radio group, as native radios do; the checked one is the only tab stop. */
   function onKey(event) {
     const el = /** @type {HTMLElement} */ (event.target);
+    if ($('[data-ask]')) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        return closeAsk();
+      }
+      // The two answers are the only stops while the question is open.
+      if (event.key === 'Tab' && el.closest?.('[data-ask]')) {
+        const last = event.shiftKey ? $('[data-ask-keep]') : $('[data-ask-confirm]');
+        if (el === last) {
+          event.preventDefault();
+          (event.shiftKey ? $('[data-ask-confirm]') : $('[data-ask-keep]'))?.focus();
+        }
+      }
+    }
     if (el.getAttribute?.('role') !== 'radio') return;
     const dir = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
     if (!dir) return;
@@ -817,12 +846,16 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     paint('title');
   }
 
+  /** Only the confirmation's own button gets here: the order is closed, and the sheet goes back to the plans. */
   async function cancelOrder() {
     const mine = pay;
+    if (!mine || cancelling) return;
+    cancelling = true;
     try {
       await api.billingCancelOrder(mine.order.id);
       toast(t('billing.pay.cancelledToast'), 'ok');
     } catch (err) {
+      closeAsk();
       // Already paid or closed in the meantime: the next look at the order says which.
       if (err.status === 409) {
         await poll();
@@ -831,6 +864,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       }
       toast(err.message, 'error');
       return;
+    } finally {
+      cancelling = false;
     }
     flow += 1;
     stopTimers();

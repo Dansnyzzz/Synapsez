@@ -10,7 +10,7 @@ import { billingMode, billingVisible } from '../billing/mode.js';
 import { PLANS, PAID_PLANS, PAYG_ANCHOR_RATE, PAYG_BASE, TOPUP, GRACE_DAYS, paygPrices, planVnd } from '../billing/plans.js';
 import { addMonths, addDays } from '../billing/period.js';
 import { usdVnd, BillingUnavailable, RATE_ATTRIBUTION } from '../billing/fx.js';
-import { quote, createOrder, dueOf } from '../billing/orders.js';
+import { quote, createOrder, dueOf, qrFor } from '../billing/orders.js';
 import { planInForce, scheduleChange, setAutoRenew, setCancelAtEnd } from '../billing/subscriptions.js';
 import { periodUsage, forgetBillable } from '../billing/meter.js';
 import { reconcile, simulateTransfer } from '../billing/sepay.js';
@@ -47,6 +47,25 @@ const isObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
  * @param {any} o
  */
 const orderView = (o) => ({ id: o.id, kind: o.kind, plan: o.plan, period: o.period, code: o.code, totalVnd: o.totalVnd, status: o.status, expiresAt: o.expiresAt });
+
+/**
+ * The order this account is still paying: its newest pending, unexpired plan or top-up order with what the QR view needs to draw
+ * the same QR again (closing the sheet never closed the order, and the browser has nothing to resume from after a reload). A
+ * renewal is left out on purpose: it lives for days and has its own Renew now flow. Null when there is none, when the balance
+ * has covered it since (nothing left to transfer) or when the bank details are not set up. Scoped by user id in the query.
+ */
+async function pendingOrder(userId, balanceVnd, now) {
+  const rows = await getStore().listOrders({ userId, status: 'pending', limit: 20 });
+  const order = rows.find((o) => (o.kind === 'plan' || o.kind === 'topup') && o.expiresAt > now);
+  if (!order) return null;
+  const dueVnd = dueOf(order, balanceVnd);
+  if (!dueVnd) return null;
+  try {
+    return { ...orderView(order), receivedVnd: order.receivedVnd, dueVnd, qr: qrFor(order, dueVnd) };
+  } catch {
+    return null;
+  }
+}
 
 /** The billing information of an account, opened; null when none was given or it will not open (never logged). */
 function openProfile(userId, sealed) {
@@ -183,6 +202,7 @@ export function mountBillingRoutes(api, admin, { wrap }) {
       bounds: TOPUP,
       // So the Team card says "noted" on a later visit, not only in the visit that pressed it.
       teamInterest: !!prefs?.teamInterest,
+      pending: await pendingOrder(req.user.id, state.balanceVnd, now),
     });
   }));
 

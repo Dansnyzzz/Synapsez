@@ -168,10 +168,25 @@ section('Usage: the Overview adds up, and warns only about what is being spent')
   check('  and spending limits one line too', overview.bars.filter((b) => /Spending limit/.test(b)).length === 1, overview.bars.join(' | '));
   check('no warning at the top: the screenshot said "used all your free requests"', !/is-(out|close)/.test(overview.headTone) && !/used all/.test(overview.head), overview.head);
   check('  and none above the composer', overview.banner === false, overview.said);
-  check("the Overview shows this month's free share: X of N, the machine, when it starts again, and how it was worked out",
-    /This month's free share/.test(overview.money) && /Searches: 120 of 400/.test(overview.money) && /Cloud computer: 35 min of 2 h 10 min/.test(overview.money) && /(December 1|1 December)/.test(overview.money) && /capacity this month \(10,000 searches\), less 20% kept for people who join later, shared by 20 people/.test(overview.money) && /never fewer than 30 or more than 900/.test(overview.money) && /You joined on day 20 of 30, so this month's share covers 11 of 30 days/.test(overview.money),
+  check("the Overview shows this month's free share: X of N, the machine, when it starts again, and the day the account joined",
+    /This month's free share/.test(overview.money) && /Searches: 120 of 400/.test(overview.money) && /Cloud computer: 35 min of 2 h 10 min/.test(overview.money) && /(December 1|1 December)/.test(overview.money) && /You joined on day 20 of 30, so this month's share covers 11 of 30 days/.test(overview.money),
     overview.money.slice(0, 400));
   check('  and what the account\'s files weigh against its 0.5 GB', /Files: 120 MB of 0\.5 GB/.test(overview.money), overview.money.slice(0, 400));
+  check('  the "Worked out on the 1st" explanation is gone', !/Worked out on the 1st|capacity this month|kept for people who join later|never fewer than/.test(overview.money), overview.money.slice(0, 400));
+  const shareBars = await page.evaluate(() =>
+    [...document.querySelectorAll('#usage-panel [data-free-share] .usage__bar')].map((b) => ({ role: b.getAttribute('role'), label: b.getAttribute('aria-label'), now: Number(b.getAttribute('aria-valuenow')), max: Number(b.getAttribute('aria-valuemax')), cls: b.className, fill: b.firstElementChild?.getAttribute('style') })),
+  );
+  check('  searches, files and the cloud computer each have a progress bar, like the other usage rows', shareBars.length === 3 && shareBars.every((b) => b.role === 'progressbar' && b.label && b.max > 0), JSON.stringify(shareBars));
+  check('  each bar is that line\'s own used over its share (30%, 24%, 27%)', shareBars[0].now === 120 && shareBars[0].max === 400 && /30%/.test(shareBars[0].fill) && shareBars[1].now === 120_000_000 && shareBars[1].max === 500_000_000 && /24%/.test(shareBars[1].fill) && shareBars[2].now === 78 && shareBars[2].max === 288 && /27%/.test(shareBars[2].fill), JSON.stringify(shareBars));
+  check('  and none is coloured while it has room', shareBars.every((b) => !/is-(close|out)/.test(b.cls)), JSON.stringify(shareBars.map((b) => b.cls)));
+  answer = { ...report(), freeShare: { ...report().freeShare, searches: { used: 400, share: 400 }, machine: { usedMills: 250, shareMills: 288 } } };
+  await page.click('#usage-panel [data-refresh]');
+  await page.waitForTimeout(400);
+  const tones = await page.evaluate(() => [...document.querySelectorAll('#usage-panel [data-free-share] .usage__bar')].map((b) => b.className));
+  check('  a full share is "out" and one past 80% is "close", the same colours and thresholds as every other row', /is-out/.test(tones[0]) && !/is-(close|out)/.test(tones[1]) && /is-close/.test(tones[2]), tones.join(' | '));
+  answer = report();
+  await page.click('#usage-panel [data-refresh]');
+  await page.waitForTimeout(400);
   check('the money is one line for the provider too', /OrcaRouter.*Balance OrcaRouter reports: \$6\.00/.test(overview.money) && !/Key 1.*Spent/.test(overview.money));
 
   await page.click('#usage-panel [data-scope="openrouter"]');

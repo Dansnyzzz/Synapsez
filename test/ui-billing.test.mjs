@@ -142,6 +142,11 @@ const subscribe = async () => {
   await ready();
   await page.click('#plans [data-continue]');
 };
+// Cancelling an order asks once more in the page (never the browser's): the button, then the confirmation's own button.
+const cancelOrder = async () => {
+  await page.click('#plans [data-cancel]');
+  await page.click('#plans [data-ask-confirm]');
+};
 
 section('the Upgrade plan row and the plan line');
 {
@@ -508,7 +513,7 @@ let orderId = '';
   check('bank, account, holder, amount and content each have a copy button', qr.rows.length === 5 && qr.holder, qr.rows.join());
   check('  each named for what it copies', qr.labels.every((l) => l && l.length > 4), qr.labels.join());
   check('a mm:ss countdown from 30 minutes', /^(29|30):\d\d$/.test(qr.timer), qr.timer);
-  check('a status line that is announced', qr.status === 'status' && /waiting/i.test(qr.statusText), qr.statusText);
+  check('a status line that is announced, and empty while the order waits (no "waiting for your transfer" sentence)', qr.status === 'status' && qr.statusText === '' && !/Waiting for your transfer/i.test(await page.textContent('#plans')), qr.statusText);
   await page.click('#plans [data-copy="content"]');
   const clip = await page.evaluate(() => navigator.clipboard.readText());
   check('copy puts the payment content on the clipboard', /^SZ\d{10}$/.test(clip), clip);
@@ -595,7 +600,7 @@ section('the saved information comes back, an edit is kept, and the box is ticke
   await page.waitForSelector('#plans .pay__qr img');
   check('an edit made at checkout is saved with the order (one PUT, the new address, the rest kept)', puts.length === 1 && puts[0].address === '2 Tran Hung Dao, Hanoi' && puts[0].name === 'Nguyen Van A' && puts[0].companyName === 'ABC Co', JSON.stringify(puts));
   page.off('request', watch);
-  await page.click('#plans [data-cancel]');
+  await cancelOrder();
   await page.waitForSelector('#plans .plans__card [data-pick="pro"]:not([disabled])');
   await page.keyboard.press('Escape');
 }
@@ -784,7 +789,7 @@ section('short payment, expiry, cancel');
   await subscribe();
   await page.waitForSelector('#plans .pay__qr img');
   const open = await page.evaluate(() => document.getElementById('plans').dataset.order);
-  await page.click('#plans [data-cancel]');
+  await cancelOrder();
   await page.waitForSelector('#plans .plans__card');
   const cancelled = await page.evaluate(async (id) => (await (await fetch(`/api/billing/orders/${id}`)).json()).status, open);
   check('Cancel closes the order and returns to the plans', cancelled === 'cancelled', cancelled);
@@ -952,6 +957,213 @@ const reopenBilling = async () => {
   await page.click('#tab-billing');
   await billingReady();
 };
+
+section('the QR keeps its order: closing never ends it, every way in goes back to the same code, a reload too');
+let kept = { code: '', amount: '', order: '' };
+{
+  await freshOrders();
+  const notes = () => page.evaluate(() => [...document.querySelectorAll('#toasts .toast, #toasts-alert .toast')].map((n) => n.textContent).filter((x) => /stays open for another/.test(x)));
+  const view = () =>
+    page.evaluate(() => {
+      const d = document.getElementById('plans');
+      return { open: d.open, view: d.querySelector('[data-view]')?.dataset.view || '', code: d.querySelector('#pay-content')?.textContent.trim() || '', amount: d.querySelector('#pay-amount')?.textContent.trim() || '', timer: d.querySelector('.pay__timer')?.textContent.trim() || '', cards: d.querySelectorAll('.plans__card').length, order: d.dataset.order || '', status: d.querySelector('.pay__status')?.textContent.trim() ?? null };
+    });
+  const secs = (clock) => {
+    const [m, s] = clock.split(':').map(Number);
+    return m * 60 + s;
+  };
+  const toPay = async () => {
+    await openMenu(page);
+    await page.click('.plusmenu--account [data-row="upgrade"]');
+    await page.waitForSelector('#plans .pay__qr img');
+    return view();
+  };
+  await openMenu(page);
+  await page.click('.plusmenu--account [data-row="upgrade"]');
+  await page.waitForSelector('#plans .plans__card [data-pick="pro"]:not([disabled])');
+  await page.click('#plans [data-plan="pro"] [data-pick]');
+  await subscribe();
+  await page.waitForSelector('#plans .pay__qr img');
+  const first = await view();
+  kept = { code: first.code, amount: first.amount, order: first.order };
+  await page.waitForTimeout(2200);
+  await page.click('#plans [data-close]');
+  await page.waitForFunction(() => !document.getElementById('plans').open);
+  const said = await notes();
+  const left = said[0] ? secs(said[0].match(/(\d\d:\d\d)/)?.[1] || '00:00') : 0;
+  check('closing with an order pending says so once, quietly, and where to reopen it', said.length === 1 && /^Your order stays open for another \d\d:\d\d — reopen it from Settings → Billing\.$/.test(said[0]), said.join(' | '));
+  check('  the time in it is what is really left, not the whole 30 minutes', left <= secs(first.timer) - 2 && left >= secs(first.timer) - 9, `${said[0]} / first ${first.timer}`);
+  const again = await toPay();
+  check('"Upgrade plan" goes straight back to the same QR: the same code and amount, not the plans', again.view === 'pay' && again.code === first.code && again.amount === first.amount && again.order === first.order && again.cards === 0, JSON.stringify(again));
+  check('  the clock kept running from the order\'s own deadline (not from 30:00 again)', secs(again.timer) <= secs(first.timer) - 2 && secs(again.timer) > 25 * 60, `${first.timer} -> ${again.timer}`);
+  check('  no "waiting" sentence, and the status line is there but empty', again.status === '');
+  // A second between the two closes: the same words are not shown twice, and the time left is part of them.
+  await page.waitForTimeout(1200);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.getElementById('plans').open);
+  check('closing with Esc says it too (a note with the time then left, said once)', (await notes()).filter((n) => n !== said[0]).length === 1, `${(await notes()).join(' | ')} (first: ${said[0]})`);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#model-chip');
+  await page.waitForTimeout(500);
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => /** @type {HTMLDialogElement} */ (d).close()));
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+  const reloaded = await toPay();
+  check('after a reload the same QR comes back: the server holds the order', reloaded.code === first.code && reloaded.amount === first.amount && reloaded.cards === 0 && secs(reloaded.timer) < secs(first.timer), JSON.stringify(reloaded));
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.getElementById('plans').open);
+
+  // The Billing tab says there is an order, and its button is the way to the QR.
+  await gotoTab(page, 'billing');
+  await billingReady();
+  await page.waitForSelector('#billing-panel [data-sec="pending"]:not([hidden]) [data-pending-left]');
+  const card = await page.evaluate(() => {
+    const s = document.querySelector('#billing-panel [data-sec="pending"]');
+    return { first: document.querySelector('#billing-panel [data-sec]:not([hidden])')?.dataset.sec, heading: s.querySelector('h4')?.textContent.trim(), text: s.textContent.replace(/\s+/g, ' ').trim(), button: s.querySelector('[data-pending-view]')?.textContent.trim(), labelled: s.getAttribute('aria-labelledby') === s.querySelector('h4')?.id };
+  });
+  check('Settings → Billing shows "Order waiting for payment" first: the plan, the amount, the time left, and "Show QR code"', card.first === 'pending' && card.heading === 'Order waiting for payment' && /Pro · Monthly · [\d,]+\s₫/.test(card.text) && /\d\d:\d\d left/.test(card.text) && card.button === 'Show QR code' && card.labelled, JSON.stringify(card));
+  const t1 = await text('[data-pending-left]');
+  await page.waitForTimeout(2100);
+  check('  and its time left runs down on its own', (await text('[data-pending-left]')) !== t1, t1);
+  await page.click('#billing-panel [data-pending-view]');
+  await page.waitForSelector('#plans .pay__qr img');
+  const fromCard = await view();
+  check('"Show QR code" opens the QR sheet on that order', fromCard.code === first.code && fromCard.amount === first.amount, JSON.stringify(fromCard));
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.getElementById('plans').open);
+  await page.click('#billing-panel [data-adjust]');
+  await page.waitForSelector('#plans .pay__qr img');
+  check('so does "Adjust plan" in the plan card: the order is not lost to a second one', (await view()).code === first.code);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.getElementById('plans').open);
+}
+
+section('Cancel this order: bottom right, red outline, and it asks first, in the page, before it does anything');
+{
+  // Read from the store: the status route answers a given order once a second at most.
+  const orderStatus = async (id) => (await store.getOrder(id))?.status;
+  const dialogs = [];
+  const onDialog = (d) => {
+    dialogs.push(d.type());
+    void d.dismiss();
+  };
+  page.on('dialog', onDialog);
+  await page.click('#billing-panel [data-pending-view]');
+  await page.waitForSelector('#plans .pay__qr img');
+  const look = await page.evaluate(() => {
+    const btn = document.querySelector('#plans [data-cancel]');
+    const cs = getComputedStyle(btn);
+    const probe = document.createElement('i');
+    probe.style.color = 'var(--danger)';
+    document.body.append(probe);
+    const danger = getComputedStyle(probe).color;
+    probe.remove();
+    const b = btn.getBoundingClientRect();
+    const body = document.querySelector('#plans .sheet__body').getBoundingClientRect();
+    const qr = document.querySelector('#plans .pay__qr').getBoundingClientRect();
+    return { border: cs.borderTopColor, color: cs.color, width: cs.borderTopWidth, bg: cs.backgroundColor, danger, right: body.right - b.right, leftHalf: b.left > body.left + body.width / 2, belowQr: b.top > qr.bottom, text: btn.textContent.trim() };
+  });
+  check('the button is "Cancel this order", bottom right (under the QR, at the right edge)', look.text === 'Cancel this order' && look.leftHalf && look.belowQr && look.right < 40, JSON.stringify(look));
+  check('  with a red outline (the theme\'s danger colour, 1px or more) and no fill', look.border === look.danger && look.color === look.danger && parseFloat(look.width) >= 1 && /rgba\(0, 0, 0, 0\)|transparent/.test(look.bg), JSON.stringify(look));
+  for (const theme of ['dark', 'light']) {
+    await page.evaluate((x) => document.documentElement.setAttribute('data-theme', x), theme);
+    const ratio = await page.evaluate(() => {
+      const rgb = (c) => c.match(/[\d.]+/g).map(Number).slice(0, 3);
+      const lum = (c) => {
+        const [r, g, b] = rgb(c).map((v) => {
+          v /= 255;
+          return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const fg = getComputedStyle(document.querySelector('#plans [data-cancel]')).color;
+      const bg = getComputedStyle(document.getElementById('plans')).backgroundColor;
+      const a = lum(fg);
+      const b = lum(bg);
+      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    });
+    check(`  and it reads at 4.5:1 or better in the ${theme} theme`, ratio >= 4.5, ratio.toFixed(2));
+  }
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+
+  // Pressing it only asks.
+  await page.click('#plans [data-cancel]');
+  const ask = await page.evaluate(() => {
+    const a = document.querySelector('#plans [data-ask]');
+    const named = (attr) => document.getElementById(a?.getAttribute(attr) || '')?.textContent.trim();
+    return { role: a?.getAttribute('role'), label: named('aria-labelledby'), desc: named('aria-describedby'), text: a?.querySelector('p')?.textContent.replace(/\s+/g, ' ').trim(), focus: document.activeElement?.textContent.trim(), buttons: [...(a?.querySelectorAll('button') || [])].map((b) => b.textContent.trim()) };
+  });
+  check('pressing it opens a labelled alert dialog in the page, with the safe answer first and focused', ask.role === 'alertdialog' && ask.label === 'Cancel this order?' && /already transferred/.test(ask.desc || '') && ask.buttons.join() === 'Keep the order,Cancel the order' && ask.focus === 'Keep the order', JSON.stringify(ask));
+  check('  its words are the spec\'s, and the browser\'s own confirm was never used', ask.text === 'Cancel this order? If you have already transferred, do not cancel — money that arrives later is still added to your balance.' && dialogs.length === 0, `${ask.text} / ${dialogs.join()}`);
+  check('  and nothing is cancelled by pressing it', (await orderStatus(kept.order)) === 'pending');
+
+  // Tab stays between the two answers.
+  await page.keyboard.press('Tab');
+  const second = await page.evaluate(() => document.activeElement?.textContent.trim());
+  await page.keyboard.press('Tab');
+  const wrapped = await page.evaluate(() => document.activeElement?.textContent.trim());
+  check('Tab moves between the two answers and wraps (it does not wander off behind the question)', second === 'Cancel the order' && wrapped === 'Keep the order', `${second} / ${wrapped}`);
+
+  // Esc closes the question only.
+  await page.keyboard.press('Escape');
+  const afterEsc = await page.evaluate(() => ({ open: document.getElementById('plans').open, ask: !!document.querySelector('#plans [data-ask]'), view: document.querySelector('#plans [data-view]')?.dataset.view, focus: document.activeElement?.hasAttribute('data-cancel') }));
+  check('Esc closes the question and only that: the QR sheet stays, focus returns to Cancel this order', afterEsc.open && !afterEsc.ask && afterEsc.view === 'pay' && afterEsc.focus, JSON.stringify(afterEsc));
+  check('  and the order is still pending', (await orderStatus(kept.order)) === 'pending');
+
+  // "Keep the order" answers as Esc did.
+  await page.click('#plans [data-cancel]');
+  await page.click('#plans [data-ask-keep]');
+  const afterKeep = await page.evaluate(() => ({ open: document.getElementById('plans').open, ask: !!document.querySelector('#plans [data-ask]'), focus: document.activeElement?.hasAttribute('data-cancel') }));
+  check('"Keep the order" closes the question, keeps the sheet, and focus returns to the button that asked', afterKeep.open && !afterKeep.ask && afterKeep.focus && (await orderStatus(kept.order)) === 'pending', JSON.stringify(afterKeep));
+
+  // Only the confirmation's own button cancels.
+  const stays = () => page.evaluate(() => [...document.querySelectorAll('#toasts .toast')].map((n) => n.textContent).filter((x) => /stays open/.test(x)));
+  const notesBefore = await stays();
+  await page.click('#plans [data-cancel]');
+  await page.click('#plans [data-ask-confirm]');
+  await page.waitForSelector('#plans .plans__card');
+  check('"Cancel the order" cancels it: the order is cancelled and the sheet is back at the plans', (await orderStatus(kept.order)) === 'cancelled' && (await page.locator('#plans [data-view="sheet"]').count()) === 1);
+  check('  and the browser\'s own confirm was still never used', dialogs.length === 0, dialogs.join());
+  page.off('dialog', onDialog);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.getElementById('plans').open);
+  await page.waitForSelector('#billing-panel [data-sec="pending"][hidden]', { state: 'attached' });
+  check('the Billing card is gone with the order', await page.evaluate(() => document.querySelector('#billing-panel [data-sec="pending"]').hidden));
+  const afterNotes = await stays();
+  check('an order that was cancelled leaves no new "stays open" note behind', afterNotes.every((n) => notesBefore.includes(n)), afterNotes.join(' | '));
+}
+
+section('a top-up resumes the same way, and an order that ended opens the plans as before');
+{
+  await freshOrders();
+  await gotoTab(page, 'billing');
+  await billingReady();
+  await page.click('[data-add-credits]');
+  await page.fill('#bill-amount', '100000');
+  await page.click('[data-topup-go]');
+  await page.waitForSelector('#plans .pay__qr img');
+  const topup = await page.evaluate(() => ({ code: document.querySelector('#plans #pay-content')?.textContent.trim(), order: document.getElementById('plans').dataset.order }));
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.getElementById('plans').open);
+  await page.waitForSelector('#billing-panel [data-sec="pending"]:not([hidden]) [data-pending-view]');
+  const card = await text('#billing-panel [data-sec="pending"]');
+  check('the Billing card names a top-up, with its amount', /Top-up · 100,000\s₫/.test(card) && /Show QR code/.test(card), card);
+  await page.click('#billing-panel [data-pending-view]');
+  await page.waitForSelector('#plans .pay__qr img');
+  check('"Show QR code" returns to the top-up\'s own code', (await page.textContent('#plans #pay-content')).trim() === topup.code);
+  await page.click('#plans [data-cancel]');
+  await page.click('#plans [data-ask-confirm]');
+  await page.waitForSelector('#plans .plans__card');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.getElementById('plans').open);
+  await page.evaluate(() => document.getElementById('settings').close());
+  await openMenu(page);
+  await page.click('.plusmenu--account [data-row="upgrade"]');
+  await page.waitForSelector('#plans .plans__card [data-pick]');
+  check('with nothing open any more, "Upgrade plan" opens the plans sheet as it always did', (await page.locator('#plans .pay__qr').count()) === 0 && (await page.locator('#plans .plans__card').count()) === 4);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.getElementById('plans').open);
+  await freshOrders();
+}
 
 section('a member has no Billing tab, and a link to it lands elsewhere');
 {

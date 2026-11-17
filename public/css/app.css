@@ -11298,6 +11298,8 @@ a.cite-item:focus-visible .cite-item__title { text-decoration: underline; text-u
 .usage__label { fill: var(--text) !important; font-weight: 600; }
 .usage__label--usual { fill: var(--text-dim) !important; font-weight: 400; }
 .usage__credit { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; }
+/* The free share's rows say "Cloud computer: 35 min of 2 h 10 min" in their label, so it wraps instead of being cut off. */
+.usage__credit .usage__limit-label { white-space: normal; }
 
 /* Near a limit, above the composer, after Claude's: amber from 80%, red at the
    limit, tucked behind the top of the box so the two read as one piece. */
@@ -12964,6 +12966,12 @@ html[data-scene] .gate { background: var(--bg); }
 .pay__rows dt { color: var(--text-dim); font-size: 13px; }
 .pay__rows dd { margin: 0; overflow-wrap: anywhere; font-family: var(--mono); }
 .pay__timer { font-family: var(--mono); font-weight: 600; }
+/* Cancel sits bottom right with the danger outline; its hover is a tint, not a red fill, so the words keep their contrast in both themes. */
+.pay__foot { justify-content: flex-end; }
+.pay__cancel:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.pay__ask { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid var(--danger); border-radius: 12px; background: var(--surface-2); }
+.pay__ask p { margin: 0; line-height: 1.5; }
+.pay__ask .btn--danger:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
 .pay__done { display: grid; justify-items: center; gap: 6px; padding: 24px 0; text-align: center; }
 .pay__tick { display: grid; place-items: center; width: 48px; height: 48px; margin: 0; border-radius: 50%; background: var(--accent); color: var(--on-accent); font-size: 26px; }
 .pay__donetext { margin: 0; font-size: 20px; font-weight: 650; }
@@ -12981,6 +12989,11 @@ html[data-scene] .gate { background: var(--bg); }
 .bill__card h4:focus, .adm__h:focus { outline: none; }
 .bill__card h4:focus-visible, .adm__h:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
 .bill__card p { margin: 0 0 8px; }
+/* The order that is still waiting for its transfer: what it is for, how much, how long it has, and the way back to its QR. */
+.bill__pending { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.bill__pending-what { margin: 0; min-width: 0; }
+.bill__pending-what p { margin: 0; overflow-wrap: anywhere; }
+.bill__pending-left { font-family: var(--mono); }
 .bill__card .field { display: grid; gap: 4px; margin: 0 0 8px; }
 .bill__card .field input { width: 100%; max-width: 360px; box-sizing: border-box; }
 .bill__name { font-size: 18px; font-weight: 650; }
