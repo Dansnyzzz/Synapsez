@@ -6,7 +6,7 @@ import { t, currentLanguage } from './i18n.js';
  */
 
 /** About an hour of the 2-vCPU machine costs this many thousandths of a dollar (server/freeShares.js MACHINE_MILLS_PER_HOUR). */
-const MILLS_PER_HOUR = 133;
+export const MILLS_PER_HOUR = 133;
 
 const locale = () => (currentLanguage() === 'vi' ? 'vi-VN' : 'en-US');
 export const countOf = (n) => new Intl.NumberFormat(locale()).format(n);

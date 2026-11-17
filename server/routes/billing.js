@@ -15,6 +15,8 @@ import { planInForce, scheduleChange, setAutoRenew, setCancelAtEnd } from '../bi
 import { periodUsage, forgetBillable } from '../billing/meter.js';
 import { reconcile, simulateTransfer } from '../billing/sepay.js';
 import { capacityOf } from '../billing/capacity.js';
+import { freeTierOnly } from '../freeTier.js';
+import { searchShareOf, machineShareOf } from '../freeShares.js';
 import { costOfMonth } from '../billing/cost.js';
 import { createPromo, redeem } from '../billing/promo.js';
 import { catchUpAndTell, tellOnce } from '../billing/tell.js';
@@ -216,6 +218,22 @@ export function mountBillingRoutes(api, admin, { wrap }) {
     res.json({ ok: true });
   }));
 
+  /**
+   * The viewer's own free share, for the plans sheet. Only their two figures are read (accountShares would read the keys' capacity
+   * on every open); a figure that is a fallback or has no end is no figure, and the sheet then says the general thing.
+   */
+  async function shareOfViewer(userId, now) {
+    if (!freeTierOnly()) return null;
+    try {
+      const [s, m] = await Promise.all([searchShareOf(userId, now), machineShareOf(userId, now)]);
+      if (s.unread || !Number.isFinite(s.share)) return null;
+      return { searches: s.share, machineMills: !m.unread && Number.isFinite(m.share) ? m.share : null };
+    } catch (err) {
+      log.warn('billing: the free share could not be read for the plans', { error: String(err?.message || err).slice(0, 160) });
+      return null;
+    }
+  }
+
   api.get('/billing/plans', settle, route(async (req, res) => {
     const now = new Date();
     let rate = null;
@@ -225,7 +243,7 @@ export function mountBillingRoutes(api, admin, { wrap }) {
       // No honest rate: the plans are listed without prices rather than with a wrong one.
       if (!(err instanceof BillingUnavailable)) throw err;
     }
-    const current = await planInForce(req.user.id, { now });
+    const [current, share] = await Promise.all([planInForce(req.user.id, { now }), shareOfViewer(req.user.id, now)]);
     res.json({
       plans: PAID_PLANS.map((id) => ({
         id,
@@ -238,6 +256,7 @@ export function mountBillingRoutes(api, admin, { wrap }) {
       payg: { anchorRate: PAYG_ANCHOR_RATE, base: PAYG_BASE, prices: rate ? paygPrices(rate.rate) : null },
       rate: rate ? { rate: rate.rate, source: rate.source, at: rate.at, ...(rate.source === 'erapi' ? { attribution: RATE_ATTRIBUTION } : {}) } : null,
       current: { plan: current.plan, period: current.period },
+      share,
     });
   }));
 

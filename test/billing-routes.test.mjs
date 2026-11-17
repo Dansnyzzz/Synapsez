@@ -192,6 +192,35 @@ section('the plans, with and without a rate');
   check("  pay as you go and the caller's plan", ok.json?.payg?.prices?.searchVnd > 0 && ok.json?.current?.plan === 'free', JSON.stringify([ok.json?.payg, ok.json?.current]));
 }
 
+section('the plans carry the viewer\'s own free share, and nobody else\'s');
+{
+  const pool = await import('../server/keyPool.js');
+  const shares = await import('../server/freeShares.js');
+  process.env.EXA_API_KEY = 'exa-share-test-key-0001';
+  await pool.keysFor('exa', { fresh: true });
+  shares.__testing.forget();
+  const now = new Date();
+  // Two accounts that began metering on different days of this month: their prorated shares differ.
+  await shares.noteArrival('search', owner.id, new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 3)));
+  await shares.noteArrival('search', dan.id, new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 28)));
+  const mineOwner = await shares.searchShareOf(owner.id);
+  const mineDan = await shares.searchShareOf(dan.id);
+  const seenOwner = (await owner.j.call('GET', '/api/billing/plans')).json;
+  const seenDan = (await dan.j.call('GET', '/api/billing/plans')).json;
+  check('the two accounts really have different shares to tell apart', Number.isFinite(mineOwner.share) && Number.isFinite(mineDan.share) && mineOwner.share !== mineDan.share, `${mineOwner.share} / ${mineDan.share}`);
+  check('the plans carry the signed-in account\'s own search share', seenOwner.share?.searches === mineOwner.share && seenDan.share?.searches === mineDan.share, JSON.stringify([seenOwner.share, seenDan.share]));
+  check('  and never the other\'s', seenOwner.share?.searches !== mineDan.share && seenDan.share?.searches !== mineOwner.share);
+  const machine = await shares.machineShareOf(owner.id);
+  check('  the machine share is in mills, or null when it has no figure', seenOwner.share && (seenOwner.share.machineMills === (Number.isFinite(machine.share) && !machine.unread ? machine.share : null)), JSON.stringify([seenOwner.share, machine]));
+  process.env.FREE_TIER_ONLY = 'false';
+  const lifted = await owner.j.call('GET', '/api/billing/plans');
+  check('with the ceilings lifted there is no share to show (null)', lifted.status === 200 && lifted.json.share === null, JSON.stringify(lifted.json?.share));
+  delete process.env.FREE_TIER_ONLY;
+  delete process.env.EXA_API_KEY;
+  await pool.keysFor('exa', { fresh: true });
+  shares.__testing.forget();
+}
+
 section('"tell me when Team opens": kept once per account, counted for the administrator');
 {
   const before = (await owner.j.call('GET', '/api/admin/billing')).json?.figures?.teamInterest;

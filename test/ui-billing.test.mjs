@@ -200,7 +200,7 @@ section('the plans sheet');
   check('Individual | Team is the segmented control, Individual first; no month/year at the top', sheet.group === 'radiogroup' && sheet.radios.join() === 'individual:Individual:true,team:Team:false' && !sheet.periodAtTop, sheet.radios.join());
   const byId = Object.fromEntries(sheet.cardParts.map((c) => [c.id, c]));
   check('each card has an icon of its own (line drawing, currentColor, hidden from readers) that grows richer from Free to Max', sheet.cardParts.every((c) => c.icon) && byId.free.shapes < byId.plus.shapes && byId.plus.shapes < byId.pro.shapes && byId.pro.shapes < byId.max.shapes, sheet.cardParts.map((c) => `${c.id}:${c.shapes}`).join());
-  check('  and a tagline, a ticked list and the "Everything in … and:" lead-ins', sheet.cardParts.every((c) => c.tagline.length > 8 && c.ticks >= 4) && byId.free.lead === '' && byId.plus.lead === 'Everything in Free, and:' && byId.pro.lead === 'Everything in Plus, and:' && byId.max.lead === 'Everything in Pro, and:', sheet.cardParts.map((c) => `${c.id}:${c.ticks}:${c.lead}`).join(' '));
+  check('  and a tagline, a ticked list and the "Everything in … and:" lead-ins', sheet.cardParts.every((c) => c.tagline.length > 8 && c.ticks >= (c.id === 'free' ? 3 : 4)) && byId.free.lead === '' && byId.plus.lead === 'Everything in Free, and:' && byId.pro.lead === 'Everything in Plus, and:' && byId.max.lead === 'Everything in Pro, and:', sheet.cardParts.map((c) => `${c.id}:${c.ticks}:${c.lead}`).join(' '));
   check('the toggle is inside each paid card and not the Free one, with the saving worked out from the prices', !byId.free.toggle && byId.plus.toggle && byId.pro.toggle && byId.max.toggle && sheet.save.length === 3 && sheet.save.every((s) => s === 'Save 17%'), sheet.save.join());
   check('monthly: the price per month, then "billed monthly" and the đồng it is billed as', /^\$5 \/ month$/.test(byId.plus.price) && /^billed monthly \| billed as 128,000/.test(byId.plus.billed), `${byId.plus.price} / ${byId.plus.billed}`);
   check('"No commitment · Cancel any time" is under the monthly buttons of the paid plans only', byId.plus.terms === 'No commitment · Cancel any time' && byId.pro.terms === byId.plus.terms && byId.max.terms === byId.plus.terms && byId.free.terms === '', JSON.stringify(sheet.cardParts.map((c) => c.terms)));
@@ -293,6 +293,41 @@ section('the rate line: one line, no link unless Exchange Rate API is the source
   check('Vietcombank: the 24-hour clock across midnight, still no link', bank.text === 'Rate updated at 00:30, 06/01/2026' && bank.links === 0, JSON.stringify(bank));
   const erapi = await withRate({ rate: 25_500, source: 'erapi', at: '2026-11-16T23:00:00.000Z', attribution: 'x' });
   check('Exchange Rate API: the same line, with its link', erapi.text === 'Rate updated at 06:00, 17/11/2026 Rates By Exchange Rate API' && erapi.links === 1, JSON.stringify(erapi));
+}
+
+section('the plans carry the free share: Free says it, a paid plan shows the larger allowance');
+{
+  const sheetWith = async (share) => {
+    await page.route('**/api/billing/plans', async (route) => {
+      const res = await route.fetch();
+      const body = await res.json();
+      await route.fulfill({ response: res, json: { ...body, share } });
+    });
+    await openMenu(page);
+    await page.click('.plusmenu--account [data-row="upgrade"]');
+    await page.waitForFunction(() => document.querySelectorAll('#plans .plans__card').length === 4);
+    const got = await page.evaluate(() => {
+      const card = (id) => document.querySelector(`#plans [data-plan="${id}"]`).textContent.replace(/\s+/g, ' ');
+      return { free: card('free'), plus: card('plus'), pro: card('pro'), all: document.getElementById('plans').textContent };
+    });
+    await page.unroute('**/api/billing/plans');
+    await page.keyboard.press('Escape');
+    return got;
+  };
+  const time = (mills) => page.evaluate(async (m) => (await import('/js/free-share.js')).machineTime(m), mills);
+  const big = await sheetWith({ searches: 400, machineMills: 2000 });
+  check('Free reads its searches: "400 free searches a month"', /400 free searches a month/.test(big.free), big.free);
+  check('  and its computer time, worded by the same machineTime as Settings', big.free.includes(`${await time(2000)} of free computer time a month`), big.free);
+  check('a share above the plan\'s own wins on Plus: "400 searches a month (the free share included)"', /400 searches a month \(the free share included\)/.test(big.plus), big.plus);
+  check('  and the computer line follows, in mills', big.plus.includes(`${await time(2000)} of computer time a month (the free share included)`), big.plus);
+  const small = await sheetWith({ searches: 120, machineMills: 300 });
+  check('a share below the plan\'s own: Plus keeps 150 searches', /150 searches a month \(the free share included\)/.test(small.plus), small.plus);
+  check('  and its 4 h of computer time', /4 h of computer time a month \(the free share included\)/.test(small.plus), small.plus);
+  check('  Pro keeps its own 250 too', /250 searches a month/.test(small.pro), small.pro);
+  const none = await sheetWith(null);
+  check('with no share the Free card says the general thing', /Free searches and computer time each month, shared evenly/.test(none.free) && !/free searches a month/.test(none.free), none.free);
+  check('  and Plus shows its own figures', /150 searches a month \(the free share included\)/.test(none.plus) && /4 h of computer time/.test(none.plus), none.plus);
+  check('"No metered searches included" and "No cloud computer time included" appear nowhere', ![big, small, none].some((g) => /No metered searches included|No cloud computer time included/.test(g.all)));
 }
 
 section('the Team tab: coming soon, and "Tell me when it opens" is kept once');

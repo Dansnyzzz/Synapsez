@@ -1,6 +1,7 @@
 import { t, localeTag } from './i18n.js';
 import { escapeHtml as esc } from './markdown.js';
 import { vnd, planName, minutes, clock } from './billing-format.js';
+import { machineTime, MILLS_PER_HOUR } from './free-share.js';
 import { planIconHtml, savePercent, priceHtml, cardToggleHtml, listHtml, teamCardHtml, rateStamp } from './billing-plan-cards.js';
 import { checkoutHtml as checkoutViewHtml, FORM_FIELDS } from './billing-checkout-view.js';
 import { COPY, CLOCK_MAX_MS, POLL_MS, deadline, statusText, footHtml, askHtml, payHtml } from './billing-pay-view.js';
@@ -287,6 +288,23 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   /** On a monthly plan, that plan's own card offers the year (spec: "Chuyển sang <Plan> theo năm"); in grace the card says Renew instead. */
   const yearSwitch = (id) => id !== 'free' && current().plan === id && current().period === 'month' && !inGrace() && actionFor(id) === 'current';
 
+  /**
+   * The searches and computer lines. Free is the account's free share; a paid plan is the larger of that share and its own amount
+   * (server/billing/meter.js pays a call from the plan first, then the share above it). The two are compared in mills, the unit the
+   * share is kept in, and a plan's own figure keeps its own wording when it is the larger.
+   */
+  function allowanceLines(p) {
+    const share = data.plans.share;
+    const planMills = (p.sandboxMinutes * MILLS_PER_HOUR) / 60;
+    if (p === FREE) {
+      if (!share) return [t('billing.plans.freeGeneral')];
+      return [t('billing.plans.freeSearches', { n: number(share.searches) }), ...(!(share.machineMills > 0) ? [] : [t('billing.plans.freeComputer', { time: machineTime(share.machineMills) })])];
+    }
+    const searches = t('billing.plans.searches', { n: number(Math.max(p.searches, share?.searches ?? 0)) });
+    const shareWins = share && share.machineMills !== null && share.machineMills > planMills;
+    return [searches, t('billing.plans.computer', { time: shareWins ? machineTime(share.machineMills) : minutes(p.sandboxMinutes * 60) })];
+  }
+
   function cardHtml(id) {
     const p = id === 'free' ? FREE : planById(id) || FREE;
     const action = actionFor(id);
@@ -305,12 +323,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     const disabled = (action === 'current' && !toYear) || action === 'scheduled' || (toYear && noRate) || (noRate && (action === 'buy' || (action === 'renew' && !data.account.plan.renewalLocked)));
     // One card is lit: the plan in force, or in grace the renewal's terms (the plan that ran is then plain).
     const lit = action === 'renew' || (action === 'current' && !ORDER.some((x) => actionFor(x) === 'renew'));
-    const lines = [
-      p.searches ? t('billing.plans.searches', { n: number(p.searches) }) : t('billing.plans.searchesNone'),
-      p.sandboxMinutes ? t('billing.plans.computer', { time: minutes(p.sandboxMinutes * 60) }) : t('billing.plans.computerNone'),
-      t('billing.plans.storage', { gb: number(p.storageGb) }),
-      t('billing.plans.people'),
-    ];
+    const lines = [...allowanceLines(p), t('billing.plans.storage', { gb: number(p.storageGb) }), t('billing.plans.people')];
     const paid = id !== 'free';
     const pct = paid ? savePercent(p) : 0;
     const note = toYear ? `<p class="plans__note">${esc(t('billing.plans.monthlyNote', { pct }))}</p>` : '';
