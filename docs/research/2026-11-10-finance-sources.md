@@ -1,10 +1,10 @@
-# Finance data sources for Synapsez — research report
+# Finance data sources for Ephapse — research report
 
 Checked 2026-11-10. This is research only: nothing in `D:\AI remote` was changed.
 
 **How the probes were run.** Every probe was a small GET from the owner's Windows development machine. Cloudflare served it from Hong Kong (HKG) and Tokyo (NRT), and api.binance.com answered 200, so this machine is **not on a US IP**. That means **none of these probes count as rule (3)'s server-IP check.** `vercel.json` sets no `regions`, so the functions run in Vercel's default region, iad1 (Washington DC, a US datacenter IP). §3.9 lists the URLs to re-probe from a deployed function.
 
-**User-Agent.** The probes sent `Synapsez-research/1.0`, with two exceptions:
+**User-Agent.** The probes sent `Ephapse-research/1.0`, with two exceptions:
 - The Yahoo cookie/crumb tests and one Yahoo chart call sent `Mozilla/5.0`, which is what `library.js` already sends.
 - One batch would have retried IMF and FRED with a browser UA after they refused the generic one. The session's safety check stopped that batch and it never ran, which is correct. Those two sources are recorded below as "refused/timed out with an honest UA".
 
@@ -139,7 +139,7 @@ Column key:
 
 14. **SEC: the 10 req/s figure is correct.** But:
     - The User-Agent rule is enforced on `www.sec.gov`: `company_tickers.json` returned **403** to a generic UA, while `data.sec.gov` answered 200.
-    - The owner must configure `SEC_USER_AGENT="Synapsez <real contact email>"`.
+    - The owner must configure `SEC_USER_AGENT="Ephapse <real contact email>"`.
     - Cache `company_tickers.json` for a day.
     - The bulk `companyfacts.zip` (nightly) exists but is far too big for a 300 s function. Use per-CIK calls.
 

@@ -1,4 +1,4 @@
-Synapsez — third-party notices for the app's own code
+Ephapse — third-party notices for the app's own code
 
 Notices for the built-in skills are in server/skills/THIRD_PARTY_NOTICES.md, and for
 the mascot art in public/assets/mascot/NOTICE.txt. This file covers the rest.
@@ -62,7 +62,7 @@ bot-avatar.js; server/bots/; server/routes/bots.js)
 
   What was not taken: none of DS Bot's source code, prompts, wording or artwork.
   Every line of the Bot page is written for this app, and a bot's face is one of
-  Synapsez's own pixel creatures (public/js/mascots/), not one of DS Bot's
+  Ephapse's own pixel creatures (public/js/mascots/), not one of DS Bot's
   characters. Where this app departs from DS Bot — a hard ceiling on hand-offs per
   message, a round run in segments that a later invocation carries on, entries in a
   database rather than Markdown files, no per-bot browser — is said in

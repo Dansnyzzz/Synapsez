@@ -1,6 +1,6 @@
-# Data Cloaking và CoT Monitorability: nghiên cứu cho Synapsez
+# Data Cloaking và CoT Monitorability: nghiên cứu cho Ephapse
 
-Ngày: 2026-11-04. Người yêu cầu: chủ Synapsez. Phạm vi: nghiên cứu web (nguồn gốc ưu tiên) cộng đọc repo ở chế độ chỉ-đọc.
+Ngày: 2026-11-04. Người yêu cầu: chủ Ephapse. Phạm vi: nghiên cứu web (nguồn gốc ưu tiên) cộng đọc repo ở chế độ chỉ-đọc.
 
 Quy ước độ tin cậy dùng xuyên suốt:
 - **[P]** = nguồn gốc (bài của lab, tài liệu API, arXiv của lab) mà tôi đã đọc hoặc nhận kết quả trích trực tiếp.
@@ -84,15 +84,15 @@ Không có một định nghĩa chuẩn. Tôi không tìm thấy "Cloaked" như 
 | # | Nghĩa | Có thật? | Cách hoạt động | Lab/sản phẩm làm gì |
 |---|---|---|---|---|
 | 1 | **PII pseudonymisation/tokenisation trước khi vào model** | Có, phổ biến nhất trong ngữ cảnh ứng dụng | Phát hiện PII (regex, checksum, NER) rồi thay bằng placeholder, giữ bảng ánh xạ, khôi phục ở đầu ra. Variant: format-preserving encryption (FPE) cho định danh có cấu trúc | Microsoft Presidio: operator `encrypt` (AES) là reversible duy nhất, `hash` một chiều [S] https://microsoft.github.io/presidio/anonymizer ; LangChain `PresidioReversibleAnonymizer` giữ mapping; NDSS 2026 poster đề xuất FPE cho SSN/thẻ và cách khác cho text tự do [S] https://www.ndss-symposium.org/wp-content/uploads/ndss26-poster-23.pdf |
-| 2 | **Giấu reasoning khỏi đối thủ / chống distillation** | Có, nhưng lab nói công khai lý do là "an toàn/chống lạm dụng" | Không trả raw CoT; trả summary; trả reasoning dạng mã hoá để gửi lại | OpenAI: raw reasoning không lộ, `encrypted_content`. Anthropic: summarized thinking "ngăn lạm dụng", signature mã hoá, bill theo full tokens. Google: thought summary + signature. Đây là hành vi của *nhà cung cấp*, không phải thứ Synapsez làm |
+| 2 | **Giấu reasoning khỏi đối thủ / chống distillation** | Có, nhưng lab nói công khai lý do là "an toàn/chống lạm dụng" | Không trả raw CoT; trả summary; trả reasoning dạng mã hoá để gửi lại | OpenAI: raw reasoning không lộ, `encrypted_content`. Anthropic: summarized thinking "ngăn lạm dụng", signature mã hoá, bill theo full tokens. Google: thought summary + signature. Đây là hành vi của *nhà cung cấp*, không phải thứ Ephapse làm |
 | 3 | **Image cloaking** (Glaze, Nightshade, Fawkes) | Có, nhưng không liên quan chat | Nhiễu loạn pixel khó thấy để cản model học phong cách (Glaze), đầu độc liên kết (Nightshade), cản nhận dạng mặt (Fawkes). LightShed (USENIX Sec 2025) phát hiện Nightshade ~99.98% và gỡ được, nên bảo vệ không bền [S] https://www.theregister.com/2025/07/11/defenses_against_ai_scrapers_beaten/ ; Fawkes [P] https://ar5iv.arxiv.org/html/2002.08327 |
-| 4 | **Data poisoning đối kháng** | Có | Chèn dữ liệu xấu vào tập huấn luyện | Nằm ngoài phạm vi Synapsez |
+| 4 | **Data poisoning đối kháng** | Có | Chèn dữ liệu xấu vào tập huấn luyện | Nằm ngoài phạm vi Ephapse |
 | 5 | **"Cloaked/stealth models"** trên router | Có, đây là nghĩa "cloaked" thật trên OpenRouter | Model chưa công bố danh tính, lab thử nghiệm lấy feedback. Điều khoản dữ liệu *khác nhau theo model*: nhiều model stealth cũ ghi prompt bị log và có thể dùng cải thiện model (Optimus Alpha, Quasar, Horizon); trang provider stealth hiện nói provider ẩn danh giữ prompt, theo "Stealth Model Terms" [S, mirror] https://openrouter.ai/provider/stealth . Bên thứ ba báo điều khoản OpenRouter 07/2026 thêm Stealth Program EULA [?] |
 | 6 | **Zero Data Retention (ZDR)** | Có | Hợp đồng/cờ định tuyến: endpoint không lưu prompt. OpenRouter có ba tầng (ZDR, Safety Retention, Retention+Training), cờ `provider.zdr: true` theo request; endpoint không xác minh được chính sách bị coi là giữ và train; tool/plugin (web search) có chính sách riêng; Google/Vertex từ 18/10/2026 bắt Safety Retention tối đa 90 ngày; CSAM screening có thể giữ dữ liệu dù ZDR [P] https://openrouter.ai/docs/guides/features/zdr |
 | 7 | **Confidential computing** | Có | Chạy suy luận trong TEE, mã hoá khi xử lý, attestation từ xa | Apple Private Cloud Compute (mở rộng sang Google Cloud với NVIDIA CC, Intel TDX) [P] https://security.apple.com/blog/expanding-pcc ; Google Private AI Compute (11/2025, TPU + AMD-based TEE, "ephemeral by design"; NCC Group tìm ra timing side channel ở IP-blinding relay, Google đánh giá thấp) [S] https://blog.google/technology/ai/google-private-ai-compute ; Anthropic: bài thiết kế "Confidential Inference via Trusted VMs" và whitepaper với Irregular, **chưa thấy sản phẩm GA** [P] https://www.anthropic.com/research/confidential-inference-trusted-vms |
 | 8 | **Search-engine cloaking** | Có, nhưng là SEO kém chuẩn | Trả nội dung khác cho crawler và người dùng | Không liên quan; chỉ đáng lưu ý khi `web_fetch` đọc trang cloaking (nội dung agent thấy có thể khác người dùng thấy) |
 
-Điểm quan trọng: nghĩa 1 là cái Synapsez có thể làm tự chủ. Nghĩa 6 Synapsez đã dùng. Nghĩa 7 không khả thi trên Vercel và với BYOK. Nghĩa 2 là việc của nhà cung cấp, và Synapsez phải *tôn trọng* nó (không cố lấy raw CoT).
+Điểm quan trọng: nghĩa 1 là cái Ephapse có thể làm tự chủ. Nghĩa 6 Ephapse đã dùng. Nghĩa 7 không khả thi trên Vercel và với BYOK. Nghĩa 2 là việc của nhà cung cấp, và Ephapse phải *tôn trọng* nó (không cố lấy raw CoT).
 
 ---
 
@@ -118,7 +118,7 @@ Nhận xét: hạ tầng nghĩa 1, 6 và việc mang reasoning (signature, encry
 
 ---
 
-## Phần D. Khuyến nghị cho Synapsez
+## Phần D. Khuyến nghị cho Ephapse
 
 Xếp theo giá trị trên chi phí. Mọi mục là một đề xuất; tôi không sửa code.
 
@@ -150,11 +150,11 @@ Xếp theo giá trị trên chi phí. Mọi mục là một đề xuất; tôi k
 ### 5. (Tuỳ chọn, bật theo opt-in) Monitor hành động rủi ro bằng model nhỏ
 - Làm gì: trước khi chạy tool có tác động ra ngoài (gửi mail, xoá, thanh toán, shell), một lời gọi ngắn tới model rẻ kiểm tra: "hành động này có khớp yêu cầu của người dùng và nội dung đã đọc không?" (chống prompt injection qua nội dung web/mail). Đầu vào: yêu cầu người dùng + tool + tham số + (nếu có) tóm tắt thinking. Đầu ra: allow / hỏi lại người dùng.
 - Cơ sở bằng chứng: CoT monitor yếu bắt hành vi xấu tốt hơn action-only (OpenAI 2503.11926; "CoT Red-Handed" 2-7 lần cho sabotage tinh vi [S]); nhưng với thinking *tóm tắt* thì tín hiệu yếu hơn raw CoT, và Anthropic chỉ ra faithfulness thấp. Vì vậy monitor này phải coi thinking là tín hiệu phụ, **không phải căn cứ chính**. Đây là hàng rào chống injection chứ không phải bằng chứng an toàn.
-- Quan trọng: monitor chỉ *đọc* và chặn/hỏi. **Không** dùng đầu ra monitor làm phần thưởng huấn luyện hay đưa ngược vào prompt của model để "dạy" nó (Synapsez không huấn luyện, nên rủi ro obfuscation ở mức huấn luyện không áp dụng, nhưng đừng thêm vòng phản hồi trong ngữ cảnh).
+- Quan trọng: monitor chỉ *đọc* và chặn/hỏi. **Không** dùng đầu ra monitor làm phần thưởng huấn luyện hay đưa ngược vào prompt của model để "dạy" nó (Ephapse không huấn luyện, nên rủi ro obfuscation ở mức huấn luyện không áp dụng, nhưng đừng thêm vòng phản hồi trong ngữ cảnh).
 - File: mới `server/actionMonitor.js`; móc vào nơi phân loại rủi ro tool (xem skill `new-tool` và `server/tools/`; cần xác nhận chỗ phân loại rủi ro hiện có trước khi viết). Phải kiểm tra ngoại lệ shield: tham số tool đã được khôi phục PII ở đầu ra, **monitor không được nhận PII thật nếu `maskPersonal` bật** → gọi nó qua `streamCompletion` để đi qua cùng shield và `googleData`.
 - Chi phí: ~500–1500 token vào + ~50 ra mỗi hành động rủi ro, +0.5–2 s, chỉ cho tool rủi ro cao (không phải mọi bước). Dùng model rẻ/không train theo `providerPrivacy`.
 - Test: bộ eval có nhãn (hành động khớp / không khớp / bị injection), theo skill `eval` của repo; đo tỷ lệ hỏi lại thừa; test rằng khi monitor lỗi thì hành vi mặc định là hỏi người dùng (fail closed cho tool rủi ro cao).
-- Xếp hạng thấp hơn 1-4 vì giá trị phụ thuộc hạ tầng phân loại tool và chưa có bằng chứng đo trên Synapsez.
+- Xếp hạng thấp hơn 1-4 vì giá trị phụ thuộc hạ tầng phân loại tool và chưa có bằng chứng đo trên Ephapse.
 
 ### 6. Hiển thị chính sách dữ liệu theo provider (giáo dục, ít code)
 - Một bảng tĩnh trong Settings: Anthropic/OpenAI API (không train theo mặc định), Gemini free (có thể bị Google đọc/dùng), OpenRouter (tuỳ endpoint, ZDR cờ), OrcaRouter (không có công tắc theo request), stealth. Nguồn: tài liệu của từng bên; ghi ngày kiểm tra vì chính sách thay đổi (ví dụ Google/Vertex Safety Retention từ 18/10/2026). Cần test "nguồn + ngày" để không rơi vào lỗi lỗi thời. Repo đã có cơ chế facts-pinned-by-test (xem bộ nhớ onboarding).
@@ -167,7 +167,7 @@ Xếp theo giá trị trên chi phí. Mọi mục là một đề xuất; tôi k
 - **Image cloaking (Glaze/Nightshade/Fawkes)** cho ảnh người dùng tải lên: không phục vụ bài toán chat, hiệu quả đã bị chứng minh là không bền (LightShed), và nhiễu pixel có thể làm model đọc ảnh sai.
 - **Giám sát mọi bước bằng LLM**: tăng gấp đôi chi phí, mà bằng chứng chỉ ủng hộ mục tiêu hẹp.
 - **Tuyên bố "bảo vệ 100% PII"**: masking dựa trên regex/nhãn chỉ best-effort. Giữ lời cảnh báo hiện có.
-- **Huấn luyện/tối ưu lên CoT**: Synapsez không huấn luyện model, giữ nguyên như vậy (đây là điểm mà bài OpenAI cảnh báo).
+- **Huấn luyện/tối ưu lên CoT**: Ephapse không huấn luyện model, giữ nguyên như vậy (đây là điểm mà bài OpenAI cảnh báo).
 
 ### Thứ tự đề xuất
 1. Huy hiệu đường đi dữ liệu + chặn/cảnh báo stealth (mục 1).

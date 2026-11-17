@@ -160,9 +160,9 @@ Vercel, nơi tài khoản cũng có sudo không mật khẩu.
 
 ### 7. Template riêng (không bắt buộc)
 
-Thêm `npm run e2b:template` (`scripts/e2b-template.mjs`): dựng template `synapsez-computer`
+Thêm `npm run e2b:template` (`scripts/e2b-template.mjs`): dựng template `ephapse-computer`
 từ `base` với 2 vCPU, 2 GiB và font. Chủ dự án chạy một lần, rồi đặt
-`E2B_TEMPLATE=synapsez-computer` trên Vercel. Không có template này thì dùng `base`.
+`E2B_TEMPLATE=ephapse-computer` trên Vercel. Không có template này thì dùng `base`.
 
 ## Kiểm chứng
 
@@ -191,7 +191,7 @@ từ `base` với 2 vCPU, 2 GiB và font. Chủ dự án chạy một lần, r�
 
 ## Kết quả kiểm trên máy E2B thật (2026-11-02)
 
-Đã chạy `npm run e2b:probe -- --browser` trên template `synapsez-computer`; mọi check đều pass.
+Đã chạy `npm run e2b:probe -- --browser` trên template `ephapse-computer`; mọi check đều pass.
 Trên đường đi, probe tìm ra ba điều mà spec ban đầu không lường trước:
 
 - **`/etc/profile` của E2B kết thúc bằng `source ~/.bashrc; source ~/.profile`.** Như vậy HAR-001
@@ -203,7 +203,7 @@ Trên đường đi, probe tìm ra ba điều mà spec ban đầu không lườn
   mô hình với `*.vercel.run`.
 - **E2B để `/usr/local` ở mode 777 khi máy chạy**, bất kể template đặt quyền gì. Hệ quả:
   - helper không bao giờ chạy dưới root trên E2B, mà chạy dưới quyền tài khoản, đúng thiết kế của
-    `shellFor`. Cập nhật 2026-11-03 (SBX-006): template `synapsez-computer` chép node của image vào
+    `shellFor`. Cập nhật 2026-11-03 (SBX-006): template `ephapse-computer` chép node của image vào
     `/opt/synz-node` (chỉ root ghi được, live probe xác nhận quyền giữ nguyên khi máy chạy), nên trên
     template này helper chạy dưới root. Cùng ngày (SBX-011): app đóng `/usr/local` và bỏ `sudo` của tài
     khoản ngay khi gặp máy lần đầu, vì đóng trong lúc build không giữ được còn đóng khi máy chạy thì giữ

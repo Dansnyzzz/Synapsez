@@ -41,7 +41,7 @@ Câu gợi ý cũng chưa sát nhu cầu thường gặp, và không bước nà
 
 ## Sáu bước
 
-1. **Synapsez làm được gì** — tìm và đọc web có dẫn nguồn; viết Word, Excel, PDF, slide để tải về;
+1. **Ephapse làm được gì** — tìm và đọc web có dẫn nguồn; viết Word, Excel, PDF, slide để tải về;
    có máy cloud riêng chạy Python, lệnh, tệp và một trình duyệt bạn xem trực tiếp; dùng từ máy nào cũng được.
 2. **Thêm API key** — Cài đặt → Nhà cung cấp; gợi ý OpenRouter (có model miễn phí); thêm được nhiều key
    mỗi nhà cung cấp và nhiều nhà cung cấp; key được mã hoá. Trạng thái: đã có / chưa có; nút mở phần key.
