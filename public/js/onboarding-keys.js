@@ -101,17 +101,16 @@ export function createKeyGuide({ providers, recommended, addKey, onSaved }) {
   let paused = false;
   const current = () => picked || providerOrder(recommended())[0];
 
-  /** The recording of this provider's page, its still frame first, and a caption that dates it. */
+  /** The recording of this provider's page, its still frame first; the video has its accessible name and no visible caption. */
   function clipHtml(guide) {
     const base = `/onboarding/keys/${guide.id}`;
     const name = NAMES[guide.id];
-    return `<figure class="onbk__clip">
+    return `<div class="onbk__clip">
         <div class="onbk__video">
           <video muted loop playsinline preload="metadata" poster="${base}.jpg" src="${base}.webm" width="${guide.width}" height="${guide.height}" aria-label="${escapeHtml(t('onb.keys.clipLabel', { provider: name }))}"></video>
           <button type="button" class="onb__play" data-key-play></button>
         </div>
-        <figcaption class="onbk__sample">${escapeHtml(t('onb.keys.clip', { provider: name }))}</figcaption>
-      </figure>`;
+      </div>`;
   }
 
   function paintPlay() {

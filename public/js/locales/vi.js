@@ -1511,7 +1511,6 @@ export const vi = {
   'onb.keys.step.create.google': 'Bấm "Tạo khóa API", rồi bấm "Tạo khóa" trong biểu mẫu nhỏ: tên và dự án mặc định đã được điền sẵn.',
   'onb.keys.step.copy.google': 'Sao chép key vừa tạo. Key mới bắt đầu bằng AQ.',
   'onb.keys.step.paste.google': 'Quay lại đây và dán vào ô bên dưới: key được kiểm tra ngay khi bạn dán.',
-  'onb.keys.clip': 'Trang {provider} thật, quay vào tháng 11/2026, đã làm mờ thông tin cá nhân. Từ đó trang có thể đã đổi.',
   'onb.keys.clipLabel': 'Video: lấy key {provider}, từng bước',
   'onb.keys.boxLabel': 'Key {n}',
   'keys.hintOr': 'hoặc',

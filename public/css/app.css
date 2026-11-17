@@ -4704,7 +4704,6 @@ details.block > summary > .mark--pending { margin: 0 3.5px; }
 .onbk__clip { display: grid; gap: 4px; margin: 0; }
 .onbk__video { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .onbk__video video { display: block; width: 100%; height: auto; }
-.onbk__sample { margin: 0; color: var(--text-faint); font-size: 11.5px; line-height: 1.4; }
 .onbk__do { display: flex; flex-wrap: wrap; gap: 8px; }
 .onbk__do .btn { text-decoration: none; }
 .onbk__keys { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }

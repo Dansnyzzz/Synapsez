@@ -1525,7 +1525,6 @@ export const en = {
   'onb.keys.step.create.google': 'Press "Create API key", then "Create key" in the small form: the name and the default project are already filled in.',
   'onb.keys.step.copy.google': 'Copy the new key. It starts with AQ.',
   'onb.keys.step.paste.google': 'Come back here and paste it into the box below: it is checked as soon as you paste it.',
-  'onb.keys.clip': 'The real {provider} page, recorded in November 2026 with personal details blurred. It may have changed since.',
   'onb.keys.clipLabel': 'Video: getting your {provider} key, step by step',
   'onb.keys.boxLabel': 'Key {n}',
   'keys.hintOr': 'or',
