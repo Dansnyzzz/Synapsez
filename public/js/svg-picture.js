@@ -8,6 +8,8 @@
  */
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+const XLINK_NS = 'http://www.w3.org/1999/xlink';
+const XMLNS_NS = 'http://www.w3.org/2000/xmlns/';
 const FALLBACK = { width: 800, height: 600 };
 
 /**
@@ -31,19 +33,32 @@ function parse(markup) {
 }
 
 /**
- * Nothing in it that runs or fetches.
+ * The drawing made inert, for drawing as a picture.
  *
- * An <img> would run and fetch nothing of this anyway; the point is that the PNG made from
- * the same markup, and anything that later reuses it, match what is shown.
+ * This is not a sanitiser for a page, and nothing here makes the markup safe to put in a
+ * document: it is only ever drawn as an <img> (which runs and fetches nothing) or painted
+ * onto a canvas. What is removed is what could still be live if the markup were reused
+ * elsewhere, so that the PNG matches what is shown: scripts, `foreignObject`, every element
+ * outside the SVG namespace (an XHTML `<iframe srcdoc>` in a strictly-parsed file), every
+ * attribute outside it but xlink, `on*` attributes, any link that is not a `#fragment` or a
+ * `data:image/` URL, and animations that would set a link or a handler.
  *
  * @param {Element} root
  */
 function clean(root) {
-  for (const bad of root.querySelectorAll('script, foreignObject')) bad.remove();
+  for (const el of [...root.querySelectorAll('*')]) {
+    const local = el.localName.toLowerCase();
+    const target = String(el.getAttribute('attributeName') || '').trim().toLowerCase();
+    const rewrites = (local === 'set' || local.startsWith('animate')) && /^(on|(xlink:)?href)/.test(target);
+    // A prefixed name in an HTML-parsed file (`h:iframe`) is an SVG element only until it is written out and read as XML.
+    if (el.namespaceURI !== SVG_NS || el.tagName.includes(':') || local === 'script' || local === 'foreignobject' || rewrites) el.remove();
+  }
   for (const el of [root, ...root.querySelectorAll('*')]) {
     for (const attr of [...el.attributes]) {
       const name = attr.name.toLowerCase();
-      if (name.startsWith('on')) el.removeAttribute(attr.name);
+      const foreign = attr.namespaceURI && attr.namespaceURI !== XLINK_NS && attr.namespaceURI !== XMLNS_NS;
+      const prefixed = name.startsWith('xmlns:') && name !== 'xmlns:xlink';
+      if (name.startsWith('on') || foreign || prefixed) el.removeAttribute(attr.name);
       else if (attr.localName.toLowerCase() === 'href' && !/^\s*(#|data:image\/)/i.test(attr.value)) el.removeAttribute(attr.name);
     }
   }

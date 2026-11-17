@@ -365,6 +365,13 @@ section('a drawing opens as a drawing (owner, 2026-11-17: an SVG said it had not
   check('  and it is still not a picture for a model', classify('Ve.svg', 'image/svg+xml') === 'binary');
   const kept = await previewOf(row({ name: 'kept.svg', data: '', origin: 'machine' }));
   check('one kept on the machine has no bytes here and answers as before', kept.kind === 'binary' && kept.onMachine === true, JSON.stringify(kept));
+  // What create_file stores: text/plain, and so classified 'text', not 'binary'.
+  const { createDocument } = await import('../server/office/index.js');
+  const made = createDocument({ format: 'svg', name: 've', content: markup });
+  const stored = { id: 'y', origin: 'generated', name: made.name, mime: made.mime, data: made.buffer.toString('base64') };
+  const asText = await previewOf({ ...stored, kind: classify(made.name, made.mime) });
+  check('one written with create_file (stored as text) is a drawing too', classify(made.name, made.mime) === 'text' && asText.kind === 'svg' && asText.text === markup, JSON.stringify(asText).slice(0, 120));
+  check('  while any other text file stays text', (await previewOf({ ...stored, name: 'a.txt', kind: 'text' })).kind === 'text');
   const huge = await previewOf(row({ name: 'huge.svg', data: Buffer.from('<svg>' + 'x'.repeat(2 * 1024 * 1024)).toString('base64') }));
   check('past two million characters it is left to download', huge.kind === 'binary' && !huge.text, huge.kind);
 }

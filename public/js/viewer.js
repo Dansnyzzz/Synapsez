@@ -396,13 +396,14 @@ function kindMarkup(file, preview, { sheetIndex = 0, plainSheets = false, plainS
 }
 
 /**
- * What cannot be drawn from a string of markup: the workbook, and a slide with no
- * picture. Called after `kindMarkup`'s markup is on the page, in `body`.
+ * What cannot be drawn from a string of markup: the workbook, a slide with no
+ * picture, and a drawing (SVG). Called after `kindMarkup`'s markup is on the page, in `body`.
  *
  * @param {HTMLElement} body
  * @param {any} file
  * @param {{ revision?: number|null, preview?: any, onPlainSheets: () => void, onPlainSlides: () => void }} options
- *   `preview`: the reading of the file, which holds a drawing's markup; `onPlainSheets`: this server cannot read the workbook that way, so draw the
+ *   `preview`: the reading of the file, which holds a drawing's markup;
+ *   `onPlainSheets`: this server cannot read the workbook that way, so draw the
  *   plain table; `onPlainSlides`: one slide could not be drawn, so none can.
  * @returns {{ destroy: () => void } | null}  the workbook view, while one is mounted
  */
@@ -420,7 +421,7 @@ function wireKind(body, file, { revision = null, preview = null, onPlainSheets, 
     picture.addEventListener('error', onPlainSlides, { once: true });
   }
   for (const img of /** @type {NodeListOf<HTMLImageElement>} */ (body.querySelectorAll('img[data-svg-view]'))) {
-    drawSvg(img, preview?.text || '');
+    drawSvg(img, preview);
   }
   return workbook;
 }
@@ -432,10 +433,13 @@ function wireKind(body, file, { revision = null, preview = null, onPlainSheets, 
  * picture has loaded, and is never shown to anybody.
  *
  * @param {HTMLImageElement} img
- * @param {string} markup
+ * @param {any} preview  the reading of the file, which holds the markup
  */
-async function drawSvg(img, markup) {
+async function drawSvg(img, preview) {
+  const markup = preview?.text || '';
   const fail = () => {
+    // So the menu does not offer to copy a picture there is not.
+    if (preview) preview.undrawable = true;
     if (!img.isConnected) return;
     const wrap = img.parentElement;
     if (wrap) wrap.outerHTML = `<p class="viewer__empty">${escapeHtml(t('viewer.noPreview'))}</p>${markup ? `<pre class="viewer__code">${escapeHtml(markup)}</pre>` : ''}`;
@@ -770,7 +774,7 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
     afterDraw();
   }
 
-  /** What cannot be drawn from a string of markup: the workbook, and a slide with no picture. */
+  /** What cannot be drawn from a string of markup: the workbook, a slide with no picture, and a drawing. */
   function afterDraw() {
     workbookView = wireKind(bodyNode, current.file, {
       revision: showingRevision,
@@ -808,6 +812,7 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
       };
     }
     if (opener?.launchable) return { id: 'open', label: t('viewer.open'), run: () => openOnMachine('open') };
+    if (current?.preview?.kind === 'svg' && current.preview.undrawable) return { id: 'download', label: t('viewer.download'), run: download };
     if (tab === 'source' || (tab === 'text' && current?.preview?.kind === 'svg') || current?.preview?.kind === 'text') {
       return { id: 'copy', label: t('viewer.copy'), run: copyRich };
     }
@@ -938,10 +943,14 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
 
   async function copyImage() {
     try {
-      const blob = await (await fetch(bytesUrl())).blob();
-      // Only PNG is universally accepted by `ClipboardItem`; anything else is
-      // repainted through a canvas rather than refused.
-      const png = blob.type === 'image/png' ? blob : await toPng(blob);
+      // The promise, not the blob: Safari allows a clipboard write only if it begins inside the
+      // click, and fetching and repainting the picture takes longer than that.
+      // Only PNG is universally accepted by `ClipboardItem`; anything else is repainted
+      // through a canvas rather than refused.
+      const png = (async () => {
+        const blob = await (await fetch(bytesUrl())).blob();
+        return blob.type === 'image/png' ? blob : toPng(blob);
+      })();
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
       toast(t('viewer.pictureCopied'));
     } catch {
@@ -951,7 +960,8 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
 
   async function copySvg() {
     try {
-      const png = await svgToPng(current.preview.text || '');
+      // The promise, not the PNG: see copyImage.
+      const png = svgToPng(current.preview.text || '');
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
       toast(t('viewer.pictureCopied'));
     } catch {
@@ -1118,7 +1128,7 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
     }
     if (opener) items.push({ label: t('viewer.showInFolder'), icon: '🗀', run: () => openOnMachine('folder') });
     if (first !== 'download') items.push({ label: t('viewer.download'), icon: '⤓', run: download });
-    if (first !== 'copy') {
+    if (first !== 'copy' && !(current.preview.kind === 'svg' && current.preview.undrawable)) {
       items.push({
         // Named for what it carries: the formatting is the point, and 'Copy
         // text' promised the opposite of what it now does.
@@ -1131,7 +1141,7 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
     // Two entries for two intentions: a PDF to keep, and paper. Both go through
     // the browser's print dialog — with "Save as PDF" already chosen for the
     // first, which is the only way a page can ask for it.
-    if (current.preview.kind !== 'pdf' && current.preview.kind !== 'image') {
+    if (current.preview.kind !== 'pdf' && current.preview.kind !== 'image' && current.preview.kind !== 'svg') {
       items.push({ label: t('viewer.savePdf'), icon: '⤓', run: () => printIt({ pdf: true }) });
       items.push({ label: t('viewer.print'), icon: '⎙', run: () => printIt() });
     }

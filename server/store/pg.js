@@ -340,19 +340,6 @@ const toJson = (value) => JSON.stringify(value, (key, item) => withoutNul(item))
 // BIGINT comes back as a string from some drivers; money is whole đồng well inside 2^53,
 // so every amount is read as a Number, and a fraction is refused before it reaches SQL.
 const num = (v) => (v == null ? null : Number(v));
-/**
- * The first words of a file that was kept only as bytes, for its card on the shelf.
- *
- * What arrives is the front of the base64, cut wherever 800 characters ended: a base64
- * group is four characters, and a Vietnamese letter is two or three bytes, so both cuts
- * can land inside something. The half group is dropped before decoding and the half
- * character that decoding turns into U+FFFD after it, rather than showing a lozenge.
- */
-const openingOf = (head) => {
-  const whole = String(head).slice(0, Math.floor(String(head).length / 4) * 4);
-  const text = Buffer.from(whole, 'base64').toString('utf8');
-  return (text.at(-1) === String.fromCharCode(0xfffd) ? text.slice(0, -1) : text).slice(0, 400);
-};
 const asDate = (v) => (v == null ? null : v instanceof Date ? v : new Date(v));
 function wholeVnd(v) {
   const n = Number(v);
@@ -2624,6 +2611,20 @@ export function createPgStore(connectionString) {
      * conversation that was is the problem it exists to remove.
      */
     async listAllGeneratedFiles(userId, limit = 200) {
+      /**
+       * The first words of a file that was kept only as bytes, for its card on the shelf.
+       *
+       * What arrives is the front of the base64, cut wherever 800 characters ended: a base64
+       * group is four characters, and a Vietnamese letter is two or three bytes, so both cuts
+       * can land inside something. The half group is dropped before decoding and the half
+       * character that decoding turns into U+FFFD after it, rather than showing a lozenge.
+       */
+      const openingOf = (head) => {
+        const whole = String(head).slice(0, Math.floor(String(head).length / 4) * 4);
+        const text = Buffer.from(whole, 'base64').toString('utf8');
+        // By code point, so an emoji at the cut is whole or gone rather than half a surrogate pair.
+        return Array.from(text.at(-1) === String.fromCharCode(0xfffd) ? text.slice(0, -1) : text).slice(0, 400).join('');
+      };
       const rows = await q(
         // The opening of the source, so the shelf can show a window onto each
         // artifact rather than a row of identical file icons. Clipped in SQL

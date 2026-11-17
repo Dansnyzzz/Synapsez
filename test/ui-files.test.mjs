@@ -785,6 +785,10 @@ section('a drawing is a picture, on the shelf, in the viewer and on the clipboar
   await give('svg-loose', 'loose.svg', loose, { mime: 'image/svg+xml' });
   await give('svg-hostile', 'hostile.svg', hostile, { mime: 'image/svg+xml' });
   await give('svg-notsvg', 'not-a-drawing.svg', 'this is just words, not a drawing', { mime: 'image/svg+xml' });
+  // What create_file stores: the type is text/plain and the file is a 'text' one, with its source.
+  await give('svg-made', 'made.svg', loose, { mime: 'text/plain; charset=utf-8', kind: 'text', source: loose });
+  // Things an SVG can carry that are live in a page, whatever an <img> would do with them.
+  await give('svg-live', 'live.svg', '<svg xmlns="http://www.w3.org/2000/svg" xmlns:h="http://www.w3.org/1999/xhtml" width="30" height="30"><h:iframe srcdoc="<script>1</script>"></h:iframe><a href="javascript:alert(1)"><set attributeName="href" to="javascript:alert(2)"/><rect width="30" height="30"/></a></svg>', { mime: 'image/svg+xml' });
   await give('md-handed', 'from-machine.md', '# Opening words\n\nThe rest of it.', { kind: 'text', mime: 'text/markdown' });
   await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
   await page.click('#open-artifacts');
@@ -827,6 +831,58 @@ section('a drawing is a picture, on the shelf, in the viewer and on the clipboar
   });
   check('Copy puts a picture on the clipboard, not the code', clip.length === 1 && clip[0] === 'image/png', `${label} ${clip.join()}`);
   await page.evaluate(() => document.getElementById('viewer-close')?.click());
+
+  // The probe: what svgPicture hands an <img> has none of the live parts left.
+  const probe = await page.evaluate(async () => {
+    const { svgPicture } = await import('/js/svg-picture.js');
+    const text = await (await fetch('/api/attachments/svg-live')).text();
+    // The page may not fetch a blob: URL, so what goes into the Blob is caught as it is made.
+    const RealBlob = window.Blob;
+    let xml = '';
+    window.Blob = class extends RealBlob { constructor(parts, options) { super(parts, options); if (options?.type === 'image/svg+xml') xml = String(parts[0]); } };
+    const picture = await svgPicture(text);
+    window.Blob = RealBlob;
+    if (picture) URL.revokeObjectURL(picture.url);
+    return xml;
+  });
+  check('an XHTML iframe, a javascript: link and a set of href are removed', probe.includes('<rect') && !/iframe|srcdoc|javascript|<set/i.test(probe), probe.slice(0, 200));
+
+  // An SVG the assistant wrote itself: stored as text, with a Source tab, and still a picture.
+  await page.locator('.card--artifact[data-file="svg-made"]').click();
+  await page.waitForSelector('#viewer-body img[data-svg-view]');
+  await page.waitForTimeout(600);
+  const made = await page.evaluate(() => ({ w: document.querySelector('#viewer-body img[data-svg-view]')?.naturalWidth || 0, tabs: [...document.querySelectorAll('#viewer-tabs [data-tab]')].map((b) => b.dataset.tab).join() }));
+  check('an SVG written by the assistant is drawn, with its Source tab beside it', made.w > 0 && /source/.test(made.tabs), JSON.stringify(made));
+  await page.click('#viewer-tabs [data-tab="source"]');
+  await page.evaluate(() => navigator.clipboard.writeText('before'));
+  // The main button opens it in an app on a machine that has one; the menu always has the picture.
+  await page.click('#viewer-more');
+  await page.getByText('Copy picture', { exact: true }).first().click();
+  await page.waitForTimeout(1200);
+  const madeClip = await page.evaluate(async () => (await navigator.clipboard.read()).map((i) => i.types.join('+')));
+  check('  and Copy on the Source tab copies the picture, not the code', madeClip.join() === 'image/png', `${madeClip.join()} ${await page.evaluate(() => [...document.querySelectorAll('.toast')].map((n) => n.textContent).join('|'))}`);
+  await page.evaluate(() => document.getElementById('viewer-close')?.click());
+}
+
+section('a drawing among the outputs of a project is drawn, not a 400 (owner, 2026-11-17)');
+{
+  await store.createProject(me.id, { id: 'p-svg', name: 'Drawings' });
+  await store.createChat(me.id, { id: 'c-proj-svg', title: 'In project', model: 'auto', projectId: 'p-svg' });
+  const svg = '<svg viewBox="0 0 90 40"><rect width="90" height="40" fill="#fed"/><text>A&nbsp;B</text></svg>';
+  await store.createAttachment(me.id, { id: 'svg-out', name: 'out.svg', mime: 'text/plain; charset=utf-8', kind: 'text', bytes: svg.length, data: Buffer.from(svg).toString('base64'), origin: 'generated', source: svg, chatId: 'c-proj-svg' });
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  const bad = [];
+  page.on('response', (res) => { if (/svg-out\/run/.test(res.url()) && res.status() >= 400) bad.push(res.status()); });
+  await page.click('#open-projects');
+  await page.waitForSelector('[data-project="p-svg"]');
+  await page.click('[data-project="p-svg"]');
+  await page.waitForSelector('[data-peek="svg-out"]');
+  await page.waitForTimeout(1500);
+  const out = await page.evaluate(() => {
+    const img = document.querySelector('[data-peek="svg-out"] img');
+    return { w: img?.naturalWidth || 0, frame: !!document.querySelector('[data-peek="svg-out"] iframe') };
+  });
+  check('its card is the picture, with no frame on the run route', out.w > 0 && !out.frame && bad.length === 0, JSON.stringify({ out, bad }));
 }
 
 await browser.close();

@@ -1030,17 +1030,12 @@ export async function previewOf(row) {
     return { kind: 'pdf', format: 'pdf', text: text?.text || '', pages: text?.pages || null };
   }
 
-  if (row.kind === 'text') {
-    return { kind: 'text', format: row.name.split('.').pop().toLowerCase(), text: Buffer.from(row.data, 'base64').toString('utf8') };
-  }
-
-  if (row.kind === 'audio' || row.kind === 'video') return { kind: row.kind, format: row.name.split('.').pop().toLowerCase() };
-
   /**
    * A drawing, as its markup.
    *
-   * It stays `binary` for the models (classify is not touched: `image` means vision input,
-   * and an SVG is not one), but the viewer can draw it, and the client has to repair and
+   * Matched by name or type whatever the kind: an upload is `binary`, but one the assistant
+   * wrote with create_file is stored as `text`, and would otherwise be shown as code. Neither
+   * is changed for the models (`image` means vision input, and an SVG is not one), but the viewer can draw it, and the client has to repair and
    * sanitise the markup before it does, so it is handed over as text. Past the cap it is
    * left to download, as before; so is one kept on the machine, which has no bytes here.
    */
@@ -1048,6 +1043,12 @@ export async function previewOf(row) {
     const markup = Buffer.from(row.data, 'base64').toString('utf8');
     if (markup.length <= SVG_PREVIEW_MAX) return { kind: 'svg', format: 'svg', text: markup };
   }
+
+  if (row.kind === 'text') {
+    return { kind: 'text', format: row.name.split('.').pop().toLowerCase(), text: Buffer.from(row.data, 'base64').toString('utf8') };
+  }
+
+  if (row.kind === 'audio' || row.kind === 'video') return { kind: row.kind, format: row.name.split('.').pop().toLowerCase() };
 
   if (row.kind === 'binary') {
     const listed = zipListing(row);

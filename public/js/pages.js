@@ -543,8 +543,10 @@ export function createPages({
           // A picture shows itself. An SVG is fetched and drawn from a blob in
           // `wire` — an <img> never runs a script inside one, and the file route
           // serves it as a download rather than as a page of this origin.
+          // Not past what the viewer will open (2 MiB of markup): the icon, with nothing fetched.
+          const tooBig = isSvg(file) && (file.bytes || 0) > 2 * 1024 * 1024;
           const picture =
-            kind === 'image'
+            kind === 'image' && !tooBig
               ? `<div class="card__peek card__peek--image">${
                   isSvg(file)
                     ? `<img alt="" data-svg="${escapeHtml(file.id)}">`
