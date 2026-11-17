@@ -1009,6 +1009,9 @@ let kept = { code: '', amount: '', order: '' };
   await page.waitForTimeout(2200);
   await page.click('#plans [data-close]');
   await page.waitForFunction(() => !document.getElementById('plans').open);
+  // The note is said by the dialog's `close` event, which the browser queues after `open` turns false: wait for the note
+  // itself, or it is read a frame early (a wrong red in 2 runs of 10). A note that never comes still fails the checks below.
+  await page.waitForFunction(() => [...document.querySelectorAll('#toasts .toast, #toasts-alert .toast')].some((n) => /stays open for another/.test(n.textContent)), null, { timeout: 3000 }).catch(() => {});
   const said = await notes();
   const left = said[0] ? secs(said[0].match(/(\d\d:\d\d)/)?.[1] || '00:00') : 0;
   check('closing with an order pending says so once, quietly, and where to reopen it', said.length === 1 && /^Your order stays open for another \d\d:\d\d — reopen it from Settings → Billing\.$/.test(said[0]), said.join(' | '));
@@ -1021,6 +1024,7 @@ let kept = { code: '', amount: '', order: '' };
   await page.waitForTimeout(1200);
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !document.getElementById('plans').open);
+  await page.waitForFunction((first) => [...document.querySelectorAll('#toasts .toast, #toasts-alert .toast')].some((n) => /stays open for another/.test(n.textContent) && n.textContent !== first), said[0], { timeout: 3000 }).catch(() => {});
   check('closing with Esc says it too (a note with the time then left, said once)', (await notes()).filter((n) => n !== said[0]).length === 1, `${(await notes()).join(' | ')} (first: ${said[0]})`);
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#model-chip');

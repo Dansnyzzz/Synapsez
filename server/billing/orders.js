@@ -295,7 +295,8 @@ async function draftOf(userId, kind, input, now) {
   const store = getStore();
   const { balanceVnd } = await store.billingState(userId);
   // QRs already open count: four of them paid at once must not carry the balance past the cap.
-  const open = (await store.listOrders({ userId, status: 'pending', limit: 200 })).filter((o) => o.kind === 'topup' && o.expiresAt > now).reduce((sum, o) => sum + o.totalVnd, 0);
+  // `listOrders` reads a missing userId as every account; an order always has its account, so nothing is read without one.
+  const open = (userId ? await store.listOrders({ userId, status: 'pending', limit: 200 }) : []).filter((o) => o.kind === 'topup' && o.expiresAt > now).reduce((sum, o) => sum + o.totalVnd, 0);
   if (balanceVnd + open + amountVnd > max) throw Object.assign(new Error(`A top-up cannot take your balance past ${dong(max)}đ.`), { status: 422 });
   // The transfer is what credits a top-up, so the balance never pays for it.
   return { kind, priceVnd: amountVnd, creditVnd: 0, totalVnd: amountVnd, useBalance: false, expiresAt: new Date(now.getTime() + ORDER_TTL_MS) };
@@ -328,7 +329,7 @@ export async function createOrder(userId, input, { now = new Date(), simulated =
     // Money already received for an open order is never shut by starting another (a plan order cancels the older one, and the transfer
     // would then land in the balance with the plan not started): the person finishes or cancels that order first. An order that has
     // received nothing keeps the old way; the renewal is the period's own order and never counts here.
-    const partPaid = (await store.listOrders({ userId, status: 'pending', limit: 50 })).find((o) => o.kind !== 'renewal' && o.expiresAt > now && o.receivedVnd > 0);
+    const partPaid = (userId ? await store.listOrders({ userId, status: 'pending', limit: 50 }) : []).find((o) => o.kind !== 'renewal' && o.expiresAt > now && o.receivedVnd > 0);
     if (partPaid) throw Object.assign(new Error('You have an order that has been partly paid — finish or cancel it first.'), { status: 409 });
     const draft = await draftOf(userId, kind, { ...input, useBalance: input.useBalance !== false }, now);
     // One open plan QR at a time: the older one would be quoted on a plan that this one is about to change.
