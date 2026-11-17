@@ -79,7 +79,7 @@ section('the email loads nothing from anywhere');
   check('the only image is the embedded logo', sources.length > 0 && sources.every((src) => src === 'cid:brand-logo@mail'), sources.join(' '));
   check('no stylesheets, fonts or scripts', !/<link|<script|@import|url\(/i.test(html));
   const plain = layoutEmail({ brand: 'Ephapse', title: 'T', contentHtml: '', logo: false });
-  check('without the logo file the mark is a letter, not a broken image', !/<img/i.test(plain) && />S<\/td>/.test(plain));
+  check('without the logo file the mark is a letter, not a broken image', !/<img/i.test(plain) && />E<\/td>/.test(plain));
   check('600px wide at most', html.includes('max-width:600px'));
   check('with a hidden preview line that skips the heading', /display:none;max-height:0[^>]*>VN-Index giảm 6,98 điểm/.test(html), html.match(/mso-hide:all">[^<]*/)?.[0]);
 }
