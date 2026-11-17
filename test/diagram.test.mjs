@@ -17,7 +17,8 @@ const check = (label, pass, detail = '') => {
 };
 
 const { validateDiagram } = await import('../server/diagram/validate.js');
-const { layoutDiagram, textWidth, wrapText, TEXT } = await import('../server/diagram/layout.js');
+const { layoutDiagram } = await import('../server/diagram/layout.js');
+const { textWidth, wrapText, TEXT } = await import('../server/diagram/measure.js');
 const { translateMessage } = await import('../server/i18n/index.js');
 
 // Every refusal seen below is kept, to prove each reaches a Vietnamese reader translated.
@@ -91,6 +92,14 @@ function problems(layout) {
   for (let i = 0; i < labelled.length; i += 1) {
     for (let j = i + 1; j < labelled.length; j += 1) if (overlapArea(labelled[i].labelBox, labelled[j].labelBox) > 0.01) out.push(`the labels of ${labelled[i].from}→${labelled[i].to} and ${labelled[j].from}→${labelled[j].to} overlap`);
   }
+  // The text block keeps its padding inside its box, however far the box grew for its arrows.
+  for (const n of layout.nodes) {
+    const t = n.textBox;
+    const padX = TEXT.padding + (n.kind === 'pill' ? TEXT.pillExtra : 0);
+    const inside = t.x - n.x >= padX - EPS && n.x + n.w - (t.x + t.w) >= padX - EPS && t.y - n.y >= TEXT.padding - EPS && n.y + n.h - (t.y + t.h) >= TEXT.padding - EPS;
+    const fits = n.titleLines.every((l) => textWidth(l, TEXT.titleSize, true) <= t.w + 0.01) && n.lines.every((l) => textWidth(l, TEXT.lineSize) <= t.w + 0.01);
+    if (!inside || !fits) out.push(`the text of ${n.id} does not sit inside its box`);
+  }
   for (const g of layout.groups) {
     for (const m of layout.nodes.filter((n) => n.group === g.id)) {
       const inside = m.x - g.x >= 16 - EPS && m.y - g.y >= 16 - EPS && g.x + g.w - (m.x + m.w) >= 16 - EPS && g.y + g.h - (m.y + m.h) >= 16 - EPS;
@@ -122,6 +131,22 @@ const sideBySide = (layout) => {
     }
   }
   return out;
+};
+// Places where one edge's line crosses another's, at right angles, away from both ends.
+const crossingsOf = (layout) => {
+  const segs = segmentsOf(layout);
+  let n = 0;
+  for (let i = 0; i < segs.length; i += 1) {
+    for (let j = i + 1; j < segs.length; j += 1) {
+      const [s, t] = [segs[i], segs[j]];
+      const flat = s.a[1] === s.b[1];
+      if (s.ei === t.ei || flat === (t.a[1] === t.b[1])) continue;
+      const [h, v] = flat ? [s, t] : [t, s];
+      const [x, y] = [v.a[0], h.a[1]];
+      if (x > Math.min(h.a[0], h.b[0]) && x < Math.max(h.a[0], h.b[0]) && y > Math.min(v.a[1], v.b[1]) && y < Math.max(v.a[1], v.b[1])) n += 1;
+    }
+  }
+  return n;
 };
 const centre = (n) => [n.x + n.w / 2, n.y + n.h / 2];
 
@@ -380,6 +405,62 @@ section('groups hold their members and keep others out');
   check('a lone member sits 16 px inside its group, with the title above it', near(a.x - g.x, 16) && near(g.x + g.w - (a.x + a.w), 16) && a.y - g.y > 16 + g.titleBox.h && near(g.y + g.h - (a.y + a.h), 16));
 }
 
+section('labels on a busy box stay off every line (review, fix round 1)');
+{
+  // A hub with labelled ways out: in "down" a label is wide across its line, and a hub capped
+  // at 260 wide once squeezed its ports until its labels lay on each other's lines.
+  const label = (i, len) => `nhãn ${i} ${'chữ '.repeat(10)}`.slice(0, len).trim();
+  const fan = (k, len, direction) =>
+    valid({ direction, nodes: [{ id: 'hub', title: 'Cổng API' }, ...Array.from({ length: k }, (_, i) => ({ id: `t${i}`, title: `Dịch vụ t${i}` }))], edges: Array.from({ length: k }, (_, i) => ({ from: 'hub', to: `t${i}`, label: label(i, len) })) });
+  const bad = [];
+  for (const k of [2, 3, 4, 5, 6]) {
+    for (const len of [8, 14, 20, 30]) {
+      for (const direction of ['right', 'down']) {
+        const layout = layoutDiagram(fan(k, len, direction));
+        const wrong = [...problems(layout), ...labelsOverLines(layout).map((n) => `label of ${n} on a line`)];
+        if (wrong.length) bad.push(`${direction} k=${k} len=${len}: ${wrong.slice(0, 2).join(' | ')}`);
+      }
+    }
+  }
+  check('fan-outs of 2–6 with labels of 8–30 characters, both ways: no label on a line, no rule broken', bad.length === 0, bad.slice(0, 3).join(' || '));
+  for (const direction of ['right', 'down']) {
+    const loops = layoutDiagram(valid({ direction, nodes: [{ id: 'p', title: 'Xử lý' }, { id: 'q', title: 'Xong' }], edges: [{ from: 'p', to: 'q' }, ...Array.from({ length: 6 }, (_, i) => ({ from: 'p', to: 'p', label: label(i, 20) }))] }));
+    const wrong = [...problems(loops), ...labelsOverLines(loops)];
+    check(`${direction}: six labelled loops on one box keep their labels off every line`, wrong.length === 0, wrong.slice(0, 3).join(' | '));
+  }
+  const wide = layoutDiagram(fan(6, 30, 'down'));
+  const hub = wide.nodes[0];
+  check('a hub grows past 260 for its labels, but its text stays wrapped at 260 and centred', hub.w > TEXT.maxWidth && hub.textBox.w <= TEXT.maxWidth - 2 * TEXT.padding && Math.abs(hub.textBox.x + hub.textBox.w / 2 - (hub.x + hub.w / 2)) < 0.01, `${hub.w} wide, text ${hub.textBox.w}`);
+}
+
+section('small drawings: no two lines side by side, no label on a line (review, fix round 1)');
+{
+  // 300 seeds of 5–15 boxes, both ways: about 2 % once had two arrows 1–4 px apart, which the
+  // lane order now avoids.
+  const sides = [];
+  const covered = [];
+  const broken = [];
+  let crossed = 0;
+  for (let seed = 1; seed <= 300; seed += 1) {
+    const n = 5 + (seed % 11);
+    const d = valid(bigDiagram(seed, { n, m: n + (seed % (n + 1)), groups: Math.min(seed % 4, Math.floor(n / 3)) }));
+    for (const direction of ['right', 'down']) {
+      const layout = layoutDiagram({ ...d, direction });
+      const name = `seed ${seed} ${direction}`;
+      sides.push(...sideBySide(layout).map((p) => `${name}: ${p}`));
+      covered.push(...labelsOverLines(layout).map((p) => `${name}: ${p}`));
+      if (problems(layout).length) broken.push(`${name}: ${problems(layout)[0]}`);
+      crossed += crossingsOf(layout);
+    }
+  }
+  check('600 small layouts: no two arrows run side by side closer than 4 px', sides.length === 0, `${sides.length}: ${sides.slice(0, 3).join(' | ')}`);
+  check('  no label lies on another arrow\'s line', covered.length === 0, `${covered.length}: ${covered.slice(0, 3).join(' | ')}`);
+  check('  and no rule is broken', broken.length === 0, broken.slice(0, 3).join(' | '));
+  // The lane order's local search is what keeps arrows from crossing needlessly: the greedy
+  // order alone gave 2,246 crossings here, the search 1,446. A ceiling, so it may only fall.
+  check('  and their arrows cross each other at most 1,500 times in all', crossed <= 1500, `${crossed}`);
+}
+
 section('a big diagram: every rule holds, quickly');
 {
   let worst = 0;
@@ -407,6 +488,26 @@ section('a big diagram: every rule holds, quickly');
   layoutDiagram(valid(cold));
   const once = performance.now() - t0;
   check('40 nodes and 80 edges, validated and laid out, in under 200 ms', once < 200, `${once.toFixed(1)} ms`);
+  // The label search's worst case: 41 labelled edges, each through ~37 ranks of dummies, so
+  // every label has long runs to slide along (took up to 350 ms before the search looked only
+  // at lines near each run). Task 2's "auto" lays a drawing out twice.
+  const chain = Array.from({ length: 40 }, (_, i) => `c${i}`);
+  const longEdges = valid({
+    nodes: chain.map((id) => ({ id, title: `Bước ${id}` })),
+    edges: [...chain.slice(1).map((id, i) => ({ from: chain[i], to: id })), ...Array.from({ length: 41 }, (_, k) => ({ from: `c${k % 3}`, to: `c${39 - (k % 5)}`, label: `đường dài số ${k}` }))],
+  });
+  // Both ways, as "auto" will: together within the one budget.
+  const t1 = performance.now();
+  const both = ['right', 'down'].map((direction) => layoutDiagram({ ...longEdges, direction }));
+  const took = performance.now() - t1;
+  check('a 40-box chain with 41 labelled long edges, laid out both ways, in under 200 ms together', took < 200, `${took.toFixed(1)} ms`);
+  for (const [i, direction] of ['right', 'down'].entries()) {
+    const layout = both[i];
+    check(`${direction}: every label of it off every line, no rule broken`, labelsOverLines(layout).length === 0 && problems(layout).length === 0, `${labelsOverLines(layout).length} on lines`);
+    // Its crowded gaps are where a lane order once kept two ways 1–2 px apart rather than
+    // take a dozen crossings; lines under 4 px apart now count as one line.
+    check(`${direction}:   and no two of its arrows run side by side`, sideBySide(layout).length === 0, sideBySide(layout).join(' | '));
+  }
 }
 
 console.log(failures ? `\n\x1b[31m${failures} failed\x1b[0m` : '\n\x1b[32mall passed\x1b[0m');

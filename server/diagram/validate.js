@@ -19,7 +19,8 @@ export const DIRECTIONS = Object.freeze(['right', 'down']);
 export const KINDS = Object.freeze(['box', 'pill', 'note']);
 export const STYLES = Object.freeze(['solid', 'dashed']);
 
-const ID = /^[A-Za-z0-9_-]{1,40}$/;
+// Built from the limit, so the rule and the number in its refusal cannot drift apart.
+const ID = new RegExp(`^[A-Za-z0-9_-]{1,${LIMITS.id}}$`);
 // How many node ids a refusal lists, so the model can pick the one it meant.
 const IDS_SHOWN = 12;
 
