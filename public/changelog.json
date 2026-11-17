@@ -1,6 +1,18 @@
 {
   "entries": [
     {
+      "version": "1.31.1",
+      "date": "2026-11-17",
+      "improved": {
+        "vi": [
+          "Thêm khoá Exa từ một tài khoản khác (mỗi tài khoản một nhóm riêng) không còn bị báo nhầm là bị từ chối: khi bước kiểm tra Websets của Exa báo khoá không hợp lệ, Synapsez hỏi lại phần tìm kiếm — phần mà Synapsez thực sự dùng — bằng một yêu cầu không tốn lượt nào. Khoá sai vẫn bị từ chối như trước."
+        ],
+        "en": [
+          "Adding an Exa key from another account (each account its own team) is no longer wrongly refused: when Exa's Websets check calls the key invalid, Synapsez asks Exa's search — what Synapsez actually uses — once more, with a request that costs nothing. A wrong key is still refused."
+        ]
+      }
+    },
+    {
       "version": "1.31.0",
       "date": "2026-11-17",
       "new": {

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-17 — Exa keys from other accounts are let in (1.31.1)
+
+**A new Exa key is checked where it will be used.** Adding a key from another Exa account — each account its own team — was refused with "Exa refused this key." because the check asked Exa's Websets API, which answered 401 INVALID_API_KEY for a key that Exa's search takes (the owner's live report, 2026-11-17). Now a 401 from Websets is asked again, once, of `POST /search` with an empty body: Exa checks the key before the request, so an unknown key is still 401 (refused) and a known one is told the request is incomplete (let in) — no search is run and no credit spent. Search down or out of reach is "try again", never a refusal.
+
 ## 2026-11-17 — A leaner Users page, the guide, keys one at a time, compaction by size (1.31.0)
 
 **The Users page** keeps the 10 people who used the most tokens this month; "See all" opens a full-screen list, 20 to a page, with ← and → (also from the keyboard). Recommended models save as soon as one is picked, and the explanatory notes are gone.

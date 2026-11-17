@@ -760,6 +760,8 @@ section('the owner adds, checks and removes service keys');
     if (key.startsWith('bad-')) return new Response('{}', { status: 401 });
     // A real key on an account without Websets: Exa knows the key and answers 403 (owner's live report, 2026-11-13).
     if (key.startsWith('nowebsets-')) return new Response('{}', { status: 403 });
+    // A new account's key (each account its own team): Websets says it is invalid, search knows it (owner's live report, 2026-11-17).
+    if (key.startsWith('teamkey-')) return String(url).includes('/websets/') ? new Response(JSON.stringify({ tag: 'INVALID_API_KEY' }), { status: 401 }) : new Response(JSON.stringify({ error: 'query is required' }), { status: 400 });
     return new Response('{}', { status: 200 });
   };
   try {
@@ -807,6 +809,9 @@ section('the owner adds, checks and removes service keys');
     const noWebsets = await add('exa', 'nowebsets-key-0007');
     check('an Exa key whose check answers 403 (no Websets on that account) is let in: 201', noWebsets.status === 201 && (await store.listServiceKeys('exa')).length === 2, JSON.stringify(noWebsets.json));
     await alice.call('DELETE', `/api/admin/service-keys/${noWebsets.json.id}`);
+    const otherTeam = await add('exa', 'teamkey-value-0009');
+    check("an Exa key Websets calls invalid but search knows (another account's team) is let in: 201", otherTeam.status === 201 && (await store.listServiceKeys('exa')).length === 2, JSON.stringify(otherTeam.json));
+    await alice.call('DELETE', `/api/admin/service-keys/${otherTeam.json.id}`);
 
     // A free ceiling may not pass the free amount (security review M1): past it is the paid key's, under its cap.
     const tooWide = await add('exa', 'exa-key-wide-0004', { ceiling: 100_000 });
