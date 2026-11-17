@@ -11,7 +11,8 @@ import { PLANS, PAID_PLANS } from './billing/plans.js';
  * month, not the day", "the numbers must not need changing when there are many more users").
  * A fixed 900 a month runs the deployment's free keys dry after about 17 heavy accounts, so on
  * the first call of a UTC month the share is worked out from what the keys can really do and
- * how many people use them, stored under the setting `free_shares:<month>`, and held.
+ * how many people use them, less what the paid plans in force are owed (set aside first, so the free keys are never promised
+ * twice), stored under the setting `free_shares:<month>`, and held.
  *
  * It is the deployment's figure, never one account's, so it is safe to keep a memory of it in this
  * instance (`memo`). Working it out reads the keys' capacity (about a dozen queries), so it is done
@@ -120,6 +121,7 @@ function workOut(capacity, people, env = process.env, committed = { searches: 0,
   const bounds = SHARE_BOUNDS(env);
   const kept = 1 - shareReserve(env);
   const searches = clamp(Math.floor((Math.max(0, capacity.searches - committed.searches) * kept) / Math.max(bounds.searchPeopleFloor, people.searches)), bounds.searchMin, Math.max(bounds.searchMin, bounds.searchMax));
+  // The 34% cap stays on the RAW capacity: it protects the keys from one account, not the plans' set-aside; only the per-person figure uses the net.
   const machineHigh = Math.floor(capacity.machineMills * bounds.machineMaxShare);
   // The share cap wins over the floor: an owner who sets E2B_ACCOUNT_SHARE very low means it.
   const machineMills = Math.min(machineHigh, Math.max(bounds.machineMinMills, Math.floor((Math.max(0, capacity.machineMills - committed.machineMills) * kept) / Math.max(bounds.machinePeopleFloor, people.machines))));
@@ -146,7 +148,7 @@ export const __testing = { forget: () => { memo = null; } };
 
 /**
  * This month's shares: { month, searches, machineMills, capacity: { searches, machineMills },
- * people: { searches, machines }, at }.
+ * people: { searches, machines }, committed: { searches, machineMills }, at }.
  */
 export async function monthShares({ now = new Date() } = {}) {
   const month = periodOf('month', now).key;

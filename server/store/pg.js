@@ -7017,7 +7017,7 @@ export function createPgStore(connectionString) {
     /**
      * Write a month's free-share figure so that it can only rise (server/freeShares.js): in one statement,
      * each of `searches`, `machineMills` and the two `capacity` figures keeps the larger of what is
-     * stored and what is offered, and `people` and `at` follow whichever has the larger capacity. Two
+     * stored and what is offered, and `people`, `committed` and `at` follow whichever has the larger capacity. Two
      * instances working it out at once, from different counts, in either order, leave the same row — the
      * read-then-write it replaces let the later writer lower it. Returns the row as stored.
      *
@@ -7036,6 +7036,7 @@ export function createPgStore(connectionString) {
              'searches', GREATEST(${num('{capacity,searches}', 'settings.value')}, ${num('{capacity,searches}', 'EXCLUDED.value')}),
              'machineMills', GREATEST(${num('{capacity,machineMills}', 'settings.value')}, ${num('{capacity,machineMills}', 'EXCLUDED.value')})),
            'people', CASE WHEN settings.value->'people' IS NOT NULL AND ${num('{capacity,searches}', 'settings.value')} >= ${num('{capacity,searches}', 'EXCLUDED.value')} THEN settings.value->'people' ELSE EXCLUDED.value->'people' END,
+           'committed', CASE WHEN settings.value->'committed' IS NOT NULL AND ${num('{capacity,searches}', 'settings.value')} >= ${num('{capacity,searches}', 'EXCLUDED.value')} THEN settings.value->'committed' ELSE EXCLUDED.value->'committed' END,
            'at', CASE WHEN settings.value->'at' IS NOT NULL AND ${num('{capacity,searches}', 'settings.value')} >= ${num('{capacity,searches}', 'EXCLUDED.value')} THEN settings.value->'at' ELSE EXCLUDED.value->'at' END)
          RETURNING value`,
         [key, toJson(figure)],

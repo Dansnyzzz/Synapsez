@@ -12,7 +12,7 @@ for (const name of [
   'DATABASE_URL', 'POSTGRES_URL', 'VERCEL', 'FREE_TIER_ONLY', 'FREE_TIER_USER_DAILY', 'FREE_TIER_USER_MONTHLY_MIN', 'FREE_TIER_USER_MONTHLY_MAX',
   'FREE_SHARE_RESERVE', 'E2B_ACCOUNT_MIN_MILLS', 'E2B_ACCOUNT_SHARE', 'E2B_CREDIT_MILLS', 'E2B_CREDIT_LASTING_MILLS', 'E2B_CREDIT_EXPIRES', 'E2B_TEMPLATE',
   'EXA_API_KEY', 'TAVILY_API_KEY', 'BRAVE_API_KEY', 'FIRECRAWL_API_KEY', 'E2B_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY',
-  'FIRECRAWL_SEARCH_FREE', 'EXA_FREE_MILLS', 'TAVILY_FREE_CREDITS', 'BRAVE_FREE_REQUESTS',
+  'BILLING_MODE', 'FIRECRAWL_SEARCH_FREE', 'EXA_FREE_MILLS', 'TAVILY_FREE_CREDITS', 'BRAVE_FREE_REQUESTS',
 ]) delete process.env[name];
 
 let failures = 0;
@@ -31,6 +31,7 @@ const { encryptSecret, sha256 } = await import('../server/crypto.js');
 const { serviceKeyContext } = await import('../server/secretContexts.js');
 const pool = await import('../server/keyPool.js');
 const tiers = await import('../server/freeTier.js');
+const { PLANS } = await import('../server/billing/plans.js');
 const shares = await import('../server/freeShares.js');
 
 let added = 0;
@@ -368,19 +369,27 @@ section('paid plans are set aside before the even split');
 
   await fresh();
   const none = await shares.monthShares({ now: on(1) });
-  check('no plans: the share is the even split of the whole, 400', none.searches === 400 && none.committed.searches === 0, JSON.stringify([none.searches, none.committed]));
-  const mills = (minutes) => Math.round((minutes * 133) / 60);
+  check('no plans: the share is the even split of the whole, 400', none.searches === 400 && none.committed?.searches === 0, JSON.stringify([none.searches, none.committed]));
+  const kept = 1 - shares.shareReserve();
+  const bounds = shares.SHARE_BOUNDS();
+  const mills = (plan) => Math.round((PLANS[plan].sandboxMinutes * shares.MACHINE_MILLS_PER_HOUR) / 60);
   await subscribe('plus');
   await subscribe('plus');
   await subscribe('max');
-  const owed = 2 * 150 + 450;
-  const owedMills = 2 * mills(240) + mills(720);
+  const owed = 2 * PLANS.plus.searches + PLANS.max.searches;
+  const owedMills = 2 * mills('plus') + mills('max');
   const set = await plain();
-  check('two Plus and a Max are set aside first: the figure falls by exactly the floor difference', set.searches === Math.floor(((10_000 - owed) * 0.8) / 20) && set.searches < none.searches, `${set.searches} vs ${none.searches}`);
-  check('  the stored figure carries what was set aside', set.committed.searches === owed && set.committed.machineMills === owedMills, JSON.stringify(set.committed));
+  check('two Plus and a Max are set aside first: the figure falls by exactly the floor difference', set.searches === Math.floor(((10_000 - owed) * kept) / 20) && set.searches < none.searches, `${set.searches} vs ${none.searches}`);
+  check('  the stored figure carries what was set aside', set.committed?.searches === owed && set.committed?.machineMills === owedMills, JSON.stringify(set.committed));
   const limit = (await tiers.allowance('e2b', on(1))).limit;
-  const want = (committed) => Math.min(Math.floor(limit * 0.34), Math.max(133, Math.floor(((limit - committed) * 0.8) / 3)));
+  const want = (committed) => Math.min(Math.floor(limit * bounds.machineMaxShare), Math.max(bounds.machineMinMills, Math.floor(((limit - committed) * kept) / bounds.machinePeopleFloor)));
   check('  the machine share drops the same way', set.machineMills === want(owedMills) && set.machineMills < none.machineMills, `${set.machineMills} vs ${none.machineMills}, want ${want(owedMills)} (limit ${limit})`);
+
+  process.env.E2B_ACCOUNT_SHARE = '0.1';
+  const capped = await plain();
+  const lowShare = shares.SHARE_BOUNDS().machineMaxShare;
+  check("the cap on one account's machine share is taken from the raw capacity, not the net", capped.machineMills === Math.floor(limit * lowShare) && capped.machineMills > Math.floor((limit - owedMills) * lowShare), `${capped.machineMills} vs raw ${Math.floor(limit * lowShare)}, net ${Math.floor((limit - owedMills) * lowShare)}`);
+  delete process.env.E2B_ACCOUNT_SHARE;
 
   await subscribe('pro', 'grace');
   await subscribe('plus', 'ended');
@@ -389,7 +398,7 @@ section('paid plans are set aside before the even split');
 
   process.env.BILLING_MODE = 'off';
   const off = await plain();
-  check('with BILLING_MODE=off nothing is set aside: the share equals the no-plan figure', off.searches === none.searches && off.machineMills === none.machineMills && off.committed.searches === 0, JSON.stringify([off.searches, off.committed]));
+  check('with BILLING_MODE=off nothing is set aside: the share equals the no-plan figure', off.searches === none.searches && off.machineMills === none.machineMills && off.committed?.searches === 0, JSON.stringify([off.searches, off.committed]));
   delete process.env.BILLING_MODE;
 
   const before = await plain();
@@ -399,6 +408,10 @@ section('paid plans are set aside before the even split');
   await refreshPool();
   const after = await shares.monthShares({ now: on(2) });
   check('a plan bought after the figure is stored never lowers it, even when it is worked out again', after.capacity.searches > before.capacity.searches && after.searches >= before.searches && after.machineMills >= before.machineMills, JSON.stringify([before.searches, after.searches]));
+  const owedNow = owed + PLANS.pro.searches + 2 * PLANS.max.searches;
+  check('  and the re-worked figure keeps what was set aside, the newer count (the conflict path)', after.committed?.searches === owedNow && (await store.getSetting(`free_shares:${monthKey}`)).committed?.searches === owedNow, JSON.stringify(after.committed));
+  const lower = await store.raiseSetting(`free_shares:${monthKey}`, { ...after, capacity: { searches: 1, machineMills: 1 }, committed: { searches: 7, machineMills: 7 } });
+  check('  a racing write with less capacity leaves the stored committed alone', lower.committed?.searches === owedNow, JSON.stringify(lower.committed));
 
   await sql.query('DELETE FROM subscriptions');
   delete process.env.E2B_API_KEY;
