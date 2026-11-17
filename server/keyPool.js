@@ -1030,6 +1030,24 @@ async function templateIn(key) {
 }
 
 /**
+ * Whether Exa's search API knows a key, asked with a request it turns down before searching (no query), so no credit is
+ * spent: an unknown key is answered 401 INVALID_API_KEY first, a known one is told the request is incomplete.
+ *
+ * @returns {Promise<'known'|'refused'|'unreachable'>}
+ */
+async function exaSearchKnows(key) {
+  try {
+    const res = await fetch('https://api.exa.ai/search', { method: 'POST', headers: { 'x-api-key': key, 'Content-Type': 'application/json' }, body: '{}', signal: AbortSignal.timeout(CHECK_MS) });
+    const body = await res.json().catch(() => null);
+    if (res.status === 401 || body?.tag === 'INVALID_API_KEY') return 'refused';
+    return res.status >= 500 ? 'unreachable' : 'known';
+  } catch (err) {
+    log.warn('key pool: a key could not be checked', { service: 'exa', hint: hintOf(key), error: String(err?.name || 'fetch failed') });
+    return 'unreachable';
+  }
+}
+
+/**
  * Whether a key is good, by its service's free call (Brave has none: it is checked on first
  * use). `refused`: the service turned it away; `unreachable`: it could not be asked, or was
  * busy — try again; `template`: an E2B account without the Synapsez template.
@@ -1058,6 +1076,10 @@ export async function checkKey(service, key) {
   // live report, 2026-11-13). Any answer below 500 but an authentication failure means Exa knew the key.
   if (service === 'exa') {
     if (res.status === 401 || body?.tag === 'INVALID_API_KEY') {
+      // Websets is a product of its own: a key from a new account, each its own team, was turned away there although
+      // search is what Synapsez uses it for (the owner's live report, 2026-11-17). Search is asked the same once.
+      const search = await exaSearchKnows(text);
+      if (search !== 'refused') return search === 'known' ? { ok: true } : { ok: false, reason: 'unreachable' };
       log.info('key pool: a key was refused by its service', { service, hint: hintOf(text), status: res.status });
       return { ok: false, reason: 'refused' };
     }

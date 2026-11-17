@@ -2921,7 +2921,10 @@ section('billing: the sheet, the menu row, the mode and the release notes agree 
   const version = JSON.parse(read('package.json')).version;
   const log = JSON.parse(read('public/changelog.json')).entries;
   check("the changelog's newest entry is the package version", log[0].version === version, `${log[0].version} vs ${version}`);
-  check("1.31.0 is released, in both languages", version === '1.31.0' && log[0].version === '1.31.0' && log[0].new.vi.length > 0 && log[0].new.en.length === log[0].new.vi.length && (log[0].improved?.vi.length ?? 0) === (log[0].improved?.en.length ?? 0));
+  // Read by version, as the 1.30.0 pins are: a later release goes on top without moving this one.
+  const released131 = log.find((e) => e.version === '1.31.0');
+  check("1.31.0 is released, in both languages", !!released131 && released131.new.vi.length > 0 && released131.new.en.length === released131.new.vi.length && (released131.improved?.vi.length ?? 0) === (released131.improved?.en.length ?? 0));
+  check("1.31.1 is released, in both languages: Exa keys from other accounts", version === '1.31.1' && log[0].version === '1.31.1' && log[0].improved.vi.length > 0 && log[0].improved.en.length === log[0].improved.vi.length && /Exa/.test(log[0].improved.en[0]) && /Exa/.test(log[0].improved.vi[0]));
   check('CHANGELOG.md carries the same version', read('CHANGELOG.md').includes('(1.31.0)'));
   // 1.30.0 stays in the file as the entry below the newest; its own claims are pinned against it.
   const r130 = log.find((e) => e.version === '1.30.0');
@@ -2951,7 +2954,7 @@ section('billing: the sheet, the menu row, the mode and the release notes agree 
   const topUsers = Number(/const TOP_USERS = (\d+);/.exec(read('public/js/app.js'))?.[1]);
   const pageSize = Number(/const PAGE_SIZE = (\d+);/.exec(read('public/js/users-dialog.js'))?.[1]);
   check('the README states the Users page as the code draws it: top 10 this month, See all at 20 a page', topUsers === 10 && pageSize === 20 && /top 10 by tokens this month/.test(flat) && /20 to a page/.test(flat), topUsers + ' ' + pageSize);
-  check('yearly prices are Plus 50, Pro 80, Max 150 USD, and the changelog says so in both languages', PLANS.plus.usdCents.year === 5000 && PLANS.pro.usdCents.year === 8000 && PLANS.max.usdCents.year === 15000 && /Plus 50, Pro 80 and Max 150 USD/.test(log[0].new.en.join(' ')) && /Plus 50, Pro 80 và Max 150 USD/.test(log[0].new.vi.join(' ')));
+  check('yearly prices are Plus 50, Pro 80, Max 150 USD, and the changelog says so in both languages', PLANS.plus.usdCents.year === 5000 && PLANS.pro.usdCents.year === 8000 && PLANS.max.usdCents.year === 15000 && /Plus 50, Pro 80 and Max 150 USD/.test(released131.new.en.join(' ')) && /Plus 50, Pro 80 và Max 150 USD/.test(released131.new.vi.join(' ')));
   check('  no earlier figure for a year (57, 91, 171) is left in the README, and "Chốt tỷ giá" is gone from the app', !/\b(57|91|171) USD/.test(readme) && !/Chốt tỷ giá/.test(read('public/js/locales/vi.js')));
   const fxSrc = read('server/billing/fx.js');
   const order = ['frankfurter', 'vietcombank', 'erapi'].map((n) => fxSrc.indexOf("{ source: '" + n + "', pick"));

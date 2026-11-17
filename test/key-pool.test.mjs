@@ -403,6 +403,8 @@ try {
   section('checking a key: a fixed address per service, the key never echoed');
   {
     answers.set('api.exa.ai/websets/v0/teams/me', (u, h) => (h.get('x-api-key') === KEYS.exa ? json({ object: 'team', id: 't' }) : json({ error: 'Invalid API key', tag: 'INVALID_API_KEY' }, 401)));
+    // Search knows the same keys: a request with no query is turned down after the key is (no search is run, no credit spent).
+    answers.set('api.exa.ai/search', (u, h) => (h.get('x-api-key') === KEYS.exa ? json({ error: 'query is required' }, 400) : json({ error: 'Invalid API key', tag: 'INVALID_API_KEY' }, 401)));
     answers.set('api.e2b.app/v2/sandboxes', (u, h) => ([KEYS.e2b, KEYS.noTemplate].includes(h.get('x-api-key')) ? json([]) : json({ code: 401, message: 'Invalid API key' }, 401)));
     answers.set('api.e2b.app/templates/aliases/synapsez-computer', (u, h) => (h.get('x-api-key') === KEYS.e2b ? json({ templateID: 'x', public: false }) : json({ code: 404, message: 'not found' }, 404)));
     const good = { exa: KEYS.exa, tavily: KEYS.a, firecrawl: KEYS.fc1, e2b: KEYS.e2b };
@@ -412,7 +414,7 @@ try {
     check('Exa, Tavily, Firecrawl, E2B: their own key passes, a wrong one is refused', wrong.length === 0, wrong.join(' | '));
     check('  Tavily and Firecrawl say the plan', results.tavily.good.plan === 'Researcher' && results.firecrawl.good.plan === 'Hobby', JSON.stringify([results.tavily.good, results.firecrawl.good]));
     const hosts = [...new Set(asked.map((q) => `${q.host}${q.path}`))].sort();
-    const fixed = ['api.e2b.app/templates/aliases/synapsez-computer', 'api.e2b.app/v2/sandboxes', 'api.exa.ai/websets/v0/teams/me', 'api.firecrawl.dev/v2/team/credit-usage', 'api.tavily.com/usage'];
+    const fixed = ['api.e2b.app/templates/aliases/synapsez-computer', 'api.e2b.app/v2/sandboxes', 'api.exa.ai/search', 'api.exa.ai/websets/v0/teams/me', 'api.firecrawl.dev/v2/team/credit-usage', 'api.tavily.com/usage'];
     check('  only the fixed addresses were asked, each with the key in its header', hosts.every((h) => fixed.includes(h)) && asked.every((q) => ![...q.query.values()].some((v) => leaks(v).length)), hosts.join(' '));
     const before = asked.length;
     check('Brave has no free check: passed without a call, checked on first use', (await pool.checkKey('brave', KEYS.bad)).ok === true && asked.length === before);
@@ -429,10 +431,28 @@ try {
       exaSaid[status] = await pool.checkKey('exa', KEYS.exa);
     }
     check('Exa knowing the key by any answer but 401 and a 5xx — 200, 402, 403, 404, 429 — lets it in', [200, 402, 403, 404, 429].every((st) => exaSaid[st].ok === true), JSON.stringify(exaSaid));
-    check('  a 401 is refused, a 500 is unreachable, and so is a fetch that throws', exaSaid[401].reason === 'refused' && exaSaid[500].reason === 'unreachable' && (answers.delete('api.exa.ai/websets/v0/teams/me'), (await pool.checkKey('exa', KEYS.exa)).reason === 'unreachable'), JSON.stringify([exaSaid[401], exaSaid[500]]));
+    // The owner's live report, 2026-11-17: a key of a new account (each its own team) told 401 by Websets, which search takes.
+    check('  a 401 from Websets that search does not share lets the key in (search is what it is used for)', exaSaid[401].ok === true, JSON.stringify(exaSaid[401]));
+    const searchSays = async (answer) => {
+      if (answer) answers.set('api.exa.ai/search', answer);
+      else answers.delete('api.exa.ai/search');
+      return pool.checkKey('exa', KEYS.exa);
+    };
+    answers.set('api.exa.ai/websets/v0/teams/me', () => json({ tag: 'INVALID_API_KEY' }, 401));
+    const bothRefuse = await searchSays(() => json({ error: 'Invalid API key', tag: 'INVALID_API_KEY' }, 401));
+    const searchTagged = await searchSays(() => json({ tag: 'INVALID_API_KEY' }, 403));
+    const searchDown = await searchSays(() => json({}, 503));
+    const searchGone = await searchSays(null);
+    check('  refused only when search refuses it too: a 401, or INVALID_API_KEY whatever the status', bothRefuse.reason === 'refused' && searchTagged.reason === 'refused', JSON.stringify([bothRefuse, searchTagged]));
+    check('  search down or out of reach is "try again", never a refusal', searchDown.reason === 'unreachable' && searchGone.reason === 'unreachable', JSON.stringify([searchDown, searchGone]));
+    const sent = asked.filter((q) => q.host === 'api.exa.ai' && q.path === '/search');
+    check('  search is asked with the key being checked in its header and nothing in the address', sent.length > 0 && sent.every((q) => [KEYS.exa, KEYS.bad].includes(q.headers.get('x-api-key')) && ![...q.query.keys()].length), sent.map((q) => q.headers.get('x-api-key')?.slice(-4)).join(' '));
+    answers.set('api.exa.ai/search', (u, h) => (h.get('x-api-key') === KEYS.exa ? json({ error: 'query is required' }, 400) : json({ tag: 'INVALID_API_KEY' }, 401)));
+    check('  a 500 from Websets is unreachable without asking search, and so is a fetch that throws', exaSaid[500].reason === 'unreachable' && (answers.delete('api.exa.ai/websets/v0/teams/me'), (await pool.checkKey('exa', KEYS.exa)).reason === 'unreachable'), JSON.stringify(exaSaid[500]));
     answers.set('api.exa.ai/websets/v0/teams/me', () => json({ tag: 'INVALID_API_KEY' }, 403));
-    check('  and a body that says INVALID_API_KEY is refused whatever the status', (await pool.checkKey('exa', KEYS.exa)).reason === 'refused');
+    check('  a Websets body that says INVALID_API_KEY is refused when search refuses too', (await pool.checkKey('exa', KEYS.bad)).reason === 'refused');
     answers.delete('api.exa.ai/websets/v0/teams/me');
+    answers.delete('api.exa.ai/search');
   }
 
   section("the administrators' view: every key by its hint, whose figure it is, the paid key");
