@@ -416,7 +416,7 @@ async function fetchedThroughExa(url, maxChars, why, { moreThan = 0, userId = nu
  */
 async function fetchedThroughFirecrawl(url, maxChars, why, { moreThan = 0, userId = null, signal } = {}) {
   if (!firecrawlReady()) return null;
-  // A billable account pays its units (billing/meter.js) instead of using up the free share; any other is as it was.
+  // A billable account's unit comes from its plan, then its free share (a NOT_BILLED hold, counted below as a member's), then its balance (billing/meter.js).
   const hold = await holdSearch(userId);
   const billed = hold.billed && !hold.refused && hold.source !== 'none';
   let units = 0;

@@ -236,8 +236,9 @@ const E2B_KEY = 'env';
  * monthly cap before it runs (`take`) — and, being the person's own, not drawn
  * from their share of the free month.
  *
- * A billable account's window is held first (billing/meter.js `holdSandbox`): from the plan's minutes or the balance,
- * which makes the start a charged one (the paid key may serve it) and spares the account's free share. It rides on the
+ * A billable account's window is held first (billing/meter.js `holdSandbox`): from the plan's minutes, else from its free
+ * share (`shareCost`; the hold is then NOT_BILLED and the share is spent below, with free keys only), else from the
+ * balance, which makes the start a charged one (the paid key may serve it) and spares the share. It rides on the
  * receipt, so `giveBack` returns it. In preview a window nothing can hold goes on as it always did.
  *
  * @param {{ cpu: number, memMb: number, paidUntil?: number }} record
@@ -249,13 +250,13 @@ async function payUntil(record, until, userId, { paid = false } = {}) {
   const from = Math.max(Date.now(), Number(record.paidUntil) || 0);
   if (until <= from) return null;
   const cost = priceOf(record, from, until);
-  const hold = userId ? await holdSandbox(userId, Math.ceil((until - from) / 1000)) : NOT_BILLED;
+  const hold = userId ? await holdSandbox(userId, Math.ceil((until - from) / 1000), { shareCost: cost }) : NOT_BILLED;
   try {
     if (hold.refused) throw new E2BOutOfCredit();
     const billed = hold.billed && hold.source !== 'none';
     const pick = await pickKey('e2b', cost, { paid: paid || (billed && hold.paid) });
     if (!pick || pick.key.id !== E2B_KEY) throw new E2BOutOfCredit();
-    // A window billing paid for is not also drawn from the account's free share.
+    // A window the plan or the balance paid for is not also drawn from the account's free share; one billing left to the share is.
     const shared = userId && !pick.paid && !billed ? userId : undefined;
     if (shared && cost > (await e2bAccountAllowance(shared)).left) throw new E2BOutOfCredit();
     const counted = { keyId: E2B_KEY, paid: pick.paid };

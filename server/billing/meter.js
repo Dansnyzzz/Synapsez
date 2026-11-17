@@ -5,6 +5,11 @@
  * given back. Only a billable account is held at all (an administrator in preview who holds a plan or
  * a balance); everybody else gets `NOT_BILLED` and their calls go exactly as they did before.
  *
+ * The free share comes between the two (owner, 2026-11-17): every account keeps its monthly share of the free keys, Free
+ * after topping up too, and a paid plan gets the larger of that share and its own amount. A call the share pays for is
+ * `NOT_BILLED`: the caller counts it against the share as it does a member's, and only free keys serve it. Nothing of the
+ * kind with the ceilings lifted (`FREE_TIER_ONLY` off): there is no share then, and counting one would make every call free.
+ *
  * In preview nothing is ever refused: when neither the plan nor the balance can hold a call it goes
  * ahead unpaid, as today, and a "would" counter says it would have been charged. There are no daily
  * limits; an allowance is a month's. Prices come from the rate at the moment of each hold. No state
@@ -18,6 +23,8 @@ import { vnDay, vnDayEnd, addDays, addMonths, daysInVnMonth } from './period.js'
 import { meteringRate } from './fx.js';
 import { catchUpChanges, planInForce } from './subscriptions.js';
 import { BILLABLE_MAX, BILLABLE_MS, billableCache, forgetBillable } from './billable.js';
+import { freeTierOnly } from '../freeTierPeriod.js';
+import { searchShareOf, machineShareOf, MACHINE_MILLS_PER_HOUR } from '../freeShares.js';
 
 /** How long a metered call waits for the mail of a plan change it made; the mail then finishes by itself. */
 const TELL_MS = 8_000;
@@ -112,6 +119,39 @@ function monthOf(plan, now) {
 
 const warn = (what, err) => log.warn(`billing: ${what}`, { error: String(err?.message || err).slice(0, 160) });
 
+/** A call the free share pays for: the caller's member path counts it, with free keys only (owner, 2026-11-17). */
+const SHARE = Symbol('share');
+
+/**
+ * What is left of the free share beyond the plan's own amount: a plan gets the larger of the two (owner, 2026-11-17,
+ * "the best for profit"), and Free gets the whole share. Nothing with the ceilings lifted: there is no share then, and
+ * counting one would make every call free. Unreadable is nothing: the call is charged as before.
+ */
+async function searchRoom(userId, now, plan) {
+  if (!freeTierOnly()) return 0;
+  try {
+    const { share, used } = await searchShareOf(userId, now);
+    const own = plan.plan === 'free' ? 0 : PLANS[plan.plan].searches;
+    return Number.isFinite(share) ? Math.max(0, share - own - used) : 0;
+  } catch (err) {
+    warn('the free share could not be read', err);
+    return 0;
+  }
+}
+
+/** The same for the cloud computer, in mills. */
+async function machineRoom(userId, now, plan) {
+  if (!freeTierOnly()) return 0;
+  try {
+    const { share, used } = await machineShareOf(userId, now);
+    const own = plan.plan === 'free' ? 0 : Math.round((PLANS[plan.plan].sandboxMinutes * MACHINE_MILLS_PER_HOUR) / 60);
+    return Number.isFinite(share) ? Math.max(0, share - own - used) : 0;
+  } catch (err) {
+    warn('the free machine share could not be read', err);
+    return 0;
+  }
+}
+
 /** @returns {Hold} */
 function makeHold({ source, paid, refused, units, settle }) {
   let done = false;
@@ -132,10 +172,11 @@ function makeHold({ source, paid, refused, units, settle }) {
 /* ── searches ───────────────────────────────────────────────────────── */
 
 /**
- * Take `units` from one source: the plan's month, else the balance, else nothing (a would-count in preview).
- * Null in live when nothing could be held.
+ * Take `units` from one source: the plan's month, else the free share (`SHARE`, taken by the caller's own count), else the
+ * balance, else nothing (a would-count in preview). Null in live when nothing could be held. A settle that asks for more
+ * passes `share: false`: the unit it holds is billed, and the caller's share count was made for the first one only.
  */
-async function takeSearch(ctx, units) {
+async function takeSearch(ctx, units, { share = true } = {}) {
   const { userId, now, plan } = ctx;
   const store = getStore();
   if (plan.plan !== 'free') {
@@ -144,6 +185,7 @@ async function takeSearch(ctx, units) {
     if ((await store.addToCounter(bucket, units, ends)) <= PLANS[plan.plan].searches) return { source: 'included', units, bucket, ends };
     await store.addToCounter(bucket, -units, ends);
   }
+  if (share && (await searchRoom(userId, now, plan)) > 0) return SHARE;
   const price = paygPrices(await meteringRate()).searchVnd;
   const day = vnDay(now);
   const charged = await store.chargeUsage(userId, 'search', units, units * price, day);
@@ -183,7 +225,10 @@ export async function holdSearch(userId, { units = 1, now = new Date() } = {}) {
     const plan = await planInForce(id, { now });
     const ctx = { userId: id, now, plan, month: monthOf(plan, now) };
     const first = await takeSearch(ctx, units);
+    if (first === SHARE) return NOT_BILLED;
     if (!first) return makeHold({ source: 'none', paid: false, refused: true, units, settle: async () => {} });
+    // Never the share: it was returned above, and the extra of a settle asks for none (the checker cannot see either).
+    /** @type {any[]} */
     const pieces = [first];
     return makeHold({
       source: first.source,
@@ -195,7 +240,7 @@ export async function holdSearch(userId, { units = 1, now = new Date() } = {}) {
         const held = pieces.reduce((sum, p) => sum + p.units, 0);
         if (want > held) {
           // More than was held: the extra is held by the same rules; in live one that cannot be held is not charged.
-          const extra = await takeSearch(ctx, want - held);
+          const extra = await takeSearch(ctx, want - held, { share: false });
           if (extra) pieces.push(extra);
           else log.warn('billing: an extra unit could not be held', {});
           return;
@@ -219,17 +264,18 @@ export async function holdSearch(userId, { units = 1, now = new Date() } = {}) {
 /* ── the cloud computer ─────────────────────────────────────────────── */
 
 /**
- * Hold `seconds` of cloud computer time. The plan's month first (counted in seconds); then the balance, charged
+ * Hold `seconds` of cloud computer time. The plan's month first (counted in seconds); then the free share, when the caller
+ * says what the window costs it (`shareCost`, in mills; `NOT_BILLED`, and the caller spends it); then the balance, charged
  * per started minute over what this month's balance-paid seconds already covered (so 30 s + 30 s is one minute);
  * then nothing. `release()` takes back exactly what was taken. A partial settle keeps the whole window: a window
  * is paid up front and is either used or given back (e2b.js `giveBack`).
  *
  * @param {string|null|undefined} userId
  * @param {number} seconds
- * @param {{ now?: Date }} [options]
+ * @param {{ now?: Date, shareCost?: number }} [options]
  * @returns {Promise<Hold>}
  */
-export async function holdSandbox(userId, seconds, { now = new Date() } = {}) {
+export async function holdSandbox(userId, seconds, { now = new Date(), shareCost } = {}) {
   try {
     const secs = Math.max(0, Math.ceil(Number(seconds) || 0));
     if (!(await isBillable(userId, { now }))) return NOT_BILLED;
@@ -245,6 +291,7 @@ export async function holdSandbox(userId, seconds, { now = new Date() } = {}) {
       else await store.addToCounter(bucket, -secs, ends);
     }
     if (!piece) {
+      if (shareCost != null && (await machineRoom(id, now, plan)) >= shareCost) return NOT_BILLED;
       const perMinute = paygPrices(await meteringRate()).sandboxVndPerMinute;
       const day = vnDay(now);
       const paidBucket = sandboxPaidBucket(id, month);

@@ -47,6 +47,15 @@ const counter = (bucket) => store.readCounter(bucket);
 const usage = async (user, category) => { const r = (await query("SELECT COALESCE(SUM(units),0) AS u, COALESCE(SUM(delta_vnd),0) AS v FROM balance_entries WHERE user_id = $1 AND kind = 'usage' AND category = $2", [user.id, category]))[0]; return { u: Number(r.u), v: Number(r.v) }; };
 const wouldOf = async (user, kind) => Number((await query("SELECT COALESCE(SUM(count),0) AS c FROM rate_limits WHERE bucket LIKE $1", [`bill:would:${user.id}:${kind}:%`]))[0].c);
 const month = (start) => String(start.getTime());
+/**
+ * A free account with a balance is paid for by its free share first (owner, 2026-11-17). An older check that is about the
+ * balance uses the share up, as the caller's own count would, rather than turning the ceilings off: the order is the point.
+ */
+const usedUpShare = async (user, now) => {
+  const { searchBucket } = await import('../server/freeShares.js');
+  const { bucket, ends } = searchBucket(user.id, now);
+  await store.addToCounter(bucket, 1_000_000, ends);
+};
 const ever = async () => Number((await query("SELECT COUNT(*) AS c FROM rate_limits WHERE bucket LIKE 'bill:%'"))[0].c);
 
 section('who is metered');
@@ -74,6 +83,7 @@ section('who is metered');
   process.env.BILLING_MODE = 'live';
   const anyone = await makeUser('user');
   await withBalance(anyone, 5000);
+  await usedUpShare(anyone, T0);
   const live = await meter.holdSearch(anyone.id, { now: T0 });
   check('in live any account with a balance is held (the admin check is preview only)', live.billed && live.source === 'balance');
   delete process.env.BILLING_MODE;
@@ -129,6 +139,7 @@ section('settling with more or fewer than was held');
   // Past the month and out of balance an extra is unpaid in preview, and with a balance it is charged.
   const poor = await makeUser();
   await withBalance(poor, 1000);
+  await usedUpShare(poor, hours(1));
   const held = await meter.holdSearch(poor.id, { now: hours(1) });
   await held.settle(3);
   check('no plan, 1000đ: held 1 (400đ), used 3: the extra 2 are one block from one source, 800đ does not fit the 600đ left, so both are unpaid', (await balanceOf(poor)) === 600 && (await wouldOf(poor, 'search')) === 2, `${await balanceOf(poor)} ${await wouldOf(poor, 'search')}`);
@@ -152,6 +163,7 @@ section('20 holds at once with 4,000đ and no plan: exactly 10 are paid');
 {
   const admin = await makeUser();
   await withBalance(admin, 4000);
+  await usedUpShare(admin, T0);
   const holds = await Promise.all(Array.from({ length: 20 }, () => meter.holdSearch(admin.id, { now: T0 })));
   check('10 from the balance', holds.filter((h) => h.source === 'balance').length === 10, holds.map((h) => h.source).join(','));
   check('  10 unpaid, none refused', holds.filter((h) => h.source === 'none' && !h.paid && !h.refused).length === 10);
@@ -162,6 +174,7 @@ section('the prices follow the rate at the moment of the hold');
 {
   const admin = await makeUser();
   await withBalance(admin, 10_000);
+  await usedUpShare(admin, T0);
   await store.setSetting('billing_fx', { rate: 30_000, source: 'erapi', at: T0.toISOString() });
   (await import('../server/billing/fx.js'))._resetFxForTests();
   const { paygPrices } = await import('../server/billing/plans.js');
@@ -263,6 +276,121 @@ section('This period');
   check('search: included 150, used 150, 2 paid units for 800đ', p.search.included === 150 && p.search.used === 150 && p.search.paidUnits === 2 && p.search.paidVnd === 800, JSON.stringify(p.search));
   check('sandbox: 240 min included, 30 s of them used, nothing paid', p.sandbox.includedSeconds === 14_400 && p.sandbox.usedSeconds === 30 && p.sandbox.paidMinutes === 0, JSON.stringify(p.sandbox));
   check('storage and would are present', p.storage.includedGb === 3 && p.storage.paidVnd === 0 && p.would.search === 0 && p.would.sandbox === 0 && p.would.storage === 0, JSON.stringify([p.storage, p.would]));
+}
+
+section('every plan gets at least the free share (owner, 2026-11-17)');
+{
+  const shares = await import('../server/freeShares.js');
+  const { countMetered, e2bAccountAllowance, e2bAccountSpend } = await import('../server/freeTier.js');
+  const { paygPrices } = await import('../server/billing/plans.js');
+  const { meteringRate } = await import('../server/billing/fx.js');
+  // The 1st of the month: a share worked out for the days left is the whole one, so the figures below stay exact.
+  const FIRST = new Date('2027-03-01T03:00:00Z');
+  const at = (h) => new Date(FIRST.getTime() + h * 3_600_000);
+  /** Fix this month's share: a capacity far above any key's, so it is never worked out again. */
+  const pin = async (searches, machineMills) => {
+    await store.setSetting('free_shares:2027-03', { month: '2027-03', searches, machineMills, capacity: { searches: 1e12, machineMills: 1e12 }, people: { searches: 1, machines: 1 }, committed: { searches: 0, machineMills: 0 }, at: FIRST.toISOString() });
+    shares.__testing.forget();
+  };
+  const price = paygPrices(await meteringRate()).searchVnd;
+  const perMinute = paygPrices(await meteringRate()).sandboxVndPerMinute;
+  const S = 4;
+  await pin(S, 25);
+  const share = (await shares.searchShareOf('probe', FIRST)).share;
+  check('the pinned share is what the meter will read', share === S, String(share));
+
+  // Free with a balance: the share first, as the caller counts it, then the balance.
+  const free = await makeUser();
+  await withBalance(free, 10_000);
+  const sources = [];
+  for (let i = 0; i < S; i += 1) {
+    const h = await meter.holdSearch(free.id, { now: at(1) });
+    sources.push(h === meter.NOT_BILLED && !h.paid && !h.billed);
+    await countMetered(free.id, at(1));
+  }
+  check('Free with a balance: the first S searches are NOT_BILLED, paid false', sources.every(Boolean), JSON.stringify(sources));
+  check('  the balance does not move and no usage row is written', (await balanceOf(free)) === 10_000 && (await usage(free, 'search')).u === 0);
+  const past = await meter.holdSearch(free.id, { now: at(1) });
+  check('  the next one is billed from the balance, paid, at the pay-as-you-go price', past.billed && past.source === 'balance' && past.paid === true && (await balanceOf(free)) === 10_000 - price, `${past.source} ${await balanceOf(free)}`);
+
+  // A balance-sourced hold that settles with more never draws on the share.
+  const grow = await makeUser();
+  await withBalance(grow, 10_000);
+  for (let i = 0; i < S; i += 1) await countMetered(grow.id, at(1));
+  const held = await meter.holdSearch(grow.id, { now: at(1) });
+  await pin(100, 25);
+  await held.settle(3);
+  check('settle(more) on a billed hold: all 3 units are charged, none taken from a share that has room', held.source === 'balance' && (await usage(grow, 'search')).u === 3 && (await balanceOf(grow)) === 10_000 - 3 * price, `${(await usage(grow, 'search')).u} ${await balanceOf(grow)}`);
+  await pin(S, 25);
+
+  // Plus, share no larger than its own 150: the plan's month, then the balance, never the share.
+  const plus = await makeUser();
+  await withPlan(plus, 'plus', FIRST);
+  await withBalance(plus, 10_000);
+  const incl = await meter.holdSearch(plus.id, { units: 150, now: at(1) });
+  check('Plus with S <= 150: the included month comes first, paid', incl.billed && incl.source === 'included' && incl.paid === true);
+  const after = [];
+  for (let i = 0; i < 3; i += 1) after.push(await meter.holdSearch(plus.id, { now: at(2) }));
+  check('  after it, the balance is charged and NOT_BILLED never appears', after.every((h) => h.billed && h.source === 'balance' && h.paid) && (await balanceOf(plus)) === 10_000 - 3 * price);
+
+  // Plus, share larger than its own 150: S - 150 more are free, then the balance.
+  await pin(153, 25);
+  const big = await makeUser();
+  await withPlan(big, 'plus', FIRST);
+  await withBalance(big, 10_000);
+  const first = await meter.holdSearch(big.id, { units: 150, now: at(1) });
+  const free3 = [];
+  for (let i = 0; i < 3; i += 1) {
+    const h = await meter.holdSearch(big.id, { now: at(2) });
+    free3.push(h === meter.NOT_BILLED);
+    await countMetered(big.id, at(2));
+  }
+  check('Plus with S = 153: 150 included, then S - 150 = 3 NOT_BILLED', first.source === 'included' && free3.every(Boolean) && (await balanceOf(big)) === 10_000, JSON.stringify(free3));
+  const then = await meter.holdSearch(big.id, { now: at(2) });
+  check('  then the balance', then.billed && then.source === 'balance' && (await balanceOf(big)) === 10_000 - price);
+  check('  paid is true on included and balance holds, false on the share ones', first.paid === true && then.paid === true && meter.NOT_BILLED.paid === false);
+  await pin(S, 25);
+
+  // With the ceilings lifted there is no share: a Free account with a balance is charged from the first search.
+  process.env.FREE_TIER_ONLY = 'false';
+  const lifted = await makeUser();
+  await withBalance(lifted, 10_000);
+  const h = await meter.holdSearch(lifted.id, { now: at(1) });
+  check('FREE_TIER_ONLY=false: charged from the first search, as before', h.billed && h.source === 'balance' && (await balanceOf(lifted)) === 10_000 - price);
+  delete process.env.FREE_TIER_ONLY;
+
+  // The computer: Free with a balance.
+  const cost = 10;
+  const box = await makeUser();
+  await withBalance(box, 10_000);
+  const w1 = await meter.holdSandbox(box.id, 600, { now: at(1), shareCost: cost });
+  check('computer, Free with a balance: a window the share can pay is NOT_BILLED, paid false, nothing charged', w1 === meter.NOT_BILLED && !w1.paid && (await balanceOf(box)) === 10_000);
+  await e2bAccountSpend(box.id, cost, at(1));
+  const w2 = await meter.holdSandbox(box.id, 600, { now: at(1), shareCost: cost });
+  check('  the second also (15 left of 25)', w2 === meter.NOT_BILLED && (await e2bAccountAllowance(box.id, at(1))).left === 15);
+  await e2bAccountSpend(box.id, cost, at(1));
+  const w3 = await meter.holdSandbox(box.id, 600, { now: at(1), shareCost: cost });
+  check('  with 5 left it takes from the balance, 10 started minutes', w3.billed && w3.source === 'balance' && w3.paid === true && (await balanceOf(box)) === 10_000 - 10 * perMinute, `${w3.source} ${await balanceOf(box)}`);
+  const bare = await makeUser();
+  await withBalance(bare, 10_000);
+  const w4 = await meter.holdSandbox(bare.id, 600, { now: at(1) });
+  check('  with shareCost omitted the share is skipped and the balance pays', w4.billed && w4.source === 'balance' && (await balanceOf(bare)) === 10_000 - 10 * perMinute);
+
+  // The computer, a paid plan: its hours, then the share beyond them, then the balance.
+  await pin(S, 552);
+  const plusBox = await makeUser();
+  await withPlan(plusBox, 'plus', FIRST);
+  await withBalance(plusBox, 10_000);
+  const inc = await meter.holdSandbox(plusBox.id, 240 * 60, { now: at(1), shareCost: cost });
+  const s1 = await meter.holdSandbox(plusBox.id, 600, { now: at(2), shareCost: cost });
+  await e2bAccountSpend(plusBox.id, cost, at(2));
+  const s2 = await meter.holdSandbox(plusBox.id, 600, { now: at(2), shareCost: cost });
+  await e2bAccountSpend(plusBox.id, cost, at(2));
+  const b1 = await meter.holdSandbox(plusBox.id, 600, { now: at(2), shareCost: cost });
+  check('computer, Plus: 240 minutes included (paid), then 552 - 532 = 20 mills of share (two windows of 10), then the balance',
+    inc.source === 'included' && inc.paid && s1 === meter.NOT_BILLED && s2 === meter.NOT_BILLED && b1.source === 'balance' && b1.paid && (await balanceOf(plusBox)) === 10_000 - 10 * perMinute,
+    `${inc.source} ${b1.source} ${await balanceOf(plusBox)}`);
+  await pin(S, 25);
 }
 
 /* ── search and the tools ───────────────────────────────────────────── */
