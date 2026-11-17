@@ -3672,6 +3672,7 @@ export const vi = {
   'billing.pay.cancel': 'Huỷ đơn này',
   'billing.pay.cancelledToast': 'Đã hủy đơn.',
   'billing.pay.closedNote': 'Đơn vẫn mở thêm {time} — mở lại từ Cài đặt → Thanh toán.',
+  'billing.pay.closedNoteRenewal': 'Đơn gia hạn vẫn mở thêm {time} — mở lại bằng nút Gia hạn ngay trong Cài đặt → Thanh toán.',
   'billing.pay.askTitle': 'Huỷ đơn này?',
   'billing.pay.askBody': 'Nếu bạn đã chuyển khoản, đừng huỷ — tiền đến sau vẫn được cộng vào số dư của bạn.',
   'billing.pay.askKeep': 'Giữ đơn',

@@ -2,6 +2,7 @@ import { t, localeTag } from './i18n.js';
 import { escapeHtml as esc } from './markdown.js';
 import { vnd, planName, minutes, clock } from './billing-format.js';
 import { PROFILE_FIELDS } from './billing-checkout-view.js';
+import { POLL_MS } from './billing-pay-view.js';
 
 /**
  * Settings → Billing (billing preview, 2026-11-15): the plan, the credits, the low-balance email, what this month used, the
@@ -46,8 +47,14 @@ export function createBillingPanel(host, { api, toast, plans }) {
   const drawn = new Map();
   // The newest read wins: an answer that comes back after a newer one was asked for is for a screen that has moved on.
   let latest = 0;
-  // The one-second clock on the pending-order card; it runs only while that card is on screen.
+  // The pending-order card's one-second clock and its status question (every POLL_MS): they run only while that card is on screen,
+  // for one order at a time. `gaveUp` is the order whose end this page has already read for, so a clock that disagrees with the
+  // server's can cost one read and never a loop.
   let pendingTimer = 0;
+  let pendingPoll = 0;
+  let watched = null;
+  let asking = false;
+  let gaveUp = null;
 
   const $ = (selector) => /** @type {HTMLElement | null} */ (host.querySelector(selector));
   const section = (name) => $(`[data-sec="${name}"]`);
@@ -108,30 +115,67 @@ export function createBillingPanel(host, { api, toast, plans }) {
     return `${head('pending')}<div class="bill__pending"><div class="bill__pending-what"><p>${esc(what)} · ${esc(vnd(p.dueVnd))}</p><p class="plans__muted bill__pending-left" data-pending-left></p></div><button type="button" class="btn btn--primary" data-pending-view data-focus="pending-view">${esc(t('billing.panel.pendingView'))}</button></div>`;
   }
 
-  function pendingLeftText() {
-    const left = Date.parse(account.pending.expiresAt) - Date.now();
-    return t('billing.panel.pendingLeft', { time: left > 3_600_000 ? minutes(left / 1000) : clock(left) });
+  function stopPending() {
+    clearInterval(pendingTimer);
+    clearInterval(pendingPoll);
+    pendingTimer = 0;
+    pendingPoll = 0;
+    watched = null;
   }
 
-  /** Starts the clock while the card is on screen, writes the time now, and ends the card when the time is up (the server stops offering it too). */
-  function syncPendingClock() {
-    clearInterval(pendingTimer);
-    pendingTimer = 0;
-    if (!active || !account?.pending) return;
-    const tick = () => {
-      const node = $('[data-pending-left]');
-      if (!node || !account?.pending) return;
-      if (Date.parse(account.pending.expiresAt) <= Date.now()) {
-        clearInterval(pendingTimer);
-        pendingTimer = 0;
+  /** The time left on the card; an order is good for 30 minutes (a renewal has no card), so it is always a clock. */
+  const pendingLeftText = () => t('billing.panel.pendingLeft', { time: clock(Date.parse(account.pending.expiresAt) - Date.now()) });
+
+  function tickPending() {
+    const p = account?.pending;
+    if (!p) return;
+    if (Date.parse(p.expiresAt) <= Date.now()) {
+      // Over by this page's clock: the card goes now, and the server is asked once. If it still offers the order (the two clocks
+      // disagree) the card is dropped again without another read.
+      account.pending = null;
+      stopPending();
+      paint(['pending']);
+      if (gaveUp !== p.id) {
+        gaveUp = p.id;
         void read();
-        return;
       }
-      const text = pendingLeftText();
-      if (node.textContent !== text) node.textContent = text;
-    };
-    tick();
-    pendingTimer = window.setInterval(tick, 1000);
+      return;
+    }
+    const node = $('[data-pending-left]');
+    const text = pendingLeftText();
+    if (node && node.textContent !== text) node.textContent = text;
+  }
+
+  /**
+   * While the card is on screen and the page is visible, the order is asked about as the sheet does: once it is not pending, or part of
+   * it arrived, the tab is read again so the card ends (or shows what is left to transfer) without the customer doing anything.
+   */
+  async function askPending() {
+    const p = account?.pending;
+    if (!p || asking || document.hidden || !active || document.querySelector('#plans[open]')) return;
+    asking = true;
+    try {
+      const s = await api.billingOrderStatus(p.id);
+      if (account?.pending?.id !== p.id) return;
+      if (s.status !== 'pending' || s.receivedVnd !== p.receivedVnd || s.dueVnd !== p.dueVnd) await read();
+    } catch {
+      /* asked again in a few seconds */
+    } finally {
+      asking = false;
+    }
+  }
+
+  /** Starts (or keeps) the clock and the question for the order on the card, writes the time now; stops both when there is no card. */
+  function syncPendingClock() {
+    const p = active ? account?.pending : null;
+    if (!p) return stopPending();
+    if (watched !== p.id) {
+      stopPending();
+      watched = p.id;
+      pendingTimer = window.setInterval(tickPending, 1000);
+      pendingPoll = window.setInterval(() => void askPending(), POLL_MS);
+    }
+    tickPending();
   }
 
   /** @param {string} name */
@@ -363,8 +407,7 @@ export function createBillingPanel(host, { api, toast, plans }) {
   function leave() {
     active = false;
     latest += 1;
-    clearInterval(pendingTimer);
-    pendingTimer = 0;
+    stopPending();
   }
 
   /** The plans sheet says something changed: read again, but only for a tab that is on screen. */

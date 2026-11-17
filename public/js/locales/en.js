@@ -3686,6 +3686,7 @@ export const en = {
   'billing.pay.cancel': 'Cancel this order',
   'billing.pay.cancelledToast': 'Order cancelled.',
   'billing.pay.closedNote': 'Your order stays open for another {time} — reopen it from Settings → Billing.',
+  'billing.pay.closedNoteRenewal': 'Your renewal stays open for another {time} — reopen it with Renew now in Settings → Billing.',
   'billing.pay.askTitle': 'Cancel this order?',
   'billing.pay.askBody': 'If you have already transferred, do not cancel — money that arrives later is still added to your balance.',
   'billing.pay.askKeep': 'Keep the order',

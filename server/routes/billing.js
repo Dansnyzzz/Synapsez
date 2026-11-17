@@ -54,15 +54,19 @@ const orderView = (o) => ({ id: o.id, kind: o.kind, plan: o.plan, period: o.peri
  * renewal is left out on purpose: it lives for days and has its own Renew now flow. Null when there is none, when the balance
  * has covered it since (nothing left to transfer) or when the bank details are not set up. Scoped by user id in the query.
  */
-async function pendingOrder(userId, balanceVnd, now) {
-  const rows = await getStore().listOrders({ userId, status: 'pending', limit: 20 });
+const pendingRows = (userId) => (userId ? getStore().listOrders({ userId, status: 'pending', limit: 20 }) : Promise.resolve([]));
+
+/** The rows come from `pendingRows` (read beside the rest of GET /api/billing): a missing user id would list everyone's, so it lists nothing. */
+function pendingOrder(rows, balanceVnd, now) {
   const order = rows.find((o) => (o.kind === 'plan' || o.kind === 'topup') && o.expiresAt > now);
   if (!order) return null;
   const dueVnd = dueOf(order, balanceVnd);
   if (!dueVnd) return null;
   try {
     return { ...orderView(order), receivedVnd: order.receivedVnd, dueVnd, qr: qrFor(order, dueVnd) };
-  } catch {
+  } catch (err) {
+    // The order is real but cannot be drawn (no bank details): said once per read, with nothing about the order or the person.
+    log.warn('billing: an open order could not be offered again', { error: String(err?.message || err).slice(0, 120) });
     return null;
   }
 }
@@ -191,7 +195,7 @@ export function mountBillingRoutes(api, admin, { wrap }) {
   api.get('/billing', settle, route(async (req, res) => {
     const now = new Date();
     const store = getStore();
-    const [plan, state, usage, row, prefs] = await Promise.all([planView(req.user.id, now), store.billingState(req.user.id), periodUsage(req.user.id, { now }), store.getBillingProfile(req.user.id), store.getUserSetting(req.user.id, 'prefs')]);
+    const [plan, state, usage, row, prefs, open] = await Promise.all([planView(req.user.id, now), store.billingState(req.user.id), periodUsage(req.user.id, { now }), store.getBillingProfile(req.user.id), store.getUserSetting(req.user.id, 'prefs'), pendingRows(req.user.id)]);
     res.json({
       mode: billingMode(),
       plan,
@@ -202,7 +206,7 @@ export function mountBillingRoutes(api, admin, { wrap }) {
       bounds: TOPUP,
       // So the Team card says "noted" on a later visit, not only in the visit that pressed it.
       teamInterest: !!prefs?.teamInterest,
-      pending: await pendingOrder(req.user.id, state.balanceVnd, now),
+      pending: pendingOrder(open, state.balanceVnd, now),
     });
   }));
 

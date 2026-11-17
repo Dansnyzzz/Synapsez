@@ -13,6 +13,8 @@ import { vnd, clock } from './billing-format.js';
 
 /** The rows of the QR view a person can copy, in order, and the words each is called by. */
 export const COPY = { bank: 'billing.pay.bank', account: 'billing.pay.account', holder: 'billing.pay.holder', amount: 'billing.pay.amount', content: 'billing.pay.content' };
+/** One question every 5 s while the order is on screen (the sheet's, and the Billing card's); the server answers at most once a second per order. */
+export const POLL_MS = 5000;
 /** A renewal order stays good until grace ends, days away: past this the deadline is a date and time, not a clock. */
 export const CLOCK_MAX_MS = 3_600_000;
 

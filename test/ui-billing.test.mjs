@@ -594,6 +594,7 @@ section('the saved information comes back, an edit is kept, and the box is ticke
   await page.unroute('**/api/billing/profile');
   check('unticking the box while the information is being saved stops the order', puts.length === 1 && orders.length === 0 && (await page.locator('#plans .pay__qr').count()) === 0 && !(await page.isChecked('#plans [data-consent]')), JSON.stringify([puts.length, orders.length]));
   check('  and the back arrow is usable again, without ticking anything (it was drawn disabled while the information was saved)', await page.locator('#plans [data-back]').isEnabled());
+  check('  with focus on the consent box it was unticked from, not lost to the page', await page.evaluate(() => document.activeElement?.hasAttribute('data-consent')));
   page.off('request', seeOrders);
   await page.check('#plans [data-consent]');
   await page.click('#plans [data-continue]');
@@ -1128,6 +1129,7 @@ section('Cancel this order: bottom right, red outline, and it asks first, in the
   await page.waitForFunction(() => !document.getElementById('plans').open);
   await page.waitForSelector('#billing-panel [data-sec="pending"][hidden]', { state: 'attached' });
   check('the Billing card is gone with the order', await page.evaluate(() => document.querySelector('#billing-panel [data-sec="pending"]').hidden));
+  check('  and focus is on something in the Billing tab, not lost to the page, now that the button that opened the sheet is gone', await page.evaluate(() => !!document.activeElement?.closest('#billing-panel')), await page.evaluate(() => document.activeElement?.tagName));
   const afterNotes = await stays();
   check('an order that was cancelled leaves no new "stays open" note behind', afterNotes.every((n) => notesBefore.includes(n)), afterNotes.join(' | '));
 }
@@ -1162,6 +1164,77 @@ section('a top-up resumes the same way, and an order that ended opens the plans 
   check('with nothing open any more, "Upgrade plan" opens the plans sheet as it always did', (await page.locator('#plans .pay__qr').count()) === 0 && (await page.locator('#plans .plans__card').count()) === 4);
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !document.getElementById('plans').open);
+  await freshOrders();
+}
+
+section('the Billing card follows its order: Add credits while one is open, paid or cancelled elsewhere, a clock that runs ahead, Settings closed');
+{
+  await freshOrders();
+  const requests = [];
+  const seen = (req) => {
+    const u = new URL(req.url());
+    if (req.method() === 'GET' && (u.pathname === '/api/billing' || u.pathname.startsWith('/api/billing/orders/'))) requests.push(u.pathname);
+  };
+  const topUp = async (amount) => {
+    await page.click('[data-add-credits]');
+    await page.fill('#bill-amount', String(amount));
+    await page.click('[data-topup-go]');
+    await page.waitForSelector('#plans .pay__qr img');
+    return page.evaluate(() => ({ code: document.querySelector('#plans #pay-content')?.textContent.trim(), order: document.getElementById('plans').dataset.order }));
+  };
+  const openCount = async () => (await store.listOrders({ userId: OWNER, status: 'pending', limit: 50 })).length;
+  const card = () => page.evaluate(() => !document.querySelector('#billing-panel [data-sec="pending"]').hidden);
+  await gotoTab(page, 'billing');
+  await billingReady();
+  const one = await topUp(100000);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.getElementById('plans').open);
+  const before = await openCount();
+  const two = await topUp(200000);
+  const after = await openCount();
+  check('"Add credits" with an order open goes back to that order\'s QR: the same code, and no second order is made', two.code === one.code && two.order === one.order && after === before, JSON.stringify([one, two, before, after]));
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.getElementById('plans').open);
+  await page.waitForSelector('#billing-panel [data-sec="pending"]:not([hidden])');
+
+  // Cancelled somewhere else (another device, the owner of the account): the card ends on its own, within a poll or two.
+  await store.cancelOrder(one.order, OWNER);
+  const gone = await ok(page.waitForSelector('#billing-panel [data-sec="pending"][hidden]', { state: 'attached', timeout: 14000 }));
+  check('an order that ends while the sheet is shut ends its card within a poll or two, without a press', gone && !(await card()));
+
+  // A browser clock that runs ahead of the server's: the server still offers the order, the card must not read for ever.
+  const forged = { id: 'skewed-order', kind: 'topup', plan: null, period: null, code: 'SZ0000000000', totalVnd: 100000, status: 'pending', expiresAt: new Date(Date.now() - 5000).toISOString(), receivedVnd: 0, dueVnd: 100000, qr: { image: 'https://qr.sepay.vn/img?acc=1&bank=B&amount=100000&des=SZ0000000000', bank: 'B', account: '1', holder: 'H', amount: 100000, content: 'SZ0000000000' } };
+  await page.route('**/api/billing', async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    const response = await route.fetch();
+    return route.fulfill({ response, json: { ...(await response.json()), pending: forged } });
+  });
+  page.on('request', seen);
+  await page.click('#tab-usage');
+  await page.click('#tab-billing');
+  await billingReady();
+  await page.waitForTimeout(6000);
+  const reads = requests.filter((p) => p === '/api/billing').length;
+  check('with the clock past the order\'s end and the server still offering it, the tab reads at most twice (the open and one more), not for ever', reads >= 1 && reads <= 2, String(reads));
+  check('  and the card is not left claiming time that has passed', !(await card()));
+  page.off('request', seen);
+  await page.unroute('**/api/billing');
+
+  // Settings shut: nothing keeps asking.
+  await page.click('#tab-usage');
+  await page.click('#tab-billing');
+  await billingReady();
+  const live = await topUp(100000);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.getElementById('plans').open);
+  await page.waitForSelector('#billing-panel [data-sec="pending"]:not([hidden])');
+  await page.evaluate(() => document.getElementById('settings').close());
+  requests.length = 0;
+  page.on('request', seen);
+  await page.waitForTimeout(7000);
+  check('once Settings is closed no request goes out for the card (no status question, no read)', requests.length === 0, requests.join());
+  page.off('request', seen);
+  await store.cancelOrder(live.order, OWNER);
   await freshOrders();
 }
 

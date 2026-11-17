@@ -12968,10 +12968,9 @@ html[data-scene] .gate { background: var(--bg); }
 .pay__timer { font-family: var(--mono); font-weight: 600; }
 /* Cancel sits bottom right with the danger outline; its hover is a tint, not a red fill, so the words keep their contrast in both themes. */
 .pay__foot { justify-content: flex-end; }
-.pay__cancel:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.pay__cancel:hover, .pay__ask .btn--danger:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
 .pay__ask { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid var(--danger); border-radius: 12px; background: var(--surface-2); }
 .pay__ask p { margin: 0; line-height: 1.5; }
-.pay__ask .btn--danger:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
 .pay__done { display: grid; justify-items: center; gap: 6px; padding: 24px 0; text-align: center; }
 .pay__tick { display: grid; place-items: center; width: 48px; height: 48px; margin: 0; border-radius: 50%; background: var(--accent); color: var(--on-accent); font-size: 26px; }
 .pay__donetext { margin: 0; font-size: 20px; font-weight: 650; }

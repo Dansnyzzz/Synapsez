@@ -5459,6 +5459,7 @@ $('settings').addEventListener('close', () => {
   // Nothing on a page nobody can see should keep drawing.
   themesPanel.leave();
   rankingPanel.leave();
+  billingPanel.leave();
   rail.forgetAccount();
   renderRail();
   // A Connect pressed on a suggestion card leads in here; leaving says whether it took.
