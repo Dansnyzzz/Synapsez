@@ -39,6 +39,7 @@ globalThis.fetch = async (url, options) => {
 
 const SHOTS = process.env.BILLING_SHOTS || null;
 const { initStore } = await import('../server/store/index.js');
+const { periodEnd, renewalEnd } = await import('../server/billing/period.js');
 const store = await initStore();
 const { createApp } = await import('../server/app.js');
 const { hashPassword } = await import('../server/crypto.js');
@@ -124,6 +125,16 @@ const context = await browser.newContext({ viewport: { width: 1280, height: 900 
 const page = await signIn(context, 'owner@test.local');
 const shot = async (name) => {
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, `${name}.png`) });
+};
+// Subscribe is off until the consent box is ticked, afresh for every checkout: these tick it, then wait for the button.
+const ready = async (timeout = 30000) => {
+  await page.waitForSelector('#plans [data-consent]', { timeout });
+  await page.check('#plans [data-consent]');
+  await page.waitForSelector('#plans [data-continue]:not([disabled])', { timeout });
+};
+const subscribe = async () => {
+  await ready();
+  await page.click('#plans [data-continue]');
 };
 
 section('the Upgrade plan row and the plan line');
@@ -360,65 +371,113 @@ section('a Team press whose answer comes after the sheet was closed and opened a
   await page.keyboard.press('Escape');
 }
 
-section('Get Plus: the first time asks who is buying');
+section('Get Plus: Configure your plan');
 {
+  const puts = [];
+  const orderPosts = [];
+  const watch = (req) => {
+    if (req.method() === 'PUT' && /\/api\/billing\/profile/.test(req.url())) puts.push(JSON.parse(req.postData() || '{}'));
+    if (req.method() === 'POST' && /\/api\/billing\/orders$/.test(req.url())) orderPosts.push(req.postData());
+  };
+  page.on('request', watch);
   await openMenu(page);
   await page.click('.plusmenu--account [data-row="upgrade"]');
   await page.waitForSelector('#plans .plans__card [data-pick]');
   await page.waitForFunction(() => document.querySelector('#plans [data-plan="plus"] [data-pick]')?.textContent.trim() === 'Get Plus');
   await page.click('#plans [data-plan="plus"] [data-pick]');
-  await page.waitForSelector('#plans [data-view="checkout"]');
-  const first = await page.evaluate(() => ({
-    form: !!document.querySelector('#plans form[data-profile]'),
-    summary: !!document.querySelector('#plans .checkout__summary'),
-    fields: [...document.querySelectorAll('#plans form[data-profile] input')].map((i) => `${i.id}:${document.querySelector(`label[for="${i.id}"]`)?.textContent.trim() || 'NO LABEL'}`),
-    continueDisabled: document.querySelector('#plans [data-continue]').disabled,
-    lines: document.querySelector('#plans .checkout__lines').textContent.replace(/\s+/g, ' '),
-    note: !!document.querySelector('#plans .plans__preview'),
-    balanceBox: !!document.querySelector('#plans [data-use-balance]'),
-    labelled: document.getElementById(document.getElementById('plans').getAttribute('aria-labelledby'))?.textContent.trim(),
-  }));
-  check('the billing-information form is there, labelled field by field', first.form && !first.summary && first.fields.length === 5 && first.fields.every((f) => !f.includes('NO LABEL')), first.fields.join());
-  check('Continue waits until it is saved', first.continueDisabled);
-  check('the lines show the price and Total due today', /Plus/.test(first.lines) && /Total due today/.test(first.lines) && /128,000/.test(first.lines), first.lines);
+  await page.waitForSelector('#plans [data-view="checkout"] [data-consent]');
+  const first = await page.evaluate(() => {
+    const d = document.getElementById('plans');
+    const cards = [...d.querySelectorAll('.checkout__period [role="radio"]')].map((r) => ({ period: r.dataset.period, checked: r.getAttribute('aria-checked'), text: r.textContent.replace(/\s+/g, ' ').trim(), badge: r.querySelector('.checkout__badge')?.textContent.trim() || '' }));
+    const btn = d.querySelector('[data-continue]');
+    const hint = document.getElementById(btn.getAttribute('aria-describedby') || '__none__');
+    const consent = d.querySelector('.checkout__consent');
+    return {
+      title: document.getElementById(d.getAttribute('aria-labelledby'))?.textContent.trim(),
+      heading: d.querySelector('#co-plan')?.textContent.trim(),
+      backLabel: d.querySelector('[data-back]')?.getAttribute('aria-label'),
+      group: d.querySelector('.checkout__period')?.getAttribute('role'),
+      cards,
+      form: !!d.querySelector('form[data-profile]'),
+      fields: [...d.querySelectorAll('form[data-profile] input')].map((i) => `${i.name}:${d.querySelector(`label[for="${i.id}"]`)?.textContent.trim() || 'NO LABEL'}`),
+      method: d.querySelector('.checkout__method')?.textContent.replace(/\s+/g, ' ').trim(),
+      lines: d.querySelector('.checkout__lines').textContent.replace(/\s+/g, ' '),
+      tax: !!d.querySelector('.checkout__tax'),
+      renew: d.querySelector('.checkout__renew')?.textContent.replace(/\s+/g, ' ').trim(),
+      all: d.textContent,
+      subscribe: btn.textContent.trim(),
+      subscribeOff: btn.disabled,
+      hint: hint?.textContent.trim() || '',
+      consentText: consent?.textContent.replace(/\s+/g, ' ').trim(),
+      consentTicked: d.querySelector('[data-consent]').checked,
+      terms: consent?.querySelector('a')?.getAttribute('href'),
+      note: !!d.querySelector('.plans__preview'),
+    };
+  });
+  const expectDate = (when) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', year: 'numeric' }).format(when);
+  check('the dialog is "Configure your plan", with a back arrow named for where it goes', first.title === 'Configure your plan' && first.backLabel === 'Back to plans', JSON.stringify([first.title, first.backLabel]));
+  check('two radio cards, monthly chosen; the yearly one carries "Save 17%" and the monthly one does not', first.group === 'radiogroup' && first.cards.length === 2 && first.cards[0].period === 'month' && first.cards[0].checked === 'true' && first.cards[1].checked === 'false' && first.cards[1].badge === 'Save 17%' && first.cards[0].badge === '' && /Plus monthly/.test(first.cards[0].text) && /Billed monthly/.test(first.cards[0].text) && /Plus yearly/.test(first.cards[1].text) && /Billed yearly/.test(first.cards[1].text), JSON.stringify(first.cards));
+  check('the billing information is an inline form: seven fields, each labelled', first.form && first.fields.length === 7 && first.fields.every((f) => !f.includes('NO LABEL')) && ['name', 'email', 'country', 'address', 'company', 'tax', 'invoiceName'].every((n) => first.fields.some((f) => f.startsWith(`${n}:`))), first.fields.join());
+  check('  with the optional ones marked and no Save button (it is saved with the order)', /Company name \(optional\)/.test(first.fields.join()) && /Other name on the invoice \(optional\)/.test(first.fields.join()) && !/Save/.test(first.all.replace(/Save 17%/g, '')), first.fields.join());
+  check('the payment method is VietQR bank transfer through SePay', /Payment method/.test(first.method) && /VietQR/.test(first.method) && /SePay/.test(first.method), first.method);
+  check('the summary: plan, the line, Subtotal and Total due today; no tax line without BILLING_TAX_RATE', /Plus/.test(first.heading) && /Plus, Monthly/.test(first.lines) && /Subtotal/.test(first.lines) && /Total due today/.test(first.lines) && /128,000/.test(first.lines) && !first.tax && !/VAT/.test(first.all), `${first.heading} / ${first.lines}`);
+  const { en } = await import('../public/js/locales/en.js');
+  const { vi } = await import('../public/js/locales/vi.js');
+  check('the order locks its rate on the server, but no "locked rate" line is shown, and its words are gone from both languages', !/Locked at|1 USD =/i.test(first.all) && !('billing.checkout.rate' in en) && !('billing.checkout.rate' in vi) && !Object.values(vi).some((v) => /Chốt tỷ giá/.test(v)), '');
+  check('the auto-renew box names the real date (a month on, DD/MM/YYYY, Vietnam time) and the QR three days before', first.renew === `Your plan renews on ${expectDate(periodEnd(new Date(), 'month'))} from your balance. If the balance is short, we email you a QR code 3 days before.`, first.renew);
+  check('the consent box is not ticked, and its words name the renewal, the Terms and where to cancel', !first.consentTicked && /renews each period from my balance until I cancel/.test(first.consentText) && /Settings → Billing/.test(first.consentText) && first.terms === '/terms.html', `${first.consentText} ${first.terms}`);
+  check('Subscribe is off until it is ticked, and says why to a screen reader', first.subscribe === 'Subscribe' && first.subscribeOff && first.hint === 'Tick the box above to subscribe.', JSON.stringify([first.subscribe, first.subscribeOff, first.hint]));
   check('the preview note repeats at checkout', first.note);
-  check('the dialog is named for the checkout', /Checkout/i.test(first.labelled || ''), first.labelled);
+  const wide = await page.evaluate(() => {
+    const r = (sel) => document.querySelector(sel).getBoundingClientRect();
+    return { form: r('#plans form[data-profile]'), summary: r('#plans .checkout__summary'), cards: r('#plans .checkout__period') };
+  });
+  check('wide: two columns, the choices and the form on the left, the summary card on the right', wide.summary.left >= wide.form.right - 1 && wide.summary.left > wide.cards.right - 1 && Math.abs(wide.summary.top - wide.cards.top) < 80, JSON.stringify(wide));
 
-  await page.click('#plans [data-save-profile]');
-  await page.waitForSelector('#plans [role="alert"]');
-  check('an empty form says what is missing and saves nothing', (await page.textContent('#plans [role="alert"]')).length > 5);
+  // Radio cards switch the summary, by pointer and by arrow key.
+  const total = () => page.textContent('#plans .checkout__total dd');
+  const monthTotal = await total();
+  await page.click('#plans .checkout__period [data-period="year"]');
+  const yearView = await page.evaluate(() => ({ total: document.querySelector('#plans .checkout__total dd').textContent, lines: document.querySelector('#plans .checkout__lines').textContent.replace(/\s+/g, ' '), renew: document.querySelector('#plans .checkout__renew').textContent, checked: document.querySelector('#plans .checkout__period [aria-checked="true"]').dataset.period }));
+  check('choosing yearly changes the summary (line, total) and the renewal date to a year on', yearView.checked === 'year' && /Plus, Yearly/.test(yearView.lines) && yearView.total !== monthTotal && /\d,\d{3},000/.test(yearView.total) && yearView.renew.includes(expectDate(periodEnd(new Date(), 'year'))), JSON.stringify(yearView));
+  await page.focus('#plans .checkout__period [data-period="year"]');
+  await page.keyboard.press('ArrowLeft');
+  check('the arrow keys move the choice, and the summary follows', (await page.getAttribute('#plans .checkout__period [data-period="month"]', 'aria-checked')) === 'true' && (await total()) === monthTotal && (await page.evaluate(() => document.activeElement?.dataset?.period)) === 'month');
+
+  // Nothing is sent until the box is ticked, and an empty form says what is missing.
+  await page.evaluate(() => document.querySelector('#plans [data-continue]').click());
+  await page.waitForTimeout(250);
+  check('pressing a disabled Subscribe does nothing', orderPosts.length === 0 && puts.length === 0 && (await page.locator('#plans .pay__qr').count()) === 0);
+  await page.focus('#plans [data-consent]');
+  await page.keyboard.press('Space');
+  check('the consent box is reachable and ticked from the keyboard, and then Subscribe is on', (await page.isChecked('#plans [data-consent]')) && (await page.getAttribute('#plans [data-continue]', 'disabled')) === null);
+  await page.click('#plans [data-continue]');
+  await page.waitForSelector('#plans form[data-profile] [role="alert"]');
+  check('an empty form says what is missing, saves nothing and makes no order', (await page.textContent('#plans form[data-profile] [role="alert"]')).length > 5 && orderPosts.length === 0 && puts.length === 0);
   await page.fill('#bill-name', 'Typed Name');
   await page.click('#plans .checkout__period [data-period="year"]');
-  check('what was typed in the form survives choosing Yearly', (await page.inputValue('#bill-name')) === 'Typed Name');
+  check('what was typed survives choosing yearly, and so does the ticked box', (await page.inputValue('#bill-name')) === 'Typed Name' && (await page.isChecked('#plans [data-consent]')));
   await page.click('#plans .checkout__period [data-period="month"]');
   await page.fill('#bill-name', 'Nguyen Van A');
   await page.fill('#bill-email', 'a@example.com');
   await page.fill('#bill-country', 'vn');
   await page.fill('#bill-address', '1 Le Loi, Ho Chi Minh City');
+  await page.fill('#bill-company', 'ABC Co');
   await page.fill('#bill-tax', '0312345678');
-  await page.click('#plans [data-save-profile]');
-  await page.waitForSelector('#plans .checkout__summary');
-  const saved = await page.evaluate(() => ({
-    text: document.querySelector('#plans .checkout__summary').textContent.replace(/\s+/g, ' '),
-    update: !!document.querySelector('#plans [data-update-profile]'),
-    form: !!document.querySelector('#plans form[data-profile]'),
-    continueDisabled: document.querySelector('#plans [data-continue]').disabled,
-  }));
-  check('after saving, the saved summary with Update', saved.update && !saved.form && /Nguyen Van A/.test(saved.text) && /VN/.test(saved.text), saved.text);
-  check('  and Continue is open', !saved.continueDisabled);
-  const stored = await page.evaluate(async () => (await (await fetch('/api/billing')).json()).profile);
-  check('the information is kept on the account', stored?.name === 'Nguyen Van A' && stored.country === 'VN', JSON.stringify(stored));
+  await page.fill('#bill-invoiceName', 'ABC Accounts');
   await shot('checkout');
-  await page.click('#plans [data-update-profile]');
-  check('Update brings the form back, filled in', (await page.inputValue('#bill-name')) === 'Nguyen Van A');
-  await page.click('#plans [data-save-profile]');
-  await page.waitForSelector('#plans .checkout__summary');
+  await page.click('#plans [data-continue]');
+  await page.waitForSelector('#plans .pay__qr img');
+  check('Subscribe saves the form with the order: one PUT with every field, then one order', puts.length === 1 && puts[0].name === 'Nguyen Van A' && puts[0].companyName === 'ABC Co' && puts[0].invoiceName === 'ABC Accounts' && puts[0].taxCode === '0312345678' && orderPosts.length === 1, JSON.stringify([puts, orderPosts]));
+  const stored = await page.evaluate(async () => (await (await fetch('/api/billing')).json()).profile);
+  check('  and the information is kept on the account', stored?.name === 'Nguyen Van A' && stored.country === 'VN' && stored.companyName === 'ABC Co' && stored.invoiceName === 'ABC Accounts', JSON.stringify(stored));
+  page.off('request', watch);
 }
 
 section('Continue: the QR, the copy buttons, the countdown');
 let orderId = '';
 {
-  await page.click('#plans [data-continue]');
+  // The order was made by Subscribe at the end of the section above.
   await page.waitForSelector('#plans .pay__qr img');
   const qr = await page.evaluate(() => {
     const d = document.getElementById('plans');
@@ -475,6 +534,61 @@ section('a transfer arrives');
   check('Done closes the dialog', !(await page.evaluate(() => document.getElementById('plans').open)));
 }
 
+section('the saved information comes back, an edit is kept, and the box is ticked afresh each time');
+{
+  const puts = [];
+  const watch = (req) => {
+    if (req.method() === 'PUT' && /\/api\/billing\/profile/.test(req.url())) puts.push(JSON.parse(req.postData() || '{}'));
+  };
+  page.on('request', watch);
+  await openMenu(page);
+  await page.click('.plusmenu--account [data-row="upgrade"]');
+  await page.waitForSelector('#plans .plans__card [data-pick="pro"]:not([disabled])');
+  await page.click('#plans [data-plan="pro"] [data-pick]');
+  await page.waitForSelector('#plans [data-consent]');
+  const back = await page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#plans form[data-profile] input')].map((i) => [i.name, i.value])));
+  check('a second checkout is prefilled from the saved profile, email included', back.name === 'Nguyen Van A' && back.email === 'a@example.com' && back.country === 'VN' && back.address === '1 Le Loi, Ho Chi Minh City' && back.company === 'ABC Co' && back.tax === '0312345678' && back.invoiceName === 'ABC Accounts', JSON.stringify(back));
+  check('  and the consent box is not ticked again just because it was before', !(await page.isChecked('#plans [data-consent]')));
+  await page.check('#plans [data-consent]');
+  await page.click('#plans [data-back]');
+  await page.waitForSelector('#plans .plans__card [data-pick="pro"]:not([disabled])');
+  check('the back arrow returns to the plans sheet', (await page.locator('#plans .plans__cards').count()) === 1 && (await page.locator('#plans [data-view="sheet"]').count()) === 1);
+  await page.click('#plans [data-plan="pro"] [data-pick]');
+  await page.waitForSelector('#plans [data-consent]');
+  check('a new checkout asks for the consent again', !(await page.isChecked('#plans [data-consent]')) && (await page.getAttribute('#plans [data-continue]', 'disabled')) !== null);
+  await page.fill('#bill-address', '2 Tran Hung Dao, Hanoi');
+  await page.check('#plans [data-consent]');
+  await page.click('#plans [data-continue]');
+  await page.waitForSelector('#plans .pay__qr img');
+  check('an edit made at checkout is saved with the order (one PUT, the new address, the rest kept)', puts.length === 1 && puts[0].address === '2 Tran Hung Dao, Hanoi' && puts[0].name === 'Nguyen Van A' && puts[0].companyName === 'ABC Co', JSON.stringify(puts));
+  page.off('request', watch);
+  await page.click('#plans [data-cancel]');
+  await page.waitForSelector('#plans .plans__card [data-pick="pro"]:not([disabled])');
+  await page.keyboard.press('Escape');
+}
+
+section('the tax line, only when the seller sets a rate');
+{
+  const lineFor = async () => {
+    await openMenu(page);
+    await page.click('.plusmenu--account [data-row="upgrade"]');
+    await page.waitForSelector('#plans .plans__card [data-pick="pro"]:not([disabled])');
+    await page.click('#plans [data-plan="pro"] [data-pick]');
+    await page.waitForSelector('#plans [data-consent]');
+    return page.evaluate(() => ({ tax: document.querySelector('#plans .checkout__tax')?.textContent.replace(/\s+/g, ' ').trim() || '', subtotal: [...document.querySelectorAll('#plans .checkout__lines > div')].find((r) => /Subtotal/.test(r.textContent))?.querySelector('dd').textContent || '' }));
+  };
+  const none = await lineFor();
+  check('no BILLING_TAX_RATE: no tax line', none.tax === '', JSON.stringify(none));
+  await page.keyboard.press('Escape');
+  process.env.BILLING_TAX_RATE = '10';
+  const withTax = await lineFor();
+  delete process.env.BILLING_TAX_RATE;
+  const sub = Number(withTax.subtotal.replace(/[^\d]/g, ''));
+  const part = Math.round((sub * 10) / 110);
+  check('BILLING_TAX_RATE=10: "Of which VAT 10%" with the tax inside the subtotal, as the receipt works it out', sub > 0 && withTax.tax.startsWith('Of which VAT 10%') && Number(withTax.tax.replace(/Of which VAT 10%/, '').replace(/[^\d]/g, '')) === part, JSON.stringify(withTax));
+  await page.keyboard.press('Escape');
+}
+
 section('what the server only schedules, a late answer, a typed form, a double click');
 {
   const puts = [];
@@ -500,12 +614,17 @@ section('what the server only schedules, a late answer, a typed form, a double c
   await page.click('#plans [data-plan="plus"] .plans__toggle [data-period="year"]');
   await page.click('#plans [data-plan="plus"] [data-pick]');
   await page.waitForSelector('#plans .checkout__lines');
+  await page.waitForSelector('#plans [data-consent]');
+  await page.check('#plans [data-consent]');
   const sched = await page.evaluate(() => ({
     month: document.querySelector('#plans .checkout__period [data-period="month"]').disabled,
     year: document.querySelector('#plans .checkout__period [data-period="year"]').getAttribute('aria-checked'),
     cont: document.querySelector('#plans [data-continue]').disabled,
     total: document.querySelector('#plans .checkout__total dd').textContent,
+    why: document.querySelector('#plans .checkout__period [data-period="month"]').textContent.replace(/\s+/g, ' '),
+    whyId: document.getElementById(document.querySelector('#plans .checkout__period [data-period="month"]').getAttribute('aria-describedby') || '__none__')?.textContent.trim(),
   }));
+  check('  and the disabled card says why, to everyone, not just by being grey', /Changes at renewal/.test(sched.why) && sched.whyId === 'Changes at renewal. Choose it from the plans.', JSON.stringify(sched));
   check('Plus monthly to yearly: the Monthly radio is off (the server only schedules it) and yearly is chosen', sched.month && sched.year === 'true', JSON.stringify(sched));
   check('  Continue is live, for a total that is not 0', !sched.cont && !/^0\s/.test(sched.total), JSON.stringify(sched));
   await page.click('#plans [data-back]');
@@ -513,7 +632,7 @@ section('what the server only schedules, a late answer, a typed form, a double c
 
   // Closing, or going back, while the order is being made leaves no clock and no poll behind.
   await page.click('#plans [data-plan="pro"] [data-pick]');
-  await page.waitForSelector('#plans [data-continue]:not([disabled])');
+  await ready();
   const calls = [];
   const watch = (req) => calls.push(`${req.method()} ${new URL(req.url()).pathname}`);
   await page.route('**/api/billing/orders', async (route) => {
@@ -568,7 +687,7 @@ section('short payment, expiry, cancel');
   // The status line is one node for the whole wait (a replaced node is often not announced), and focus is left alone.
   let answer = { status: 'pending', receivedVnd: 50000, dueVnd: 50000, plan: 'pro' };
   await page.route('**/api/billing/orders/*', (route) => (route.request().method() === 'GET' ? route.fulfill({ contentType: 'application/json', body: JSON.stringify(answer) }) : route.fallback()));
-  await page.click('#plans [data-continue]');
+  await subscribe();
   await page.waitForSelector('#plans .pay__qr img');
   await page.evaluate(() => { window.__status = document.querySelector('#plans .pay__status'); document.querySelector('#plans [data-copy="content"]').focus(); });
   await page.waitForFunction(() => /Received/.test(document.querySelector('#plans .pay__status')?.textContent || ''), null, { timeout: 9000 }).catch(() => {});
@@ -588,7 +707,7 @@ section('short payment, expiry, cancel');
   await page.click('#plans [data-back]');
   await page.waitForSelector('#plans .plans__card [data-pick="pro"]:not([disabled])');
   await page.click('#plans [data-plan="pro"] [data-pick]');
-  await page.waitForSelector('#plans [data-continue]:not([disabled])');
+  await ready();
   await page.click('#plans [data-continue]');
   await page.waitForFunction(() => /balance/.test(document.querySelector('#plans .pay__status')?.textContent || ''), null, { timeout: 9000 }).catch(() => {});
   const refunded = await page.evaluate(() => ({ text: document.querySelector('#plans .pay__status').textContent, timer: document.querySelector('#plans .pay__time').hidden }));
@@ -598,7 +717,7 @@ section('short payment, expiry, cancel');
   await page.waitForSelector('#plans .plans__card');
   await page.click('#plans [data-plan="max"] [data-pick]');
   await page.waitForSelector('#plans [data-view="checkout"]');
-  await page.click('#plans [data-continue]');
+  await subscribe();
   await page.waitForSelector('#plans .pay__qr img');
   const open = await page.evaluate(() => document.getElementById('plans').dataset.order);
   await page.click('#plans [data-cancel]');
@@ -653,13 +772,21 @@ section('narrow screens');
   check('  nor does the Team tab', narrowTeam.page && narrowTeam.body, JSON.stringify(narrowTeam));
   await page.click('#plans [data-audience="individual"]');
   await page.click('#plans [data-plan="pro"] [data-pick]');
-  await page.waitForSelector('#plans [data-view="checkout"]');
+  await page.waitForSelector('#plans [data-view="checkout"] [data-consent]');
   const checkout = await page.evaluate(() => {
     const d = document.getElementById('plans');
     const body = d.querySelector('.sheet__body');
     return { page: document.documentElement.scrollWidth <= window.innerWidth, body: body.scrollWidth <= body.clientWidth + 1 };
   });
   check('nor does the checkout', checkout.page && checkout.body, JSON.stringify(checkout));
+  const phone = await page.evaluate(() => {
+    const r = (sel) => document.querySelector(sel).getBoundingClientRect();
+    const form = r('#plans form[data-profile]');
+    const summary = r('#plans .checkout__summary');
+    const fields = [...document.querySelectorAll('#plans form[data-profile] input')].map((i) => i.getBoundingClientRect());
+    return { below: summary.top >= form.bottom - 1, sameLeft: Math.abs(summary.left - form.left) < 2, inside: fields.every((f) => f.left >= 0 && f.right <= window.innerWidth), button: r('#plans [data-continue]').right <= window.innerWidth };
+  });
+  check('  on a phone the summary card goes under the form, every field and the button inside the screen', phone.below && phone.sameLeft && phone.inside && phone.button, JSON.stringify(phone));
   await shot('narrow');
   await page.keyboard.press('Escape');
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -936,6 +1063,7 @@ section('Billing information');
   check('the information saved at checkout is shown', /Nguyen Van A/.test(info) && /a@example\.com/.test(info), info);
   await page.click('[data-sec="info"] [data-edit-info]');
   check('Update opens a labelled form, filled in', (await page.inputValue('#bp-name')) === 'Nguyen Van A' && !!(await page.textContent('label[for="bp-name"]')));
+  check('  with the company name and the other invoice name too, so saving here cannot erase them', (await page.inputValue('#bp-company')) === 'ABC Co' && (await page.inputValue('#bp-invoiceName')) === 'ABC Accounts' && !!(await page.textContent('label[for="bp-company"]')) && !!(await page.textContent('label[for="bp-invoiceName"]')));
   await page.fill('#bp-email', 'not-an-email');
   await page.click('[data-sec="info"] [data-save-info]');
   await page.waitForFunction(() => !!document.querySelector('[data-sec="info"] [role="alert"]')?.textContent.trim());
@@ -945,6 +1073,8 @@ section('Billing information');
   await page.click('[data-sec="info"] [data-save-info]');
   await page.waitForFunction(() => /b@example\.com/.test(document.querySelector('[data-sec="info"]')?.textContent || '') && !document.querySelector('#bp-name'));
   check('a good save shows the new information and puts focus on Update', await page.evaluate(() => document.activeElement?.hasAttribute('data-edit-info')));
+  const kept = await page.evaluate(async () => (await (await fetch('/api/billing')).json()).profile);
+  check('  and the company and invoice names are shown and still kept', /ABC Co/.test(await text('[data-sec="info"]')) && /ABC Accounts/.test(await text('[data-sec="info"]')) && kept.companyName === 'ABC Co' && kept.invoiceName === 'ABC Accounts' && kept.email === 'b@example.com', JSON.stringify(kept));
 }
 
 section('a plan in grace: Renew now, the date instead of a clock, and no late cancel of a shared renewal order');
@@ -971,7 +1101,7 @@ section('a plan in grace: Renew now, the date instead of a clock, and no late ca
   });
   page.on('request', watch);
   await page.click('[data-renew]');
-  await page.waitForSelector('#plans [data-continue]:not([disabled])');
+  await ready();
   check('before any renewal order exists, the checkout offers the choice of using the balance', (await page.locator('#plans [data-use-balance]').count()) === 1 && (await page.locator('#plans [data-fixed-balance]').count()) === 0);
   await page.click('#plans [data-continue]');
   await page.keyboard.press('Escape');
@@ -981,7 +1111,7 @@ section('a plan in grace: Renew now, the date instead of a clock, and no late ca
   check('the renewal order made after Esc is left open for the period', !calls.some((c) => /\/cancel$/.test(c)) && calls.some((c) => c === 'POST /api/billing/orders'), calls.join(' | '));
 
   await page.click('[data-renew]');
-  await page.waitForSelector('#plans [data-continue]:not([disabled])');
+  await ready();
   const fixed = await page.evaluate(() => ({ box: document.querySelectorAll('#plans [data-use-balance]').length, note: document.querySelector('#plans [data-fixed-balance]')?.textContent.trim() || '', total: document.querySelector('#plans .checkout__total dd')?.textContent.trim() || '' }));
   check('once the renewal order exists, the checkout does not offer a choice the order ignores, and says what it does', fixed.box === 0 && /uses your balance/.test(fixed.note), JSON.stringify(fixed));
   await page.click('#plans [data-continue]');
@@ -1004,7 +1134,7 @@ section('a plan in grace: Renew now, the date instead of a clock, and no late ca
   // The rate source being down also fails the quote for the period that has no locked order; the checkout must carry on with the one that has.
   await page.route('**/api/billing/quote', (route) => (JSON.parse(route.request().postData() || '{}').period === 'year' ? route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"No exchange rate."}' }) : route.fallback()));
   await page.click('#plans [data-plan="plus"] [data-pick]');
-  check('  and its checkout opens, ready to continue, with the locked price', (await ok(page.waitForSelector('#plans [data-continue]:not([disabled])', { timeout: 5000 }))) && /128,000/.test(await text('#plans .checkout__lines')), await text('#plans .checkout__lines'));
+  check('  and its checkout opens, ready to continue, with the locked price', (await ok(ready(5000))) && /128,000/.test(await text('#plans .checkout__lines')), await text('#plans .checkout__lines'));
   await page.unroute('**/api/billing/quote');
   await page.unroute('**/api/billing/plans');
   await page.keyboard.press('Escape');
@@ -1020,9 +1150,13 @@ section('a plan in grace with a downgrade scheduled: Renew now is the scheduled 
   check('with auto-renew on the line says add credit, and names Plus (what renews), not Pro', /In grace until .+ — add credit to keep Plus/.test(line) && !/keep Pro/.test(line), line);
   await page.click('[data-renew]');
   await page.waitForSelector('#plans [data-view="checkout"] .checkout__lines');
-  await page.waitForSelector('#plans [data-continue]:not([disabled])');
-  const co = await page.evaluate(() => ({ title: document.querySelector('#plans #co-plan')?.textContent.trim(), period: document.querySelector('#plans .checkout__period [aria-checked="true"]')?.dataset.period, lines: document.querySelector('#plans .checkout__lines')?.textContent.replace(/\s+/g, ' ') }));
-  check('Renew now opens the checkout for Plus, monthly, at the full price', co.title === 'Plus' && co.period === 'month' && /128,000/.test(co.lines), JSON.stringify(co));
+  await ready();
+  const co = await page.evaluate(() => ({ title: document.querySelector('#plans #co-plan')?.textContent.trim(), renew: document.querySelector('#plans .checkout__renew')?.textContent || '', period: document.querySelector('#plans .checkout__period [aria-checked="true"]')?.dataset.period, lines: document.querySelector('#plans .checkout__lines')?.textContent.replace(/\s+/g, ' ') }));
+  check('Renew now opens the checkout for Plus, monthly, at the full price', co.title === 'Plus plan' && co.period === 'month' && /128,000/.test(co.lines), JSON.stringify(co));
+  // A renewal continues the old period, so its date is the end of the NEXT period counted from the old end, not a month from today.
+  const was = await store.getSubscription(OWNER);
+  const expectRenews = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Ho_Chi_Minh', day: '2-digit', month: '2-digit', year: 'numeric' }).format(renewalEnd(was.anchorAt ?? was.periodStart, was.periodEnd, 'month'));
+  check('  and the renewal date is when the continued period ends, in Vietnam time', co.renew.includes(expectRenews), `${co.renew} / ${expectRenews}`);
   await page.keyboard.press('Escape');
   await page.click('[data-adjust]');
   await page.waitForFunction(() => document.querySelector('#plans [data-plan="plus"] [data-pick]')?.textContent.trim() === 'Renew');

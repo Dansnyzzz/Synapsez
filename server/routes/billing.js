@@ -22,6 +22,7 @@ import { sendBillingMail, within } from '../billing/mail.js';
 import { drawReceipt } from '../billing/receipt.js';
 import { einvoiceStatus, einvoicePdf } from '../billing/einvoice.js';
 import { mailLanguage } from '../auth.js';
+import { taxRate, taxIn } from '../billing/tax.js';
 
 /**
  * Billing's HTTP surface (spec B1, Task 7; owner, 2026-11-13).
@@ -52,7 +53,7 @@ function openProfile(userId, sealed) {
   if (!sealed) return null;
   try {
     const parsed = JSON.parse(decryptSecret(sealed, billingProfileContext(userId)) || 'null');
-    return isObject(parsed) ? { name: parsed.name ?? '', email: parsed.email ?? '', country: parsed.country ?? '', address: parsed.address ?? null, taxCode: parsed.taxCode ?? null } : null;
+    return isObject(parsed) ? { name: parsed.name ?? '', email: parsed.email ?? '', country: parsed.country ?? '', address: parsed.address ?? null, taxCode: parsed.taxCode ?? null, companyName: parsed.companyName ?? null, invoiceName: parsed.invoiceName ?? null } : null;
   } catch {
     log.warn('billing information could not be opened');
     return null;
@@ -81,7 +82,7 @@ async function planView(userId, now) {
 
 /**
  * Billing information, checked field by field. Returns the value to seal, or the sentence that says what is wrong.
- * @returns {{ value: { name: string, email: string, country: string, address: string | null, taxCode: string | null } } | { error: string }}
+ * @returns {{ value: { name: string, email: string, country: string, address: string | null, taxCode: string | null, companyName: string | null, invoiceName: string | null } } | { error: string }}
  */
 function checkProfile(body) {
   if (!isObject(body)) return { error: 'Enter your billing information.' };
@@ -102,7 +103,17 @@ function checkProfile(body) {
     taxCode = text(body.taxCode);
     if (taxCode === null || !/^[0-9-]{1,20}$/.test(taxCode)) return { error: 'The tax code is digits and dashes, up to 20 characters.' };
   }
-  return { value: { name, email, country: country.toUpperCase(), address, taxCode } };
+  // Two optional names for the invoice: the company the tax code belongs to, and another name to print on it.
+  /** @type {{ companyName: string | null, invoiceName: string | null }} */
+  const names = { companyName: null, invoiceName: null };
+  for (const [key, tooLong] of /** @type {['companyName' | 'invoiceName', string][]} */ ([['companyName', 'The company name is at most 120 characters.'], ['invoiceName', 'The other name on the invoice is at most 120 characters.']])) {
+    if (body[key] != null && body[key] !== '') {
+      const v = text(body[key]);
+      if (v === null || v.length > 120) return { error: tooLong };
+      names[key] = v || null;
+    }
+  }
+  return { value: { name, email, country: country.toUpperCase(), address, taxCode, ...names } };
 }
 
 /** An administrator's view of an order or a transfer, with the account's address instead of its id alone. */
@@ -209,7 +220,9 @@ export function mountBillingRoutes(api, admin, { wrap }) {
   api.post('/billing/quote', settle, route(async (req, res) => {
     const q = await quote(req.user.id, { plan: req.body?.plan, period: req.body?.period });
     const { basis: _basis, ...visible } = q;
-    res.json(visible);
+    // The rate comes from the environment and the tax is worked out here, with the receipt's own formula: the browser only draws it.
+    const rate = taxRate();
+    res.json({ ...visible, taxRate: rate, taxVnd: rate === null ? null : taxIn(q.totalVnd, rate) });
   }));
 
   api.post('/billing/orders', rateLimit('billing-order', (req) => req.user?.id), settle, route(async (req, res) => {

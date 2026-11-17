@@ -159,9 +159,11 @@ function itemName(order) {
 function buyerBody(buyer) {
   if (!buyer) return { type: 'personal' };
   const taxCode = buyer.taxCode ? String(buyer.taxCode) : '';
+  // "Another name on the invoice" is what the buyer is called on it; the company name is the legal name that goes with a tax code.
+  const called = buyer.invoiceName || buyer.name;
   return {
     type: taxCode ? 'company' : 'personal',
-    ...(buyer.name ? { name: String(buyer.name), ...(taxCode ? { legal_name: String(buyer.name) } : {}) } : {}),
+    ...(called ? { name: String(called), ...(taxCode ? { legal_name: String(buyer.companyName || buyer.name || called) } : {}) } : {}),
     ...(taxCode ? { tax_code: taxCode } : {}),
     ...(buyer.address ? { address: String(buyer.address) } : {}),
     ...(buyer.email ? { email: String(buyer.email) } : {}),
@@ -173,7 +175,7 @@ function buyerBody(buyer) {
  * row (any status but `error`) is not sent again.
  *
  * @param {{ id: string, kind: string, plan?: string | null, period?: string | null, totalVnd: number }} order
- * @param {{ name?: string, email?: string, address?: string | null, taxCode?: string | null } | null} buyer
+ * @param {{ name?: string, email?: string, address?: string | null, taxCode?: string | null, companyName?: string | null, invoiceName?: string | null } | null} buyer
  * @param {{ now?: Date, fetchImpl?: typeof fetch, env?: NodeJS.ProcessEnv }} [options]
  */
 export async function issueEinvoice(order, buyer, { now = new Date(), fetchImpl = globalThis.fetch, env = process.env } = {}) {

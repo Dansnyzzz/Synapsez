@@ -237,6 +237,16 @@ section('billing information');
   const mine = await owner.j.call('GET', '/api/billing');
   check('another account does not see it', mine.json?.profile === null);
   check('the optional fields may be left out', (await put({ name: 'B', email: 'b@example.test', country: 'US' }, owner)).json?.profile?.address === null);
+  // Two optional names for the invoice (the checkout form asks for them): kept sealed with the rest, capped like the name.
+  const named = await put({ name: 'B', email: 'b@example.test', country: 'US', companyName: '  Công ty ABC ', invoiceName: 'Kế toán ABC' }, owner);
+  check('a company name and another invoice name are kept, trimmed', named.status === 200 && named.json?.profile?.companyName === 'Công ty ABC' && named.json.profile.invoiceName === 'Kế toán ABC', JSON.stringify(named.json));
+  check('  and read back for their owner', (await owner.j.call('GET', '/api/billing')).json?.profile?.invoiceName === 'Kế toán ABC');
+  const row2 = await store.getBillingProfile(owner.id);
+  check('  sealed with the rest, not the text', !/ABC/.test(row2?.sealed || ''));
+  check('  left out, both are null', (await put({ name: 'B', email: 'b@example.test', country: 'US' }, owner)).json?.profile?.companyName === null);
+  check('  a company name of 121 characters is a 400', (await put({ ...good, companyName: 'c'.repeat(121) })).status === 400);
+  check('  another invoice name of 121 characters is a 400', (await put({ ...good, invoiceName: 'i'.repeat(121) })).status === 400);
+  check('  a name that is not text is a 400', (await put({ ...good, companyName: 5 })).status === 400 && (await put({ ...good, invoiceName: ['x'] })).status === 400);
   const audit = (await store.listAudit(dan.id, 20)).map((e) => e.kind);
   check('the update is in the account\'s own record', audit.includes('billing_profile_updated'), audit.join());
   const lowSet = await dan.j.call('PUT', '/api/billing/alerts', { lowBalanceVnd: 60_000 });
@@ -280,6 +290,12 @@ let ownerTopup;
   check('the eleventh order in an hour is a 429', statuses[10] === 429 && statuses.slice(0, 10).every((s) => s !== 429), statuses.join());
   const quoted = await owner.j.call('POST', '/api/billing/quote', { plan: 'pro', period: 'month' });
   check('a quote prices a plan and creates nothing', quoted.status === 200 && quoted.json.priceVnd === planVnd('pro', 'month', 25_500) && quoted.json.kind === 'new' && !('basis' in quoted.json), JSON.stringify(quoted.json));
+  check('  it names the day the plan renews (a month on from when it starts)', quoted.json.renewsAt === addMonths(new Date(quoted.json.startsAt), 1).toISOString(), String(quoted.json.renewsAt));
+  check('  and with no BILLING_TAX_RATE says no tax rate and states no tax', quoted.json.taxRate === null && quoted.json.taxVnd === null, JSON.stringify([quoted.json.taxRate, quoted.json.taxVnd]));
+  process.env.BILLING_TAX_RATE = '10';
+  const taxed = await owner.j.call('POST', '/api/billing/quote', { plan: 'pro', period: 'month' });
+  delete process.env.BILLING_TAX_RATE;
+  check('  with BILLING_TAX_RATE=10 it carries the rate and the tax inside the total (as the receipt works it out)', taxed.json.taxRate === 10 && taxed.json.taxVnd === Math.round((taxed.json.totalVnd * 10) / 110) && taxed.json.totalVnd === quoted.json.totalVnd, JSON.stringify([taxed.json.taxRate, taxed.json.taxVnd, taxed.json.totalVnd]));
 }
 
 section('the plan, paid by a (simulated) transfer, and what the owner may do with it');

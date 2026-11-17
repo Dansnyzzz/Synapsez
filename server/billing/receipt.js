@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { openSecret } from '../crypto.js';
 import { billingProfileContext } from '../secretContexts.js';
+import { taxRate, taxIn } from './tax.js';
 
 const FONT_FILE = fileURLToPath(new URL('../assets/fonts/Arimo-VariableWeight.ttf', import.meta.url));
 const FONT = 'Receipt Arimo';
@@ -184,11 +185,11 @@ export async function drawReceipt(receipt, { language = 'en', seller, env = proc
   y += 22;
 
   // A tax line only when the seller says what rate applies; a guess would be a tax statement nobody made.
-  const rate = String(env.BILLING_TAX_RATE ?? '').trim() === '' ? NaN : Number(env.BILLING_TAX_RATE);
+  const rate = taxRate(env);
   // Money added to the balance bought nothing, so no tax is stated on it: tax belongs to the sale of a plan or a top-up's use.
   const sold = (receipt.lines || []).some((l) => l?.kind !== 'credit');
-  if (Number.isFinite(rate) && rate >= 0 && sold) {
-    const tax = Math.round((Math.trunc(receipt.amountVnd) * rate) / (100 + rate));
+  if (rate !== null && sold) {
+    const tax = taxIn(receipt.amountVnd, rate);
     text(vi ? `Trong đó thuế GTGT ${rate}%` : `Of which VAT ${rate}%`, left + 8, 11, { color: '#5b6470' });
     text(money(tax, language), right - 8, 11, { color: '#5b6470', align: 'right' });
     y += 20;

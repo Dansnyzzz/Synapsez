@@ -119,6 +119,8 @@ section('the receipt is a PDF with what a receipt must say');
   const taxed = squash(await textOf(await drawReceipt(receipt, { language: 'vi', env: { BILLING_TAX_RATE: '10', BILLING_SELLER_NAME: 'Công ty Mẫu' } })));
   check('with BILLING_TAX_RATE a tax line appears (of the total, tax included), and the seller comes from the environment', taxed.includes('thuế GTGT 10%') && taxed.includes('11.727 ₫') && taxed.includes('Công ty Mẫu'), taxed);
   const creditOnly = squash(await textOf(await drawReceipt({ ...receipt, lines: [{ kind: 'credit', plan: null, period: null, code: 'SZ0123456789', amountVnd: 129_000 }] }, { language: 'vi', env: { BILLING_TAX_RATE: '10' } })));
+  const { taxRate, taxIn } = await import('../server/billing/tax.js');
+  check('the one tax formula: a rate from the environment (null when unset, blank or not a number) and the tax inside a total', taxRate({}) === null && taxRate({ BILLING_TAX_RATE: '  ' }) === null && taxRate({ BILLING_TAX_RATE: 'ten' }) === null && taxRate({ BILLING_TAX_RATE: '-1' }) === null && taxRate({ BILLING_TAX_RATE: '8' }) === 8 && taxRate({ BILLING_TAX_RATE: '0' }) === 0 && taxIn(129_000, 10) === 11_727 && taxIn(129_000.9, 10) === 11_727 && taxIn(110, 10) === 10 && taxIn(0, 10) === 0);
   check('a credit-only receipt (money added to the balance) has no VAT line even when a rate is set', creditOnly.includes('Tiền đã chuyển vào số dư') && !creditOnly.includes('Trong đó thuế'), creditOnly);
   const many = squash(await textOf(await drawReceipt({ ...receipt, lines: Array.from({ length: 60 }, (_, i) => ({ kind: 'topup', plan: null, period: null, code: 'SZ0123456789', amountVnd: 1000 + i })) }, { language: 'en', env: {} })));
   check('a receipt with far more lines than a page holds keeps its footer and says how many it left out', many.includes('Payment receipt — not a VAT invoice.') && /and [0-9]+ more/.test(many), many.slice(-200));
@@ -242,6 +244,22 @@ section('issueEinvoice: the happy path');
   check('a buyer with a tax code is a company, and a seller-set rate goes on the line', company.status === 'pending' && cb.buyer.type === 'company' && cb.buyer.tax_code === '0312345678' && cb.buyer.legal_name === 'Công ty ABC' && cb.items[0].tax_rate === 8);
   const noBuyer = await einvoice.issueEinvoice(order('inv-nb'), null, { now: NOW, env: ENV, fetchImpl: recorded(() => json({ success: true, data: { tracking_code: 'trk-nb' } })) });
   check('an order with no billing information still gets an invoice (nothing in buyer is required)', noBuyer.status === 'pending' && created().at(-1).body.buyer.type === 'personal');
+
+  // The checkout form's two optional names: "another name on the invoice" is what the buyer is called; the company name is the legal one.
+  const mk = async (id, buyer) => {
+    await einvoice.issueEinvoice(order(id), buyer, { now: NOW, env: ENV, fetchImpl: recorded(() => json({ success: true, data: { tracking_code: `trk-${id}` } })) });
+    return created().at(-1).body.buyer;
+  };
+  const both = await mk('inv-names', { name: 'Trần Văn Ánh', invoiceName: 'Kế toán ABC', companyName: 'Công ty ABC', taxCode: '0312345678', email: 'k@abc.test' });
+  check('with a tax code: the invoice name is the buyer, the company name the legal name, the tax code kept', both.type === 'company' && both.name === 'Kế toán ABC' && both.legal_name === 'Công ty ABC' && both.tax_code === '0312345678', JSON.stringify(both));
+  const noInv = await mk('inv-co-only', { name: 'Trần Văn Ánh', companyName: 'Công ty ABC', taxCode: '0312345678' });
+  check('  without another invoice name the buyer is the person, the legal name still the company', noInv.name === 'Trần Văn Ánh' && noInv.legal_name === 'Công ty ABC', JSON.stringify(noInv));
+  const noCo = await mk('inv-inv-only', { name: 'Trần Văn Ánh', invoiceName: 'Kế toán ABC', taxCode: '0312345678' });
+  check('  without a company name the legal name is the name of the person, as before', noCo.name === 'Kế toán ABC' && noCo.legal_name === 'Trần Văn Ánh', JSON.stringify(noCo));
+  const priv = await mk('inv-private', { name: 'Trần Văn Ánh', invoiceName: 'Anh T.', companyName: 'Công ty ABC' });
+  check('  without a tax code it is a private buyer under the invoice name, and no legal name', priv.type === 'personal' && priv.name === 'Anh T.' && !('legal_name' in priv) && !('tax_code' in priv), JSON.stringify(priv));
+  const plain = await mk('inv-plain', { name: 'Trần Văn Ánh', email: 'anh@example.test' });
+  check('  neither name given: exactly as before', plain.name === 'Trần Văn Ánh' && plain.type === 'personal', JSON.stringify(plain));
 }
 
 section('the token is cached until five minutes before its 24 hours');

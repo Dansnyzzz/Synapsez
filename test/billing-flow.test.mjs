@@ -182,6 +182,8 @@ section('quotes');
   const fresh = await orders.quote(u.id, { plan: 'plus', period: 'month' }, { now: NOW });
   check('a new Plus month at 25655.85 is 129,000đ', fresh.kind === 'new' && fresh.priceVnd === 129000 && fresh.totalVnd === 129000 && fresh.creditVnd === 0, JSON.stringify(fresh));
   check('  the quote carries the rate, its source and the balance', fresh.rate === 25655.85 && fresh.rateSource === 'erapi' && fresh.balanceVnd === 0 && fresh.startsAt === NOW.toISOString());
+  // The checkout says the day the plan renews; it is worked out here (Vietnam time), never in the browser.
+  check('  and the instant the new period ends, one month on from now', fresh.renewsAt === periodEnd(NOW, 'month').toISOString(), String(fresh.renewsAt));
 
   const half = new Date('2026-11-16T12:00:00Z');
   await store.saveSubscription(subRow(u.id, { periodStart: new Date('2026-11-01T12:00:00Z'), periodEnd: new Date('2026-12-01T12:00:00Z') }));
@@ -196,9 +198,11 @@ section('quotes');
   await store.saveSubscription(subRow(u.id, { periodStart: new Date('2026-11-01T12:00:00Z'), periodEnd: new Date('2026-12-01T12:00:00Z') }));
   const yr = await orders.quote(u.id, { plan: 'plus', period: 'year' }, { now: mid });
   check('month to year on the same plan is an upgrade', yr.kind === 'upgrade' && yr.priceVnd === 1283000 && yr.creditVnd === 64500 && yr.totalVnd === 1218500, JSON.stringify(yr));
+  check('  an upgrade starts a new period today, so a year on from now', yr.renewsAt === periodEnd(mid, 'year').toISOString(), String(yr.renewsAt));
   await store.saveSubscription(subRow(u.id, { plan: 'plus', period: 'year', paidVnd: 1283000, periodStart: new Date('2026-11-01T12:00:00Z'), periodEnd: new Date('2027-11-01T12:00:00Z') }));
   const back = await orders.quote(u.id, { plan: 'plus', period: 'month' }, { now: mid });
   check('year to month is later', back.kind === 'later' && back.totalVnd === 0, JSON.stringify(back));
+  check('  a later change has no renewal date (nothing is bought now)', back.renewsAt === null, String(back.renewsAt));
   const bad = await caught(orders.quote(u.id, { plan: 'gold', period: 'month' }, { now: NOW }));
   check('a plan that does not exist is a 422', bad?.status === 422, String(bad));
   // In grace the same terms are the renewal itself (Renew now), not "later": Task 10 found the checkout offered nothing to pay.
@@ -206,6 +210,7 @@ section('quotes');
   const inGrace = new Date('2026-11-02T12:00:00Z');
   const renew = await orders.quote(u.id, { plan: 'plus', period: 'month' }, { now: inGrace });
   check('in grace, the same plan and period is a renewal at full price', renew.kind === 'renewal' && renew.creditVnd === 0 && renew.totalVnd === 129000, JSON.stringify(renew));
+  check('  a renewal continues the old period: it renews one month after the old end', renew.renewsAt === '2026-12-01T12:00:00.000Z', String(renew.renewsAt));
   const dearer = await orders.quote(u.id, { plan: 'pro', period: 'month' }, { now: inGrace });
   check('  another plan in grace is still an upgrade, and the credit is 0 (nothing of the ended period is left)', dearer.kind === 'upgrade' && dearer.creditVnd === 0, JSON.stringify(dearer));
 

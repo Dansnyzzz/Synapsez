@@ -1,7 +1,8 @@
-import { t, currentLanguage, localeTag } from './i18n.js';
+import { t, localeTag } from './i18n.js';
 import { escapeHtml as esc } from './markdown.js';
-import { vnd, usd, planName, minutes, clock } from './billing-format.js';
+import { vnd, planName, minutes, clock } from './billing-format.js';
 import { planIconHtml, savePercent, priceHtml, cardToggleHtml, listHtml, teamCardHtml, rateStamp } from './billing-plan-cards.js';
+import { checkoutHtml as checkoutViewHtml, FORM_FIELDS } from './billing-checkout-view.js';
 
 /**
  * The plans sheet and the checkout by SePay VietQR (billing preview, 2026-11-14) — one lazy
@@ -84,11 +85,8 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     dialog.addEventListener('click', onClick);
     dialog.addEventListener('change', onChange);
     dialog.addEventListener('keydown', onKey);
-    // Save is the billing form's submit button, so a click and Enter in a field both arrive here, once.
-    dialog.addEventListener('submit', (event) => {
-      event.preventDefault();
-      if (/** @type {HTMLElement} */ (event.target).matches?.('form[data-profile]')) void saveProfile();
-    });
+    // The billing form is saved with the order (Subscribe), so a form submit by itself goes nowhere.
+    dialog.addEventListener('submit', (event) => event.preventDefault());
     return dialog;
   }
 
@@ -111,8 +109,12 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
   function keepTyped() {
     const form = /** @type {HTMLFormElement | null} */ (dialog?.querySelector('form[data-profile]'));
     if (!form || !checkout) return;
-    const value = (name) => /** @type {HTMLInputElement} */ (form.elements.namedItem(name))?.value ?? '';
-    checkout.draft = { name: value('name'), email: value('email'), country: value('country'), address: value('address'), taxCode: value('tax') };
+    checkout.draft = typed(form);
+  }
+
+  /** What is in the billing form, by the profile's own keys, as typed (not yet trimmed). */
+  function typed(form) {
+    return Object.fromEntries(FORM_FIELDS.map((f) => [f.key, /** @type {HTMLInputElement} */ (form.elements.namedItem(f.input))?.value ?? '']));
   }
 
   /* ── loading ──────────────────────────────────────────────────────── */
@@ -289,18 +291,12 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       <div class="plans__cards">${ORDER.map(cardHtml).join('')}</div>${paygHtml()}${rateHtml()}`;
   }
 
-  /** Monthly | Yearly in the checkout, a radio group with one tab stop (arrow keys move inside it). The plans sheet has one in each paid card. */
-  function periodHtml(className, label, prices) {
-    return `<div class="${className}" role="radiogroup" aria-label="${esc(label)}">${['month', 'year']
-      .map((p) => `<button type="button" role="radio" data-period="${p}" aria-checked="${p === period}" tabindex="${p === period ? 0 : -1}"${prices && laterQuote(p) ? ' disabled' : ''}><span>${esc(t(`billing.period.${p}`))}</span>${prices ? `<span class="plans__periodprice">${esc(prices[p])}</span>` : ''}</button>`)
-      .join('')}</div>`;
-  }
-
   /* ── the checkout ─────────────────────────────────────────────────── */
   async function startCheckout(plan, chosen) {
     period = chosen;
     view = 'checkout';
-    checkout = { plan, quotes: null, useBalance: true, editing: !data?.account?.profile, error: null, draft: null };
+    // The consent box starts empty for every checkout: it speaks for this order, not for the last one.
+    checkout = { plan, quotes: null, useBalance: true, consent: false, error: null, draft: null };
     paint('title');
     await loadQuotes();
   }
@@ -343,87 +339,75 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     return Math.max(0, q.totalVnd - (useBalanceFor(q) ? Math.min(q.balanceVnd, q.totalVnd) : 0));
   }
 
-  function profileHtml() {
-    const p = profileOf();
-    const f = checkout.draft || p || {};
-    if (!checkout.editing && p) {
-      const rows = [p.name, p.email, p.country, p.address, p.taxCode ? t('billing.profile.taxLine', { code: p.taxCode }) : ''].filter(Boolean);
-      return `<section class="checkout__side" aria-labelledby="bill-heading"><h3 id="bill-heading">${esc(t('billing.profile.title'))}</h3>
-        <div class="checkout__summary">${rows.map((r) => `<p>${esc(r)}</p>`).join('')}</div>
-        <p><button type="button" class="btn btn--small" data-update-profile>${esc(t('billing.profile.update'))}</button></p></section>`;
-    }
-    const field = (id, key, value, extra = '') => `<div class="field"><label for="bill-${id}">${esc(t(`billing.profile.${key}`))}</label><input id="bill-${id}" name="${id}" value="${esc(value ?? '')}" ${extra}></div>`;
-    return `<section class="checkout__side" aria-labelledby="bill-heading"><h3 id="bill-heading">${esc(t('billing.profile.title'))}</h3>
-      <form data-profile novalidate>
-        <p class="plans__muted">${esc(t('billing.profile.why'))}</p>
-        ${field('name', 'name', f.name, 'autocomplete="name" maxlength="120" required')}
-        ${field('email', 'email', f.email, 'type="email" autocomplete="email" maxlength="254" required')}
-        ${field('country', 'country', f.country, 'autocomplete="country" maxlength="2" required aria-describedby="bill-country-hint" size="3"')}
-        <p id="bill-country-hint" class="plans__muted">${esc(t('billing.profile.countryHint'))}</p>
-        ${field('address', 'address', f.address, 'autocomplete="street-address" maxlength="300"')}
-        ${field('tax', 'tax', f.taxCode, 'inputmode="numeric" maxlength="20" autocomplete="off"')}
-        ${checkout.formError ? `<p class="plans__error" role="alert">${esc(checkout.formError)}</p>` : ''}
-        <p class="plans__actions"><button type="submit" class="btn btn--primary" data-save-profile>${esc(t('billing.profile.save'))}</button>${profileOf() ? ` <button type="button" class="btn" data-cancel-profile>${esc(t('billing.profile.cancel'))}</button>` : ''}</p>
-      </form></section>`;
-  }
-
   function checkoutHtml() {
     if (checkout.error) return `<p class="plans__error" role="alert">${esc(checkout.error)}</p><p><button type="button" class="btn" data-back>${esc(t('billing.back'))}</button></p>`;
     if (!checkout.quotes) return `<p class="plans__muted">${esc(t('common.loading'))}</p>`;
     const q = checkout.quotes[period];
-    const p = planById(checkout.plan);
-    const prices = Object.fromEntries(['month', 'year'].map((x) => [x, checkout.quotes[x].unavailable ? '—' : currentLanguage() === 'vi' || !p ? vnd(checkout.quotes[x].priceVnd) : `${usd(p.usdCents[x])} (${vnd(checkout.quotes[x].priceVnd)})`]));
     const balanceUsed = useBalanceFor(q) ? Math.min(q.balanceVnd, q.totalVnd) : 0;
-    const row = (label, value, cls = '') => `<div class="${cls}"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`;
-    const lines = [
-      row(t('billing.checkout.line', { plan: planName(checkout.plan), period: t(`billing.period.${period}`) }), vnd(q.priceVnd)),
-      q.creditVnd ? row(t('billing.checkout.credit'), `−${vnd(q.creditVnd)}`) : '',
-      balanceUsed ? row(t('billing.checkout.balanceUsed'), `−${vnd(balanceUsed)}`) : '',
-      row(t('billing.checkout.total'), vnd(dueToday()), 'checkout__total'),
-    ].join('');
-    const rateLine = q.rate ? `<p class="plans__muted">${esc(t('billing.checkout.rate', { rate: number(q.rate) }))}</p>` : '';
-    return `<div class="checkout">
-      <section class="checkout__main" aria-labelledby="co-plan">
-        <h3 id="co-plan">${esc(planName(checkout.plan))}</h3>
-        ${periodHtml('checkout__period', t('billing.plans.period'), prices)}
-        ${q.kind === 'later' ? `<p class="plans__muted" role="status">${esc(t('billing.checkout.later'))}</p>` : ''}
-        <dl class="checkout__lines">${lines}</dl>
-        ${rateLine}
-        ${q.balanceVnd > 0 && q.useBalance != null ? `<p class="plans__muted" data-fixed-balance>${esc(t(q.useBalance ? 'billing.checkout.fixedUse' : 'billing.checkout.fixedNot'))}</p>` : ''}
-        ${q.balanceVnd > 0 && q.useBalance == null ? `<label class="checkout__balance"><input type="checkbox" data-use-balance${checkout.useBalance ? ' checked' : ''}> ${esc(t('billing.checkout.useBalance', { balance: vnd(q.balanceVnd) }))}</label>` : ''}
-        ${checkout.orderError ? `<p class="plans__error" role="alert">${esc(checkout.orderError)}</p>` : ''}
-      </section>
-      ${profileHtml()}
-    </div>
-    <div class="plans__foot"><button type="button" class="btn" data-back${busy ? ' disabled' : ''}>${esc(t('billing.back'))}</button>
-      <button type="button" class="btn btn--primary" data-continue${checkout.editing || busy || q.kind === 'later' ? ' disabled' : ''}>${esc(t('billing.checkout.continue'))}</button></div>`;
+    return checkoutViewHtml({ checkout, period, plan: planById(checkout.plan), label: planName(checkout.plan), profile: profileOf(), dueVnd: dueToday(), balanceUsed, busy });
   }
 
+  /**
+   * The profile as the form would send it: trimmed, the country in capitals, an empty optional field as nothing.
+   * @returns {Record<string, string>}
+   */
+  function profileBody(form) {
+    /** @type {Record<string, string>} */
+    const v = Object.fromEntries(Object.entries(typed(form)).map(([k, x]) => [k, x.trim()]));
+    return { ...v, country: v.country.toUpperCase() };
+  }
+
+  /**
+   * Saves the billing information that was typed, as part of subscribing: nothing is sent when it is what the account already
+   * holds. Says in the form what is wrong and returns false, so no order is made on information the server refused.
+   */
   async function saveProfile() {
     const form = /** @type {HTMLFormElement | null} */ ($('form[data-profile]'));
-    if (!form || busy) return;
-    const value = (name) => /** @type {HTMLInputElement} */ (form.elements.namedItem(name)).value.trim();
-    const body = { name: value('name'), email: value('email'), country: value('country'), address: value('address'), taxCode: value('tax') };
-    checkout.draft = { ...body };
+    if (!form || busy) return false;
+    const mine = checkout;
+    const token = flow;
+    const body = profileBody(form);
+    checkout.draft = typed(form);
     if (!body.name || !body.email || !body.country) {
       checkout.formError = t('billing.profile.required');
       paint(null);
       $(`#bill-${!body.name ? 'name' : !body.email ? 'email' : 'country'}`)?.focus();
-      return;
+      return false;
+    }
+    const saved = profileOf();
+    if (saved && FORM_FIELDS.every((f) => (saved[f.key] ?? '') === body[f.key])) {
+      checkout.formError = null;
+      return true;
     }
     busy = true;
+    paint(null);
     try {
-      const saved = await api.billingProfile(body);
-      data.account.profile = saved.profile;
-      checkout.editing = false;
+      const done = await api.billingProfile(body);
+      busy = false;
+      // The sheet was closed or left meanwhile: what was saved is saved, and nothing here may carry on for a screen that is gone.
+      if (!dialog.open || flow !== token || checkout !== mine) return false;
+      data.account.profile = done.profile;
       checkout.formError = null;
       checkout.draft = null;
+      return true;
     } catch (err) {
-      checkout.formError = err.message;
-    } finally {
       busy = false;
+      if (!dialog.open || flow !== token || checkout !== mine) return false;
+      checkout.formError = err.message;
+      paint(null);
+      $('#bill-name')?.focus();
+      return false;
     }
-    paint(checkout.editing ? '#bill-name' : '[data-continue]');
+  }
+
+  /** Subscribe: the form is saved with the order, then the order is made. Off until the consent box is ticked. */
+  async function subscribe() {
+    if (!checkout?.quotes || !checkout.consent || busy) return;
+    const mine = checkout;
+    const token = flow;
+    if (!(await saveProfile())) return;
+    if (!dialog.open || flow !== token || checkout !== mine) return;
+    await makeOrder({ kind: 'plan', plan: checkout.plan, period, useBalance: useBalanceFor(checkout.quotes[period]) }, 'plan');
   }
 
   /* ── an order, its QR and its payment ─────────────────────────────── */
@@ -740,20 +724,7 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       if (view === 'sheet' && dialog.open) paint(null);
       return;
     }
-    if (el.hasAttribute('data-update-profile')) {
-      checkout.editing = true;
-      checkout.draft = null;
-      paint('#bill-name');
-      return;
-    }
-    if (el.hasAttribute('data-cancel-profile')) {
-      checkout.editing = false;
-      checkout.formError = null;
-      checkout.draft = null;
-      paint('[data-continue]');
-      return;
-    }
-    if (el.hasAttribute('data-continue')) return void makeOrder({ kind: 'plan', plan: checkout.plan, period, useBalance: useBalanceFor(checkout.quotes[period]) }, 'plan');
+    if (el.hasAttribute('data-continue')) return void subscribe();
     if (el.dataset.copy) return void copy(el.dataset.copy);
     if (el.hasAttribute('data-cancel')) return void cancelOrder();
   }
@@ -764,6 +735,10 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
       checkout.useBalance = el.checked;
       paint(null);
       $('[data-use-balance]')?.focus();
+    } else if (el.hasAttribute?.('data-consent')) {
+      checkout.consent = el.checked;
+      paint(null);
+      $('[data-consent]')?.focus();
     }
   }
 

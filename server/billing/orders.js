@@ -10,7 +10,7 @@ import crypto from 'node:crypto';
 import { getStore } from '../store/index.js';
 import { PLANS, TOPUP, ORDER_TTL_MS, GRACE_DAYS, isPaidPlan, isPeriod, planVnd } from './plans.js';
 import { newPaymentCode } from './codes.js';
-import { addDays, prorate } from './period.js';
+import { addDays, prorate, periodEnd, renewalEnd } from './period.js';
 import { usdVnd, BillingUnavailable } from './fx.js';
 import { activate, applyPaidOrder, basisOf, isLive, moveKind, planInForce } from './subscriptions.js';
 import { forgetBillable } from './billable.js';
@@ -33,6 +33,7 @@ export function isRenewalTerms(sub, plan, period, now) {
  * own price, total and rate (no exchange rate is needed to read it), `useBalance` (what the order decided: the checkout's checkbox cannot
  * change it) and `dueVnd`, the amount its QR will ask for (total less what already arrived). For anything else those last two are null.
  * `rateAt` is when the rate used was read, or, for a locked order, when the order (and so its rate) was made.
+ * `renewsAt` is when the period this would start ends, so the checkout can say the day the plan renews (null for `later`: nothing starts now).
  */
 export async function quote(userId, { plan, period }, { now = new Date() } = {}) {
   if (!isPaidPlan(plan)) throw Object.assign(new Error('That plan is not available.'), { status: 422 });
@@ -72,6 +73,8 @@ export async function quote(userId, { plan, period }, { now = new Date() } = {})
     useBalance: open ? open.useBalance : null,
     dueVnd: open ? dueOf(open, state.balanceVnd) : null,
     startsAt: (kind === 'later' ? sub.periodEnd : now).toISOString(), basis: basisOf(sub, now),
+    // A renewal continues the old period (as applyPaidOrder will); anything else starts a new one today.
+    renewsAt: kind === 'later' ? null : (kind === 'renewal' ? renewalEnd(sub.anchorAt ?? sub.periodStart, sub.periodEnd, period) : periodEnd(now, period)).toISOString(),
   };
 }
 
