@@ -41,7 +41,7 @@ function parse(markup) {
  * onto a canvas. What is removed is what could still be live if the markup were reused
  * elsewhere, so that the PNG matches what is shown: scripts, `foreignObject`, every element
  * outside the SVG namespace (an XHTML `<iframe srcdoc>` in a strictly-parsed file), every
- * attribute outside it but xlink and `xml:space`/`xml:lang`, an attribute with no namespace and a colon in its name
+ * attribute outside it but xlink and the `xml:` ones (`xml:space`, `xml:lang`), an attribute with no namespace and a colon in its name
  * (`inkscape:label` in a file read as a page), `on*` attributes, any link that is not a `#fragment` or a
  * `data:image/` URL, and animations that would set a link or a handler.
  *

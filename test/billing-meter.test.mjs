@@ -1077,6 +1077,21 @@ section('a share search the free engines answer is held again on the balance (fi
   const whole = await CLOUD_IMPLEMENTATIONS.web_fetch({ url: refusedUrl }, { userId: holder.id });
   check('  end to end, the read is charged to the balance, not refused', /read through Firecrawl/.test(whole) && (await balanceOf(holder)) < 10_000 && (await shareOf(holder)) === 0, `${whole.slice(0, 40)} ${await balanceOf(holder)}`);
   await reset();
+
+  // Final review N1: Google has no paid key, so a charged search past its daily free quota must not ask it — the deployment's
+  // Gemini key would be used past its free grounding quota with nothing charged for it.
+  process.env.GEMINI_API_KEY = 'gemini-test-key';
+  process.env.SEARCH_ORDER = 'google, duckduckgo';
+  await tiers.exhaust('google');
+  meter.forgetFreePools();
+  const pastGoogle = await fresh();
+  stubWeb({ 'generativelanguage.googleapis.com': () => json({ candidates: [{ content: { parts: [{ text: 'x' }] } }] }) });
+  await CLOUD_IMPLEMENTATIONS.web_search({ query: 'google is spent', depth: 'quick' }, { userId: pastGoogle.id });
+  check("a charged search with Google's daily free quota spent does not ask Google (it has no paid key)", !asked.some((u) => u.includes('generativelanguage')), asked.join(' '));
+  delete process.env.GEMINI_API_KEY;
+  delete process.env.SEARCH_ORDER;
+  await query("DELETE FROM rate_limits WHERE bucket LIKE 'free:google%'");
+  await reset();
   delete process.env.TAVILY_API_KEY;
   delete process.env.FIRECRAWL_API_KEY;
   await pool.warmPools();

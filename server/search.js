@@ -37,7 +37,7 @@ import { log } from './util/trace.js';
 import { googleDataInScope } from './googleData.js';
 import { allowance, spend, take, mayMeter, countMetered, exaMills, exaSpent } from './freeTier.js';
 import { firecrawlSearch } from './firecrawl.js';
-import { poolHas, warmPools } from './keyPool.js';
+import { poolHas, warmPools, isPooled } from './keyPool.js';
 import { throughPool, chargeTo, refusal, refusesKey } from './keyCall.js';
 
 const DEFAULT_ORDER = ['exa', 'firecrawl', 'google', 'duckduckgo', 'tavily', 'brave'];
@@ -131,7 +131,9 @@ const standAside = (why) => Object.assign(new Error(why), { skip: true });
 async function metered(service, ask, cost) {
   if (!ask.mayMeter) throw standAside(`${service}: this account's share of this month's searches is used`);
   const room = await allowance(service);
-  if (room.left < cost && !ask.paid) throw standAside(`${service}: the free allowance for this period is used`);
+  // Only a pooled service has a paid key to go on to. Google has none, so its daily free cap holds for a charged search too:
+  // past it the deployment's Gemini key would be billed for grounding with nothing charged (final review N1, 2026-11-17).
+  if (room.left < cost && !(ask.paid && isPooled(service === 'firecrawl_search' ? 'firecrawl' : service))) throw standAside(`${service}: the free allowance for this period is used`);
   ask.drew = true;
   return room;
 }

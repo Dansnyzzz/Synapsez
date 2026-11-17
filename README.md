@@ -1320,7 +1320,7 @@ aside until it resets while DuckDuckGo and Stack Exchange carry on.
   (never fewer than 10 counted), and kept between 30 and 900. It is stored (setting `free_shares:<month>`), raised
   if a key is added, never lowered, shown in Settings → Usage with how it was worked out, and the cloud
   computer's share is worked out the same way (at least 133 thousandths of a dollar, at most `E2B_ACCOUNT_SHARE`).
-  A newcomer (no count last month) whose first metered search is on day *d* gets the days that are left, from the reserve; an account counted last month never does. The figure is recomputed at most every ten minutes or when a key is added or removed, and is written so that it can only rise. Past its share, its
+  A newcomer (no count last month) whose first metered search is on day *d* gets the days that are left, from the reserve; an account counted last month never does, and neither does an account on a paid plan, which is counted from day 1 when it first reaches the share so its larger-of-the-two is never cut short. The figure is recomputed at most every ten minutes or when a key is added or removed, and is written so that it can only rise. Past its share, its
   searches use the free engines. `FREE_TIER_USER_DAILY` was replaced in 1.30.0 and is no longer read.
 - **The same search, asked again within ten minutes,** is answered from memory and spends nothing.
 - **Administrators see each service's use** this period in Settings → People → *Free allowances* (in the
