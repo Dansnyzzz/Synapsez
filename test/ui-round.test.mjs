@@ -184,6 +184,19 @@ section('Usage: the Overview adds up, and warns only about what is being spent')
   await page.waitForTimeout(400);
   const tones = await page.evaluate(() => [...document.querySelectorAll('#usage-panel [data-free-share] .usage__bar')].map((b) => b.className));
   check('  a full share is "out" and one past 80% is "close", the same colours and thresholds as every other row', /is-out/.test(tones[0]) && !/is-(close|out)/.test(tones[1]) && /is-close/.test(tones[2]), tones.join(' | '));
+  // A paid plan: the bars count the plan's month and the share together over the larger of the two, and a dry pool is charged.
+  const paidCard = { ...report().freeShare, withPlan: true, billable: true, dry: true, searches: { used: 400, share: 400 }, machine: { usedMills: 322, shareMills: 2000 } };
+  answer = { ...report(), freeShare: paidCard };
+  await page.click('#usage-panel [data-refresh]');
+  await page.waitForTimeout(400);
+  const planText = await page.evaluate(() => document.querySelector('#usage-panel [data-free-share]')?.textContent.replace(/\s+/g, ' ') || '');
+  check('a paid account\'s card says the plan and the free share are counted together: 400 / 400', /Searches this month \(the free share included\): 400 \/ 400/.test(planText) && /Cloud computer this month \(the free share included\): .+ \/ .+/.test(planText) && !/Searches: \d+ of/.test(planText), planText.slice(0, 300));
+  check('  and a billable account with dry free keys is told its searches are charged, not that free engines answer', /charged to your balance/.test(planText) && !/free engines/.test(planText), planText.slice(0, 400));
+  answer = { ...report(), freeShare: { ...report().freeShare, dry: true } };
+  await page.click('#usage-panel [data-refresh]');
+  await page.waitForTimeout(400);
+  const dryText = await page.evaluate(() => document.querySelector('#usage-panel [data-free-share]')?.textContent.replace(/\s+/g, ' ') || '');
+  check('  an account that is not billable still reads the free-engines line', /Searches use the free engines until/.test(dryText) && !/charged to your balance/.test(dryText), dryText.slice(0, 400));
   answer = report();
   await page.click('#usage-panel [data-refresh]');
   await page.waitForTimeout(400);

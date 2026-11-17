@@ -2805,8 +2805,12 @@ so topping up does not take it away.
 **The order a call is paid from:** the plan's included month, then the free share, then the balance, and refused
 only in `live` when none of them can hold it. A plan's own amount is used before the share, so what the share adds
 for a plan is S minus P (nothing when P is the larger). The share is used only while the free keys of that service have
-room: when they run dry, a paying account's call is charged to its balance and may go to the paid key, never refused
-and never sent to a worse engine. The paid key is always the last one used. With `FREE_TIER_ONLY` off (the ceilings
+room: when they run dry, a paying account's call is charged to its balance and may go to the paid key, and is not refused
+just because the free keys ran out, as long as the balance can cover it. A search the share pays for is held to the metered
+engines ahead of the first free one in the chain (Exa and Firecrawl's search by default), because Google and DuckDuckGo count
+nothing; when one of them stands aside and a free engine answers, the search is held again on the balance. So a billable
+account's search is not sent to a free engine in place of a metered one when a paid search key is set. The paid key is always
+the last one used. With `FREE_TIER_ONLY` off (the ceilings
 lifted) there is no share step, and billing works as before this release.
 
 Past an allowance, or with no plan, a charge comes from the balance, at these prices at the anchor
@@ -2896,6 +2900,7 @@ seen to work against the real thing:
 - SePay's e-invoice API, which is built and switched off;
 - E2B's list of running machines, used for the capacity line on the administrators' card;
 - a real Exa key check (the pooled keys' plan and use);
+- the share step against real keys: the free share, its fall-back to the balance when the free keys are dry, and the paid keys;
 - concurrency on real Postgres: the tests run on PGlite, which executes one statement at a time, so
   two charges at the same instant have been argued from the SQL, not observed;
 - the copy fallback in a browser that refuses the clipboard;

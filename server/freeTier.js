@@ -158,9 +158,9 @@ function defaultLimit(service) {
  * service with several keys, the sum over them. Unbounded when the ceilings are
  * off, or when the count cannot be read — the services with no card on file refuse
  * by themselves once they are spent. A `billed` one does not, so an unreadable count
- * is none left (HAR-009).
+ * is none left (HAR-009). `unread` says the figure is that guess, which a caller that keeps figures should not keep.
  *
- * @returns {Promise<{ left: number, limit: number }>}
+ * @returns {Promise<{ left: number, limit: number, unread?: boolean }>}
  */
 export async function allowance(service, now = new Date()) {
   const tier = TIERS[service];
@@ -174,7 +174,7 @@ export async function allowance(service, now = new Date()) {
     const used = await getStore().readCounter(bucketOf(service, now).bucket);
     return { left: Math.max(0, limit - used), limit };
   } catch (err) {
-    return { left: tier.billed && !noDatabase(err) ? 0 : Infinity, limit: defaultLimit(service) };
+    return { left: tier.billed && !noDatabase(err) ? 0 : Infinity, limit: defaultLimit(service), unread: true };
   }
 }
 

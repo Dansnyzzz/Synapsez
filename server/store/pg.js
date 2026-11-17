@@ -7041,7 +7041,7 @@ export function createPgStore(connectionString) {
      * read-then-write it replaces let the later writer lower it. Returns the row as stored.
      *
      * @param {string} key
-     * @param {{ month: string, searches: number, machineMills: number, capacity: { searches: number, machineMills: number }, people: any, at: string }} figure
+     * @param {{ month: string, searches: number, machineMills: number, capacity: { searches: number, machineMills: number }, people: any, committed?: { searches: number, machineMills: number }, at: string }} figure
      */
     async raiseSetting(key, figure) {
       const num = (path, from) => `COALESCE((${from}#>>'${path}')::numeric, 0)`;

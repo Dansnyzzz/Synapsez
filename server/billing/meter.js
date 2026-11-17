@@ -27,7 +27,8 @@ import { catchUpChanges, planInForce } from './subscriptions.js';
 import { BILLABLE_MAX, BILLABLE_MS, billableCache, forgetBillable } from './billable.js';
 import { freeTierOnly, periodOf } from '../freeTierPeriod.js';
 import { allowance, countMetered } from '../freeTier.js';
-import { searchShareOf, machineShareOf, searchCapacityLeft, noteArrival, MACHINE_MILLS_PER_HOUR } from '../freeShares.js';
+import { keysVersion } from '../keyPool.js';
+import { monthShares, accountShares, searchShareOf, machineShareOf, searchCapacityLeft, noteArrival, MACHINE_MILLS_PER_HOUR } from '../freeShares.js';
 
 /** How long a metered call waits for the mail of a plan change it made; the mail then finishes by itself. */
 const TELL_MS = 8_000;
@@ -138,19 +139,45 @@ const freePools = new Map();
 export const forgetFreePools = () => freePools.clear();
 
 /**
+ * Forget one service's figure, as a fallback to the balance does: the pool said there was room and there was none, so the next
+ * hold asks again rather than trusting it for the rest of the minute. A key is `<service>:<month>:<keys version>[:engines]`.
+ *
+ * @param {string} service
+ */
+export function forgetFreePool(service) {
+  for (const key of [...freePools.keys()]) if (key.startsWith(`${service}:`)) freePools.delete(key);
+}
+
+/**
  * What the free keys of one service have left this month: `'exa'`; `'firecrawl_scrape'` (a page read) or `'firecrawl_more'`
- * (a map or a crawl), each with Firecrawl's whole credits; `'search'`, every pooled engine together. The share is of free
- * capacity that exists (owner, 2026-11-17: once it is used up, use goes to the paid key), so a dry pool is no share.
+ * (a map or a crawl), each with Firecrawl's whole credits; `'search'`, the metered engines a share search can reach: those
+ * ahead of the first free one in the chain (search.js `shareSearchEngines`), because Google and DuckDuckGo answer without
+ * counting anything, so room behind them is never reached by a call that holds the share. The share is of free capacity that
+ * exists (owner, 2026-11-17: once it is used up, use goes to the paid key), so a dry pool is no share.
+ *
+ * Kept only when it was really read: a count that failed says nothing (an unbounded one is no figure, and a billed service's
+ * 0 from an error is not "dry"), so it is asked again. The key holds the keys' version, so a key added or taken away is seen.
  */
 async function freePoolLeft(service, now) {
-  const key = `${service}:${periodOf('month', now).key}`;
+  let engines = '';
+  let reach = null;
+  if (service === 'search') {
+    reach = await (await import('../search.js')).shareSearchEngines();
+    engines = `:${reach.join(',')}`;
+  }
+  const key = `${service}:${periodOf('month', now).key}:${await keysVersion()}${engines}`;
   const hit = freePools.get(key);
   if (hit && Date.now() - hit.at < FREE_POOL_MS) return hit.left;
   let left;
-  if (service === 'search') left = await searchCapacityLeft(now);
-  else if (service === 'exa') left = (await allowance('exa', now)).left;
-  else left = Math.min((await allowance(service, now)).left, (await allowance('firecrawl', now)).left);
-  freePools.set(key, { at: Date.now(), left });
+  let read = true;
+  if (service === 'search') ({ left, read } = reach.length ? await searchCapacityLeft(now, reach) : { left: 0, read: true });
+  else {
+    const rooms = [await allowance(service, now)];
+    if (service !== 'exa') rooms.push(await allowance('firecrawl', now));
+    left = Math.min(...rooms.map((r) => r.left));
+    read = rooms.every((r) => !r.unread);
+  }
+  if (Number.isFinite(left) && read) freePools.set(key, { at: Date.now(), left });
   return left;
 }
 
@@ -164,13 +191,21 @@ async function searchRoom(userId, now, plan, service) {
   if (!freeTierOnly()) return 0;
   try {
     if (service && !((await freePoolLeft(service, now)) > 0)) return 0;
+    const own = plan.plan === 'free' ? 0 : PLANS[plan.plan].searches;
+    // The deployment's figure first (kept ten minutes): a plan at least as large as the whole share has no room beyond it, so
+    // the account's own counters need not be read at all.
+    if (own > 0 && !((await monthShares({ now })).searches > own)) return 0;
     const { share, used, unread } = await searchShareOf(userId, now);
     if (unread) {
       log.warn('billing: the free share could not be read, so the call is charged', {});
       return 0;
     }
-    const own = plan.plan === 'free' ? 0 : PLANS[plan.plan].searches;
-    return Number.isFinite(share) ? Math.max(0, share - own - used) : 0;
+    const room = Number.isFinite(share) ? Math.max(0, share - own - used) : 0;
+    // A paid plan that reaches its share is not worked out for the days left: it gets the whole of it (owner: the larger of the
+    // two). The day is noted here, at the share step, so only an account that reaches the share pays the write; once the first
+    // share count is in, the count's own note is a no-op (setCounterIfAbsent).
+    if (room > 0 && own > 0 && used === 0) await noteArrival('search', userId, now, 1);
+    return room;
   } catch (err) {
     warn('the free share could not be read', err);
     return 0;
@@ -181,13 +216,16 @@ async function searchRoom(userId, now, plan, service) {
 async function machineRoom(userId, now, plan) {
   if (!freeTierOnly()) return 0;
   try {
+    const own = plan.plan === 'free' ? 0 : Math.round((PLANS[plan.plan].sandboxMinutes * MACHINE_MILLS_PER_HOUR) / 60);
+    if (own > 0 && !((await monthShares({ now })).machineMills > own)) return 0;
     const { share, used, unread } = await machineShareOf(userId, now);
     if (unread) {
       log.warn('billing: the free machine share could not be read, so the window is charged', {});
       return 0;
     }
-    const own = plan.plan === 'free' ? 0 : Math.round((PLANS[plan.plan].sandboxMinutes * MACHINE_MILLS_PER_HOUR) / 60);
-    return Number.isFinite(share) ? Math.max(0, share - own - used) : 0;
+    const room = Number.isFinite(share) ? Math.max(0, share - own - used) : 0;
+    if (room > 0 && own > 0 && used === 0) await noteArrival('machine', userId, now, 1);
+    return room;
   } catch (err) {
     warn('the free machine share could not be read', err);
     return 0;
@@ -230,11 +268,7 @@ async function takeSearch(ctx, units, { share = true } = {}) {
     const bucket = searchBucket(userId, ctx.month);
     const ends = lasts(ctx.month);
     const total = await store.addToCounter(bucket, units, ends);
-    if (total <= PLANS[plan.plan].searches) {
-      // The day it first uses its month is the day it joined, so the share it reaches later is not worked out for the days left.
-      if (total <= Math.max(3, units * 3)) await noteArrival('search', userId, now);
-      return { source: 'included', units, bucket, ends };
-    }
+    if (total <= PLANS[plan.plan].searches) return { source: 'included', units, bucket, ends };
     await store.addToCounter(bucket, -units, ends);
   }
   if (share && (await searchRoom(userId, now, plan, ctx.service)) > 0) return SHARE;
@@ -296,7 +330,9 @@ async function giveSearch(ctx, piece, n) {
  * A store that fails lets the call go ahead unpaid.
  *
  * `service` names the free keys that would serve the call (`freePoolLeft`): with none left the share is not used and the
- * call is charged, so it may go on the paid key. Left out, the share is taken without asking.
+ * call is charged, so it may go on the paid key. It is required unless `share` is false: a share taken without asking what
+ * the free keys have left is free use of whatever answers. A call that leaves it out throws in development and in tests (a
+ * bug to fix where it is made), and in production takes no share, so it is charged rather than made free.
  *
  * @param {string|null|undefined} userId
  * @param {{ units?: number, now?: Date, service?: 'exa'|'firecrawl_scrape'|'firecrawl_more'|'search', share?: boolean }} [options]
@@ -304,6 +340,11 @@ async function giveSearch(ctx, piece, n) {
  * @returns {Promise<Hold>}
  */
 export async function holdSearch(userId, { units = 1, now = new Date(), service, share = true } = {}) {
+  if (share !== false && !service) {
+    if (process.env.NODE_ENV !== 'production') throw new Error('holdSearch needs a service, or share: false');
+    warn('a search hold named no service, so it takes no share', new Error('no service'));
+    share = false;
+  }
   try {
     if (!(await isBillable(userId, { now }))) return NOT_BILLED;
     const id = String(userId);
@@ -344,6 +385,38 @@ export async function holdSearch(userId, { units = 1, now = new Date(), service,
   }
 }
 
+/**
+ * Run one metered search under a hold, and hold it again on the balance when the share's pool turns out to be dry. A share
+ * hold is made when the pooled engines the share can reach have room (`freePoolLeft`), but one of them may stand aside all the
+ * same (its key is full, the count moved since the figure was read) and a free engine answers: nothing metered ran, so nothing
+ * would be counted, and the account would never reach its balance. Seen here (`aside` with nothing metered), the hold is released
+ * (it counts nothing), the figure is forgotten, and the call is held again with `share: false` and run again, charged and with
+ * `paid` as that hold says. The first run spent nothing, so nothing is charged twice. Settles what the last run says it used.
+ *
+ * @template T
+ * @param {string|null|undefined} userId
+ * @param {{ service?: 'exa'|'firecrawl_scrape'|'firecrawl_more'|'search' }} options the free keys that would serve it
+ * @param {(hold: Hold, again: boolean) => Promise<{ value: T, units: number, aside?: boolean }>} run `units`: how many were really
+ *   used; `aside`: a metered engine stood aside; `again` is true for the second run, which should skip any memory of the first
+ * @returns {Promise<{ value: T, hold: Hold }>}
+ */
+export async function heldSearch(userId, { service = 'search' } = {}, run) {
+  let hold = await holdSearch(userId, { service });
+  let out;
+  try {
+    out = await run(hold, false);
+    if (hold.source === 'share' && !(out.units > 0) && out.aside) {
+      await hold.release();
+      forgetFreePool(service);
+      hold = await holdSearch(userId, { share: false });
+      out = await run(hold, true);
+    }
+    return { value: out.value, hold };
+  } finally {
+    await hold.settle(out?.units ?? 0);
+  }
+}
+
 /* ── the cloud computer ─────────────────────────────────────────────── */
 
 /**
@@ -372,11 +445,8 @@ export async function holdSandbox(userId, seconds, { now = new Date(), shareCost
     if (plan.plan !== 'free') {
       const bucket = sandboxBucket(id, month);
       const total = await store.addToCounter(bucket, secs, ends);
-      if (total <= PLANS[plan.plan].sandboxMinutes * 60) {
-        // As for searches: the first day it uses its included time is the day it joined, for the share it reaches later.
-        if (total <= secs * 3) await noteArrival('machine', id, now);
-        piece = { source: 'included', bucket, ends };
-      } else await store.addToCounter(bucket, -secs, ends);
+      if (total <= PLANS[plan.plan].sandboxMinutes * 60) piece = { source: 'included', bucket, ends };
+      else await store.addToCounter(bucket, -secs, ends);
     }
     if (!piece) {
       if (shareCost > 0 && (await machineRoom(id, now, plan)) >= shareCost && (await allowance('e2b', now)).left >= shareCost) {
@@ -460,6 +530,44 @@ export async function chargeStorageDay({ now = new Date() } = {}) {
     }
   }
   return out;
+}
+
+/* ── the Usage card's free share ────────────────────────────────────── */
+
+/**
+ * The free-share card of Settings → Usage (freeShares.js `accountShares`), for what the meter really allows. A billable account
+ * on a paid plan is paid by its plan's month first and then by the share beyond it (`searchRoom`), so its allowance is the
+ * larger of the two, and what it has used is the plan's month and the share together: a Plus account with a share of 400 that
+ * used 150 included and 250 from the share has used 400 of 400, not 250 of 400, and its next search is charged. The card says so
+ * (`withPlan`). Any billable account (a Free one with a balance too) is charged, not sent to a free engine, when the free keys
+ * run dry, which the card says as well (`billable`). Every other account's card is as it was. Never throws past the base card.
+ *
+ * @param {{ id: string, role?: string }} user
+ * @param {{ now?: Date }} [options]
+ * @returns {Promise<any>}
+ */
+export async function usageShare(user, { now = new Date() } = {}) {
+  const card = await accountShares(user.id, now);
+  try {
+    if (!(await isBillable(user.id, { now, user }))) return card;
+    const plan = await planInForce(user.id, { now });
+    const out = { ...card, billable: true, withPlan: false };
+    if (plan.plan === 'free') return out;
+    const own = PLANS[plan.plan];
+    const month = monthOf(plan, now);
+    const store = getStore();
+    const [searched, ran] = await Promise.all([store.readCounter(searchBucket(user.id, month)), store.readCounter(sandboxBucket(user.id, month))]);
+    const ownMills = Math.round((own.sandboxMinutes * MACHINE_MILLS_PER_HOUR) / 60);
+    out.withPlan = true;
+    out.searches = { used: searched + card.searches.used, share: Number.isFinite(card.searches.share) ? Math.max(card.searches.share, own.searches) : own.searches };
+    // Seconds of the plan's hours, in the mills the share is kept in.
+    const ranMills = Math.round((ran * MACHINE_MILLS_PER_HOUR) / 3600);
+    out.machine = { usedMills: ranMills + card.machine.usedMills, shareMills: card.machine.shareMills === null ? null : Math.max(card.machine.shareMills, ownMills) };
+    return out;
+  } catch (err) {
+    warn('the free share card could not be worked out for a plan', err);
+    return card;
+  }
 }
 
 /* ── the Billing tab's "This period" ────────────────────────────────── */

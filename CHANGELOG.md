@@ -4,13 +4,17 @@
 
 **The Free plan keeps its free share, even with a balance.** Each month's free searches and cloud computer time are used first, then the balance; topping up no longer takes them away.
 
-**A paid plan gets the larger of the free share and its own amount.** Plus is 150 searches and 4 h, Pro 250 and 6 h, Max 450 and 12 h; where the month's free share is larger, that is what the plan has. The order is the plan's included month, then the free share, then the balance, and the paid key is always the last one used. The share is used only while that service's free keys have room: when they run dry, a paying account's call is charged to its balance and is never refused or sent to a worse engine. With the ceilings lifted (`FREE_TIER_ONLY` off) there is no share step and billing works as before.
+**A paid plan gets the larger of the free share and its own amount.** Plus is 150 searches and 4 h, Pro 250 and 6 h, Max 450 and 12 h; where the month's free share is larger, that is what the plan has. The order is the plan's included month, then the free share, then the balance, and the paid key is always the last one used. The share is used only while that service's free keys have room: when they run dry, a paying account's call is charged to its balance (not refused just because the free keys ran out, as long as the balance can cover it), and its searches go to the metered engines on the owner's paid key rather than to Google or DuckDuckGo, when a paid search key is set. A search the free share paid for is held to the metered engines ahead of the first free one in the chain (Exa and Firecrawl by default); if one of them stands aside and a free engine answers, the search is held again on the balance. With the ceilings lifted (`FREE_TIER_ONLY` off) there is no share step and billing works as before.
 
 **What paid plans are owed is set aside first.** It is taken out of the free capacity before the even split, so the free keys are never promised twice.
 
 **The plans sheet shows the real figures.** The Free card shows the viewer's own free share this month (and leaves out the computer line when that share is 0 or unknown); each paid card shows the larger figure with "(the free share included)".
 
-**Not verified live:** the new Vietnamese text.
+**The Usage card shows what the meter allows a paid account.** A Plus account whose share is 400 and that has used 150 included and 250 from the share sees "Searches this month (the free share included): 400 / 400", not 250 of 400; the same for the cloud computer. When the free keys are dry, a billable account is told its next searches are charged to its balance.
+
+**Smaller fixes.** An Exa read past the free allowance goes on the paid key when the call is charged; a charged Firecrawl read whose free share is spent goes on the paid key; a plan anchored mid-month gets the whole share when it reaches it; a paid plan at least as large as the share no longer reads its share counters on every search; SVGs from Inkscape (prefixed attributes) and `xml:space` are drawn.
+
+**Not verified live:** the new Vietnamese text, and the share step (the free share, the fallback to the balance and the paid keys) against real keys.
 
 ## 2026-11-17 — SVG drawings open as pictures, and copy as pictures (1.31.2)
 
@@ -22,7 +26,7 @@
 
 ## 2026-11-17 — Exa keys from other accounts are let in (1.31.1)
 
-**A new Exa key is checked where it will be used.** Adding a key from another Exa account — each account its own team — was refused with "Exa refused this key." because the check asked Exa's Websets API, which answered 401 INVALID_API_KEY for a key that Exa's search takes (the owner's live report, 2026-11-17). Now a 401 from Websets is asked again, once, of `POST /search` with an empty body: Exa checks the key before the request, so an unknown key is still 401 (refused) and a known one is told the request is incomplete (let in) — no search is run and no credit spent. Search down or out of reach is "try again", never a refusal.
+**A new Exa key is checked where it will be used.** Adding a key from another Exa account — each account its own team — was refused with "Exa refused this key." because the check asked Exa's Websets API, which answered 401 INVALID_API_KEY for a key that Exa's search takes (the owner's live report, 2026-11-17). Now a 401 from Websets is asked again, once, of `POST /search` with an empty body: Exa checks the key before the request, so an unknown key is still 401 (refused) and a known one is told the request is incomplete (let in). Search down or out of reach is "try again", never a refusal.
 
 ## 2026-11-17 — A leaner Users page, the guide, keys one at a time, compaction by size (1.31.0)
 

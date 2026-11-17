@@ -67,29 +67,39 @@ const arrivalBucket = (kind, userId, now) => ({ bucket: `free:arrive:${kind}:${p
  * one statement, so it can be repeated until it has been written (the caller does, for an account's
  * first few counts). A day that is missing means the whole share, never a smaller one.
  */
-export async function noteArrival(kind, userId, now = new Date()) {
+export async function noteArrival(kind, userId, now = new Date(), day = now.getUTCDate()) {
   try {
     const { bucket, ends } = arrivalBucket(kind, userId, now);
-    await getStore().setCounterIfAbsent(bucket, now.getUTCDate(), ends);
+    await getStore().setCounterIfAbsent(bucket, day, ends);
   } catch {
     /* tried again with the account's next count */
   }
 }
 
-/** What the keys can do this month, in searches and in mills of machine time, and how many searches are left. */
-async function capacityNow(now) {
+/**
+ * What the keys can do this month, in searches and in mills of machine time, and how many searches are left. `only` names the
+ * engines whose room is counted in `left` (the capacity, which the shares are worked out from, is always every engine's);
+ * `read` is false when an allowance could not be read, so its figure is a guess.
+ *
+ * @param {Date} now
+ * @param {string[]} [only] engines out of exa, tavily, brave and firecrawl
+ */
+async function capacityNow(now, only) {
   let searches = 0;
   let left = 0;
+  let read = true;
   const parts = { exa: ['exa', 'exa'], tavily: ['tavily', 'tavily'], brave: ['brave', 'brave'], firecrawl: ['firecrawl_search', 'firecrawl'] };
   for (const [engine, [service, keyed]] of Object.entries(parts)) {
     // A service with no key at all adds nothing: its default ceiling is a figure for a key that is not there.
     if (!(await keysFor(keyed)).length) continue;
     const one = await allowance(service, now);
     searches += Math.floor(one.limit / SEARCH_COST[engine]);
+    if (only && !only.includes(engine)) continue;
     left += Math.floor(one.left / SEARCH_COST[engine]);
+    if (one.unread) read = false;
   }
   const machine = (await keysFor('e2b')).length ? await allowance('e2b', now) : { limit: 0 };
-  return { searches, left, machineMills: machine.limit };
+  return { searches, left, read, machineMills: machine.limit };
 }
 
 /** Distinct accounts that used something this month or last. */
@@ -230,9 +240,17 @@ export async function machineShareOf(userId, now = new Date()) {
   return { share, used, joinedOn: joinedOn > 1 ? joinedOn : null, unread };
 }
 
-/** What the pooled search engines have left this month, in searches: whether the free keys can still pay a share (billing/meter.js). */
-export async function searchCapacityLeft(now = new Date()) {
-  return (await capacityNow(now)).left;
+/**
+ * What the named search engines have left this month, in searches: whether the free keys can still pay a share (billing/meter.js).
+ * `read` is false when a count failed, so the figure should not be kept.
+ *
+ * @param {Date} [now]
+ * @param {string[]} [engines] the metered engines a share search can reach (search.js `shareSearchEngines`); all of them if left out
+ * @returns {Promise<{ left: number, read: boolean }>}
+ */
+export async function searchCapacityLeft(now = new Date(), engines) {
+  const { left, read } = await capacityNow(now, engines);
+  return { left, read };
 }
 
 /** Everything the Usage card shows for one account. */

@@ -63,28 +63,28 @@ section('who is metered');
   const user = await makeUser('user');
   await withPlan(user);
   await withBalance(user, 50_000);
-  const a = await meter.holdSearch(user.id, { now: T0 });
+  const a = await meter.holdSearch(user.id, { service: 'search', now: T0 });
   const b = await meter.holdSandbox(user.id, 600, { now: T0 });
   check('a non-administrator holding a plan and a balance gets NOT_BILLED in preview', a === meter.NOT_BILLED && b === meter.NOT_BILLED && !a.billed && !a.paid);
   await a.settle(1);
   await a.release();
   check('  and nothing is written, nothing charged', (await ever()) === 0 && (await balanceOf(user)) === 50_000 && (await usage(user, 'search')).u === 0);
   const nobody = await makeUser();
-  check('an administrator with no plan and no balance gets NOT_BILLED', (await meter.holdSearch(nobody.id, { now: T0 })) === meter.NOT_BILLED && (await ever()) === 0);
-  check('no account at all, none either', (await meter.holdSearch(null)) === meter.NOT_BILLED && (await meter.holdSearch('nobody-here')) === meter.NOT_BILLED);
+  check('an administrator with no plan and no balance gets NOT_BILLED', (await meter.holdSearch(nobody.id, { service: 'search', now: T0 })) === meter.NOT_BILLED && (await ever()) === 0);
+  check('no account at all, none either', (await meter.holdSearch(null, { service: 'search' })) === meter.NOT_BILLED && (await meter.holdSearch('nobody-here', { service: 'search' })) === meter.NOT_BILLED);
   check('the Hold of NOT_BILLED is the documented shape', meter.NOT_BILLED.source === null && meter.NOT_BILLED.refused === false && meter.NOT_BILLED.units === 0);
   process.env.BILLING_MODE = 'off';
   meter.forgetBillable();
   const admin = await makeUser();
   await withPlan(admin);
-  check('with billing off, nobody is metered', (await meter.holdSearch(admin.id, { now: T0 })) === meter.NOT_BILLED);
+  check('with billing off, nobody is metered', (await meter.holdSearch(admin.id, { service: 'search', now: T0 })) === meter.NOT_BILLED);
   delete process.env.BILLING_MODE;
   meter.forgetBillable();
   process.env.BILLING_MODE = 'live';
   const anyone = await makeUser('user');
   await withBalance(anyone, 5000);
   await usedUpShare(anyone, T0);
-  const live = await meter.holdSearch(anyone.id, { now: T0 });
+  const live = await meter.holdSearch(anyone.id, { service: 'search', now: T0 });
   check('in live any account with a balance is held (the admin check is preview only)', live.billed && live.source === 'balance');
   delete process.env.BILLING_MODE;
   meter.forgetBillable();
@@ -95,12 +95,12 @@ section('searches: the month first, then the balance, then nothing (never refuse
   const admin = await makeUser();
   await withPlan(admin, 'plus');
   const key = `bill:search:${admin.id}:${month(T0)}`;
-  const first = await meter.holdSearch(admin.id, { now: hours(1) });
+  const first = await meter.holdSearch(admin.id, { service: 'search', now: hours(1) });
   check('Plus: a search is held from the included allowance', first.billed && first.source === 'included' && first.paid && !first.refused && first.units === 1);
   let last = first;
-  for (let i = 1; i < 150; i += 1) last = await meter.holdSearch(admin.id, { now: hours(2) });
+  for (let i = 1; i < 150; i += 1) last = await meter.holdSearch(admin.id, { service: 'search', now: hours(2) });
   check('all 150 of the month can be used in one day (no daily limit)', last.source === 'included' && (await counter(key)) === 150, String(await counter(key)));
-  const over = await meter.holdSearch(admin.id, { now: hours(3) });
+  const over = await meter.holdSearch(admin.id, { service: 'search', now: hours(3) });
   check('the 151st, with no balance, is held from nothing: unpaid, not refused', over.billed && over.source === 'none' && over.paid === false && over.refused === false);
   check('  and a would-count says it would have been charged', (await wouldOf(admin, 'search')) === 1 && (await counter(key)) === 150);
   await over.settle(0);
@@ -108,7 +108,7 @@ section('searches: the month first, then the balance, then nothing (never refuse
 
   await withBalance(admin, 800);
   meter.forgetBillable();
-  const bal = await meter.holdSearch(admin.id, { now: hours(3) });
+  const bal = await meter.holdSearch(admin.id, { service: 'search', now: hours(3) });
   check('with a balance, past the month, a search costs 400đ', bal.source === 'balance' && bal.paid && (await balanceOf(admin)) === 400 && (await counter(key)) === 150);
   const row = await usage(admin, 'search');
   check('  and is one usage row: 1 unit, 400đ', row.u === 1 && row.v === -400, JSON.stringify(row));
@@ -129,10 +129,10 @@ section('settling with more or fewer than was held');
   const admin = await makeUser();
   await withPlan(admin, 'plus');
   const key = `bill:search:${admin.id}:${month(T0)}`;
-  const crawl = await meter.holdSearch(admin.id, { now: hours(1) });
+  const crawl = await meter.holdSearch(admin.id, { service: 'search', now: hours(1) });
   await crawl.settle(unitsForPages(10));
   check('a crawl of 10 pages (held 1) settles as 4 units', unitsForPages(10) === 4 && (await counter(key)) === 4, String(await counter(key)));
-  const two = await meter.holdSearch(admin.id, { units: 3, now: hours(1) });
+  const two = await meter.holdSearch(admin.id, { service: 'search', units: 3, now: hours(1) });
   await two.settle(1);
   check('held 3, used 1: two come back', (await counter(key)) === 5, String(await counter(key)));
 
@@ -140,7 +140,7 @@ section('settling with more or fewer than was held');
   const poor = await makeUser();
   await withBalance(poor, 1000);
   await usedUpShare(poor, hours(1));
-  const held = await meter.holdSearch(poor.id, { now: hours(1) });
+  const held = await meter.holdSearch(poor.id, { service: 'search', now: hours(1) });
   await held.settle(3);
   check('no plan, 1000đ: held 1 (400đ), used 3: the extra 2 are one block from one source, 800đ does not fit the 600đ left, so both are unpaid', (await balanceOf(poor)) === 600 && (await wouldOf(poor, 'search')) === 2, `${await balanceOf(poor)} ${await wouldOf(poor, 'search')}`);
   await held.release();
@@ -150,12 +150,12 @@ section('a month rolls over on the plan\'s own day');
 {
   const admin = await makeUser();
   await withPlan(admin, 'plus');
-  const early = await meter.holdSearch(admin.id, { units: 150, now: days(10) });
-  const full = await meter.holdSearch(admin.id, { now: days(11) });
+  const early = await meter.holdSearch(admin.id, { service: 'search', units: 150, now: days(10) });
+  const full = await meter.holdSearch(admin.id, { service: 'search', now: days(11) });
   check('the 150 used up, the next is not included', early.source === 'included' && full.source === 'none');
-  const next = await meter.holdSearch(admin.id, { now: new Date('2027-04-10T03:00:01Z') });
+  const next = await meter.holdSearch(admin.id, { service: 'search', now: new Date('2027-04-10T03:00:01Z') });
   check('from the plan\'s own day (the 10th, 10:00 Vietnamese time) the allowance is new', next.source === 'included');
-  const before = await meter.holdSearch(admin.id, { now: new Date('2027-04-10T02:59:59Z') });
+  const before = await meter.holdSearch(admin.id, { service: 'search', now: new Date('2027-04-10T02:59:59Z') });
   check('  and a second earlier it was not', before.source === 'none');
 }
 
@@ -164,7 +164,7 @@ section('20 holds at once with 4,000đ and no plan: exactly 10 are paid');
   const admin = await makeUser();
   await withBalance(admin, 4000);
   await usedUpShare(admin, T0);
-  const holds = await Promise.all(Array.from({ length: 20 }, () => meter.holdSearch(admin.id, { now: T0 })));
+  const holds = await Promise.all(Array.from({ length: 20 }, () => meter.holdSearch(admin.id, { service: 'search', now: T0 })));
   check('10 from the balance', holds.filter((h) => h.source === 'balance').length === 10, holds.map((h) => h.source).join(','));
   check('  10 unpaid, none refused', holds.filter((h) => h.source === 'none' && !h.paid && !h.refused).length === 10);
   check('  the balance is 0, never below', (await balanceOf(admin)) === 0);
@@ -178,7 +178,7 @@ section('the prices follow the rate at the moment of the hold');
   await store.setSetting('billing_fx', { rate: 30_000, source: 'erapi', at: T0.toISOString() });
   (await import('../server/billing/fx.js'))._resetFxForTests();
   const { paygPrices } = await import('../server/billing/plans.js');
-  const h = await meter.holdSearch(admin.id, { now: T0 });
+  const h = await meter.holdSearch(admin.id, { service: 'search', now: T0 });
   check('a search costs what paygPrices says at the known rate, not 400đ', h.source === 'balance' && (await balanceOf(admin)) === 10_000 - paygPrices(30_000).searchVnd && paygPrices(30_000).searchVnd !== 400, String(await balanceOf(admin)));
   await store.setSetting('billing_fx', null);
   (await import('../server/billing/fx.js'))._resetFxForTests();
@@ -268,8 +268,8 @@ section('This period');
   const admin = await makeUser();
   await withPlan(admin, 'plus');
   await withBalance(admin, 5000);
-  await meter.holdSearch(admin.id, { units: 150, now: hours(1) });
-  await meter.holdSearch(admin.id, { units: 2, now: hours(2) });
+  await meter.holdSearch(admin.id, { service: 'search', units: 150, now: hours(1) });
+  await meter.holdSearch(admin.id, { service: 'search', units: 2, now: hours(2) });
   await meter.holdSandbox(admin.id, 30, { now: hours(2) });
   const p = await meter.periodUsage(admin.id, { now: hours(5) });
   check('plan, month window and finance flag', p.plan === 'plus' && +p.month.start === +T0 && +p.month.end === +new Date('2027-04-10T03:00:00Z') && p.finance.free === true, JSON.stringify(p.month));
@@ -304,21 +304,21 @@ section('every plan gets at least the free share (owner, 2026-11-17)');
   await withBalance(free, 10_000);
   const sources = [];
   for (let i = 0; i < S; i += 1) {
-    const h = await meter.holdSearch(free.id, { now: at(1) });
+    const h = await meter.holdSearch(free.id, { service: 'search', now: at(1) });
     sources.push(h.source === 'share' && h.billed && !h.paid && !h.refused);
     await h.settle(1);
   }
   check('Free with a balance: the first S searches are share holds (billed, paid false: free keys only)', sources.every(Boolean), JSON.stringify(sources));
   check('  the balance does not move and no usage row is written', (await balanceOf(free)) === 10_000 && (await usage(free, 'search')).u === 0);
   check('  settling each counted it against the share, once', (await counter(shares.searchBucket(free.id, at(1)).bucket)) === S);
-  const past = await meter.holdSearch(free.id, { now: at(1) });
+  const past = await meter.holdSearch(free.id, { service: 'search', now: at(1) });
   check('  the next one is billed from the balance, paid, at the pay-as-you-go price', past.billed && past.source === 'balance' && past.paid === true && (await balanceOf(free)) === 10_000 - price, `${past.source} ${await balanceOf(free)}`);
 
   // A balance-sourced hold that settles with more never draws on the share.
   const grow = await makeUser();
   await withBalance(grow, 10_000);
   for (let i = 0; i < S; i += 1) await countMetered(grow.id, at(1));
-  const held = await meter.holdSearch(grow.id, { now: at(1) });
+  const held = await meter.holdSearch(grow.id, { service: 'search', now: at(1) });
   await pin(100, 25);
   await held.settle(3);
   check('settle(more) on a billed hold: all 3 units are charged, none taken from a share that has room', held.source === 'balance' && (await usage(grow, 'search')).u === 3 && (await balanceOf(grow)) === 10_000 - 3 * price, `${(await usage(grow, 'search')).u} ${await balanceOf(grow)}`);
@@ -328,10 +328,10 @@ section('every plan gets at least the free share (owner, 2026-11-17)');
   const plus = await makeUser();
   await withPlan(plus, 'plus', FIRST);
   await withBalance(plus, 10_000);
-  const incl = await meter.holdSearch(plus.id, { units: 150, now: at(1) });
+  const incl = await meter.holdSearch(plus.id, { service: 'search', units: 150, now: at(1) });
   check('Plus with S <= 150: the included month comes first, paid', incl.billed && incl.source === 'included' && incl.paid === true);
   const after = [];
-  for (let i = 0; i < 3; i += 1) after.push(await meter.holdSearch(plus.id, { now: at(2) }));
+  for (let i = 0; i < 3; i += 1) after.push(await meter.holdSearch(plus.id, { service: 'search', now: at(2) }));
   check('  after it, the balance is charged and NOT_BILLED never appears', after.every((h) => h.billed && h.source === 'balance' && h.paid) && (await balanceOf(plus)) === 10_000 - 3 * price);
 
   // Plus, share larger than its own 150: S - 150 more are free, then the balance.
@@ -339,15 +339,15 @@ section('every plan gets at least the free share (owner, 2026-11-17)');
   const big = await makeUser();
   await withPlan(big, 'plus', FIRST);
   await withBalance(big, 10_000);
-  const first = await meter.holdSearch(big.id, { units: 150, now: at(1) });
+  const first = await meter.holdSearch(big.id, { service: 'search', units: 150, now: at(1) });
   const free3 = [];
   for (let i = 0; i < 3; i += 1) {
-    const h = await meter.holdSearch(big.id, { now: at(2) });
+    const h = await meter.holdSearch(big.id, { service: 'search', now: at(2) });
     free3.push(h);
     await h.settle(1);
   }
   check('Plus with S = 153: 150 included, then S - 150 = 3 share holds', first.source === 'included' && free3.every((h) => h.source === 'share') && (await balanceOf(big)) === 10_000, JSON.stringify(free3.map((h) => h.source)));
-  const then = await meter.holdSearch(big.id, { now: at(2) });
+  const then = await meter.holdSearch(big.id, { service: 'search', now: at(2) });
   check('  then the balance', then.billed && then.source === 'balance' && (await balanceOf(big)) === 10_000 - price);
   check('  paid is true on the included and balance holds, false on each share one', first.paid === true && then.paid === true && free3.every((h) => h.paid === false && h.billed === true));
   await pin(S, 25);
@@ -356,7 +356,7 @@ section('every plan gets at least the free share (owner, 2026-11-17)');
   process.env.FREE_TIER_ONLY = 'false';
   const lifted = await makeUser();
   await withBalance(lifted, 10_000);
-  const h = await meter.holdSearch(lifted.id, { now: at(1) });
+  const h = await meter.holdSearch(lifted.id, { service: 'search', now: at(1) });
   check('FREE_TIER_ONLY=false: charged from the first search, as before', h.billed && h.source === 'balance' && (await balanceOf(lifted)) === 10_000 - price);
   delete process.env.FREE_TIER_ONLY;
 
@@ -426,14 +426,14 @@ section('the share is only for free capacity that exists, and it counts what it 
   // What a share hold keeps: one unit against the share, the rest on the balance.
   const four = await makeUser();
   await withBalance(four, 10_000);
-  const h4 = await meter.holdSearch(four.id, { now: at(1) });
+  const h4 = await meter.holdSearch(four.id, { service: 'search', now: at(1) });
   await h4.settle(4);
   check('a share hold settled with 4: 1 counted against the share, 3 charged to the balance', h4.source === 'share' && (await shareCount(four)) === 1 && (await usage(four, 'search')).u === 3 && (await balanceOf(four)) === 10_000 - 3 * price, `${await shareCount(four)} ${(await usage(four, 'search')).u} ${await balanceOf(four)}`);
   const none = await makeUser();
   await withBalance(none, 10_000);
-  const h0 = await meter.holdSearch(none.id, { now: at(1) });
+  const h0 = await meter.holdSearch(none.id, { service: 'search', now: at(1) });
   await h0.settle(0);
-  const hr = await meter.holdSearch(none.id, { now: at(1) });
+  const hr = await meter.holdSearch(none.id, { service: 'search', now: at(1) });
   await hr.release();
   await hr.settle(1);
   check('  settle(0) and release() count nothing, and a settle after a release is nothing', (await shareCount(none)) === 0 && (await balanceOf(none)) === 10_000 && (await usage(none, 'search')).u === 0);
@@ -453,8 +453,8 @@ section('the share is only for free capacity that exists, and it counts what it 
   check('Exa used up: the read is charged to the balance, paid, so the paid key may serve it', dryExa.hold.source === 'balance' && dryExa.hold.paid === true && (await balanceOf(dryExa.user)) === 10_000 - price);
   const drySearchHold = await drySearch('search');
   check('  the pooled search engines used up: a search is charged too', drySearchHold.hold.source === 'balance' && drySearchHold.hold.paid === true);
-  const noService = await drySearch(undefined);
-  check('  a hold that names no service takes the share without asking', noService.hold.source === 'share');
+  const noService = await drySearch(undefined).then(() => null, (err) => err);
+  check('  a hold that names no service throws here (in production it takes no share), and share: false needs none', /needs a service/.test(String(noService?.message)) && (await meter.holdSearch((await makeUser()).id, { now: at(1), share: false })) === meter.NOT_BILLED);
   await query("DELETE FROM rate_limits WHERE bucket LIKE 'free:exa%'");
   meter.forgetFreePools();
 
@@ -477,7 +477,7 @@ section('the share is only for free capacity that exists, and it counts what it 
   let sickHold;
   let sickBox;
   try {
-    sickHold = await meter.holdSearch(sick.id, { now: at(1) });
+    sickHold = await meter.holdSearch(sick.id, { service: 'search', now: at(1) });
     sickBox = await meter.holdSandbox(sick.id, 600, { now: at(1), shareCost: 10 });
   } finally {
     store.readCounters = real;
@@ -491,22 +491,156 @@ section('the share is only for free capacity that exists, and it counts what it 
   const plus = await makeUser();
   await withPlan(plus, 'plus', FIRST);
   await withBalance(plus, 10_000);
-  await meter.holdSearch(plus.id, { units: 150, now: at(1) });
+  await meter.holdSearch(plus.id, { service: 'search', units: 150, now: at(1) });
   const tenth = new Date('2027-03-10T04:00:00Z');
   const kept = [];
   for (let i = 0; i < 3; i += 1) {
-    const h = await meter.holdSearch(plus.id, { now: tenth });
+    const h = await meter.holdSearch(plus.id, { service: 'search', now: tenth });
     kept.push(h.source);
     await h.settle(1);
   }
-  const after = await meter.holdSearch(plus.id, { now: tenth });
+  const after = await meter.holdSearch(plus.id, { service: 'search', now: tenth });
   check('Plus using its month from the 1st, reaching the share on the 10th: the whole S - 150 is there, not a prorated one', kept.every((s) => s === 'share') && after.source === 'balance', `${kept.join(',')} then ${after.source}`);
   const plusBox = await makeUser();
   await withPlan(plusBox, 'plus', FIRST);
   await meter.holdSandbox(plusBox.id, 600, { now: at(1) });
   const arrival = await counter(`free:arrive:machine:2027-03:user:${plusBox.id}`);
-  check('  and a window of the plan\'s hours notes the day the same way', arrival === 1, String(arrival));
+  check('  a window of the plan\'s own hours writes no arrival: only an account that reaches the share pays that write', arrival === 0, String(arrival));
   await pin(4, 25);
+}
+
+section('a plan that began mid-month gets the whole share when it reaches it (fix round, A3)');
+{
+  const shares = await import('../server/freeShares.js');
+  const MONTH = new Date('2027-03-01T03:00:00Z');
+  const tenth = new Date('2027-03-10T04:00:00Z');
+  const twentieth = new Date('2027-03-20T04:00:00Z');
+  await store.setSetting('free_shares:2027-03', { month: '2027-03', searches: 300, machineMills: 2000, capacity: { searches: 1e12, machineMills: 1e12 }, people: { searches: 1, machines: 1 }, committed: { searches: 0, machineMills: 0 }, at: MONTH.toISOString() });
+  shares.__testing.forget();
+  meter.forgetFreePools();
+  const mid = await makeUser();
+  await withPlan(mid, 'plus', new Date('2027-03-10T03:00:00Z'));
+  await withBalance(mid, 10_000);
+  await meter.holdSearch(mid.id, { service: 'search', units: 150, now: tenth });
+  const first = await meter.holdSearch(mid.id, { service: 'search', now: twentieth });
+  await first.settle(1);
+  const got = await shares.searchShareOf(mid.id, twentieth);
+  check('Plus anchored on the 10th, its 150 used, reaching the share on the 20th: the whole 300, not 22/31 of it', first.source === 'share' && got.share === 300 && got.joinedOn === null, JSON.stringify([first.source, got]));
+  await meter.holdSandbox(mid.id, 240 * 60, { now: tenth });
+  const window = await meter.holdSandbox(mid.id, 600, { now: twentieth, shareCost: 10 });
+  const machine = await shares.machineShareOf(mid.id, twentieth);
+  check('  and the computer the same: the whole 2000 mills', window.source === 'share' && machine.share === 2000 && machine.joinedOn === null, JSON.stringify([window.source, machine]));
+  check('  the arrival is written once, as day 1, and not again by a later share count', (await counter(`free:arrive:search:2027-03:user:${mid.id}`)) === 1);
+
+  // An account whose plan is at least as large as the whole share reads none of its own counters: its room is provably 0.
+  await store.setSetting('free_shares:2027-03', { month: '2027-03', searches: 100, machineMills: 25, capacity: { searches: 1e12, machineMills: 1e12 }, people: { searches: 1, machines: 1 }, committed: { searches: 0, machineMills: 0 }, at: MONTH.toISOString() });
+  shares.__testing.forget();
+  const big = await makeUser();
+  await withPlan(big, 'plus', MONTH);
+  await withBalance(big, 10_000);
+  await meter.holdSearch(big.id, { service: 'search', units: 150, now: tenth });
+  await meter.holdSandbox(big.id, 240 * 60, { now: tenth });
+  const real = store.readCounters;
+  const reads = [];
+  store.readCounters = async (names) => { reads.push(...names); return real.call(store, names); };
+  let past;
+  let box;
+  try {
+    past = await meter.holdSearch(big.id, { service: 'search', now: twentieth });
+    box = await meter.holdSandbox(big.id, 600, { now: twentieth, shareCost: 10 });
+  } finally {
+    store.readCounters = real;
+  }
+  check('Plus with S <= its plan: past the plan the balance pays, and none of its share counters is read', past.source === 'balance' && box.source === 'balance' && !reads.some((name) => name.includes(`:user:${big.id}`) || name.includes(`user:${big.id}:`)), reads.join(' '));
+}
+
+section('the Usage card of a paid account shows what the meter allows (fix round, B)');
+{
+  const shares = await import('../server/freeShares.js');
+  const MONTH = new Date('2027-03-01T03:00:00Z');
+  const twentieth = new Date('2027-03-20T04:00:00Z');
+  await store.setSetting('free_shares:2027-03', { month: '2027-03', searches: 400, machineMills: 2000, capacity: { searches: 1e12, machineMills: 1e12 }, people: { searches: 1, machines: 1 }, committed: { searches: 0, machineMills: 0 }, at: MONTH.toISOString() });
+  shares.__testing.forget();
+  meter.forgetFreePools();
+  const plus = await makeUser();
+  await withPlan(plus, 'plus', MONTH);
+  await withBalance(plus, 10_000);
+  // 150 of its own month, 250 from the share: 400 in all, and the share beyond the plan was S - P = 250.
+  await meter.holdSearch(plus.id, { service: 'search', units: 150, now: twentieth });
+  await meter.holdSandbox(plus.id, 6000, { now: twentieth });
+  const { bucket, ends } = shares.searchBucket(plus.id, twentieth);
+  await store.addToCounter(bucket, 250, ends);
+  const mach = shares.machineBucket(plus.id, twentieth);
+  await store.addToCounter(mach.bucket, 100, mach.ends);
+  const raw = await shares.accountShares(plus.id, twentieth);
+  const card = await meter.usageShare(plus, { now: twentieth });
+  check('the base card says 250 of 400, which is what the review found misleading', raw.searches.used === 250 && raw.searches.share === 400, JSON.stringify(raw.searches));
+  check('a Plus account with S = 400 that used 150 included and 250 from the share sees 400 of 400', card.withPlan === true && card.billable === true && card.searches.used === 400 && card.searches.share === 400, JSON.stringify(card.searches));
+  check('  and its next search is charged', (await meter.holdSearch(plus.id, { service: 'search', now: twentieth })).source === 'balance');
+  check('  the computer the same: its plan\'s 6000 s (222 mills) and the 100 of the share, of the larger 2000', card.machine.usedMills === 322 && card.machine.shareMills === 2000, JSON.stringify(card.machine));
+  const small = await makeUser();
+  await withPlan(small, 'pro', MONTH);
+  await store.setSetting('free_shares:2027-03', { month: '2027-03', searches: 100, machineMills: 25, capacity: { searches: 1e12, machineMills: 1e12 }, people: { searches: 1, machines: 1 }, committed: { searches: 0, machineMills: 0 }, at: MONTH.toISOString() });
+  shares.__testing.forget();
+  const pro = await meter.usageShare(small, { now: twentieth });
+  check('a plan larger than the share is the allowance: Pro shows 0 of 250', pro.withPlan && pro.searches.share === 250 && pro.searches.used === 0 && pro.machine.shareMills === 798, JSON.stringify([pro.searches, pro.machine]));
+  const free = await makeUser();
+  await withBalance(free, 10_000);
+  const freeCard = await meter.usageShare(free, { now: twentieth });
+  check('a Free account with a balance keeps its card (the share) and is told it is billable', freeCard.billable === true && freeCard.withPlan === false && freeCard.searches.share === 100 && freeCard.searches.used === 0, JSON.stringify([freeCard.searches, freeCard.billable, freeCard.withPlan]));
+  const member = await makeUser('user');
+  const plain = await meter.usageShare(member, { now: twentieth });
+  check('an account that is not billable is unchanged', plain.billable === undefined && plain.withPlan === undefined && plain.searches.share === 100, JSON.stringify([plain.billable, plain.searches]));
+  await store.setSetting('free_shares:2027-03', { month: '2027-03', searches: 4, machineMills: 25, capacity: { searches: 1e12, machineMills: 1e12 }, people: { searches: 1, machines: 1 }, committed: { searches: 0, machineMills: 0 }, at: MONTH.toISOString() });
+  shares.__testing.forget();
+}
+
+section('the free-pool memo (fix round, A2)');
+{
+  const shares = await import('../server/freeShares.js');
+  const tiers = await import('../server/freeTier.js');
+  const pool = await import('../server/keyPool.js');
+  const AT = new Date('2027-03-02T03:00:00Z');
+  await store.setSetting('free_shares:2027-03', { month: '2027-03', searches: 50, machineMills: 100, capacity: { searches: 1e12, machineMills: 1e12 }, people: { searches: 1, machines: 1 }, committed: { searches: 0, machineMills: 0 }, at: AT.toISOString() });
+  shares.__testing.forget();
+  const fresh = async () => {
+    const user = await makeUser();
+    await withBalance(user, 10_000);
+    return user;
+  };
+  // A key added or taken away moves the keys' version, and the figure is asked again at once.
+  await query("DELETE FROM rate_limits WHERE bucket LIKE 'free:exa%'");
+  meter.forgetFreePools();
+  await tiers.exhaust('exa', AT);
+  const dry = await meter.holdSearch((await fresh()).id, { service: 'exa', now: AT });
+  await query("DELETE FROM rate_limits WHERE bucket LIKE 'free:exa%'");
+  const stale = await meter.holdSearch((await fresh()).id, { service: 'exa', now: AT });
+  await pool.bumpKeysVersion();
+  const seen = await meter.holdSearch((await fresh()).id, { service: 'exa', now: AT });
+  check('a dry figure is kept for a minute, but not past a change of the keys', dry.source === 'balance' && stale.source === 'balance' && seen.source === 'share', `${dry.source} ${stale.source} ${seen.source}`);
+
+  // A count that failed says nothing: a billed engine's 0 from an error is not "dry", and is not kept.
+  process.env.BRAVE_API_KEY = 'brave-test-key';
+  process.env.SEARCH_ORDER = 'brave,duckduckgo';
+  await pool.warmPools();
+  meter.forgetFreePools();
+  const real = store.readCounters;
+  store.readCounters = async () => { throw new Error('store is down'); };
+  let during;
+  try {
+    during = await meter.holdSearch((await fresh()).id, { service: 'search', now: AT });
+  } finally {
+    store.readCounters = real;
+  }
+  const after = await meter.holdSearch((await fresh()).id, { service: 'search', now: AT });
+  check('an allowance that could not be read is charged at the time, and not remembered as dry', during.source === 'balance' && after.source === 'share', `${during.source} ${after.source}`);
+  delete process.env.BRAVE_API_KEY;
+  delete process.env.SEARCH_ORDER;
+  await pool.warmPools();
+  await query("DELETE FROM rate_limits WHERE bucket LIKE 'free:exa%'");
+  meter.forgetFreePools();
+  await store.setSetting('free_shares:2027-03', { month: '2027-03', searches: 4, machineMills: 25, capacity: { searches: 1e12, machineMills: 1e12 }, people: { searches: 1, machines: 1 }, committed: { searches: 0, machineMills: 0 }, at: AT.toISOString() });
+  shares.__testing.forget();
 }
 
 /* ── search and the tools ───────────────────────────────────────────── */
@@ -853,6 +987,100 @@ section('end to end: a share-paid call counts, and a dry free pool is the balanc
   e2b.__testing.useSdk(null);
   await clearE2b();
   await pinNow(4, 25);
+}
+
+section('a share search the free engines answer is held again on the balance (fix round, A1, A4, A5)');
+{
+  const shares = await import('../server/freeShares.js');
+  const tiers = await import('../server/freeTier.js');
+  const { paygPrices } = await import('../server/billing/plans.js');
+  const { meteringRate } = await import('../server/billing/fx.js');
+  const { gatherEvidence } = await import('../server/research/gather.js');
+  const price = paygPrices(await meteringRate()).searchVnd;
+  const thisMonth = tiers.periodOf('month').key;
+  const shareOf = (user) => counter(shares.searchBucket(user.id, new Date()).bucket);
+  const fresh = async () => {
+    const user = await makeUser();
+    await withBalance(user, 10_000);
+    return user;
+  };
+  const reset = async () => {
+    await query("DELETE FROM rate_limits WHERE bucket LIKE 'free:exa%' OR bucket LIKE 'paid:exa%' OR bucket LIKE 'free:firecrawl%' OR bucket LIKE 'paid:firecrawl%'");
+    await pool.setPaidKey('exa', null);
+    await pool.setPaidKey('firecrawl', null);
+    search.clearSearchCache();
+    await heal();
+    meter.forgetFreePools();
+  };
+  await store.setSetting(`free_shares:${thisMonth}`, { month: thisMonth, searches: 50, machineMills: 1000, capacity: { searches: 1e12, machineMills: 1e12 }, people: { searches: 1, machines: 1 }, committed: { searches: 0, machineMills: 0 }, at: new Date().toISOString() });
+  shares.__testing.forget();
+  await reset();
+
+  // Exa and Firecrawl's search are dry and Tavily has room: that room is behind Google and DuckDuckGo, which answer first and count
+  // nothing, so it is not the share's. The account is charged and the paid key serves it.
+  process.env.TAVILY_API_KEY = 'tvly-test-key';
+  process.env.FIRECRAWL_API_KEY = 'fc-test-key';
+  await pool.warmPools();
+  await tiers.exhaust('exa');
+  await tiers.exhaust('firecrawl_search');
+  await pool.setPaidKey('exa', 'env', 100_000);
+  const reaches = await search.shareSearchEngines();
+  check('a share search reaches the metered engines ahead of the first free one: Exa and Firecrawl, not Tavily', reaches.join() === 'exa,firecrawl', reaches.join());
+  const hasKeys = await tiers.allowance('tavily');
+  stubWeb({ 'api.tavily.com': () => json({ results: [{ title: 'Tavily', url: 'https://example.com/tv', content: 'x' }] }) });
+  const free = await fresh();
+  const viaPaid = await CLOUD_IMPLEMENTATIONS.web_search({ query: 'dry free engines one', depth: 'quick' }, { userId: free.id });
+  check('Exa and Firecrawl dry, Tavily with room: web_search is charged to the balance and served by Exa on the paid key', hasKeys.left > 0 && /from Exa/.test(viaPaid) && (await balanceOf(free)) === 10_000 - price && (await counter(`paid:exa@env:${thisMonth}`)) > 0, `${viaPaid.slice(0, 40)} ${await balanceOf(free)} ${await counter(`paid:exa@env:${thisMonth}`)}`);
+  check('  never by Google or DuckDuckGo, and nothing was counted against the share', !asked.some((u) => u.includes('duckduckgo') || u.includes('google')) && (await shareOf(free)) === 0, asked.join(' '));
+  await reset();
+
+  // The same, when the figure said there was room (a minute's memory) and the engine had stood aside by then.
+  await meter.holdSearch((await fresh()).id, { service: 'search' }).then((h) => h.release());
+  await tiers.exhaust('exa');
+  await pool.setPaidKey('exa', 'env', 100_000);
+  const stale = await fresh();
+  stubWeb();
+  const again = await CLOUD_IMPLEMENTATIONS.web_search({ query: 'a stale figure one', depth: 'quick' }, { userId: stale.id });
+  check('a stale figure: the share hold sees a free engine answer, is released, and the search is held again on the balance and served by Exa', /from Exa/.test(again) && (await balanceOf(stale)) === 10_000 - price && (await shareOf(stale)) === 0 && asked.some((u) => u.includes('duckduckgo')), `${again.slice(0, 40)} ${await balanceOf(stale)} ${await shareOf(stale)}`);
+  await reset();
+
+  await meter.holdSearch((await fresh()).id, { service: 'search' }).then((h) => h.release());
+  await tiers.exhaust('exa');
+  await pool.setPaidKey('exa', 'env', 100_000);
+  const researcher = await fresh();
+  stubWeb();
+  const gathered = await gatherEvidence(['a stale figure two'], { userId: researcher.id, readPage: async () => '', target: 0, timeoutMs: 1000 });
+  check('gather does the same: charged once and the paid key served it', gathered.ledger.size === 1 && (await balanceOf(researcher)) === 10_000 - price && (await shareOf(researcher)) === 0, `${gathered.ledger.size} ${await balanceOf(researcher)}`);
+  await reset();
+
+  // A4: Exa's free allowance is spent, and a charged read goes on the paid key.
+  await tiers.exhaust('exa');
+  await pool.setPaidKey('exa', 'env', 100_000);
+  meter.forgetFreePools();
+  const reader = await fresh();
+  stubWeb();
+  const page = await CLOUD_IMPLEMENTATIONS.web_fetch({ url: refusedUrl }, { userId: reader.id });
+  check('an Exa read with the free allowance spent is read on the paid key and charged once', /read through Exa/.test(page) && (await balanceOf(reader)) === 10_000 - price && (await counter(`paid:exa@env:${thisMonth}`)) > 0, `${page.slice(0, 40)} ${await balanceOf(reader)} ${await counter(`paid:exa@env:${thisMonth}`)}`);
+  await reset();
+
+  // A5: Firecrawl's pages share is spent, the key still has credits: a charged read goes on the paid key, not nowhere.
+  await pool.setPaidKey('firecrawl', 'env', 100_000);
+  await tiers.exhaust('firecrawl_scrape');
+  meter.forgetFreePools();
+  const fc = await import('../server/firecrawl.js');
+  stubWeb({ 'firecrawl.dev/v2/scrape': () => json({ success: true, data: { markdown: 'A page. '.repeat(40), metadata: { statusCode: 200, creditsUsed: 1 } } }) });
+  const uncharged = await fc.firecrawlScrape('https://example.com/p', { paid: false });
+  const charged = await fc.firecrawlScrape('https://example.com/p', { paid: true });
+  check('a charged Firecrawl read with the pages share spent is served by the paid key (an uncharged one is not)', uncharged === null && !!charged?.text && (await counter(`paid:firecrawl@env:${thisMonth}`)) > 0, `${uncharged} ${charged?.text?.length} ${await counter(`paid:firecrawl@env:${thisMonth}`)}`);
+  const holder = await fresh();
+  stubWeb({ 'api.exa.ai': () => json({}, 500), 'firecrawl.dev/v2/scrape': () => json({ success: true, data: { markdown: 'A long page. '.repeat(40), metadata: { statusCode: 200, creditsUsed: 1 } } }) });
+  const whole = await CLOUD_IMPLEMENTATIONS.web_fetch({ url: refusedUrl }, { userId: holder.id });
+  check('  end to end, the read is charged to the balance, not refused', /read through Firecrawl/.test(whole) && (await balanceOf(holder)) < 10_000 && (await shareOf(holder)) === 0, `${whole.slice(0, 40)} ${await balanceOf(holder)}`);
+  await reset();
+  delete process.env.TAVILY_API_KEY;
+  delete process.env.FIRECRAWL_API_KEY;
+  await pool.warmPools();
+  meter.forgetFreePools();
 }
 
 refuser.close();

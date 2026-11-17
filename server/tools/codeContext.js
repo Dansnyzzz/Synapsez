@@ -59,13 +59,17 @@ const clip = (text, n = MAX_CHARS_EACH) => (text.length > n ? `${text.slice(0, n
  * from the pool, as web_search's are (keyPool.js): a refused or spent one
  * hands over to the next.
  */
-async function fromExa(query, count, plan, { fetchImpl, signal, paid = false }) {
+async function fromExa(query, count, plan, { fetchImpl, signal, paid = false, onAside = () => {} }) {
   await warmPools();
   if (!poolHas('exa')) return [];
   const type = plan.exa === 'lite' ? 'lite' : 'fast';
   // Two kinds of content a page: the passages, and the opening when there are none.
   const estimate = exaMills(type, count, 2);
-  if ((await allowance('exa')).left < estimate) return [];
+  // A charged call goes on past the free month, to the paid key under its cap (the pool says no when it cannot).
+  if (!paid && (await allowance('exa')).left < estimate) {
+    onAside();
+    return [];
+  }
   const body = await throughPool(
     'exa',
     estimate,
@@ -93,7 +97,10 @@ async function fromExa(query, count, plan, { fetchImpl, signal, paid = false }) 
       }
     },
     { paid },
-  ).catch(() => null);
+  ).catch((err) => {
+    if (err?.skip) onAside();
+    return null;
+  });
   if (!body) return [];
   return (body.results || [])
     .filter((r) => r?.url && (r.highlights?.length || r.text))
@@ -169,11 +176,13 @@ async function fromStackOverflow(query, count, { fetchImpl, signal }) {
  *
  * @param {{ query: string, max_results?: number }} input
  * `billed`/`noMetered`/`onCharge`: as a hold (billing/meter.js) uses them. The web search fallback is billed or
- * not; `onCharge(1)` says once that a metered source answered, which is what the caller's hold keeps.
+ * not; `onCharge(1)` says once that a metered source answered, which is what the caller's hold keeps. `onAside()` says a
+ * metered source stood aside for want of free room, so that a free one may have answered in its place (meter.js `heldSearch`);
+ * `fresh` is the second ask of that, which skips the web search's memory of the first.
  *
- * @param {{ userId?: string, signal?: AbortSignal, fetchImpl?: typeof fetch, plan?: any, paid?: boolean, billed?: boolean, noMetered?: boolean, onCharge?: (units: number) => void }} [context]
+ * @param {{ userId?: string, signal?: AbortSignal, fetchImpl?: typeof fetch, plan?: any, paid?: boolean, billed?: boolean, noMetered?: boolean, fresh?: boolean, onCharge?: (units: number) => void, onAside?: () => void }} [context]
  */
-export async function codeContextTool({ query, max_results }, { userId = null, signal, fetchImpl = fetch, plan = SEARCH_LEVELS.high, paid = false, billed = false, noMetered = false, onCharge = () => {} } = {}) {
+export async function codeContextTool({ query, max_results }, { userId = null, signal, fetchImpl = fetch, plan = SEARCH_LEVELS.high, paid = false, billed = false, noMetered = false, fresh = false, onCharge = () => {}, onAside = () => {} } = {}) {
   const asked = String(query ?? '').trim().slice(0, 300);
   if (!asked) throw new Error('Say what code or documentation to find — a library and what it should do, or an error message.');
   const count = Math.min(Math.max(Number(max_results) || plan.code || 4, 1), 8);
@@ -184,7 +193,7 @@ export async function codeContextTool({ query, max_results }, { userId = null, s
   const timed = signal ? AbortSignal.any([signal, limit]) : limit;
 
   const [exa, overflow] = await Promise.all([
-    noMetered ? [] : fromExa(asked, count, plan, { fetchImpl, signal: timed, paid }).catch(() => []),
+    noMetered ? [] : fromExa(asked, count, plan, { fetchImpl, signal: timed, paid, onAside }).catch(() => []),
     fromStackOverflow(asked, count, { fetchImpl, signal: timed }).catch(() => []),
   ]);
   // Firecrawl only when Exa had nothing: its credits are the month's, and few.
@@ -193,8 +202,9 @@ export async function codeContextTool({ query, max_results }, { userId = null, s
   let found = [...exa, ...developer, ...overflow];
   // Nothing from either: documentation pages from the ordinary search.
   if (!found.length) {
-    const web = await search(`${asked} documentation example`, { count, userId, plan, paid, billed, noMetered }).catch(() => null);
+    const web = await search(`${asked} documentation example`, { count, userId, plan, paid, billed, noMetered, fresh }).catch(() => null);
     if (web?.metered) onCharge(1);
+    else if (web?.aside) onAside();
     found = (web?.results || []).map((r) => ({ source: 'Web', title: String(r.title || r.url), url: String(r.url || ''), text: clip(String(r.snippet || r.content || '')) }));
   }
   if (!found.length) {

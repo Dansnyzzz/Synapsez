@@ -835,7 +835,7 @@ section('a plan that renews, goes into grace or ends inside a metered call is to
   const rae = await ended('rae', {}, 300_000);
   const endedAt = (await store.getSubscription(rae.id)).periodEnd;
   mails.length = 0;
-  const hold = await holdSearch(rae.id);
+  const hold = await holdSearch(rae.id, { service: 'search' });
   await hold.release();
   const renewed = await store.getSubscription(rae.id);
   const price = planVnd('plus', 'month', 25_500);
@@ -849,7 +849,7 @@ section('a plan that renews, goes into grace or ends inside a metered call is to
 
   const gus = await ended('gus', {}, 10_000);
   mails.length = 0;
-  await (await holdSearch(gus.id)).release();
+  await (await holdSearch(gus.id, { service: 'search' })).release();
   check('a short balance: the metered call moves it into grace', (await store.getSubscription(gus.id)).status === 'grace');
   check('  exactly one grace mail goes out, and no paid line', mailsTo(gus, GRACE).length === 1 && (await paidLines(gus)).length === 0, JSON.stringify(mails.map((m) => [m.to, m.subject])));
   await billingTick({ now: new Date() });
@@ -858,7 +858,7 @@ section('a plan that renews, goes into grace or ends inside a metered call is to
 
   const uma = await ended('uma', { cancelAtEnd: true });
   mails.length = 0;
-  await (await holdSearch(uma.id)).release();
+  await (await holdSearch(uma.id, { service: 'search' })).release();
   check('set to end: the metered call ends it, and one ended mail goes out', (await store.getSubscription(uma.id)).status === 'ended' && mailsTo(uma, ENDED).length === 1, JSON.stringify(mails.map((m) => [m.to, m.subject])));
   await billingTick({ now: new Date() });
   check('  the daily job afterwards sends no second one', mailsTo(uma, ENDED).length === 1);
@@ -866,14 +866,14 @@ section('a plan that renews, goes into grace or ends inside a metered call is to
   // Two at once: one statement renews it, so one mail and one paid line, whichever caller won.
   const zoe = await ended('zoe', {}, 300_000);
   mails.length = 0;
-  await Promise.all([holdSearch(zoe.id).then((h) => h.release()), billingTick({ now: new Date() }), zoe.j.call('GET', '/api/billing')]);
+  await Promise.all([holdSearch(zoe.id, { service: 'search' }).then((h) => h.release()), billingTick({ now: new Date() }), zoe.j.call('GET', '/api/billing')]);
   check('a metered call, the daily job and the Billing page at once: one renewal, one mail, one paid line', (await store.billingState(zoe.id)).balanceVnd === 300_000 - price && mailsTo(zoe, RENEWED).length === 1 && (await paidLines(zoe)).length === 1, JSON.stringify([(await store.billingState(zoe.id)).balanceVnd, mailsTo(zoe, RENEWED).length, (await paidLines(zoe)).length]));
 
   // A mail provider that fails must not fail the metered call: the renewal and its paid line stand. holdSearch never throws (a
   // failure inside it is an unpaid NOT_BILLED), so what proves it is a real hold on the plan that has just renewed.
   const ned = await ended('ned', {}, 300_000);
   email.__testing.useTransport({ sendMail: async () => { throw new Error('the provider is down'); } });
-  const during = await holdSearch(ned.id);
+  const during = await holdSearch(ned.id, { service: 'search' });
   await during.release();
   email.__testing.useTransport({
     sendMail: async (m) => {

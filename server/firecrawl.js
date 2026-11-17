@@ -231,7 +231,9 @@ async function hold(share, n, meta) {
  * of its month left, its credits held first (`hold`), the next key when one is refused, spent
  * or asked to wait. `work(key, meta, held)` makes the call with that key and settles. Null when
  * no key has room or the share is used — the caller stands aside; the last refusal, thrown,
- * when every key was refused.
+ * when every key was refused. A charged call (`paid`) whose free share is used goes on to the owner's paid key instead,
+ * held to its monthly cap: on the key itself when the pool picked the paid key as a free one (one key, chosen as the paid
+ * one, is both), else by passing the free key over so the pool offers the paid one (keyPool.js is unchanged).
  *
  * @template T
  * @param {string} share
@@ -249,8 +251,18 @@ async function withCredits(share, n, work, { paid = false } = {}) {
       n,
       async (key, meta) => {
         const held = await hold(share, n, meta);
-        if (!held) throw standAside('no room in this share');
-        return work(key, meta, held);
+        if (held) return work(key, meta, held);
+        // Charged, and on a free key: the share is the free keys' limit, not the paid key's.
+        if (paid && !meta.paid) {
+          if ((await paidKeyOf('firecrawl'))?.keyId === meta.id) {
+            const over = { ...meta, paid: true };
+            const heldPaid = await hold(share, n, over);
+            if (heldPaid) return work(key, over, heldPaid);
+          } else {
+            throw Object.assign(standAside('no room in this share'), { passOver: true });
+          }
+        }
+        throw standAside('no room in this share');
       },
       { paid },
     );

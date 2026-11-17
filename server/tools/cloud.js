@@ -45,7 +45,7 @@ import { log } from '../util/trace.js';
 import { search, formatResults, searchPlan, readThroughExa, countryOf } from '../search.js';
 import { firecrawlReady, firecrawlScrape, firecrawlMap, firecrawlCrawl, researchPapers, readPaper, relatedPapers, lawSearch } from '../firecrawl.js';
 import { mayMeter, countMetered, periodOf } from '../freeTier.js';
-import { holdSearch, NOT_BILLED as NO_OWN_HOLD } from '../billing/meter.js';
+import { holdSearch, heldSearch, forgetFreePool, NOT_BILLED as NO_OWN_HOLD } from '../billing/meter.js';
 import { unitsForPages } from '../billing/plans.js';
 import { untrusted } from './untrusted.js';
 import { searchProject } from '../projects.js';
@@ -394,10 +394,22 @@ async function fetchedThroughExa(url, maxChars, why, { moreThan = 0, userId = nu
   // A billable account's read is a held unit (billing/meter.js), kept when Exa read the page and given back when not: the
   // free share's while Exa has free room (then it counts against the share when kept), else the plan's or the balance's.
   // `held`: the web_search this read belongs to; its reads are covered by the search's own unit, kept or not.
-  const hold = held ? NO_OWN_HOLD : await holdSearch(userId, { service: 'exa' });
+  // Thorough-search page reads (`held`) take the search's `paid` flag, so once Exa's free allowance is spent a read can reach
+  // Exa's paid key uncharged, page by page: at most 4 thousandths of a dollar a search against a 400 dong unit. Accepted, over
+  // holding a unit for each of the pages web_search opens on its own.
+  let hold = held ? NO_OWN_HOLD : await holdSearch(userId, { service: 'exa' });
   let read = null;
+  let aside = false;
+  const readOnce = () => readThroughExa(url, { maxChars: limit, paid: held ? held.paid : hold.paid, onAside: () => { aside = true; } });
   try {
-    read = await readThroughExa(url, { maxChars: limit, paid: held ? held.paid : hold.paid });
+    read = await readOnce();
+    if (!read && aside && hold.source === 'share') {
+      // No free key had room after all (the figure was stale): this read is the balance's, and may go on the paid key.
+      await hold.release();
+      forgetFreePool('exa');
+      hold = await holdSearch(userId, { share: false });
+      read = hold.refused ? null : await readOnce();
+    }
   } finally {
     await hold.settle(read ? 1 : 0);
   }
@@ -437,6 +449,7 @@ async function fetchedThroughFirecrawl(url, maxChars, why, { moreThan = 0, userI
     if (read === null && hold.source === 'share') {
       // No free key had room after all: this read is the balance's, and may go on the paid key.
       await hold.release();
+      forgetFreePool('firecrawl_scrape');
       hold = await holdSearch(userId, { share: false });
       if (hold.refused) return null;
       billed = hold.billed && hold.source !== 'none';
@@ -734,16 +747,14 @@ async function webSearch({ query, count, depth, recency, sites, category }, cont
   // A billable account holds a unit first (billing/meter.js): kept when a metered engine answered, given back when a free
   // one did or nothing did. The free share pays for it while the pooled engines have free room (a 'share' hold: free keys
   // only, counted when kept). For anybody else the hold is NOT_BILLED and this is the search it always was.
-  const hold = await holdSearch(userId, { service: 'search' });
-  let found;
-  try {
-    found = await search(query, {
+  // If a metered engine stood aside and a free one answered for a share hold, it is held again on the balance (heldSearch).
+  const { value: found, hold } = await heldSearch(userId, { service: 'search' }, async (hold, again) => {
+    const out = await search(query, {
       count: Number(count) || plan.count, userId, plan, recency, sites, category, country: plan.country,
-      paid: hold.paid, billed: hold.billed && !hold.refused && hold.source !== 'none', noMetered: hold.refused,
+      paid: hold.paid, billed: hold.billed && !hold.refused && hold.source !== 'none', noMetered: hold.refused, fresh: again,
     });
-  } finally {
-    await hold.settle(found?.metered ? 1 : 0);
-  }
+    return { value: out, units: out.metered ? 1 : 0, aside: out.aside };
+  });
   const listing = formatResults(query, found);
   if (!plan.read || !found.results?.length) return listing;
 
@@ -3495,7 +3506,7 @@ const CRAWL_TOTAL_CHARS = 30_000;
 /**
  * site_pages — a website's pages listed (op "map": a credit), or a few of them read at once
  * (op "crawl": a credit a page, ten at most), through Firecrawl. Both are metered calls for
- * the account's share of the day, like a search (freeTier.js).
+ * the account's share of the month, like a search (freeTier.js).
  *
  * @param {any} input @param {{ userId?: string|null, signal?: AbortSignal, deadline?: number }} [context]
  */
@@ -3554,6 +3565,7 @@ async function sitePagesTool({ op = 'map', url, search: term, limit, include_pat
       // Firecrawl stood aside for a call the free share was to pay: no free key had room after all. It is the balance's.
       if (!(err?.skip && hold.source === 'share')) throw err;
       await hold.release();
+      forgetFreePool('firecrawl_more');
       hold = await holdSearch(userId, { share: false });
       billed = hold.billed && !hold.refused && hold.source !== 'none';
       if (hold.refused) return "This month's allowance and balance for metered web calls are used up. Use web_fetch on the pages instead.";
@@ -3602,16 +3614,18 @@ export const CLOUD_IMPLEMENTATIONS = {
   // Claude's get_code_context_exa: code and documentation for a programming question,
   // as far as the reasoning level goes.
   code_context: async (input, { userId, signal }) => {
-    const hold = await holdSearch(userId, { service: 'search' });
-    let charged = 0;
-    try {
-      return await codeContextTool(input, {
-        userId, signal, plan: await planFor(userId), paid: hold.paid, billed: hold.billed && !hold.refused && hold.source !== 'none', noMetered: hold.refused,
+    const plan = await planFor(userId);
+    const { value } = await heldSearch(userId, { service: 'search' }, async (hold, again) => {
+      let charged = 0;
+      let aside = false;
+      const out = await codeContextTool(input, {
+        userId, signal, plan, paid: hold.paid, billed: hold.billed && !hold.refused && hold.source !== 'none', noMetered: hold.refused, fresh: again,
         onCharge: (n) => { charged = Math.max(charged, n); },
+        onAside: () => { aside = true; },
       });
-    } finally {
-      await hold.settle(charged);
-    }
+      return { value: out, units: charged, aside };
+    });
+    return value;
   },
   // Claude's connector search. Withheld when Settings → Capabilities switches it
   // off (memory.js); asked again here, as search_chats asks, for a call that

@@ -298,10 +298,16 @@ export function createPlansSheet({ api, toast, onChanged = () => {} }) {
     const planMills = (p.sandboxMinutes * MILLS_PER_HOUR) / 60;
     if (p === FREE) {
       if (!share) return [t('billing.plans.freeGeneral')];
-      return [t('billing.plans.freeSearches', { n: number(share.searches) }), ...(!(share.machineMills > 0) ? [] : [t('billing.plans.freeComputer', { time: machineTime(share.machineMills) })])];
+      // Each line only when its figure is there: a share of nothing is not "0 free searches a month".
+      return [
+        ...(!(share.searches > 0) ? [] : [t('billing.plans.freeSearches', { n: number(share.searches) })]),
+        ...(!(share.machineMills > 0) ? [] : [t('billing.plans.freeComputer', { time: machineTime(share.machineMills) })]),
+      ];
     }
-    const searches = t('billing.plans.searches', { n: number(Math.max(p.searches, share?.searches ?? 0)) });
-    const shareWins = share && share.machineMills !== null && share.machineMills > planMills;
+    // With no share to show, a paid card says only its own figures: "(the free share included)" would be about nothing.
+    if (!share) return [t('billing.plans.searchesPlain', { n: number(p.searches) }), t('billing.plans.computerPlain', { time: minutes(p.sandboxMinutes * 60) })];
+    const searches = t('billing.plans.searches', { n: number(Math.max(p.searches, share.searches ?? 0)) });
+    const shareWins = share.machineMills !== null && share.machineMills > planMills;
     return [searches, t('billing.plans.computer', { time: shareWins ? machineTime(share.machineMills) : minutes(p.sandboxMinutes * 60) })];
   }
 

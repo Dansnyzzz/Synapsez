@@ -478,11 +478,14 @@ export function createUsagePanel(host, deps) {
     const filesBar = storage && storage.limitBytes != null ? `<div data-storage>${bar({ label: t('usage.share.files', { used: filesSize(storage.usedBytes), limit: filesSize(storage.limitBytes) }), used: storage.usedBytes, limit: storage.limitBytes })}</div>` : '';
     if (!share || !share.enforced) return filesBar ? `<section class="usage__credit" data-free-share><h4>${escapeHtml(t('usage.share.title'))}</h4><div class="usage__limits">${filesBar}</div></section>` : '';
     const date = when(new Date(share.endsAt), { day: 'numeric', month: 'long', timeZone: 'UTC' });
-    const bars = [bar({ label: t('usage.share.searches', { used: countOf(share.searches.used), share: countOf(share.searches.share) }), used: share.searches.used, limit: share.searches.share })];
+    // A paid plan's bars count its own month and the share together, over the larger of the two (what the meter allows).
+    const together = share.withPlan === true;
+    const bars = [bar({ label: together ? t('usage.share.searchesPlan', { used: countOf(share.searches.used), of: countOf(share.searches.share) }) : t('usage.share.searches', { used: countOf(share.searches.used), share: countOf(share.searches.share) }), used: share.searches.used, limit: share.searches.share })];
     if (filesBar) bars.push(filesBar);
-    if (share.machine.shareMills != null) bars.push(bar({ label: t('usage.share.machine', { used: machineTime(share.machine.usedMills), share: machineTime(share.machine.shareMills) }), used: share.machine.usedMills, limit: share.machine.shareMills }));
+    if (share.machine.shareMills != null) bars.push(bar({ label: together ? t('usage.share.machinePlan', { used: machineTime(share.machine.usedMills), of: machineTime(share.machine.shareMills) }) : t('usage.share.machine', { used: machineTime(share.machine.usedMills), share: machineTime(share.machine.shareMills) }), used: share.machine.usedMills, limit: share.machine.shareMills }));
     const lines = [`<div class="usage__limits">${bars.join('')}</div>`, `<p class="usage__muted">${escapeHtml(t('usage.share.starts', { date }))}</p>`];
-    if (share.dry) lines.push(`<p class="usage__note">${escapeHtml(t('usage.share.dry', { date }))}</p>`);
+    // A billable account is charged when the free keys are dry, never sent to the free engines for the rest of the month.
+    if (share.dry) lines.push(`<p class="usage__note">${escapeHtml(share.billable ? t('usage.share.dryBilled') : t('usage.share.dry', { date }))}</p>`);
     if (share.joinedOn > 1) lines.push(`<p class="usage__muted">${escapeHtml(t('usage.share.late', { day: String(share.joinedOn), days: String(share.daysInMonth), left: String(share.daysInMonth - share.joinedOn + 1) }))}</p>`);
     return `<section class="usage__credit" data-free-share><h4>${escapeHtml(t('usage.share.title'))}</h4>${lines.join('')}</section>`;
   }

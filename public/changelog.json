@@ -17,10 +17,14 @@
       },
       "improved": {
         "vi": [
-          "Lượt tìm kiếm và thời gian máy tính đám mây được trả bằng phần miễn phí chỉ dùng khi các khoá miễn phí còn chỗ. Khi hết chỗ, lượt gọi của tài khoản trả phí được tính vào số dư, không bị từ chối và không bị chuyển sang công cụ tìm kiếm kém hơn."
+          "Lượt tìm kiếm và thời gian máy tính đám mây được trả bằng phần miễn phí chỉ dùng khi các khoá miễn phí còn chỗ. Khi hết chỗ, lượt gọi của tài khoản trả phí được tính vào số dư (không bị từ chối chỉ vì các khoá miễn phí hết chỗ, miễn là số dư đủ), và khi đã đặt khoá tìm kiếm trả phí thì lượt tìm kiếm đi qua các công cụ tính phí chứ không bị chuyển sang Google hay DuckDuckGo.",
+          "Thẻ Phần miễn phí trong Mức dùng của tài khoản trả phí nay ghi đúng mức được dùng: gồm cả phần của gói lẫn phần miễn phí (ví dụ 400 / 400), và báo lượt tìm tiếp theo sẽ tính vào số dư khi các khoá miễn phí đã hết chỗ.",
+          "Chưa kiểm chứng với khoá thật: bước dùng phần miễn phí và chuyển sang số dư."
         ],
         "en": [
-          "Searches and cloud computer time that the free share covers are used only while the free keys still have room. When they run out, a paying account's call is charged to its balance and is never refused or sent to a worse search engine."
+          "Searches and cloud computer time that the free share covers are used only while the free keys still have room. When they run out, a paying account's call is charged to its balance (not refused just because the free keys ran out, as long as the balance can cover it), and with a paid search key set its searches go to the metered engines instead of Google or DuckDuckGo.",
+          "The Usage card's free share for a paid account now shows what it is really allowed: the plan's own month and the free share together (for example 400 / 400), and says the next searches are charged to the balance once the free keys are dry.",
+          "Not verified against real keys yet: the share step and the fall-back to the balance."
         ]
       }
     },
@@ -41,10 +45,10 @@
       "date": "2026-11-17",
       "improved": {
         "vi": [
-          "Thêm khoá Exa từ một tài khoản khác (mỗi tài khoản một nhóm riêng) không còn bị báo nhầm là bị từ chối: khi bước kiểm tra Websets của Exa báo khoá không hợp lệ, Synapsez hỏi lại phần tìm kiếm — phần mà Synapsez thực sự dùng — bằng một yêu cầu không tốn lượt nào. Khoá sai vẫn bị từ chối như trước."
+          "Thêm khoá Exa từ một tài khoản khác (mỗi tài khoản một nhóm riêng) không còn bị báo nhầm là bị từ chối: khi bước kiểm tra Websets của Exa báo khoá không hợp lệ, Synapsez hỏi lại phần tìm kiếm — phần mà Synapsez thực sự dùng — bằng một yêu cầu rỗng (Exa kiểm tra khoá trước khi xử lý yêu cầu). Khoá sai vẫn bị từ chối như trước."
         ],
         "en": [
-          "Adding an Exa key from another account (each account its own team) is no longer wrongly refused: when Exa's Websets check calls the key invalid, Synapsez asks Exa's search — what Synapsez actually uses — once more, with a request that costs nothing. A wrong key is still refused."
+          "Adding an Exa key from another account (each account its own team) is no longer wrongly refused: when Exa's Websets check calls the key invalid, Synapsez asks Exa's search — what Synapsez actually uses — once more, with an empty request (Exa checks the key before the request). A wrong key is still refused."
         ]
       }
     },

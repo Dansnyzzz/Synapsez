@@ -1035,9 +1035,10 @@ export async function previewOf(row) {
    *
    * Matched by name or type whatever the kind: an upload is `binary`, but one the assistant
    * wrote with create_file is stored as `text`, and would otherwise be shown as code. Neither
-   * is changed for the models (`image` means vision input, and an SVG is not one), but the viewer can draw it, and the client has to repair and
-   * sanitise the markup before it does, so it is handed over as text. Past the cap it is
-   * left to download, as before; so is one kept on the machine, which has no bytes here.
+   * is changed for the models (`image` means vision input, and an SVG is not one), but the viewer can draw it.
+   * The client has to repair and sanitise the markup before it does, so it is handed over as text.
+   * Past the cap nothing is drawn: a binary SVG is left to download, as before, and a text one falls
+   * through to the code view below, as before. One kept on the machine has no bytes here.
    */
   if (row.data && (/\.svg$/i.test(row.name || '') || /^image\/svg\+xml/i.test(row.mime || ''))) {
     const markup = Buffer.from(row.data, 'base64').toString('utf8');

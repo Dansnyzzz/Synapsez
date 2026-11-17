@@ -10,6 +10,7 @@
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
 const XMLNS_NS = 'http://www.w3.org/2000/xmlns/';
+const XML_NS = 'http://www.w3.org/XML/1998/namespace';
 const FALLBACK = { width: 800, height: 600 };
 
 /**
@@ -40,7 +41,8 @@ function parse(markup) {
  * onto a canvas. What is removed is what could still be live if the markup were reused
  * elsewhere, so that the PNG matches what is shown: scripts, `foreignObject`, every element
  * outside the SVG namespace (an XHTML `<iframe srcdoc>` in a strictly-parsed file), every
- * attribute outside it but xlink, `on*` attributes, any link that is not a `#fragment` or a
+ * attribute outside it but xlink and `xml:space`/`xml:lang`, an attribute with no namespace and a colon in its name
+ * (`inkscape:label` in a file read as a page), `on*` attributes, any link that is not a `#fragment` or a
  * `data:image/` URL, and animations that would set a link or a handler.
  *
  * @param {Element} root
@@ -51,14 +53,18 @@ function clean(root) {
     const target = String(el.getAttribute('attributeName') || '').trim().toLowerCase();
     const rewrites = (local === 'set' || local.startsWith('animate')) && /^(on|(xlink:)?href)/.test(target);
     // A prefixed name in an HTML-parsed file (`h:iframe`) is an SVG element only until it is written out and read as XML.
-    if (el.namespaceURI !== SVG_NS || el.tagName.includes(':') || local === 'script' || local === 'foreignobject' || rewrites) el.remove();
+    // Its local name keeps the colon then; a strictly-read `<svg:rect>` in the SVG namespace has the local name `rect` and stays.
+    if (el.namespaceURI !== SVG_NS || el.localName.includes(':') || local === 'script' || local === 'foreignobject' || rewrites) el.remove();
   }
   for (const el of [root, ...root.querySelectorAll('*')]) {
     for (const attr of [...el.attributes]) {
       const name = attr.name.toLowerCase();
-      const foreign = attr.namespaceURI && attr.namespaceURI !== XLINK_NS && attr.namespaceURI !== XMLNS_NS;
+      const foreign = attr.namespaceURI && attr.namespaceURI !== XLINK_NS && attr.namespaceURI !== XMLNS_NS && attr.namespaceURI !== XML_NS;
       const prefixed = name.startsWith('xmlns:') && name !== 'xmlns:xlink';
-      if (name.startsWith('on') || foreign || prefixed) el.removeAttribute(attr.name);
+      // No namespace and a colon in the name (`inkscape:label`, `sodipodi:docname` in a file read as a page): written out as XML
+      // it is an unbound prefix, which makes the whole file a parse error and the drawing blank.
+      const unbound = !attr.namespaceURI && attr.name.includes(':');
+      if (name.startsWith('on') || foreign || prefixed || unbound) el.removeAttribute(attr.name);
       else if (attr.localName.toLowerCase() === 'href' && !/^\s*(#|data:image\/)/i.test(attr.value)) el.removeAttribute(attr.name);
     }
   }

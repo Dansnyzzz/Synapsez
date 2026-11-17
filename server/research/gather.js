@@ -1,5 +1,5 @@
 import { search as defaultSearch } from '../search.js';
-import { holdSearch } from '../billing/meter.js';
+import { heldSearch } from '../billing/meter.js';
 import { STOPWORDS } from '../rag.js';
 import { mapWithLimit } from '../util/parallel.js';
 import { registrableDomain, RANK_ORDER } from './confidence.js';
@@ -363,14 +363,11 @@ export async function gatherEvidence(
     try {
       // The default search is held for a billable account (billing/meter.js) like web_search; an injected one is left alone.
       if (search !== defaultSearch) return { query, out: await search(query, { userId }) };
-      const hold = await holdSearch(userId, { service: 'search' });
-      let out;
-      try {
-        out = await search(query, { userId, paid: hold.paid, billed: hold.billed && !hold.refused && hold.source !== 'none', noMetered: hold.refused });
-        return { query, out };
-      } finally {
-        await hold.settle(out?.metered ? 1 : 0);
-      }
+      const { value: out } = await heldSearch(userId, { service: 'search' }, async (hold, again) => {
+        const found = await search(query, { userId, paid: hold.paid, billed: hold.billed && !hold.refused && hold.source !== 'none', noMetered: hold.refused, fresh: again });
+        return { value: found, units: found?.metered ? 1 : 0, aside: found?.aside };
+      });
+      return { query, out };
     } catch (err) {
       return { query, error: err };
     }

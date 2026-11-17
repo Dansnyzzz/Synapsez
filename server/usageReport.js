@@ -3,7 +3,7 @@ import { getStore } from './store/index.js';
 import { getApiKeys, providerStatus, keyEntries, setKeyMeta } from './settings.js';
 import { limitFor } from './usage.js';
 import { withMarkup } from './pricing.js';
-import { accountShares } from './freeShares.js';
+import { usageShare } from './billing/meter.js';
 import { storageOf } from './storageQuota.js';
 import { orcaBalance, orcaStanding, orcaWallet } from './keyIntake.js';
 import { ORCA_FREE_SETTING } from './models.js';
@@ -374,7 +374,8 @@ export async function usageReport(user, { fetchImpl = fetch, part = 'all' } = {}
     // monthly ceiling applies (checkQuota counts every call of the month, and
     // stops a turn only on a shared key).
     // This month's free share, worked out from the keys' capacity (server/freeShares.js, owner 2026-11-13); null when it cannot be read.
-    freeShare: part === 'limits' ? null : await accountShares(user.id).catch(() => null),
+    // A billable account's card shows what the meter really allows it (billing/meter.js `usageShare`).
+    freeShare: part === 'limits' ? null : await usageShare(user).catch(() => null),
     // What the account's files weigh against its room (server/storageQuota.js, owner 2026-11-13); limitBytes is null with no limit.
     storage: part === 'limits' ? null : await storageOf(user).catch(() => null),
     sharedKey: Object.fromEntries(Object.entries(status).map(([provider, s]) => [provider, !!s.shared])),

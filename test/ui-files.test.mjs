@@ -789,6 +789,10 @@ section('a drawing is a picture, on the shelf, in the viewer and on the clipboar
   await give('svg-made', 'made.svg', loose, { mime: 'text/plain; charset=utf-8', kind: 'text', source: loose });
   // Things an SVG can carry that are live in a page, whatever an <img> would do with them.
   await give('svg-live', 'live.svg', '<svg xmlns="http://www.w3.org/2000/svg" xmlns:h="http://www.w3.org/1999/xhtml" width="30" height="30"><h:iframe srcdoc="<script>1</script>"></h:iframe><a href="javascript:alert(1)"><set attributeName="href" to="javascript:alert(2)"/><rect width="30" height="30"/></a></svg>', { mime: 'image/svg+xml' });
+  // Inkscape writes prefixed attributes; read as a page (no xmlns:inkscape declared) they would be unbound prefixes in the XML.
+  await give('svg-inkscape', 'inkscape.svg', '<svg viewBox="0 0 50 50" xml:space="preserve" inkscape:version="1.3" sodipodi:docname="d.svg"><g inkscape:label="Layer 1" inkscape:groupmode="layer"><rect width="50" height="50" fill="#9c9"/></g></svg>', { mime: 'image/svg+xml' });
+  // Correctly prefixed SVG elements in the SVG namespace.
+  await give('svg-prefixed', 'prefixed.svg', '<svg:svg xmlns:svg="http://www.w3.org/2000/svg" viewBox="0 0 50 50"><svg:rect width="50" height="50" fill="#99c"/></svg:svg>', { mime: 'image/svg+xml' });
   await give('md-handed', 'from-machine.md', '# Opening words\n\nThe rest of it.', { kind: 'text', mime: 'text/markdown' });
   await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
   await page.click('#open-artifacts');
@@ -800,6 +804,8 @@ section('a drawing is a picture, on the shelf, in the viewer and on the clipboar
     return {
       loose: img('svg-loose') ? { w: img('svg-loose').naturalWidth, complete: img('svg-loose').complete } : null,
       hostile: img('svg-hostile') ? img('svg-hostile').naturalWidth : null,
+      inkscape: img('svg-inkscape') ? img('svg-inkscape').naturalWidth : null,
+      prefixed: img('svg-prefixed') ? img('svg-prefixed').naturalWidth : null,
       notsvgImg: !!img('svg-notsvg'),
       notsvgIcon: !!card('svg-notsvg')?.querySelector('.card__peek--empty svg'),
       md: card('md-handed')?.querySelector('.card__peek')?.textContent || '',
@@ -808,6 +814,8 @@ section('a drawing is a picture, on the shelf, in the viewer and on the clipboar
   });
   check('an SVG with no xmlns, an entity and a bare & is drawn on its card', shelf.loose?.w > 0, JSON.stringify(shelf.loose));
   check('one with a script and an onload is drawn, and neither ran', shelf.hostile > 0 && !shelf.ran, JSON.stringify(shelf));
+  check('an Inkscape-style SVG (inkscape:label, sodipodi:docname, xml:space) is drawn, not blank', shelf.inkscape > 0, JSON.stringify(shelf));
+  check('a correctly prefixed <svg:svg><svg:rect/> is drawn, not blank', shelf.prefixed > 0, JSON.stringify(shelf));
   check('markup that is no drawing shows the icon, never a broken picture', !shelf.notsvgImg && shelf.notsvgIcon, JSON.stringify(shelf));
   check('a handed-over Markdown card shows its opening words', /Opening words/.test(shelf.md), shelf.md);
 

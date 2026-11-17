@@ -3001,6 +3001,21 @@ section('billing: the sheet, the menu row, the mode and the release notes agree 
   check('1.32.0 is released, in both languages, and is the newest entry', !!r132 && version === '1.32.0' && log[0].version === '1.32.0' && r132.new.vi.length > 0 && r132.new.en.length === r132.new.vi.length && (r132.improved?.vi.length ?? 0) === (r132.improved?.en.length ?? 0));
   check('  it says the Free plan keeps its share, a plan gets at least it, and the plans sheet shows the figures', /Free plan keeps/.test(en132) && /at least/.test(en132) && /plans sheet/.test(en132) && /[Gg]ói Free/.test(vi132) && /ít nhất/.test(vi132));
   check('  and CHANGELOG.md carries it', read('CHANGELOG.md').includes('(1.32.0)'));
+
+  // A share taken without saying which free keys would serve the call is free use of whatever answers: every holdSearch call names its
+  // service, or says share: false (which skips the share step altogether).
+  const callSites = [];
+  for (const file of fs.readdirSync(new URL('../server/', import.meta.url), { recursive: true }).map(String).filter((f) => f.endsWith('.js'))) {
+    const src = read(`server/${file.replace(/\\/g, '/')}`);
+    for (const m of src.matchAll(/\bholdSearch\(/g)) {
+      const open = m.index + m[0].length;
+      const line = src.slice(0, m.index).split('\n').pop();
+      // The declaration, a comment, or a word in a sentence is not a call.
+      if (/^\s*(export\s+)?(async\s+)?function\b|^\s*(\/\/|\*|\/\*)/.test(line) || /import \{/.test(line)) continue;
+      callSites.push({ file, args: src.slice(open, src.indexOf(')', open)) });
+    }
+  }
+  check('every holdSearch call names its service or passes share: false', callSites.length >= 8 && callSites.every((c) => /\bservice\b|share: false/.test(c.args)), callSites.filter((c) => !/\bservice\b|share: false/.test(c.args)).map((c) => `${c.file}(${c.args})`).join(' | ') || String(callSites.length));
 }
 
 console.log(failures === 0 ? '\n\x1b[32mAll feature checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);

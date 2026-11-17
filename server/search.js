@@ -123,11 +123,15 @@ const keywordQuery = (query, ask) =>
 /** Standing aside — not a failure: no allowance left, or this account's share used today. */
 const standAside = (why) => Object.assign(new Error(why), { skip: true });
 
-/** Whether a metered engine may run for this search, its allowance and this account's share both counted. */
+/**
+ * Whether a metered engine may run for this search, its allowance and this account's share both counted. A charged search
+ * (`paid`) does not stop at the free allowance: the pool goes on to the owner's paid key under its cap (keyPool.js), and
+ * stands aside by itself when there is none, so a paying account is not sent to a free engine for want of free room.
+ */
 async function metered(service, ask, cost) {
   if (!ask.mayMeter) throw standAside(`${service}: this account's share of this month's searches is used`);
   const room = await allowance(service);
-  if (room.left < cost) throw standAside(`${service}: the free allowance for this period is used`);
+  if (room.left < cost && !ask.paid) throw standAside(`${service}: the free allowance for this period is used`);
   ask.drew = true;
   return room;
 }
@@ -624,6 +628,21 @@ export function cooledChain(chain, now = Date.now()) {
   return [...chain.filter((n) => !cooling(n)), ...chain.filter(cooling)];
 }
 
+/**
+ * The metered engines a search that holds the free share can reach: those ahead of the first unmetered one in the live chain
+ * (keys read, cooling engines at the back). Google and DuckDuckGo answer without counting anything, so what sits behind them
+ * is never asked while they answer, and its room is no room for the share (billing/meter.js `freePoolLeft`). By default
+ * that is Exa and Firecrawl's search.
+ *
+ * @returns {Promise<string[]>}
+ */
+export async function shareSearchEngines() {
+  await warmPools();
+  const chain = cooledChain(searchChain());
+  const free = chain.findIndex((name) => !ENGINES[name].metered);
+  return (free < 0 ? chain : chain.slice(0, free)).filter((name) => ENGINES[name].metered);
+}
+
 /** What one engine's attempt said about its health: a timeout or a 5xx counts against it. */
 export function noteEngine(name, err, now = Date.now()) {
   const row = trouble.get(name) || { fails: 0, until: 0 };
@@ -696,23 +715,28 @@ export function fuseResults(answered, count) {
  *
  * Free, first (freeTier.js): the same search asked again within ten minutes
  * is answered from memory and spends nothing; a metered engine runs only
- * inside its allowance and the account's share of the day.
+ * inside its allowance and the account's share of the month (a charged search, `paid`, may go past the free
+ * allowance to the owner's paid key).
  *
- * `billed`: a hold (billing/meter.js) already paid for it, so the account's free share is neither asked nor
- * counted; the result says whether a metered engine answered (`metered`), which is what the hold keeps.
+ * `billed`: a hold (billing/meter.js) already covers it, whether the plan's month, the free share (a share hold: free keys
+ * only, `paid` false) or the balance, so the account's own count is neither asked nor added to; the result says whether a
+ * metered engine answered (`metered`), which is what the hold keeps. `aside` says a metered engine stood aside (no allowance,
+ * no key with room), so a free engine may have answered in its place: a share hold that sees it, with nothing metered, was
+ * given a dry pool after all and is held again on the balance (meter.js `heldSearch`). `fresh` skips the memory of earlier
+ * answers, for that second ask.
  *
  * `paid`: the search is charged, so a pooled engine may go on to the owner's
  * paid key once every free key is full (keyPool.js) — true when a billing hold paid for it
  * (billing/meter.js).
  *
  * @param {string} query
- * @param {{ count?: number, userId?: string|null, plan?: any, recency?: string|null, sites?: string[]|string, category?: string|null, country?: string|null, paid?: boolean, billed?: boolean, noMetered?: boolean }} [options]
- * @returns `{ engine, engines, results, attempts, answer, metered }` — `attempts` records
+ * @param {{ count?: number, userId?: string|null, plan?: any, recency?: string|null, sites?: string[]|string, category?: string|null, country?: string|null, paid?: boolean, billed?: boolean, noMetered?: boolean, fresh?: boolean }} [options]
+ * @returns `{ engine, engines, results, attempts, answer, metered, aside }` — `attempts` records
  *   what was tried and why it did not answer, which is the difference between
  *   "there is nothing about this on the web" and "the search key expired last
  *   Tuesday"; `answer` is Exa's own summary when a deep search gave one.
  */
-export async function search(query, { count, userId = null, plan = SEARCH_LEVELS.medium, recency = null, sites = [], category = null, country = null, paid = false, billed = false, noMetered = false } = {}) {
+export async function search(query, { count, userId = null, plan = SEARCH_LEVELS.medium, recency = null, sites = [], category = null, country = null, paid = false, billed = false, noMetered = false, fresh = false } = {}) {
   const wanted = Math.min(Math.max(Number(count) || plan.count || 8, 1), 20);
   // The stored keys, read (at most every 30 s) before the chain asks which engines have one.
   await warmPools();
@@ -735,18 +759,20 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
     category: SEARCH_CATEGORIES.includes(String(category)) ? String(category) : null,
     country: /^[A-Z]{2}$/.test(String(country)) ? String(country) : null,
     userId,
-    // A billed search (server/billing/meter.js) is paid for from the plan or the balance, so the free share does not
-    // apply to it (2026-11-14); any other search is as it always was.
+    // A billed search (server/billing/meter.js) is covered by a hold (the plan, the free share or the balance), which counts
+    // it, so the account's own count does not apply to it; any other search is as it always was.
     // `noMetered`: billing refused the call (live), so no metered engine may run, as when the share is used.
     mayMeter: noMetered ? false : billed ? true : await mayMeter(userId),
     paid: paid === true,
     // Set when a metered engine was asked, so the account's share is counted once.
     drew: false,
+    // Set when a metered engine stood aside, for want of allowance or of a key with room.
+    aside: false,
   };
   // One account's cache (PRV-016, T13): shared, an instant answer told B that somebody had just searched
   // these words, and served B what A's own key had paid for.
   const cacheKey = JSON.stringify([userId || '', query.trim().toLowerCase(), chain, wanted, plan.exa, plan.tavily, plan.snippet, plan.fuse, ask.recency, ask.sites, ask.category, ask.country]);
-  const cached = recall(cacheKey);
+  const cached = fresh ? null : recall(cacheKey);
   // A cache hit asked no engine, so it is never a metered use (owner, 2026-11-13).
   if (cached) return { ...cached, metered: false };
 
@@ -780,6 +806,7 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
         // stands aside without being reported as failing.
         if (err.skip) {
           if (/allowance|share/.test(err.message)) log.info('search: free tier', { reason: err.message, userId: userId || 'unattributed' });
+          if (engine.metered) ask.aside = true;
           continue;
         }
         noteEngine(chain[at], err);
@@ -795,7 +822,7 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
   attempts.sort((a, b) => a.at - b.at);
   const tried = attempts.map(({ engine, error }) => ({ engine, error }));
 
-  if (!answered.length) return { engine: null, engines: [], results: [], attempts: tried, answer: null, metered: false };
+  if (!answered.length) return { engine: null, engines: [], results: [], attempts: tried, answer: null, metered: false, aside: ask.aside };
   const engines = answered.map((a) => a.label);
   const results = fuseResults(answered, wanted);
   /**
@@ -819,6 +846,7 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
     results,
     attempts: tried,
     answer: answered.find((a) => a.answer)?.answer || null,
+    aside: ask.aside,
   };
   remember(cacheKey, found);
   // Whether a metered engine answered: what a billed search keeps, where a free engine alone costs nothing.
@@ -895,15 +923,22 @@ export function formatResults(query, { engine, engines = [], results, attempts, 
  * On a key from the pool, like a search; `paid` as `search` takes it.
  *
  * @param {string} url
- * @param {{ maxChars?: number, timeoutMs?: number, paid?: boolean }} [options]
+ * `onAside()` is called when Exa stood aside for want of free room or a key with room, so the caller can tell that from a
+ * page Exa could not read (a share hold is then held again on the balance, cloud.js `fetchedThroughExa`).
+ *
+ * @param {{ maxChars?: number, timeoutMs?: number, paid?: boolean, onAside?: () => void }} [options]
  * @returns {Promise<{ title: string, text: string } | null>}
  */
-export async function readThroughExa(url, { maxChars = 20_000, timeoutMs = 30_000, paid = false } = {}) {
+export async function readThroughExa(url, { maxChars = 20_000, timeoutMs = 30_000, paid = false, onAside = () => {} } = {}) {
   await warmPools();
   if (!poolHas('exa')) return null;
   try {
-    // A thousandth of a dollar a page, inside the free month like a search.
-    if ((await allowance('exa')).left < 1) return null;
+    // A thousandth of a dollar a page, inside the free month like a search. A charged read (`paid`) goes on: the pool holds
+    // the owner's paid key to its cap, and a call that cannot be held stands aside there.
+    if (!paid && (await allowance('exa')).left < 1) {
+      onAside();
+      return null;
+    }
     const json = await throughPool(
       'exa',
       1,
@@ -929,7 +964,8 @@ export async function readThroughExa(url, { maxChars = 20_000, timeoutMs = 30_00
     );
     const hit = (json.results || [])[0];
     return hit?.text ? { title: String(hit.title || ''), text: String(hit.text) } : null;
-  } catch {
+  } catch (err) {
+    if (err?.skip) onAside();
     return null;
   }
 }
