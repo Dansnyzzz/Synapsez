@@ -1,6 +1,18 @@
 {
   "entries": [
     {
+      "version": "1.31.2",
+      "date": "2026-11-17",
+      "improved": {
+        "vi": [
+          "Tệp SVG nay mở ra thành hình ảnh trong khung xem, và thẻ SVG trong Tệp không còn hiện ảnh vỡ. Sao chép một tệp SVG sẽ sao chép hình ảnh chứ không phải mã. Thẻ Markdown do máy tính đám mây gửi sang cũng hiện vài dòng đầu thay vì chỉ một biểu tượng."
+        ],
+        "en": [
+          "SVG drawings now open as pictures in the viewer, and an SVG card on the Files shelf no longer shows a broken picture. Copying an SVG copies the picture, not its code. Markdown cards for files handed over from the cloud computer now show their opening lines instead of only an icon."
+        ]
+      }
+    },
+    {
       "version": "1.31.1",
       "date": "2026-11-17",
       "improved": {

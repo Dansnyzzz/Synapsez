@@ -979,6 +979,8 @@ function zipListing(file) {
   }
 }
 const ZIP_LIST_MAX = 60;
+/** The most markup of one drawing the viewer is handed, in characters. */
+const SVG_PREVIEW_MAX = 2 * 1024 * 1024;
 
 /**
  * Everything needed to show one file: its text, and the structured preview.
@@ -1033,6 +1035,19 @@ export async function previewOf(row) {
   }
 
   if (row.kind === 'audio' || row.kind === 'video') return { kind: row.kind, format: row.name.split('.').pop().toLowerCase() };
+
+  /**
+   * A drawing, as its markup.
+   *
+   * It stays `binary` for the models (classify is not touched: `image` means vision input,
+   * and an SVG is not one), but the viewer can draw it, and the client has to repair and
+   * sanitise the markup before it does, so it is handed over as text. Past the cap it is
+   * left to download, as before; so is one kept on the machine, which has no bytes here.
+   */
+  if (row.data && (/\.svg$/i.test(row.name || '') || /^image\/svg\+xml/i.test(row.mime || ''))) {
+    const markup = Buffer.from(row.data, 'base64').toString('utf8');
+    if (markup.length <= SVG_PREVIEW_MAX) return { kind: 'svg', format: 'svg', text: markup };
+  }
 
   if (row.kind === 'binary') {
     const listed = zipListing(row);

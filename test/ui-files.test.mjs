@@ -773,6 +773,62 @@ section('a file too big for this host goes straight to the machine');
   check('and sits in the message like any other file', /big\.zip/.test(tile.text) && !tile.failed, JSON.stringify(tile));
 }
 
+section('a drawing is a picture, on the shelf, in the viewer and on the clipboard (owner, 2026-11-17)');
+{
+  const context = page.context();
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: `http://127.0.0.1:${PORT}` });
+  // No xmlns, an HTML entity and a bare ampersand: strict XML refuses all three, and so would an <img>.
+  const loose = '<svg viewBox="0 0 120 60"><rect width="120" height="60" fill="#cde"/><text x="5" y="30">A&nbsp;B & C</text></svg>';
+  const hostile = '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" onload="window.__svgRan = 1"><script>window.__svgRan = 2</script><rect width="40" height="40" fill="red"/></svg>';
+  const give = (id, name, text, over = {}) =>
+    store.createAttachment(me.id, { id, name, mime: over.mime || '', kind: over.kind || 'binary', bytes: Buffer.byteLength(text), data: Buffer.from(text).toString('base64'), origin: 'generated', source: over.source ?? null });
+  await give('svg-loose', 'loose.svg', loose, { mime: 'image/svg+xml' });
+  await give('svg-hostile', 'hostile.svg', hostile, { mime: 'image/svg+xml' });
+  await give('svg-notsvg', 'not-a-drawing.svg', 'this is just words, not a drawing', { mime: 'image/svg+xml' });
+  await give('md-handed', 'from-machine.md', '# Opening words\n\nThe rest of it.', { kind: 'text', mime: 'text/markdown' });
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  await page.click('#open-artifacts');
+  await page.waitForSelector('.card--artifact[data-file="svg-loose"]');
+  await page.waitForTimeout(1500);
+  const shelf = await page.evaluate(() => {
+    const card = (id) => document.querySelector(`.card--artifact[data-file="${id}"]`);
+    const img = (id) => card(id)?.querySelector('img');
+    return {
+      loose: img('svg-loose') ? { w: img('svg-loose').naturalWidth, complete: img('svg-loose').complete } : null,
+      hostile: img('svg-hostile') ? img('svg-hostile').naturalWidth : null,
+      notsvgImg: !!img('svg-notsvg'),
+      notsvgIcon: !!card('svg-notsvg')?.querySelector('.card__peek--empty svg'),
+      md: card('md-handed')?.querySelector('.card__peek')?.textContent || '',
+      ran: window.__svgRan || null,
+    };
+  });
+  check('an SVG with no xmlns, an entity and a bare & is drawn on its card', shelf.loose?.w > 0, JSON.stringify(shelf.loose));
+  check('one with a script and an onload is drawn, and neither ran', shelf.hostile > 0 && !shelf.ran, JSON.stringify(shelf));
+  check('markup that is no drawing shows the icon, never a broken picture', !shelf.notsvgImg && shelf.notsvgIcon, JSON.stringify(shelf));
+  check('a handed-over Markdown card shows its opening words', /Opening words/.test(shelf.md), shelf.md);
+
+  await page.locator('.card--artifact[data-file="svg-loose"]').click();
+  await page.waitForSelector('#viewer-body img[data-svg-view]');
+  await page.waitForTimeout(800);
+  const viewed = await page.evaluate(() => {
+    const img = document.querySelector('#viewer-body img[data-svg-view]');
+    return { w: img?.naturalWidth || 0, none: /nothing to preview/.test(document.getElementById('viewer-body').textContent) };
+  });
+  check('the same drawing is drawn in the viewer', viewed.w > 0 && !viewed.none, JSON.stringify(viewed));
+  await page.evaluate(() => navigator.clipboard.writeText('before'));
+  const label = await page.textContent('#viewer-do');
+  await page.click('#viewer-more');
+  const item = page.getByText('Copy picture', { exact: true }).first();
+  await item.click();
+  await page.waitForTimeout(1200);
+  const clip = await page.evaluate(async () => {
+    const items = await navigator.clipboard.read();
+    return items.map((i) => i.types.join('+'));
+  });
+  check('Copy puts a picture on the clipboard, not the code', clip.length === 1 && clip[0] === 'image/png', `${label} ${clip.join()}`);
+  await page.evaluate(() => document.getElementById('viewer-close')?.click());
+}
+
 await browser.close();
 server.close();
 realLog(failures ? `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n` : '\n\x1b[32mAll file viewer checks passed.\x1b[0m\n');

@@ -13,6 +13,7 @@ import { latestWins } from './serial.js';
 import { taskState, sortByState } from './automation-status.js';
 import { isAutoTab, rememberAutoTab, setAutoHash, clearAutoHash, pillsHtml, moreButtonHtml, openRowMenu, paintAutoTabs, whenText } from './automations.js';
 import { rovingKeys } from './roving.js';
+import { svgPicture } from './svg-picture.js';
 
 /** How long the Repeat menu must sit on a choice before it is saved (UX-005). */
 const FREQUENCY_SETTLE_MS = 700;
@@ -573,16 +574,26 @@ export function createPages({
         card.addEventListener('click', () => openViewer(card.dataset.file));
       }
       for (const img of /** @type {NodeListOf<HTMLImageElement>} */ (body.querySelectorAll('img[data-svg]'))) {
+        // Never a broken picture: what cannot be drawn gets the card's code icon.
+        const unsuitable = () => {
+          const peek = img.closest('.card__peek');
+          if (!peek) return;
+          peek.className = 'card__peek card__peek--empty';
+          peek.innerHTML = artifactMark;
+        };
         fetch(`/api/attachments/${encodeURIComponent(img.dataset.svg || '')}`)
-          .then((res) => (res.ok ? res.blob() : null))
-          .then((blob) => {
-            if (!blob) return;
-            const url = URL.createObjectURL(new Blob([blob], { type: 'image/svg+xml' }));
-            img.addEventListener('load', () => URL.revokeObjectURL(url), { once: true });
-            img.addEventListener('error', () => URL.revokeObjectURL(url), { once: true });
-            img.src = url;
+          .then((res) => (res.ok ? res.text() : null))
+          .then((markup) => (markup == null ? null : svgPicture(markup)))
+          .then((picture) => {
+            if (!picture) return unsuitable();
+            img.addEventListener('load', () => URL.revokeObjectURL(picture.url), { once: true });
+            img.addEventListener('error', () => {
+              URL.revokeObjectURL(picture.url);
+              unsuitable();
+            }, { once: true });
+            img.src = picture.url;
           })
-          .catch(() => {});
+          .catch(unsuitable);
       }
     },
     onNew: () => {

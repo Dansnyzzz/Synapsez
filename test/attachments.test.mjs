@@ -813,6 +813,25 @@ section('a step screenshot is kept for the assistant, not shelved as a file');
   check('  an orphan from today survives the daily sweep', !!(await store.getAttachment(aliceId, old.id)));
 }
 
+section('the Files shelf shows the opening of a file that has no source (owner, 2026-11-17)');
+{
+  const aliceId = (await store.getUserByEmail('alice@example.com')).id;
+  const keep = (id, name, text, source) =>
+    store.createAttachment(aliceId, { id, name, mime: 'text/markdown', kind: 'text', bytes: Buffer.byteLength(text), data: Buffer.from(text).toString('base64'), origin: 'generated', source });
+  // 'a' then three-byte letters: the 600 bytes the shelf reads end in the middle of one.
+  const viet = 'a' + 'ế'.repeat(300);
+  await keep('peek-handed', 'tu-may.md', viet, null);
+  await keep('peek-short', 'ngan.md', '# Chào\n\nXin chào bạn', null);
+  await keep('peek-source', 'co-nguon.md', 'bytes say this', 'the source says this');
+  const shelf = await alice.call('GET', '/api/files');
+  const byId = (id) => (shelf.json?.files || []).find((f) => f.id === id);
+  check('a file handed over with no source has a peek from its contents', byId('peek-short')?.peek === '# Chào\n\nXin chào bạn',JSON.stringify(byId('peek-short')?.peek));
+  check('  a cut that lands inside a letter leaves no broken character', byId('peek-handed')?.peek === 'a' + 'ế'.repeat(199), JSON.stringify(byId('peek-handed')?.peek?.slice(-3)));
+  check('  and never more than 400 characters', (byId('peek-handed')?.peek || '').length <= 400);
+  check('a file with a source keeps the peek it had', byId('peek-source')?.peek === 'the source says this', JSON.stringify(byId('peek-source')?.peek));
+  check('what the peek was read from never leaves the server', !JSON.stringify(shelf.json).includes('data_head'));
+}
+
 /* ── versions, and the two Open buttons ────────────────────────── */
 
 section('a file the assistant rewrites keeps what it was');

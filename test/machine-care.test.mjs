@@ -355,6 +355,20 @@ section('any file is a file (owner, 2026-11-05: a zip could not be handed over)'
   check('  and never gets a part no provider knows', told.every((p) => p.type === 'text'), told.map((p) => p.type).join());
 }
 
+section('a drawing opens as a drawing (owner, 2026-11-17: an SVG said it had nothing to preview)');
+{
+  const markup = '<svg viewBox="0 0 10 10"><rect width="10" height="10"/><text>Tiếng Việt</text></svg>';
+  const row = (over) => ({ id: 'x', origin: 'generated', mime: '', kind: 'binary', data: Buffer.from(markup).toString('base64'), ...over });
+  const drawn = await previewOf(row({ name: 'Ve.SVG' }));
+  check('an .svg is a drawing, with its markup as text', drawn.kind === 'svg' && drawn.format === 'svg' && drawn.text === markup, JSON.stringify(drawn).slice(0, 120));
+  check('  by its type as well as by its name', (await previewOf(row({ name: 'no-extension', mime: 'image/svg+xml' }))).kind === 'svg');
+  check('  and it is still not a picture for a model', classify('Ve.svg', 'image/svg+xml') === 'binary');
+  const kept = await previewOf(row({ name: 'kept.svg', data: '', origin: 'machine' }));
+  check('one kept on the machine has no bytes here and answers as before', kept.kind === 'binary' && kept.onMachine === true, JSON.stringify(kept));
+  const huge = await previewOf(row({ name: 'huge.svg', data: Buffer.from('<svg>' + 'x'.repeat(2 * 1024 * 1024)).toString('base64') }));
+  check('past two million characters it is left to download', huge.kind === 'binary' && !huge.text, huge.kind);
+}
+
 /** A stand-in machine for sandbox_run, through the real E2B adapter. */
 function fakeMachineSdk() {
   const state = { files: {}, sizes: {}, calls: [], exit: 0, stdout: 'ok', stderr: '', listing: 'total 0\n-rw-r--r-- other.txt' };

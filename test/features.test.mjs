@@ -2924,8 +2924,12 @@ section('billing: the sheet, the menu row, the mode and the release notes agree 
   // Read by version, as the 1.30.0 pins are: a later release goes on top without moving this one.
   const released131 = log.find((e) => e.version === '1.31.0');
   check("1.31.0 is released, in both languages", !!released131 && released131.new.vi.length > 0 && released131.new.en.length === released131.new.vi.length && (released131.improved?.vi.length ?? 0) === (released131.improved?.en.length ?? 0));
-  check("1.31.1 is released, in both languages: Exa keys from other accounts", version === '1.31.1' && log[0].version === '1.31.1' && log[0].improved.vi.length > 0 && log[0].improved.en.length === log[0].improved.vi.length && /Exa/.test(log[0].improved.en[0]) && /Exa/.test(log[0].improved.vi[0]));
-  check('CHANGELOG.md carries the same version', read('CHANGELOG.md').includes('(1.31.0)'));
+  const released1311 = log.find((e) => e.version === '1.31.1');
+  check("1.31.1 is released, in both languages: Exa keys from other accounts", !!released1311 && released1311.improved.vi.length > 0 && released1311.improved.en.length === released1311.improved.vi.length && /Exa/.test(released1311.improved.en[0]) && /Exa/.test(released1311.improved.vi[0]));
+  const released1312 = log.find((e) => e.version === '1.31.2');
+  check("1.31.2 is released, in both languages: SVG drawings are pictures", !!released1312 && released1312.improved.vi.length > 0 && released1312.improved.en.length === released1312.improved.vi.length && /SVG/.test(released1312.improved.en[0]) && /SVG/.test(released1312.improved.vi[0]) && read('package.json').includes('"version": "1.31.2"'));
+  check('the viewer draws a drawing through the repair, and a copy is a picture', /svgPicture/.test(read('public/js/viewer.js')) && /svgToPng/.test(read('public/js/viewer.js')) && /svgPicture/.test(read('public/js/pages.js')));
+  check('CHANGELOG.md carries the same version', read('CHANGELOG.md').includes('(1.31.2)'));
   // 1.30.0 stays in the file as the entry below the newest; its own claims are pinned against it.
   const r130 = log.find((e) => e.version === '1.30.0');
   check("1.30.0 stays released, in both languages, as an administrators' preview", !!r130 && r130.new.vi.length > 0 && r130.new.en.length === r130.new.vi.length && /administrators/i.test(r130.new.en.join(' ')));
