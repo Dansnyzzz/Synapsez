@@ -6,8 +6,8 @@
  * The look, from the spec's "Adaptive and professional":
  *   - the drawing on its own canvas, so a label's backing is the colour behind it and a kept
  *     .svg reads the same opened on its own as in the conversation;
- *   - each group a container in its own accent: a faint tint, a 1 px edge, its title in the
- *     accent's dark shade;
+ *   - each group a container in its own accent: a tint the cards stand out from (STAND_OUT),
+ *     a 1 px edge, its title in the accent's deep shade;
  *   - each box a card with an 8 px radius and a soft shadow; a pill fully rounded; a note
  *     lighter, dashed and in muted ink, with no shadow, because it is an aside;
  *   - titles 14 px semibold, lines 12.5 px muted, edge labels 11.5 px on a backing;
@@ -23,6 +23,7 @@
 import { TEXT, lineHeight } from './measure.js';
 import { FIT } from './layout.js';
 import { ICONS, ICON_GRID } from './icons.js';
+import { contrast, colour } from '../widgetCheck.js';
 
 const hex = (rgb) => `#${rgb.map((c) => Math.round(c).toString(16).padStart(2, '0')).join('').toUpperCase()}`;
 const rgbOf = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
@@ -30,29 +31,35 @@ const rgbOf = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 const mix = (a, b, share) => hex(rgbOf(a).map((c, i) => c * share + rgbOf(b)[i] * (1 - share)));
 
 // Eight accents, as many as a diagram may have groups, so no two groups share one: the
-// accent itself, and the dark (light theme) or pale (dark theme) shade its text is set in.
+// accent itself, and the dark (light theme) or pale (dark theme) shade its text is set in —
+// 800 on light, deep enough for 4.5:1 on the stronger tints below.
 const ACCENTS = {
   light: [
-    ['#3B82F6', '#1D4ED8'],
-    ['#10B981', '#047857'],
-    ['#8B5CF6', '#6D28D9'],
-    ['#F59E0B', '#B45309'],
-    ['#F43F5E', '#BE123C'],
-    ['#06B6D4', '#0E7490'],
-    ['#84CC16', '#4D7C0F'],
-    ['#64748B', '#334155'],
+    ['#3B82F6', '#1E40AF'],
+    ['#10B981', '#065F46'],
+    ['#8B5CF6', '#5B21B6'],
+    ['#F59E0B', '#92400E'],
+    ['#F43F5E', '#9F1239'],
+    ['#06B6D4', '#155E75'],
+    ['#84CC16', '#3F6212'],
+    ['#64748B', '#1E293B'],
   ],
   dark: [
     ['#60A5FA', '#93C5FD'],
     ['#34D399', '#6EE7B7'],
     ['#A78BFA', '#C4B5FD'],
-    ['#FBBF24', '#FCD34D'],
+    ['#F59E0B', '#FCD34D'],
     ['#FB7185', '#FDA4AF'],
     ['#22D3EE', '#67E8F9'],
     ['#A3E635', '#BEF264'],
     ['#94A3B8', '#CBD5E1'],
   ],
 };
+
+// A card must stand out from the group it sits in (review, 2026-11-18: dark cards measured
+// 1.00–1.05:1 against their tints and vanished). These hold in both themes, and the tests
+// compute them: a card's fill at least 1.25:1 against every tint, its edge at least 2:1.
+export const STAND_OUT = Object.freeze({ fill: 1.25, edge: 2 });
 
 const BASE = {
   light: {
@@ -61,15 +68,18 @@ const BASE = {
     muted: '#4B5563',
     line: '#64748B',
     card: '#FFFFFF',
-    cardEdge: '#CBD5E1',
-    pill: '#F1F5F9',
-    pillEdge: '#94A3B8',
+    cardEdge: '#8696AB',
+    pill: '#FFFFFF',
+    pillEdge: '#8696AB',
     note: '#F8FAFC',
-    noteEdge: '#94A3B8',
+    noteEdge: '#8696AB',
     icon: '#475569',
     shadow: ['#0F172A', 0.06],
-    tint: 0.06,
-    groupEdge: 0.5,
+    // White cards can only stand out from a tint darker than white, so each accent is mixed in
+    // as far as it takes to reach 1.27:1 (a pale amber needs more than a deep violet).
+    tintTo: 1.27,
+    tintBase: '#FFFFFF',
+    groupEdge: 0.55,
   },
   // The page's own dark paper (public/js/render.js), so a dark drawing on a light page sits on
   // exactly the colour the page gives it.
@@ -78,20 +88,31 @@ const BASE = {
     ink: '#E5E7EB',
     muted: '#A3ADBB',
     line: '#8391A5',
-    card: '#18222F',
-    cardEdge: '#2E3B4D',
-    pill: '#1F2B3A',
-    pillEdge: '#4A5A6E',
+    card: '#2C3A4E',
+    cardEdge: '#536379',
+    pill: '#2C3A4E',
+    pillEdge: '#536379',
     note: '#131C27',
-    noteEdge: '#4A5A6E',
+    noteEdge: '#536379',
     icon: '#A3ADBB',
     // A shadow is a darkening, and on a dark canvas 6 % of one is nothing: there it is stronger.
     shadow: ['#000000', 0.35],
-    // A little more tint than on white, or a group is not seen; more still turns amber olive.
-    tint: 0.08,
+    // Mixed into a neutral dark rather than the navy canvas: navy's blue cancels amber's red
+    // and turned that group olive (review, 2026-11-18).
+    tintShare: 0.1,
+    tintBase: '#121417',
     groupEdge: 0.45,
   },
 };
+
+// The least share of an accent, in hundredths, that sets a card `ratio`:1 apart from the tint.
+function tintFor(accent, base) {
+  for (let share = 0.02; share < 0.6; share += 0.01) {
+    const fill = mix(accent, base.tintBase, share);
+    if (contrast(colour(base.card), colour(fill)) >= base.tintTo) return fill;
+  }
+  return mix(accent, base.tintBase, 0.6);
+}
 
 /**
  * Every colour of a theme: its base, and each group accent with the tint its container is
@@ -102,7 +123,7 @@ export function palette(theme = 'light') {
   const accents = (ACCENTS[theme] || ACCENTS.light).map(([accent, ink]) => ({
     accent,
     ink,
-    fill: mix(accent, base.canvas, base.tint),
+    fill: base.tintTo ? tintFor(accent, base) : mix(accent, base.tintBase, base.tintShare),
     edge: mix(accent, base.canvas, base.groupEdge),
   }));
   return { ...base, accents };

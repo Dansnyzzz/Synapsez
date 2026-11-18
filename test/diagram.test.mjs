@@ -19,7 +19,7 @@ const check = (label, pass, detail = '') => {
 const { validateDiagram, ICON_NAMES } = await import('../server/diagram/validate.js');
 const { layoutDiagram, chooseDirection } = await import('../server/diagram/layout.js');
 const { textWidth, wrapText, TEXT, measureNode, lineHeight } = await import('../server/diagram/measure.js');
-const { renderDiagram, palette } = await import('../server/diagram/render.js');
+const { renderDiagram, palette, STAND_OUT } = await import('../server/diagram/render.js');
 const { ICONS } = await import('../server/diagram/icons.js');
 const { checkDiagram, contrast, colour } = await import('../server/widgetCheck.js');
 const { translateMessage } = await import('../server/i18n/index.js');
@@ -747,6 +747,8 @@ section('both themes keep text at 4.5:1');
       ...P.accents.flatMap((a, i) => [
         [`group ${i + 1}'s title on its tint`, a.ink, a.fill],
         [`group ${i + 1}'s icon on a card`, a.ink, P.card],
+        // A label inside a group sits on that group's tint (review C11).
+        [`a label on group ${i + 1}'s tint`, P.muted, a.fill],
       ]),
     ];
     for (const [what, fg, bg] of pairs) {
@@ -755,6 +757,24 @@ section('both themes keep text at 4.5:1');
     }
   }
   check('every text pair, light and dark, at least 4.5:1 (computed, not remembered)', short.length === 0, short.join(' | '));
+  // Review D12: dark cards measured 1.00–1.05:1 against their group and vanished.
+  const faint = [];
+  for (const theme of ['light', 'dark']) {
+    const P = palette(theme);
+    for (const [i, a] of P.accents.entries()) {
+      for (const [what, fill, edge] of [['card', P.card, P.cardEdge], ['pill', P.pill, P.pillEdge]]) {
+        const f = contrast(colour(fill), colour(a.fill));
+        const e = contrast(colour(edge), colour(a.fill));
+        if (f < STAND_OUT.fill) faint.push(`${theme} ${what} fill on group ${i + 1}: ${f.toFixed(2)}:1`);
+        if (e < STAND_OUT.edge) faint.push(`${theme} ${what} edge on group ${i + 1}: ${e.toFixed(2)}:1`);
+      }
+      const n = contrast(colour(P.noteEdge), colour(a.fill));
+      if (n < STAND_OUT.edge) faint.push(`${theme} note edge on group ${i + 1}: ${n.toFixed(2)}:1`);
+    }
+  }
+  check('a card stands out from every group tint, both themes: fill at least 1.25:1, edge at least 2:1', STAND_OUT.fill >= 1.25 && STAND_OUT.edge >= 2 && faint.length === 0, faint.slice(0, 4).join(' | '));
+  const [r, g, b] = colour(palette('dark').accents[3].fill);
+  check('the dark amber group reads amber, not olive: red clearly over green, green over blue', r - g >= 4 && g > b, palette('dark').accents[3].fill);
   check('the dark canvas is the page\'s own dark paper', palette('dark').canvas === '#0F1720');
   check('eight accents, as many as a diagram may have groups, none repeated', new Set(palette().accents.map((a) => a.accent)).size === 8 && new Set(palette('dark').accents.map((a) => a.accent)).size === 8);
 }
