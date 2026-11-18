@@ -1405,7 +1405,9 @@ export const TOOLS = [
       properties: {
         title: { type: 'string', description: 'A short caption, so the picture is labelled.' },
         // Owner, 2026-11-17: the model names the boxes and arrows, the server places them. The
-        // limits come from validate.js, so the schema and the refusal cannot disagree.
+        // limits are said in words, not as maxItems/maxLength: Anthropic's strict mode refuses
+        // those keywords (review, 2026-11-18), and validate.js enforces them with a better
+        // message. The numbers come from its LIMITS, so the two cannot disagree.
         diagram: {
           type: 'object',
           description: 'Boxes and arrows, laid out for you; no coordinates.',
@@ -1414,13 +1416,13 @@ export const TOOLS = [
             theme: { type: 'string', enum: [...DIAGRAM_THEMES] },
             nodes: {
               type: 'array',
-              maxItems: DIAGRAM.nodes,
+              description: `Up to ${DIAGRAM.nodes}.`,
               items: {
                 type: 'object',
                 properties: {
-                  id: { type: 'string', maxLength: DIAGRAM.id },
-                  title: { type: 'string', maxLength: DIAGRAM.title },
-                  lines: { type: 'array', maxItems: DIAGRAM.lines, items: { type: 'string', maxLength: DIAGRAM.line } },
+                  id: { type: 'string', description: `Letters, digits, _ or -; up to ${DIAGRAM.id}.` },
+                  title: { type: 'string', description: `Up to ${DIAGRAM.title} characters.` },
+                  lines: { type: 'array', description: `Up to ${DIAGRAM.lines}, each up to ${DIAGRAM.line} characters.`, items: { type: 'string' } },
                   kind: { type: 'string', enum: [...KINDS], description: 'pill: a start or end; note: an aside.' },
                   group: { type: 'string', description: 'A group id.' },
                   icon: { type: 'string', enum: [...ICON_NAMES] },
@@ -1430,18 +1432,18 @@ export const TOOLS = [
             },
             groups: {
               type: 'array',
-              maxItems: DIAGRAM.groups,
-              items: { type: 'object', properties: { id: { type: 'string', maxLength: DIAGRAM.id }, title: { type: 'string', maxLength: DIAGRAM.title } }, required: ['id'] },
+              description: `Up to ${DIAGRAM.groups}, not nested.`,
+              items: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' } }, required: ['id'] },
             },
             edges: {
               type: 'array',
-              maxItems: DIAGRAM.edges,
+              description: `Up to ${DIAGRAM.edges}.`,
               items: {
                 type: 'object',
                 properties: {
                   from: { type: 'string' },
                   to: { type: 'string' },
-                  label: { type: 'string', maxLength: DIAGRAM.label },
+                  label: { type: 'string', description: `Up to ${DIAGRAM.label} characters.` },
                   style: { type: 'string', enum: [...STYLES] },
                 },
                 required: ['from', 'to'],

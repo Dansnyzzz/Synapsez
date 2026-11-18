@@ -18,9 +18,8 @@
  * nothing stopped it.
  *
  * Deliberately not a general JSON Schema implementation. The catalogue uses
- * exactly eight keywords — `type`, `description`, `properties`, `required`,
- * `enum`, `items`, and since `show_widget`'s `diagram` (2026-11-18) `maxItems`
- * and `maxLength` — and no combinators, so this covers those eight completely
+ * exactly six keywords — `type`, `description`, `properties`, `required`,
+ * `enum`, `items` — and no combinators, so this covers those six completely
  * rather than a larger set approximately. A tool that starts using another
  * keyword is covered by the test that asserts the catalogue still only uses
  * these, so the gap cannot open silently.
@@ -31,7 +30,8 @@
  *   - a value outside an `enum` is refused, with the allowed values named —
  *     after a case- and spacing-blind match (`"Thank you"` is `thank_you`);
  *   - …unless the field is optional, in which case it is **dropped** and the
- *     tool's own default applies, with a note saying so. An optional enum is a
+ *     tool's own default applies, with a note saying so and naming the values
+ *     it takes. An optional enum is a
  *     hint the tool can do without (`send_email`'s `kind` is inferred when
  *     absent), and refusing a whole email over `kind: "email"` cost a step and
  *     left a red card on a job that went on to succeed;
@@ -39,13 +39,7 @@
  *   - `"5"` for a number and `"true"` for a boolean are **coerced**, because
  *     models send them constantly and refusing would turn a working call into
  *     a retry that costs a full step;
- *   - a number or boolean where a string is wanted becomes that string;
- *   - a list longer than its `maxItems`, or a text longer than its `maxLength`,
- *     is refused with the limit named — the tool would refuse it anyway, and a
- *     vast list is turned away before any of it is read. A text is counted as it
- *     reads: in characters (a Vietnamese letter typed as a base and its marks is
- *     one), with runs of spaces as one, so it is never longer than the count
- *     JSON Schema gives and nothing JSON Schema allows is refused.
+ *   - a number or boolean where a string is wanted becomes that string.
  *
  * Returns `{ ok: true, input, notes }` with the coerced input and anything that
  * was set aside, or `{ ok: false, error }` with a sentence written for the
@@ -54,10 +48,9 @@
 
 import { canonicalInput } from '../../public/js/tool-aliases.js';
 
-export const SUPPORTED_KEYWORDS = new Set(['type', 'description', 'properties', 'required', 'enum', 'items', 'maxItems', 'maxLength']);
+export const SUPPORTED_KEYWORDS = new Set(['type', 'description', 'properties', 'required', 'enum', 'items']);
 
 const kindOf = (value) => (Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value);
-const lengthOf = (text) => [...text.normalize('NFC').replace(/\s+/g, ' ').trim()].length;
 
 function coerce(value, type) {
   if (type === 'integer' || type === 'number') {
@@ -311,13 +304,6 @@ function check(value, schema, where, notes = []) {
     };
   }
 
-  if (Array.isArray(value) && Number.isInteger(schema.maxItems) && value.length > schema.maxItems) {
-    return { ok: false, error: `${where} has ${value.length} items, and at most ${schema.maxItems} are allowed.` };
-  }
-  if (typeof value === 'string' && Number.isInteger(schema.maxLength) && lengthOf(value) > schema.maxLength) {
-    return { ok: false, error: `${where} is ${lengthOf(value)} characters long, and at most ${schema.maxLength} are allowed.` };
-  }
-
   if (Array.isArray(value) && schema.items) {
     const out = [];
     for (let i = 0; i < value.length; i += 1) {
@@ -350,7 +336,8 @@ function check(value, schema, where, notes = []) {
         const field = check(value[key], sub, name, notes);
         if (!field.ok && field.enumMiss && !(schema.required || []).includes(key)) {
           delete out[key];
-          notes.push(`${name} ${JSON.stringify(value[key])} is not one it knows, so it was left out and the default used.`);
+          // The allowed values with it, so the next call can pick one instead of guessing again.
+          notes.push(`${name} ${JSON.stringify(value[key])} is not one it knows, so it was left out and the default used. It takes ${sub.enum.map((v) => JSON.stringify(v)).join(', ')}.`);
           continue;
         }
         if (!field.ok) return field;

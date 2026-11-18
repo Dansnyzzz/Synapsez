@@ -126,7 +126,9 @@ function read(input) {
     const kind = choice(raw.kind, 'box');
     if (!KINDS.includes(kind)) throw new DiagramError(`node "${id}" has kind "${shown(raw.kind)}": use "box", "pill" or "note".`);
 
-    // Refused rather than dropped, with the whole set: a model that guessed one name learns them all.
+    // Refused here with the whole set, so a direct caller that guessed one name learns them all.
+    // Through executeTool the schema's enum leaves an unknown one out first, with a note that
+    // lists the set (tools/validate.js), and the drawing goes ahead without it.
     const icon = choice(raw.icon, null);
     if (icon !== null && !ICON_NAMES.includes(icon)) {
       throw new DiagramError(`node "${id}" has the icon "${shown(raw.icon)}": use one of ${ICON_NAMES.join(', ')}, or leave icon out.`);

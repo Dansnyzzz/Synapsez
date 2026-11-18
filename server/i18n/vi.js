@@ -1733,8 +1733,4 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Ephapse không dàn trang được sơ đồ này, do lỗi của chính Ephapse chứ không phải ở nội dung bạn gửi. Hãy vẽ nó bằng `svg`.',
   'This diagram comes to {0}KB drawn, over the {1}KB a picture in the conversation may be: shorten the lines in its boxes, or split it into two drawings.':
     'Sơ đồ này khi vẽ ra nặng {0}KB, vượt quá {1}KB cho phép với một hình trong cuộc trò chuyện: hãy rút gọn các dòng trong hộp, hoặc tách thành hai hình.',
-
-  /* ── giới hạn trong lược đồ tham số của công cụ (server/tools/validate.js) ── */
-  '{0} has {1} items, and at most {2} are allowed.': '{0} có {1} mục, trong khi tối đa chỉ được {2}.',
-  '{0} is {1} characters long, and at most {2} are allowed.': '{0} dài {1} ký tự, trong khi tối đa chỉ được {2}.',
 };

@@ -1674,21 +1674,8 @@ section('the untrusted-content boundary');
   check(
     'the catalogue uses only schema keywords the validator covers completely',
     unsupported.length === 0,
-    unsupported.join(', ') || 'type, description, properties, required, enum, items, maxItems, maxLength',
+    unsupported.join(', ') || 'type, description, properties, required, enum, items',
   );
-
-  // The two limits a diagram brought in (2026-11-18): enforced, and counted as text reads.
-  const listOf = { type: 'object', properties: { names: { type: 'array', maxItems: 3, items: { type: 'string', maxLength: 5 } } } };
-  const fourNames = validateArguments(listOf, { names: ['a', 'b', 'c', 'd'] });
-  check('a list past its maxItems is refused, naming the limit', !fourNames.ok && /names has 4 items, and at most 3/.test(fourNames.error), fourNames.error);
-  check('  while one at the limit passes', validateArguments(listOf, { names: ['a', 'b', 'c'] }).ok);
-  const longName = validateArguments(listOf, { names: ['abcdef'] });
-  check('a text past its maxLength is refused, naming where and the limit', !longName.ok && /names\[0\] is 6 characters long, and at most 5/.test(longName.error), longName.error);
-  check('  a Vietnamese word typed as letters and marks counts its letters (7 code points, 5 letters)', [...'tiếng'.normalize('NFD')].length === 7 && validateArguments(listOf, { names: ['tiếng'.normalize('NFD')] }).ok);
-  check('  and a run of spaces counts as one', validateArguments(listOf, { names: ['a    b  '] }).ok);
-  check('  a number sent for the text is counted as its digits', !validateArguments(listOf, { names: [123456] }).ok && validateArguments(listOf, { names: [12345] }).ok);
-  const widget = byName.show_widget.parameters.properties.diagram.properties;
-  check('show_widget\'s diagram carries the limits as maxItems and maxLength', widget.nodes.maxItems === 40 && widget.edges.maxItems === 80 && widget.groups.maxItems === 8 && widget.nodes.items.properties.title.maxLength === 60 && widget.nodes.items.properties.lines.maxItems === 6 && widget.nodes.items.properties.lines.items.maxLength === 80 && widget.nodes.items.properties.id.maxLength === 40);
 
   const del = byName.delete_file.parameters;
   const missing = validateArguments(del, {});
@@ -1730,6 +1717,8 @@ section('the untrusted-content boundary');
   const hint = validateArguments(mail, { subject: 'S', body: 'B', kind: 'email' });
   check('an optional enum outside its values is dropped, not refused', hint.ok && !('kind' in hint.input), JSON.stringify(hint));
   check('  and the model is told what was set aside', /kind "email"/.test((hint.notes || []).join(' ')), (hint.notes || []).join(' '));
+  // Fix round 1 (2026-11-18): the note names what the field takes, so the next call picks one.
+  check('  and every value it takes', mail.properties.kind.enum.every((v) => (hint.notes || []).join(' ').includes(JSON.stringify(v))), (hint.notes || []).join(' '));
   const near = validateArguments(mail, { subject: 'S', body: 'B', kind: 'Thank you' });
   check('a near miss is read as what it meant', near.ok && near.input.kind === 'thank_you', JSON.stringify(near.input));
   const exact = validateArguments(mail, { subject: 'S', body: 'B', kind: 'report' });

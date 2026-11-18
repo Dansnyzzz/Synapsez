@@ -97,7 +97,8 @@ section('show_widget says what is wrong, and keeps a clean diagram as a file');
   check('  and the page is told its canvas', good.widget?.canvas === 'light');
 
   section('show_widget draws a `diagram` it lays out itself (1.34.0)');
-  const { validateDiagram } = await import('../server/diagram/validate.js');
+  const { validateDiagram, ICON_NAMES } = await import('../server/diagram/validate.js');
+  const { TOOLS_BY_NAME } = await import('../server/tools/definitions.js');
   const pipeline = {
     groups: [{ id: 'client', title: 'Phía người dùng' }, { id: 'server', title: 'Máy chủ Ephapse' }],
     nodes: [
@@ -152,10 +153,31 @@ section('show_widget says what is wrong, and keeps a clean diagram as a file');
   check('through executeTool: the schema lets a diagram through, and it is drawn', viaTool.isError === false && viaTool.widget?.kind === 'svg', viaTool.content?.slice(0, 160));
   const refusedVia = await run({ title: 'Hỏng', diagram: broken });
   check('  a bad one comes back as an error the model reads, never a throw', refusedVia.isError === true && refusedVia.content.includes(said), refusedVia.content);
+  // The limits are in words in the schema (Anthropic's strict mode refuses maxItems and
+  // maxLength), so validate.js is what turns these away, with its own sentence.
+  const schema = TOOLS_BY_NAME.show_widget.parameters;
+  const keywords = new Set();
+  const walk = (s) => {
+    if (!s || typeof s !== 'object') return;
+    Object.keys(s).forEach((k) => keywords.add(k));
+    Object.values(s.properties || {}).forEach(walk);
+    if (s.items) walk(s.items);
+  };
+  walk(schema);
+  check('  the schema carries no maxItems or maxLength, and says the limits in words', !keywords.has('maxItems') && !keywords.has('maxLength') && /40/.test(schema.properties.diagram.properties.nodes.description) && /60/.test(schema.properties.diagram.properties.nodes.items.properties.title.description), [...keywords].join(','));
   const tooMany = await run({ title: 'Nhiều', diagram: { nodes: Array.from({ length: 41 }, (_, i) => ({ id: `n${i}`, title: 'x' })) } });
-  check('  41 boxes are turned away by the schema\'s maxItems, naming 40', tooMany.isError === true && /diagram\.nodes has 41 items, and at most 40/.test(tooMany.content), tooMany.content);
+  check('  41 boxes are turned away by the diagram\'s own check, naming 40', tooMany.isError === true && /at most 40 nodes, and this one has 41/.test(tooMany.content), tooMany.content);
   const longTitle = await run({ title: 'Dài', diagram: { nodes: [{ id: 'a', title: 'x'.repeat(61) }] } });
-  check('  a 61-character title by its maxLength, naming 60', longTitle.isError === true && /diagram\.nodes\[0\]\.title is 61 characters long, and at most 60/.test(longTitle.content), longTitle.content);
+  check('  a 61-character title, naming 60', longTitle.isError === true && /has 61 characters: keep it to 60/.test(longTitle.content), longTitle.content);
+  // Review item 4: a 95-character text with a line break is two short lines, not one long one.
+  const twoLines = `${'Định tuyến mô hình theo chi phí '.repeat(2).trim()}\n${'và độ trễ của từng nhà cung cấp'.repeat(1)}`;
+  const split = await run({ title: 'Hai dòng', diagram: { nodes: [{ id: 'a', title: 'Cổng', lines: [twoLines] }] } });
+  check('  a two-line text over 80 characters in all passes, and is drawn as its lines', [...twoLines].length > 80 && split.isError === false && split.widget?.markup.includes('và độ trễ của từng nhà cung cấp'), `${[...twoLines].length}: ${split.content.slice(0, 120)}`);
+  // An unknown optional choice is left out, and the note lists what it takes (spec amended).
+  const unknown = await run({ title: 'Lạ', diagram: { direction: 'up', theme: 'sepia', nodes: [{ id: 'a', title: 'A', icon: 'robot', kind: 'circle' }, { id: 'b', title: 'B' }], edges: [{ from: 'a', to: 'b', style: 'dotted' }] } });
+  const lists = [['icon', ICON_NAMES], ['kind', ['box', 'pill', 'note']], ['direction', ['auto', 'right', 'down']], ['theme', ['light', 'dark']], ['style', ['solid', 'dashed']]];
+  const missing = lists.filter(([field, values]) => !new RegExp(`${field} "[^"]+" is not one it knows[^\\]]*It takes ${values.map((v) => `"${v}"`).join(', ')}\\.`).test(unknown.content)).map(([field]) => field);
+  check('  an unknown icon, kind, direction, theme or style is left out, the note listing every value', unknown.isError === false && unknown.widget?.kind === 'svg' && missing.length === 0, `missing: ${missing.join(',')} — ${unknown.content.slice(-400)}`);
 }
 
 console.log(failures ? `\n\x1b[31m${failures} failed\x1b[0m` : '\n\x1b[32mall passed\x1b[0m');
