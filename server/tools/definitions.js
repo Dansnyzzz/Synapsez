@@ -2781,7 +2781,8 @@ export const TOOLS = [
       'Make a picture from a description, and put it in the conversation for the user to see and download. ' +
       'Use it when they ask for an image, a mock-up, an illustration, a social post graphic. ' +
       'Describe the subject, the style and the composition — a fuller description gets a better picture. ' +
-      'It cannot edit an existing image, and it cannot render reliable text inside the picture.',
+      'It cannot edit an existing image, and it cannot render reliable text inside the picture. ' +
+      'It never makes sexual, nude or intimate images of anyone: refuse such a request yourself, without calling it.',
     parameters: {
       type: 'object',
       properties: {

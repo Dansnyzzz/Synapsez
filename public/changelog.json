@@ -6,11 +6,15 @@
       "new": {
         "vi": [
           "Gmail giờ chỉ gửi thư: trợ lý gửi thư từ Gmail của bạn khi bạn nhờ, và không còn đọc, tìm, soạn nháp hay thay đổi thư của bạn.",
-          "Thêm từ Google Drive giờ mở bộ chọn tệp của chính Google: chọn một hay nhiều tệp và chúng nằm ngay cạnh ô nhập tin nhắn. Drive giờ chỉ mở được tệp bạn chọn và tệp Ephapse tạo ra."
+          "Thêm từ Google Drive giờ mở bộ chọn tệp của chính Google: chọn một hay nhiều tệp và chúng nằm ngay cạnh ô nhập tin nhắn. Drive giờ chỉ mở được tệp bạn chọn và tệp Ephapse tạo ra.",
+          "Trang công khai www.ephapse.net/about.html cho biết Ephapse là gì và dùng dữ liệu Google thế nào, đọc được mà không cần đăng nhập. \"Ephapse là gì?\" ở màn hình đăng nhập mở trang này.",
+          "Công cụ tạo ảnh không bao giờ tạo ảnh tình dục hay khoả thân của bất kỳ ai: yêu cầu như vậy bị từ chối trước khi gửi bất cứ thứ gì tới Google. Chính sách sử dụng nay nêu rõ lệnh cấm hình ảnh riêng tư không có sự đồng ý, kể cả do AI tạo."
         ],
         "en": [
           "Gmail now only sends: the assistant sends an email from your Gmail when you ask, and can no longer read, search, draft or change your mail.",
-          "Add from Google Drive opens Google's own file picker: choose one or more files and they land beside the message box. Drive now opens only the files you pick and the ones Ephapse creates."
+          "Add from Google Drive opens Google's own file picker: choose one or more files and they land beside the message box. Drive now opens only the files you pick and the ones Ephapse creates.",
+          "A public page at www.ephapse.net/about.html says what Ephapse is and how it uses Google data, readable without signing in. \"What is Ephapse?\" on the sign-in screen opens it.",
+          "The picture tool never makes sexual or nude images of anyone: such a request is refused before anything is sent to Google. The Usage Policy now spells out the ban on non-consensual intimate images, AI-made ones included."
         ]
       },
       "improved": {

@@ -3142,5 +3142,80 @@ section('Google on free review and the public contact address (1.33.1)');
   check('  and the guide asks for no restricted scope', !/auth\/(gmail\.(modify|readonly|compose|metadata)|drive\.readonly|drive\.metadata)\b|auth\/drive(?![.\w])|mail\.google\.com/.test(guide));
 }
 
+section('a public home page that says what Ephapse is, and no sexual imagery (1.33.1, Google branding review)');
+{
+  // Google's branding review (2026-11-18): "update your home page to clearly outline your
+  // application's purpose and ensure it does not use Google APIs for AI NCII". The sign-in card
+  // shows nothing without JS, so the purpose and the statement live on a static page.
+  const root = new URL('../', import.meta.url);
+  const read = (p) => fs.readFileSync(new URL(p, root), 'utf8');
+  const flat = (s) => s.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ');
+  const exists = fs.existsSync(new URL('public/about.html', root));
+  check('public/about.html exists', exists);
+  const about = exists ? read('public/about.html') : '';
+  const words = flat(about);
+  check('  runs no script, inline, loaded or in an attribute, and loads no outside stylesheet or font', exists && !/<script/i.test(about) && !/\son[a-z]+\s*=/i.test(about) && !/javascript:/i.test(about) && !/<link[^>]+rel="stylesheet"/i.test(about) && !/@import|@font-face/i.test(about) && !/https?:\/\/(?!www\.ephapse\.net|developers\.google\.com|myaccount\.google\.com)[^"\s]+/i.test(about.replace(/<a [^>]*>/g, '')));
+  check('  its head: the title, a description, the canonical address and the three og tags', about.includes('<title>Ephapse — AI assistant workspace</title>') && /<meta name="description" content="[^"]{60,}"/.test(about) && about.includes('<link rel="canonical" href="https://www.ephapse.net/about.html" />') && /<meta property="og:title" content="[^"]+"/.test(about) && /<meta property="og:description" content="[^"]+"/.test(about) && about.includes('<meta property="og:url" content="https://www.ephapse.net/about.html" />'));
+  const en = about.indexOf('<div id="en" lang="en">');
+  const vi = about.indexOf('<div id="vi" lang="vi">');
+  check('  English first, then Vietnamese, each half marked with its language, with a "Tiếng Việt" link at the top', /<html lang="en">/.test(about) && en > 0 && vi > en && /<a href="#vi"[^>]*>Tiếng Việt<\/a>/.test(about) && about.indexOf('href="#vi"') < en + 400, `${en} ${vi}`);
+  const enHalf = flat(about.slice(en, vi));
+  const viHalf = flat(about.slice(vi));
+  check('  says what Ephapse is, with a plain link to open it', /AI assistant workspace/.test(enHalf) && /runs code on a private cloud computer/.test(enHalf) && /only if you connect them/.test(enHalf) && /<a href="\/">Open Ephapse<\/a>/.test(about) && /<a href="\/">Mở Ephapse<\/a>/.test(about) && /chỉ khi bạn kết nối/.test(viHalf));
+  check('  Gmail only sends, never reads, searches or changes the mailbox, in both languages', (about.match(/<code>gmail\.send<\/code>/g) || []).length === 2 && /sends an email you ask it to send\. It never reads, searches or changes your mailbox/.test(enHalf) && /không bao giờ đọc, tìm hay thay đổi hộp thư/.test(viHalf));
+  check('  Drive is only the files picked in the Drive picker or that Ephapse creates, in both languages', (about.match(/<code>drive\.file<\/code>/g) || []).length === 2 && /only the files you pick in Ephapse's Google Drive picker, or files Ephapse creates for you/.test(enHalf) && /chỉ những tệp bạn chọn trong bộ chọn tệp Google Drive của Ephapse/.test(viHalf));
+  check('  and each other product, in both languages', ['Google Calendar', 'Google Docs', 'Google Sheets', 'Google Forms', 'Google Tasks', 'Google Contacts'].every((p) => enHalf.includes(p)) && ['Google Lịch', 'Google Tài liệu', 'Google Trang tính', 'Google Biểu mẫu', 'Google Tasks', 'Danh bạ Google'].every((p) => viHalf.includes(p)));
+  check('  and names no restricted scope', !/<code>(gmail\.(modify|readonly|compose|metadata)|drive|drive\.readonly|drive\.metadata)<\/code>/.test(about) && !/mail\.google\.com/.test(about));
+  // "In the same words as the privacy policy's Google section": the sentences are taken from it here.
+  const privacy = flat(read('public/privacy.html'));
+  const sentence = (text, start, end) => {
+    const from = text.indexOf(start);
+    const to = from < 0 ? -1 : text.indexOf(end, from);
+    return from < 0 || to < 0 ? `(missing: ${start})` : text.slice(from, to + end.length);
+  };
+  const same = [
+    sentence(privacy, 'Ephapse does not use Google user data for advertising', "its own or anyone else's."),
+    sentence(privacy, 'No one at Ephapse reads your Google user data', 'or when the law requires it.'),
+    sentence(privacy, "Ephapse's use and transfer to any other app of information received from Google APIs", 'including the Limited Use requirements.'),
+    sentence(privacy, 'Ephapse không dùng dữ liệu Google cho quảng cáo', 'của Ephapse hay của bất kỳ ai.'),
+    sentence(privacy, 'Không ai ở Ephapse đọc dữ liệu Google của bạn', 'hoặc khi luật bắt buộc.'),
+    sentence(privacy, 'Việc Ephapse sử dụng thông tin nhận được từ API của Google', 'bao gồm các yêu cầu về Sử dụng giới hạn.'),
+  ];
+  const differ = same.filter((s) => !words.includes(s));
+  check('  the Limited Use statement, in the privacy policy\'s own words, in both languages', differ.length === 0, differ.map((s) => s.slice(0, 60)).join(' | '));
+  check('  and a link to the privacy policy\'s Google section, which is there', about.includes('href="/privacy.html#google-user-data"') && about.includes('href="/privacy.html#google"') && read('public/privacy.html').includes('id="google-user-data"') && read('public/privacy.html').includes('id="google"'));
+  check('  pictures: made with the Gemini API, never sexual, nude or intimate, no AI NCII, refused before Google, in both languages', /Google's Gemini API/.test(enHalf) && /never makes sexual, nude or intimate images of anyone/.test(enHalf) && /\(AI NCII\)/.test(enHalf) && /refused before anything is sent to Google/.test(enHalf) && /does not use Google APIs or Google user data to create, edit or share such imagery/.test(enHalf) && /\(AI NCII\)/.test(viHalf) && /trước khi gửi bất cứ thứ gì tới Google/.test(viHalf) && /khoả thân/.test(viHalf));
+  check('  and the Usage Policy forbids it, suspension possible, with where to report', /Usage Policy forbids it/.test(enHalf) && /suspended/.test(enHalf) && /tạm khoá/.test(viHalf));
+  const mailto = [...about.matchAll(/href="mailto:([^"]+)"/g)].map((m) => m[1]);
+  check('  writes to support@ephapse.net, and to nothing else', mailto.length >= 2 && mailto.every((m) => m === 'support@ephapse.net') && (about.match(/>support@ephapse\.net<\/a>/g) || []).length === mailto.length, JSON.stringify(mailto));
+  check('  links the privacy policy, the terms and the usage policy from each half', ['/privacy.html', '/terms.html', '/usage-policy.html'].every((h) => about.slice(en, vi).includes(`href="${h}"`) && about.slice(vi).includes(`href="${h}"`)));
+  check('  every picture on it says what it is', [...about.matchAll(/<img\b[^>]*>/g)].every((m) => /\salt="[^"]+"/.test(m[0])));
+
+  const gate = read('public/index.html');
+  check('the sign-in card\'s "What is Ephapse?" is a plain link to the page, its label key kept', /<a class="gate__what" href="\/about\.html" data-i18n="gate\.what">What is Ephapse\?<\/a>/.test(gate));
+  check('  and the hidden paragraph, its toggle and their styles are gone', !/id="gate-about"/.test(gate) && !/gate-what|gate-about/.test(read('public/js/app.js')) && !/\.gate__about\b/.test(read('public/css/app.css')));
+
+  const usage = read('public/usage-policy.html');
+  const viBullet = '<li>Tạo, sửa hay chia sẻ hình ảnh, video hay âm thanh tình dục, khoả thân hoặc riêng tư của một người thật khi họ không đồng ý — kể cả nội dung do AI tạo ("deepfake", NCII). Công cụ tạo ảnh của Ephapse từ chối mọi ảnh tình dục hay khoả thân.</li>';
+  const enBullet = '<li>Make, edit or share sexual, nude or intimate images, video or audio of a real person without their consent — including AI-generated ("deepfake") content (NCII). Ephapse\'s picture tool refuses every sexual or nude image.</li>';
+  const after = (html, first, next) => {
+    const at = html.indexOf(first);
+    return at >= 0 && html.slice(at + first.length).trimStart().startsWith(next);
+  };
+  check('the usage policy bans NCII in both languages, right after the child-abuse bullet', after(usage, '<li>Tạo, tìm hay chia sẻ nội dung xâm hại tình dục trẻ em — không có ngoại lệ.</li>', viBullet) && after(usage, '<li>Make, find or share child sexual abuse material — no exceptions.</li>', enBullet));
+  const { LEGAL } = await import('../server/legal.js');
+  check('  a clarification, dated in both languages, that keeps the version: nobody is asked again', LEGAL.usage === 'usage-2026-10-26' && usage.includes('Làm rõ ngày 18/11/2026: lệnh cấm hình ảnh riêng tư không có sự đồng ý được nêu rõ; không điều gì trước đây được phép nay bị cấm.') && usage.includes('Clarified 18 November 2026: the ban on non-consensual intimate imagery is spelled out; nothing that was allowed before is now forbidden.'));
+
+  const log = JSON.parse(read('public/changelog.json')).entries.find((e) => e.version === '1.33.1');
+  const logEn = [...(log?.new?.en || []), ...(log?.improved?.en || [])].join(' ');
+  const logVi = [...(log?.new?.vi || []), ...(log?.improved?.vi || [])].join(' ');
+  check('1.33.1 says, in both languages, there is a public page about Ephapse and pictures are never sexual or nude', /about\.html/.test(logEn) && /sexual or nude/.test(logEn) && /about\.html/.test(logVi) && /tình dục hay khoả thân/.test(logVi) && log.new.vi.length === log.new.en.length && log.improved.vi.length === log.improved.en.length, logEn.slice(-240));
+  const changelog = read('CHANGELOG.md');
+  const section133 = changelog.slice(changelog.indexOf('(1.33.1)'), changelog.indexOf('## 2026-11-17'));
+  check('  CHANGELOG.md\'s 1.33.1 section carries it', /about\.html/.test(section133) && /NCII/.test(section133));
+  const guide = read('docs/google.md');
+  check("  and the owner's guide says what to set and what to tell Google", /Branding review: home page and AI NCII/.test(guide) && /Application home page.*https:\/\/www\.ephapse\.net\/about\.html|https:\/\/www\.ephapse\.net\/about\.html.*Application home page/s.test(guide) && /I have fixed the issues/.test(guide) && /refused before anything is sent to Google/.test(guide));
+}
+
 console.log(failures === 0 ? '\n\x1b[32mAll feature checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

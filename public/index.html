@@ -180,17 +180,17 @@
           </button>
         </div>
         <!-- What this is, and its privacy policy, readable before signing in:
-             Google's OAuth verification checks the home page for both. The
-             paragraph filled the foot of the card (owner, 2026-10-26), so it
-             waits behind "What is Ephapse?" — still on the page, one press away. -->
+             Google's OAuth verification checks the home page for both. What
+             Ephapse is lives on its own static page, /about.html, which reads
+             without JavaScript (Google's branding review, 2026-11-18); the card
+             keeps one quiet line linking it (owner, 2026-10-26). -->
         <p class="gate__foot">
-          <button class="gate__what" type="button" id="gate-what" aria-expanded="false" aria-controls="gate-about" data-i18n="gate.what">What is Ephapse?</button>
+          <a class="gate__what" href="/about.html" data-i18n="gate.what">What is Ephapse?</a>
           <span aria-hidden="true">·</span>
           <a class="gate__legal" href="/privacy.html" data-i18n="gate.privacy">Privacy policy</a>
           <span aria-hidden="true">·</span>
           <a class="gate__terms" href="/terms.html" data-i18n="gate.terms">Terms</a>
         </p>
-        <p class="gate__about" id="gate-about" hidden data-i18n="gate.about">Ephapse is an AI assistant: chat with the model you choose, work with your files and, only if you connect them, your Gmail, Drive, Calendar and other Google apps, to do what you ask.</p>
       </form>
     </div>
 

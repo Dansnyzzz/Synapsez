@@ -192,8 +192,9 @@ check(
  * The owner's 2026-10-26 screenshot 1: the agreement's words were centred under
  * a box that sat between their two lines; signing up asked for a name nobody
  * needed beside the username; and a paragraph about the app filled the foot of
- * the card, which Google's verification needs on the home page — so it is one
- * press away under "What is Ephapse?" rather than gone.
+ * the card. What the app is now lives on a static page, /about.html, that
+ * reads without JavaScript (Google's branding review, 2026-11-18), and the
+ * card's "What is Ephapse?" is a link to it.
  */
 {
   const gate = await page.evaluate(() => {
@@ -203,26 +204,38 @@ check(
     // is measured on the words that open it.
     const opening = words.querySelector('[data-i18n="gate.consent"]') || words;
     const first = opening.getClientRects()[0] || opening.getBoundingClientRect();
-    const about = document.getElementById('gate-about');
+    const what = document.querySelector('.gate__what');
     return {
       name: !!document.getElementById('gate-name'),
       align: getComputedStyle(words).textAlign,
       boxBesideFirstLine: Math.abs(box.top + box.height / 2 - (first.top + first.height / 2)) <= 4,
-      aboutHidden: !!about?.hidden,
-      what: document.getElementById('gate-what')?.getAttribute('aria-expanded') || '',
+      what: what ? `${what.tagName} ${what.getAttribute('href')} ${what.textContent.trim()} ${what.getClientRects().length > 0}` : '',
+      oldParagraph: !!document.getElementById('gate-about'),
       privacyShown: !!document.querySelector('.gate__legal[href="/privacy.html"]')?.getClientRects().length,
     };
   });
   check('signing up asks for no name — the username is the name', gate.name === false);
   check("  the agreement's words read from the left, the box beside their first line", /^(left|start)$/.test(gate.align) && gate.boxBesideFirstLine, JSON.stringify(gate));
-  check('  and what the app is waits behind one press, the privacy policy in view', gate.aboutHidden && gate.what === 'false' && gate.privacyShown, JSON.stringify(gate));
-  await page.click('#gate-what');
-  const told = await page.evaluate(() => ({
-    shown: !document.getElementById('gate-about').hidden,
-    words: document.getElementById('gate-about').textContent.trim(),
-    expanded: document.getElementById('gate-what').getAttribute('aria-expanded'),
+  check('  and "What is Ephapse?" is a link to the public page, the privacy policy in view beside it', gate.what === 'A /about.html What is Ephapse? true' && !gate.oldParagraph && gate.privacyShown, JSON.stringify(gate));
+
+  // The page itself, as a phone opens it, under the server's real headers.
+  const phone = await browser.newPage({ viewport: { width: 360, height: 740 } });
+  const said = [];
+  phone.on('console', (m) => { if (m.type() === 'error' || /Content Security Policy/i.test(m.text())) said.push(m.text()); });
+  phone.on('pageerror', (err) => said.push(err.message));
+  const answer = await phone.goto(`http://localhost:${PORT}/about.html`);
+  const shown = await phone.evaluate(() => ({
+    title: document.title,
+    h1: document.querySelector('#en h1')?.textContent.trim(),
+    vi: document.getElementById('vi')?.getAttribute('lang'),
+    scripts: document.scripts.length,
+    wide: document.documentElement.scrollWidth,
+    logo: (() => { const img = document.querySelector('img'); return !!img && img.complete && img.naturalWidth > 0 && !!img.alt; })(),
+    open: document.querySelector('a[href="/"]')?.textContent.trim(),
   }));
-  check('  pressed, it says what Ephapse is', told.shown && told.expanded === 'true' && /Ephapse/.test(told.words), JSON.stringify(told));
+  check('the page answers, says what Ephapse is, runs no script, and fits a 360px phone', answer?.status() === 200 && shown.title === 'Ephapse — AI assistant workspace' && shown.h1 === 'Ephapse — AI assistant workspace' && shown.vi === 'vi' && shown.scripts === 0 && shown.wide <= 360 && shown.logo && shown.open === 'Open Ephapse', JSON.stringify(shown));
+  check('  with nothing refused by the page policy and no error', said.length === 0, said.join(' | ').slice(0, 300));
+  await phone.close();
 }
 await page.click('#gate-submit');
 await page.waitForTimeout(600);

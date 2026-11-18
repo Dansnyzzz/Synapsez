@@ -90,11 +90,58 @@ consent screen. None of them costs anything:
 2. **The privacy policy link** is `https://YOUR-DOMAIN/privacy.html` — not the home page. It
    names who runs the deployment, what is read from each Google product, and carries the Limited
    Use statement Google asks for.
-3. **The home page links the policy and says what the app does** — the sign-in screen does both
-   without an account.
+3. **The home page links the policy and says what the app does.** Since 1.33.1 that page is
+   `https://YOUR-DOMAIN/about.html`, which does both without an account or JavaScript; the
+   sign-in screen at `/` shows nothing until its script runs. Set it as the *Application home
+   page* (below).
 
 Then choose **I have fixed the issues** on the Branding page. This is separate from the scope
 verification in section 8.
+
+### Branding review: home page and AI NCII
+
+Google's branding review came back on 2026-11-18 with: "Please update your home page to clearly
+outline your application's purpose and ensure it does not use Google APIs for AI NCII
+(AI-generated Non-Consensual Intimate Imagery), then retry." What 1.33.1 changed for it:
+
+- `public/about.html` is a static page with no script, English first and then Vietnamese. It says
+  what Ephapse is, what it does with each Google product (with the Limited Use statement in the
+  privacy policy's own words), and that Ephapse never makes sexual, nude or intimate images, AI
+  NCII included. The sign-in card's "What is Ephapse?" links to it.
+- `generate_image` is the only feature that calls Google's Gemini API to make a picture. A sexual
+  or nude request is refused before anything is sent to Google (`server/imageSafety.js`, a word
+  list in English and Vietnamese). Every request that does go asks Gemini for `sexually_explicit`
+  at `block_low_and_above`, the strictest threshold Google lists. A conversation holding Google
+  user data never reaches a Gemini key at all (section 5).
+- The Usage Policy's list of what Ephapse must not be used for spells out non-consensual intimate
+  imagery, AI-made included. It is a clarification in a dated line, so the policy keeps its version
+  and nobody is asked to agree again.
+
+Once 1.33.1 is deployed:
+
+1. Open `https://www.ephapse.net/about.html` in a private window, to see that it is live.
+2. In **Google Auth Platform → Branding → App domain**, set **Application home page** to
+   `https://www.ephapse.net/about.html` and save. `ephapse.net` stays an authorised domain, and
+   the page sits under the Search Console property from item 1 above.
+3. On the same page, under **Branding verification issues**, choose **I have fixed the issues**,
+   paste the note below, and submit.
+
+> Our application home page is now https://www.ephapse.net/about.html. It is a public, static
+> page, readable without signing in or running JavaScript, that states what Ephapse is: an AI
+> assistant workspace where a user chats with the AI model they choose and works with their files,
+> the web, a private cloud computer and, only if they connect it, their Google account. It lists
+> each Google scope we request and what it is used for (Gmail is send-only; Drive is limited to
+> drive.file, meaning files the user picks in the Google Picker or files Ephapse creates), and it
+> carries our Limited Use commitment.
+>
+> Ephapse does not use Google APIs for AI NCII. Its only image feature calls the Gemini API, and a
+> request for sexual, nude or intimate imagery is refused by our server before anything is sent to
+> Google. Every image request we do send also sets the Gemini safety setting for sexually explicit
+> content to block_low_and_above. Google user data is never sent through a Gemini API key, so it
+> cannot be used to make an image. The home page states this under "Pictures and safety", and our
+> Usage Policy (https://www.ephapse.net/usage-policy.html) forbids making, editing or sharing
+> sexual, nude or intimate images, video or audio of a real person without their consent,
+> including AI-generated "deepfake" content (NCII). Accounts that try may be suspended.
 
 ## 5. Where Google data may go (Limited Use)
 

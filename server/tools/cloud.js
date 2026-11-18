@@ -55,6 +55,7 @@ import {
   withoutGoogleNotes, heldNotesLine, noteKind, noteDay, kindOf, isLive, isExpired, removedNote, provenanceFor, scopeCapRefusal,
 } from '../memory.js';
 import { carriesGoogleData, googleDataInScope } from '../googleData.js';
+import { sexualImageRequest, IMAGE_SAFETY_SETTINGS } from '../imageSafety.js';
 // Only to tell a real tool name from one the model invented — see loadToolsTool.
 import { TOOLS_BY_NAME } from './definitions.js';
 import { dropElements, stripTags } from '../util/markup.js';
@@ -2985,6 +2986,9 @@ export async function requestImages(client, { model, prompt, count, aspectRatio 
         model,
         input: prompt,
         response_format: { type: 'image', ...(aspectRatio ? { aspect_ratio: String(aspectRatio) } : {}) },
+        // Gemini's strictest sexual-content filter, behind the server's own refusal (imageSafety.js).
+        // A copy, so nothing the SDK does to a request can touch the frozen original.
+        safety_settings: IMAGE_SAFETY_SETTINGS.map((setting) => ({ ...setting })),
         // Nothing about a picture request needs to be kept on Google's side.
         store: false,
       })),
@@ -3018,6 +3022,14 @@ export async function requestImages(client, { model, prompt, count, aspectRatio 
 async function generateImageTool({ prompt, name, aspect_ratio: aspectRatio, count }, { userId, chatId }) {
   const text = String(prompt || '').trim();
   if (!text) throw new Error('Describe the image you want.');
+  // First, before a key is looked up or anything is sent: no sexual or nude picture of anyone is
+  // asked of Google (Google's branding review, 2026-11-18; public/about.html, the Usage Policy).
+  if (sexualImageRequest(text)) {
+    throw new Error(
+      'Ephapse does not make sexual, nude or intimate images of anyone, so nothing was sent to make this picture. ' +
+        'Tell the user plainly that Ephapse does not make sexual or nude images, under its Usage Policy, and do not try again with other words.',
+    );
+  }
   // Pictures are made through a Gemini key, which may train on the prompt, and a
   // prompt written here may carry what was read from Google (googleData.js).
   if (googleDataInScope()) {
