@@ -1351,9 +1351,10 @@ async function showWidgetTool({ title, svg, html, diagram }, { userId = null, ch
     const kept = userId ? await keepDrawing(userId, chatId, caption, markup) : null;
     return {
       content: [
-        `Drew "${caption}" in the conversation${kept ? ', and kept it as a file of the conversation' : ''}. It is the redraw, and a check still finds these problems, which the user can see:`,
+        // Said so it is true of the redraw and of any other drawing later in the same turn.
+        `Drew "${caption}" in the conversation${kept ? ', and kept it as a file of the conversation' : ''}. This drawing is shown as it is; a check finds these problems, which the user can see:`,
         ...listed,
-        'Do not draw it again: describe what it shows, and say in a sentence what is still not right in it.',
+        'Do not draw it again: describe what it shows, and say in a sentence what is not right in it.',
       ].join('\n'),
       widget,
     };

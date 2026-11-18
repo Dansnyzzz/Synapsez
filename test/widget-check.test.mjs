@@ -284,6 +284,21 @@ section('lines and arrows: where a translate puts things, and where nothing can 
   const untitled = `<svg viewBox="0 0 500 200">${MARKER}${box}<circle cx="250" cy="100" r="30" fill="#fff" stroke="#333"/><polygon points="400,60 440,100 400,140 360,100" fill="#fff" stroke="#333"/>${arrow('M90 100L400 100')}</svg>`;
   const named = checkLines(untitled);
   check('an unnamed circle and diamond are called so, at their middles', named.some((s) => /runs through the circle at \(250, 100\)/.test(s)) && named.some((s) => /inside the diamond at \(400, 100\)/.test(s)), named.join(' | '));
+
+  // Fix round 3: an arrow floating between two boxes, free at both ends, is still the owner's
+  // fault: its head is told when a shape or a text lies straight ahead of it within 42 px.
+  const pair = '<rect x="10" y="80" width="80" height="40" fill="#fff" stroke="#333"/><text x="50" y="105" text-anchor="middle" font-size="13" fill="#111">Một</text><rect x="250" y="80" width="80" height="40" fill="#fff" stroke="#333"/><text x="290" y="105" text-anchor="middle" font-size="13" fill="#111">Hai</text>';
+  const floating = (x1, x2) => checkLines(`<svg viewBox="0 0 400 200">${MARKER}<rect width="400" height="200" fill="#fff"/>${pair}<line x1="${x1}" y1="100" x2="${x2}" y2="100" stroke="#333" marker-end="url(#ah)"/></svg>`);
+  check('an arrow floating 25 px clear of both boxes points at nothing, short of the one ahead', floating(115, 225).some((s) => /^an arrow at \(225, 100\), stopping short of "Hai", points at nothing/.test(s)), floating(115, 225).join(' | '));
+  check('  and 40 px clear of both', floating(130, 210).some((s) => /^an arrow at \(210, 100\), stopping short of "Hai", points at nothing/.test(s)), floating(130, 210).join(' | '));
+  check('  but with nothing ahead of their heads, the matrix\'s axes and the timeline\'s spine stay clean', checkLines(matrix).length === 0 && checkLines(timeline).length === 0 && checkLines(chart('')).length === 0);
+
+  // Fix round 3: a transform-origin or transform-box moves where a scale pivots, which is not read:
+  // there only a plain translate is followed, and a scale leaves the position unknown.
+  const pivoted = (g) => `<svg viewBox="0 0 400 200">${MARKER}<rect width="400" height="200" fill="#fff"/><rect x="10" y="80" width="80" height="40" fill="#fff" stroke="#333"/><text x="50" y="105" text-anchor="middle" font-size="13" fill="#111">Một</text>${g}<rect x="200" y="80" width="100" height="40" fill="#fff" stroke="#333"/><text x="250" y="105" text-anchor="middle" font-size="13" fill="#111">Hai</text></g><line x1="90" y1="100" x2="173" y2="100" stroke="#333" marker-end="url(#ah)"/></svg>`;
+  check('a box scaled by 1.5 about transform-origin="250 100", the arrow on its true edge: not blamed', checkLines(pivoted('<g transform="scale(1.5)" transform-origin="250 100">')).length === 0, checkLines(pivoted('<g transform="scale(1.5)" transform-origin="250 100">')).join(' | '));
+  check('  nor with transform-box: fill-box and transform-origin: center in its style', checkLines(pivoted('<g style="transform: scale(1.5); transform-box: fill-box; transform-origin: center">')).length === 0);
+  check('  while a translate with an origin is still followed, and the same scale with none is judged', checkLines(pivoted('<g transform="translate(-25 0)" transform-origin="250 100">')).length === 0 && checkLines(pivoted('<g transform="scale(1.5)">')).some((s) => /^an arrow at \(173, 100\), from "Một", points at nothing/.test(s)));
 }
 
 section('lines and arrows: a server-drawn diagram finds nothing, and no markup breaks the reader');
@@ -470,9 +485,10 @@ section('show_widget says what is wrong, and keeps a clean diagram as a file');
     const second = await show({ title: 'Một tên khác hẳn', svg: OWNER_FLAWED.replace('M480 130L530 130', 'M480 130L558 130') }, turn1);
     check('the redraw is shown, though it was given another title', second.widget?.kind === 'svg' && second.widget.markup.includes('M480 130L558 130'), Object.keys(second).join(','));
     check('  and kept, whatever the check still finds', (await kept()) === before + 1 && /kept it as a file/.test(second.content));
-    check('  its content lists what is still wrong, and asks for no third try', /still finds/.test(second.content) && /points at nothing/.test(second.content) && !/530, 130/.test(second.content) && /Do not draw it again/.test(second.content), second.content);
+    // Fix round 3: worded to be true of the redraw and of a different drawing later in the turn.
+    check('  its content lists what is still wrong, and asks for no third try', /This drawing is shown as it is; a check finds these problems/.test(second.content) && !/redraw|still/.test(second.content) && /points at nothing/.test(second.content) && !/530, 130/.test(second.content) && /Do not draw it again/.test(second.content), second.content);
     const third = await show({ title: 'Một hình khác nữa', svg: OWNER_FLAWED }, turn1);
-    check('  only one try a turn is ever held back: a third flawed drawing in it is shown', third.widget?.kind === 'svg' && /still finds/.test(third.content));
+    check('  only one try a turn is ever held back: a third flawed drawing in it is shown, and the words fit it too', third.widget?.kind === 'svg' && /This drawing is shown as it is; a check finds these problems/.test(third.content) && !/redraw|still/.test(third.content));
     const nextTurn = await show({ title: 'Đường đi của một câu hỏi', svg: OWNER_FLAWED }, turn2);
     check('a later turn\'s flawed drawing gets its own check, under any title', nextTurn.widget === undefined && (await store.readCounter(counter(turn2))) === 1);
     const cleanFirst = await show({ title: 'Sạch', svg: CLEAN_DRAWN }, turn3);

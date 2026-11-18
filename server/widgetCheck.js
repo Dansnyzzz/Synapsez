@@ -152,6 +152,14 @@ const ANGLE = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?(?:deg)?$/i;
 const times = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
 const mapPoint = (m, [x, y]) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
 const aligned = (m) => Math.abs(m[1]) < 1e-9 && Math.abs(m[2]) < 1e-9 && Math.abs(m[0]) > 1e-9 && Math.abs(m[3]) > 1e-9;
+// An element's own matrix. A `transform-origin` or `transform-box` moves where a scale or a turn
+// pivots, which this does not read: with either, only a plain translate is followed, and anything
+// else leaves the position unknown, as before fix round 2 (re-review, fix round 3).
+function ownMatrix(a) {
+  const m = matrixOf(a.transform);
+  const pivoted = a['transform-origin'] !== undefined || a['transform-box'] !== undefined;
+  return m && pivoted && !(Math.abs(m[0] - 1) < 1e-12 && Math.abs(m[3] - 1) < 1e-12 && Math.abs(m[1]) < 1e-12 && Math.abs(m[2]) < 1e-12) ? null : m;
+}
 function matrixOf(transform) {
   const v = typeof transform === 'string' ? transform.trim() : '';
   if (!v || v.toLowerCase() === 'none') return IDENTITY;
@@ -500,7 +508,7 @@ function readDrawing(svg) {
         cut = true;
         continue;
       }
-      const own = matrixOf(a.transform);
+      const own = ownMatrix(a);
       const hidden = top.hidden || UNPLACED.has(name) || String(a.display || '').trim() === 'none';
       stack.push({ name, hidden, m: !nested && top.m && own ? times(top.m, own) : null, inherit: pick(styleOf(name, a, top.inherit)) });
       continue;
@@ -511,7 +519,7 @@ function readDrawing(svg) {
     }
     if (!['rect', 'text', 'circle', 'ellipse', 'polygon', 'polyline', 'line', 'path'].includes(name)) continue;
     const own = attrs(whole);
-    const ownM = matrixOf(own.transform);
+    const ownM = ownMatrix(own);
     // The matrix it is drawn through; followed when it keeps boxes boxes. A text must also read
     // the right way round, or it is taken as turned.
     const M = !deeper && top.m && ownM ? times(top.m, ownM) : null;
@@ -962,6 +970,21 @@ function lineIssues(d) {
     for (const r of backings) if (r.order > t.cover && within(t.core, r, -1)) t.cover = r.order;
   }
 
+  // What a free head stops short of: the nearest shape or text it would meet going on the way it
+  // points, within three reaches (42 px), and not one it is already inside (a group, a lane).
+  const shortOf = (end) => {
+    if (!end.dir[0] && !end.dir[1]) return null;
+    const far = [end.p[0] + end.dir[0] * 3 * R.reach, end.p[1] + end.dir[1] * 3 * R.reach];
+    const span = segBox(end.p, far);
+    let best = null;
+    const take = (gap, name) => {
+      if (!best || gap < best.gap) best = { gap, name };
+    };
+    for (const s of targets) if (meets(span, s) && !holds(s, end.p) && lengthThrough(s, end.p, far, 0) > 0) take(toBox(end.p, s), s.title ? quote(s.title) : called(s));
+    for (const t of placed) if (meets(span, t.box) && !inBox(end.p, t.box) && lengthIn(end.p, far, t.box) > 0) take(toBox(end.p, t.box), quote(t.text));
+    return best?.name || null;
+  };
+
   // No end is judged where a position is not known: the read stopped at a limit, something is
   // drawn rotated, skewed or by <use>, or the crossing checks ran out of their work (below).
   let blind = d.cut || d.unknown;
@@ -996,8 +1019,14 @@ function lineIssues(d) {
           add('end', `an arrow ends on top of ${quote(over.text)} at ${at(end.p)}: stop it at the edge of what it points to, clear of the text.`);
         } else if (host) {
           add('end', `an arrow ends at ${at(end.p)}, inside ${called(host)} rather than on its edge, so its head is hidden or drawn over it: end it on the edge.`);
-        } else if (!edge && !text && anchored(other) && !lineNear(end.p, line)) {
-          add('end', `an arrow at ${at(end.p)}, from ${nameAt(other)}, points at nothing: end it on the edge of the box it belongs to.`);
+        } else if (!edge && !text && !lineNear(end.p, line)) {
+          if (anchored(other)) add('end', `an arrow at ${at(end.p)}, from ${nameAt(other)}, points at nothing: end it on the edge of the box it belongs to.`);
+          else {
+            // Both ends free: an axis or a spine, unless it stops short of something straight ahead
+            // of it — an arrow floating between two boxes (re-review, fix round 3).
+            const short = shortOf(end);
+            if (short) add('end', `an arrow at ${at(end.p)}, stopping short of ${short}, points at nothing: end it on the edge of the box it belongs to.`);
+          }
         }
       } else if (anchored(other) && !(line.length < 48 && other.head) && !touches(end)) {
         // A short arrow beside its words is a legend's key or a trend mark: its tail is free.
