@@ -970,8 +970,10 @@ function lineIssues(d) {
     for (const r of backings) if (r.order > t.cover && within(t.core, r, -1)) t.cover = r.order;
   }
 
-  // What a free head stops short of: the nearest shape or text it would meet going on the way it
-  // points, within three reaches (42 px), and not one it is already inside (a group, a lane).
+  // What a free head stops short of: the nearest shape it would meet going on the way it points,
+  // within three reaches (42 px), and not one it is already inside (a group, a lane). Never a text:
+  // an axis pointing at its label, a legend key at its words or a trend arrow under its number is
+  // drawn that way on purpose (fix round 4).
   const shortOf = (end) => {
     if (!end.dir[0] && !end.dir[1]) return null;
     const far = [end.p[0] + end.dir[0] * 3 * R.reach, end.p[1] + end.dir[1] * 3 * R.reach];
@@ -981,7 +983,6 @@ function lineIssues(d) {
       if (!best || gap < best.gap) best = { gap, name };
     };
     for (const s of targets) if (meets(span, s) && !holds(s, end.p) && lengthThrough(s, end.p, far, 0) > 0) take(toBox(end.p, s), s.title ? quote(s.title) : called(s));
-    for (const t of placed) if (meets(span, t.box) && !inBox(end.p, t.box) && lengthIn(end.p, far, t.box) > 0) take(toBox(end.p, t.box), quote(t.text));
     return best?.name || null;
   };
 
@@ -1006,6 +1007,12 @@ function lineIssues(d) {
       const seen = look(e);
       return !!seen.edge || seen.on.length > 0 || !!seen.text;
     };
+    // On a shape itself: only then is a free tail a fault. A head at a text alone is an axis at its
+    // label, whose tail is meant to start in open space (fix round 4).
+    const onShape = (e) => {
+      const seen = look(e);
+      return !!seen.edge || seen.on.length > 0;
+    };
     for (const end of blind || line.cut ? [] : line.ends) {
       // Near a turned text (an axis label), which may be what it points at (fix round 2).
       if (d.tilted.some((t) => Math.abs(end.p[0] - t.x) <= t.reach && Math.abs(end.p[1] - t.y) <= t.reach)) continue;
@@ -1028,7 +1035,7 @@ function lineIssues(d) {
             if (short) add('end', `an arrow at ${at(end.p)}, stopping short of ${short}, points at nothing: end it on the edge of the box it belongs to.`);
           }
         }
-      } else if (anchored(other) && !(line.length < 48 && other.head) && !touches(end)) {
+      } else if (onShape(other) && !(line.length < 48 && other.head) && !touches(end)) {
         // A short arrow beside its words is a legend's key or a trend mark: its tail is free.
         add('end', `an arrow starting at ${at(end.p)} comes from nothing: start it on the edge of the box it leaves.`);
       }

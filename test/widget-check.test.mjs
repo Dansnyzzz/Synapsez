@@ -293,6 +293,17 @@ section('lines and arrows: where a translate puts things, and where nothing can 
   check('  and 40 px clear of both', floating(130, 210).some((s) => /^an arrow at \(210, 100\), stopping short of "Hai", points at nothing/.test(s)), floating(130, 210).join(' | '));
   check('  but with nothing ahead of their heads, the matrix\'s axes and the timeline\'s spine stay clean', checkLines(matrix).length === 0 && checkLines(timeline).length === 0 && checkLines(chart('')).length === 0);
 
+  // Fix round 4: only shapes count as what a free head stops short of, never a text, and a free
+  // tail is told only when the head is on a shape: an arrow pointing at its own words is drawn so.
+  const open = (b) => `<svg viewBox="0 0 600 300">${MARKER}<rect width="600" height="300" fill="#fff"/>${b}</svg>`;
+  const words = (gap) => [
+    [`an axis with its label ${gap} px past the tip`, open(`<line x1="40" y1="250" x2="460" y2="250" stroke="#333" marker-end="url(#ah)"/><text x="${460 + gap}" y="254" font-size="13" fill="#111">Thời gian</text>`)],
+    [`a legend key with its words ${gap} px after the head`, open(`<line x1="40" y1="280" x2="76" y2="280" stroke="#333" marker-end="url(#ah)"/><text x="${76 + gap}" y="284" font-size="12" fill="#111">luồng dữ liệu</text>`)],
+    [`a trend arrow ${gap} px under a KPI number`, open(`<text x="300" y="100" text-anchor="middle" font-size="28" font-weight="bold" fill="#111">+12%</text><line x1="300" y1="${150 + gap}" x2="300" y2="${110 + gap}" stroke="#16a34a" stroke-width="3" marker-end="url(#ah)"/>`)],
+  ];
+  for (const gap of [10, 20, 30]) for (const [what, svg] of words(gap)) check(`${what}: finds nothing`, checkLines(svg).length === 0, checkLines(svg).join(' | '));
+  check('  but an arrow from a box to nothing still has its head told', floating(90, 200).some((s) => /^an arrow at \(200, 100\), from "Một", points at nothing/.test(s)), floating(90, 200).join(' | '));
+
   // Fix round 3: a transform-origin or transform-box moves where a scale pivots, which is not read:
   // there only a plain translate is followed, and a scale leaves the position unknown.
   const pivoted = (g) => `<svg viewBox="0 0 400 200">${MARKER}<rect width="400" height="200" fill="#fff"/><rect x="10" y="80" width="80" height="40" fill="#fff" stroke="#333"/><text x="50" y="105" text-anchor="middle" font-size="13" fill="#111">Một</text>${g}<rect x="200" y="80" width="100" height="40" fill="#fff" stroke="#333"/><text x="250" y="105" text-anchor="middle" font-size="13" fill="#111">Hai</text></g><line x1="90" y1="100" x2="173" y2="100" stroke="#333" marker-end="url(#ah)"/></svg>`;
