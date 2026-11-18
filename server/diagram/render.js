@@ -231,7 +231,8 @@ export function renderDiagram(layout, { theme = 'light', title = '' } = {}) {
   for (const nd of layout.nodes) {
     const a = nd.group ? accentOf.get(nd.group) : null;
     const [fill, edge] = nd.kind === 'note' ? [P.note, P.noteEdge] : nd.kind === 'pill' ? [P.pill, P.pillEdge] : [P.card, P.cardEdge];
-    const rx = nd.kind === 'pill' ? nd.radius : 8;
+    // A pill is round across its short side however far it grew for its arrows (fix round 5).
+    const rx = nd.kind === 'pill' ? Math.min(nd.w, nd.h) / 2 : 8;
     const look = nd.kind === 'note' ? ' stroke-dasharray="4 3"' : ` filter="url(#s${id})"`;
     out.push(`<rect x="${n(nd.x)}" y="${n(nd.y)}" width="${n(nd.w)}" height="${n(nd.h)}" rx="${n(rx)}" fill="${fill}" stroke="${edge}"${look}/>`);
 

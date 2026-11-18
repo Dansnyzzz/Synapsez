@@ -48,6 +48,9 @@ export const LAYOUT = Object.freeze({
   // Two long edges' stand-ins side by side keep this apart, so their lines never run alongside
   // closer than 16 and their arrowheads, if they end on one box, can stay in line (fix round 4).
   standGap: 20,
+  // A line keeps this far from the border of a group it passes outside of, as it keeps 24 from
+  // a box (fix round 5: a lane ran 8 under a group's bottom border and read as its edge).
+  borderGap: 16,
   portSpacing: 8,
   // Where a side is long enough, ports stand this far apart, and a two-way pair's ends further.
   portApart: 20,
@@ -329,9 +332,11 @@ function layoutPass(diagram, direction, rooms) {
     }
   }
   for (const n of nodes) {
-    // Room for its ports 20 apart (fix round 4), so a line can still be straightened by moving
-    // a port without its neighbours packing to the minimum.
-    const roomy = (halves) => halves.map((h) => Math.max(h + 2, LAYOUT.portApart / 2));
+    // Room for its ports 20 apart (fix round 4), and 2 more each on a box, so a line can still be
+    // straightened by moving a port without its neighbours packing to the minimum. A pill gets
+    // exactly what its ports need (fix round 5): it grows only as far as it must, and stays a pill.
+    const slack = n.kind === 'pill' ? 0 : 2;
+    const roomy = (halves) => halves.map((h) => Math.max(h + slack, LAYOUT.portApart / 2));
     const need = Math.max(sideNeed(roomy(halvesOf[n.index].in), insetOf(n)), sideNeed(roomy(halvesOf[n.index].out), insetOf(n)));
     if (right) n.h = Math.max(n.h, need);
     else n.w = Math.max(n.w, need);
@@ -620,7 +625,7 @@ function layoutPass(diagram, direction, rooms) {
       if (prev && prev.v === v) continue;
       const kind = g ? 'block' : it.type;
       if (prev) {
-        const gap = prev.kind === 'block' && kind === 'block' ? LAYOUT.groupGap : prev.kind === 'node' || kind === 'node' ? LAYOUT.nodeGap : prev.kind === 'dummy' && kind === 'dummy' ? LAYOUT.standGap : LAYOUT.edgeGap;
+        const gap = prev.kind === 'block' && kind === 'block' ? LAYOUT.groupGap : prev.kind === 'node' || kind === 'node' ? LAYOUT.nodeGap : prev.kind === 'dummy' && kind === 'dummy' ? LAYOUT.standGap : (prev.kind === 'block' && kind === 'dummy') || (prev.kind === 'dummy' && kind === 'block') ? LAYOUT.borderGap : LAYOUT.edgeGap;
         prev.v.succs.push({ v, gap });
         v.preds.push({ v: prev.v, gap });
       }
@@ -679,7 +684,7 @@ function layoutPass(diagram, direction, rooms) {
     let lo = g ? g.v.pos + g.header + M : -Infinity;
     let hi = g ? g.v.pos + g.size - M : Infinity;
     const extent = (x) => (x.group && x.group !== d.group ? [groupById.get(x.group).v.pos, groupById.get(x.group).v.pos + groupById.get(x.group).size] : [x.start, x.start + x.size]);
-    const gapTo = (x) => (d.group ? gapBetween(x, d) : x.type === 'node' && !x.group ? LAYOUT.nodeGap : x.type === 'dummy' ? LAYOUT.standGap : LAYOUT.edgeGap);
+    const gapTo = (x) => (d.group ? gapBetween(x, d) : x.group ? LAYOUT.borderGap : x.type === 'node' ? LAYOUT.nodeGap : x.type === 'dummy' ? LAYOUT.standGap : LAYOUT.edgeGap);
     for (let j = i - 1; j >= 0; j -= 1) {
       if (layer[j].type === 'hold') continue;
       lo = Math.max(lo, extent(layer[j])[1] + gapTo(layer[j]));
@@ -1216,7 +1221,7 @@ function layoutPass(diagram, direction, rooms) {
     const starts = groups.filter((G) => G.min === g + 1);
     // How far before the next rank something across [lo, hi] must stop: a lane's corner keeps
     // 24 from a box, and clear of the title band and margin of a group starting there.
-    const clearAt = (lo, hi, base) => Math.max(base, ...starts.filter((G) => over(lo, hi, G, 12)).map((G) => M + G.band + 12));
+    const clearAt = (lo, hi, base) => Math.max(base, ...starts.filter((G) => over(lo, hi, G, 12)).map((G) => M + G.band + LAYOUT.borderGap));
     // Labels start 12 into the gap, enough to keep off the box they leave — 24 where a group
     // ends there, so a label clears that group's border.
     const labels = reservedIn[g];
@@ -1242,6 +1247,10 @@ function layoutPass(diagram, direction, rooms) {
     let prev = -Infinity;
     rest.forEach((t, i) => {
       let rel = Math.max(lastLoop === null && clearOfLabels(t) ? C : restFirst, prev + step);
+      // Past the bottom border of a group that ends here and that it runs alongside, by 16.
+      const lo = Math.min(t.s, t.t);
+      const hi = Math.max(t.s, t.t);
+      if (ends.some((G) => over(lo, hi, G, 0))) rel = Math.max(rel, M + LAYOUT.borderGap);
       for (const u of rest.slice(0, i)) {
         if (pair(u, t)) rel = Math.max(rel, u.rel + LAYOUT.pairApart);
         else if (shared(u, t) > 12) rel = Math.max(rel, u.rel + LAYOUT.laneApart);
@@ -1300,6 +1309,33 @@ function layoutPass(diagram, direction, rooms) {
     return { x, y, w: n.w, h: n.h };
   };
   const nodeBoxes = nodes.map(boxOf);
+  // A pill grown for its arrows is still drawn a pill, its ends round across its short side (fix
+  // round 5: drawn with its old radius, a 103-tall one read as a rounded square). Where that
+  // brings the curve over a port, the line runs on to meet the curve, so it never stops short.
+  for (const n of nodes) if (n.kind === 'pill') n.radius = Math.min(n.w, n.h) / 2;
+  const ontoOutline = (point, n) => {
+    if (n.kind !== 'pill') return point;
+    const b = nodeBoxes[n.index];
+    const r = n.radius;
+    const [x, y] = point;
+    const near = (v, w) => Math.abs(v - w) < 1e-6;
+    // How far the curve stands in from the box's edge, `off` from the nearer corner's centre.
+    const inset = (along, lo, hi) => {
+      const c = clamp(along, lo + r, hi - r);
+      const d = Math.min(r, Math.abs(along - c));
+      return r - Math.sqrt(r * r - d * d);
+    };
+    if (near(x, b.x)) return [x + inset(y, b.y, b.y + b.h), y];
+    if (near(x, b.x + b.w)) return [x - inset(y, b.y, b.y + b.h), y];
+    if (near(y, b.y)) return [x, y + inset(x, b.x, b.x + b.w)];
+    if (near(y, b.y + b.h)) return [x, y - inset(x, b.x, b.x + b.w)];
+    return point;
+  };
+  for (const e of edges) {
+    if (e.route.length < 2) continue;
+    e.route[0] = ontoOutline(e.route[0], tail(e));
+    e.route[e.route.length - 1] = ontoOutline(e.route.at(-1), e.loop ? e.from : head(e));
+  }
   // The text block, centred in a box that may have grown past it for its arrows.
   const textBoxes = nodes.map((n, i) => ({ x: nodeBoxes[i].x + (n.w - n.textW) / 2, y: nodeBoxes[i].y + (n.h - n.textH) / 2, w: n.textW, h: n.textH }));
   for (const g of groups) {
