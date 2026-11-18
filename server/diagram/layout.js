@@ -33,7 +33,8 @@
  * (owner, 2026-11-17: "flexible adaptive"): see chooseDirection.
  */
 
-import { TEXT, FIT, lineHeight, textWidth, measureNode, measureLabel } from './measure.js';
+import { TEXT, FIT, READABLE_SCALE, lineHeight, textWidth, measureNode, measureLabel } from './measure.js';
+import { drawingHeightCap } from '../../public/js/drawing-fit.js';
 
 export const LAYOUT = Object.freeze({
   rankGap: Object.freeze({ right: 72, down: 56 }),
@@ -145,18 +146,32 @@ function orderTurns(list) {
 }
 
 /**
- * Of a drawing laid out both ways, the one to keep: the one whose text is largest as the page
- * shows it — scaled to the 760 px reply column, or to the 576 px height cap, whichever bites
- * (review, 2026-11-18, replacing "closer to 16:10 if it fits 1,200 at 0.8": a 1,422 px drawing
- * won that way and showed its titles at 7.5 px; fix round 2 added the height). Within 5 % of
- * each other, the box closer to 16:10 wins, on a log scale so twice too wide and twice too
+ * How the page shows a laid-out diagram (public/js/drawing-fit.js, the page's own rule): its
+ * scale, its titles in px, and its height in px — in a 760 px column of an 800 px window.
+ */
+export function shownSize(layout) {
+  const across = Math.min(FIT.widen, FIT.column / layout.width);
+  const cap = drawingHeightCap({ windowHeight: FIT.window, viewWidth: layout.width, viewHeight: layout.height, shownWidth: layout.width * across, readableScale: READABLE_SCALE });
+  const scale = Math.min(across, cap / layout.height);
+  return { scale, title: TEXT.titleSize * scale, height: layout.height * scale };
+}
+
+/**
+ * Of a drawing laid out both ways, the one to keep, judged as the page will show it
+ * (shownSize). Where both show their titles at 11 px or more, the shorter, so a person scrolls
+ * less (fix round 3); where one does, that one; where neither does, the larger titles (review,
+ * 2026-11-18: a 1,422 px drawing once won on its shape and showed 7.5 px titles). Within 5 %
+ * of each other, the box closer to 16:10 wins, on a log scale so twice too wide and twice too
  * tall are equally far off. A tie keeps "right", the way a flow is read.
  */
 export function chooseDirection(right, down) {
-  const textScale = (l) => Math.min(1, FIT.column / l.width, FIT.height / l.height);
   const off = (l) => Math.abs(Math.log(l.width / l.height / FIT.aspect));
-  const [a, b] = [textScale(right), textScale(down)];
-  if (Math.abs(a - b) > FIT.near * Math.max(a, b)) return b > a ? down : right;
+  const [a, b] = [shownSize(right), shownSize(down)];
+  const readable = (s) => s.title >= FIT.readablePx - 1e-9;
+  const apart = (p, q) => Math.abs(p - q) > FIT.near * Math.max(p, q);
+  if (readable(a) && readable(b) && apart(a.height, b.height)) return b.height < a.height ? down : right;
+  if (readable(a) !== readable(b)) return readable(b) ? down : right;
+  if (!readable(a) && apart(a.title, b.title)) return b.title > a.title ? down : right;
   return off(down) < off(right) ? down : right;
 }
 
@@ -1155,12 +1170,22 @@ function layoutPass(diagram, direction, rooms) {
   // A label sits wholly inside a group or wholly outside it, never across its border (review B6).
   const groupBoxes = groups.map((g) => g.box);
   const within = (box, g, pad) => box.x >= g.x + pad && box.y >= g.y + pad && box.x + box.w <= g.x + g.w - pad && box.y + box.h <= g.y + g.h - pad;
-  const blocked = (box, e) =>
-    nodeBoxes.some((b) => overlaps(box, b, LAYOUT.labelClearance)) ||
-    titleBoxes.some((b) => overlaps(box, b, 2)) ||
-    placed.some((b) => overlaps(box, b, 2)) ||
-    pending.some((o) => o !== e && overlaps(box, o.reserved, 2)) ||
-    groupBoxes.some((g) => overlaps(box, g, 4) && !within(box, g, 4));
+  // What a label may not touch; nearby() narrows it to what lies near one run, found once per
+  // run rather than for every step slid along it (fix round 3: a 40-box chain with 41 labels).
+  const obstacles = (e) => ({ nodes: nodeBoxes, titles: titleBoxes, placed, slots: pending.filter((o) => o !== e).map((o) => o.reserved), groups: groupBoxes });
+  const nearby = (all, band) => ({
+    nodes: all.nodes.filter((b) => overlaps(band, b, LAYOUT.labelClearance)),
+    titles: all.titles.filter((b) => overlaps(band, b, 2)),
+    placed: all.placed.filter((b) => overlaps(band, b, 2)),
+    slots: all.slots.filter((b) => overlaps(band, b, 2)),
+    groups: all.groups.filter((g) => overlaps(band, g, 4)),
+  });
+  const blocked = (box, e, near = obstacles(e)) =>
+    near.nodes.some((b) => overlaps(box, b, LAYOUT.labelClearance)) ||
+    near.titles.some((b) => overlaps(box, b, 2)) ||
+    near.placed.some((b) => overlaps(box, b, 2)) ||
+    near.slots.some((b) => overlaps(box, b, 2)) ||
+    near.groups.some((g) => overlaps(box, g, 4) && !within(box, g, 4));
   // Lines that come too near: its own edge's other parts touching it, or another edge's within
   // 10 of it (review B7: a line beside a label reads as that label's).
   // A line through the label costs far more than one merely near it, so a near miss is never
@@ -1187,6 +1212,7 @@ function layoutPass(diagram, direction, rooms) {
       const reach = LAYOUT.labelLineClear + 2;
       const band = { x: Math.min(run.a[0], run.b[0]) - w / 2 - reach, y: Math.min(run.a[1], run.b[1]) - h / 2 - reach, w: Math.abs(run.b[0] - run.a[0]) + w + 2 * reach, h: Math.abs(run.b[1] - run.a[1]) + h + 2 * reach };
       const near = segments.filter((s) => segmentTouches(s.a, s.b, band));
+      const solid = nearby(obstacles(e), band);
       for (let step = 0; step <= 80; step += 1) {
         // From the middle outward, 4 px at a time, alternately each way.
         const off = (step % 2 ? 1 : -1) * Math.ceil(step / 2) * 4;
@@ -1195,7 +1221,7 @@ function layoutPass(diagram, direction, rooms) {
         const cx = run.a[0] + (run.b[0] - run.a[0]) * f;
         const cy = run.a[1] + (run.b[1] - run.a[1]) * f;
         const box = { x: cx - w / 2, y: cy - h / 2, w, h };
-        if (blocked(box, e)) continue;
+        if (blocked(box, e, solid)) continue;
         const score = crossings(box, e, run.k, near);
         if (!best || score < best.score) best = { box, score };
         if (score === 0) break search;

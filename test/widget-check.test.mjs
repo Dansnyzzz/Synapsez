@@ -156,6 +156,38 @@ section('show_widget says what is wrong, and keeps a clean diagram as a file');
   check('through executeTool: the schema lets a diagram through, and it is drawn', viaTool.isError === false && viaTool.widget?.kind === 'svg', viaTool.content?.slice(0, 160));
   const refusedVia = await run({ title: 'Hỏng', diagram: broken });
   check('  a bad one comes back as an error the model reads, never a throw', refusedVia.isError === true && refusedVia.content.includes(said), refusedVia.content);
+  // Fix round 3: in the conversation a diagram the server laid out is never shrunk so far its
+  // titles fall under 11 px; a hand-drawn drawing keeps the 72 % height cap it always had. The
+  // page sizes both with public/js/drawing-fit.js, checked here over many shapes and windows.
+  const { drawingHeightCap, DRAWING_FIT } = await import('../public/js/drawing-fit.js');
+  const { READABLE_SCALE, TEXT } = await import('../server/diagram/measure.js');
+  check('a diagram\'s widget carries its readable scale, set by the server: 11 px over a 14 px title', drawn.widget.readableScale === READABLE_SCALE && Math.abs(READABLE_SCALE * TEXT.titleSize - 11) < 1e-9);
+  check('  a hand-drawn svg\'s never does', good.widget.readableScale === undefined && !('readableScale' in good.widget));
+  const capWrong = [];
+  for (const windowHeight of [500, 800, 1080]) {
+    const base = Math.max(240, windowHeight * 0.72);
+    for (const [viewWidth, viewHeight] of [[300, 200], [640, 1240], [725, 1027], [1200, 400], [500, 3000]]) {
+      for (const shownWidth of [360, 760, 1280]) {
+        const hand = drawingHeightCap({ windowHeight, viewWidth, viewHeight, shownWidth });
+        if (hand !== base) capWrong.push(`hand-drawn ${viewWidth}×${viewHeight} at ${shownWidth}: ${hand} for ${base}`);
+        const cap = drawingHeightCap({ windowHeight, viewWidth, viewHeight, shownWidth, readableScale: READABLE_SCALE });
+        const across = shownWidth / viewWidth;
+        const title = TEXT.titleSize * Math.min(across, cap / viewHeight);
+        // Never under 11 px, unless the width alone holds it there; never taller than its own size.
+        if (across >= READABLE_SCALE - 1e-9 ? title < 11 - 1e-9 : title < TEXT.titleSize * across - 1e-9) capWrong.push(`diagram ${viewWidth}×${viewHeight} at ${shownWidth} in ${windowHeight}: titles ${title.toFixed(1)} px`);
+        if (cap < base - 1e-9 || cap > Math.max(base, viewHeight * across) + 1e-9) capWrong.push(`diagram ${viewWidth}×${viewHeight} at ${shownWidth}: cap ${cap}`);
+      }
+    }
+  }
+  check('a hand-drawn drawing keeps 72 % of the window; a laid-out diagram\'s titles never shrink under 11 px for the height', capWrong.length === 0, capWrong.slice(0, 3).join(' | '));
+  const bogus = [0, -1, 2, NaN, Infinity, '0.8', null].map((readableScale) => drawingHeightCap({ windowHeight: 800, viewWidth: 640, viewHeight: 3000, shownWidth: 640, readableScale }));
+  check('  any other readable scale is ignored: the 72 % cap stands', bogus.every((cap) => cap === 576), bogus.join(','));
+  check('  the page\'s numbers are the ones the server lays out for', DRAWING_FIT.column === 760 && DRAWING_FIT.window === 800 && DRAWING_FIT.heightShare === 0.72 && DRAWING_FIT.readablePx === 11);
+  // Its frame grows with it (the CSS caps a widget's frame at 70vh, which cut it off with no
+  // bar to show the rest); every other widget's frame keeps that cap. Read from the page code.
+  const page = (await import('node:fs')).readFileSync(new URL('../public/js/render.js', import.meta.url), 'utf8');
+  check('  its frame grows with it, and only its: every other widget keeps the 70vh frame', /if \(isReadableScale\(widget\.readableScale\)\) frame\.style\.maxHeight = 'none';/.test(page) && (page.match(/frame\.style\.maxHeight/g) || []).length === 1 && /fitDrawing\(drawing, widget\.readableScale\)/.test(page));
+
   // The limits are in words in the schema (Anthropic's strict mode refuses maxItems and
   // maxLength), so validate.js is what turns these away, with its own sentence.
   const schema = TOOLS_BY_NAME.show_widget.parameters;

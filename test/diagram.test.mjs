@@ -18,7 +18,8 @@ const check = (label, pass, detail = '') => {
 };
 
 const { validateDiagram, ICON_NAMES } = await import('../server/diagram/validate.js');
-const { layoutDiagram, chooseDirection } = await import('../server/diagram/layout.js');
+const { layoutDiagram, chooseDirection, shownSize } = await import('../server/diagram/layout.js');
+const { drawingHeightCap, DRAWING_FIT } = await import('../public/js/drawing-fit.js');
 const { textWidth, wrapText, TEXT, FIT, measureNode, lineHeight } = await import('../server/diagram/measure.js');
 const { renderDiagram, palette, STAND_OUT } = await import('../server/diagram/render.js');
 const { ICONS } = await import('../server/diagram/icons.js');
@@ -789,34 +790,47 @@ const drawOf = (input, options) => {
   return { diagram, layout, svg: renderDiagram(layout, { theme: diagram.theme, ...options }) };
 };
 
-section('"auto" lays a drawing out both ways and keeps the better shape');
+section('"auto" lays a drawing out both ways and keeps the one the page shows best');
 {
   const chain = (k) => ({ nodes: nodes(k), edges: Array.from({ length: k - 1 }, (_, i) => ({ from: `n${i}`, to: `n${i + 1}` })) });
   const long = layoutDiagram(valid(chain(8)));
-  check('a long chain goes down', long.direction === 'down', `${long.direction} ${Math.round(long.width)}×${Math.round(long.height)}`);
+  check('a long chain goes down: going right its titles would show under 11 px', long.direction === 'down', `${long.direction} ${Math.round(long.width)}×${Math.round(long.height)}`);
+  const short = layoutDiagram(valid(chain(3)));
+  check('a short chain goes right: readable either way, and shorter on the page', short.direction === 'right', `${short.direction} ${Math.round(short.width)}×${Math.round(short.height)}`);
   const fan = { nodes: nodes(7), edges: Array.from({ length: 6 }, (_, i) => ({ from: 'n0', to: `n${i + 1}` })) };
   const wide = layoutDiagram(valid(fan));
-  check('a wide, shallow one (one box fanning out to six) goes right', wide.direction === 'right', `${wide.direction} ${Math.round(wide.width)}×${Math.round(wide.height)}`);
-  check('  and is exactly the layout that direction gives', isDeepStrictEqual(wide, layoutDiagram({ ...valid(fan), direction: 'right' })) && isDeepStrictEqual(long, layoutDiagram({ ...valid(chain(8)), direction: 'down' })));
-  // Review C8 and fix round 2: the text a person reads decides, as the page shows the drawing —
-  // in a 760 px reply column, scaled down to fit 576 px of height (72 % of an 800 px window,
-  // public/js/render.js fitDrawing), whichever bites.
-  check('the page scales a tall drawing to its height cap rather than scroll it, and auto uses that cap', /maxHeight = `\$\{Math\.round\(Math\.max\(240, \(globalThis\.innerHeight \|\| view\?\.innerHeight \|\| 800\) \* 0\.72\)\)\}px`/.test(fs.readFileSync(new URL('../public/js/render.js', import.meta.url), 'utf8')) && FIT.height === 576 && FIT.column === 760);
-  const shown = (l) => TEXT.titleSize * Math.min(1, 760 / l.width, 576 / l.height);
-  for (const [name, input] of [['pipeline', pipeline], ['owner\'s 4-layer pipeline', ownerPipeline], ['icons', iconsFixture]]) {
-    const both = ['right', 'down'].map((direction) => layoutDiagram({ ...valid(input), direction }));
+  check('one box fanning out to six goes down: readable either way, and shorter on the page', wide.direction === 'down', `${wide.direction} ${Math.round(wide.width)}×${Math.round(wide.height)}`);
+  check('  and each is exactly the layout that direction gives', isDeepStrictEqual(short, layoutDiagram({ ...valid(chain(3)), direction: 'right' })) && isDeepStrictEqual(long, layoutDiagram({ ...valid(chain(8)), direction: 'down' })) && isDeepStrictEqual(wide, layoutDiagram({ ...valid(fan), direction: 'down' })));
+  // Fix round 3: judged by the page's own rule (public/js/drawing-fit.js) — a 760 px column of
+  // an 800 px window, a narrow drawing grown up to twice, the 72 % height cap, which a server-
+  // laid-out diagram's titles never shrink under 11 px for. Worked out here from that module.
+  const render = fs.readFileSync(new URL('../public/js/render.js', import.meta.url), 'utf8');
+  check('the page sizes drawings by the shared rule, and passes a diagram\'s readable scale from its widget', /import \{[^}]*\bdrawingHeightCap\b[^}]*\} from '\.\/drawing-fit\.js'/.test(render) && /fitDrawing\(drawing, widget\.readableScale\)/.test(render) && /drawingHeightCap\(\{/.test(render) && !/innerHeight \|\| view\?\.innerHeight \|\| 800\) \* 0\.72/.test(render) && FIT.column === DRAWING_FIT.column && FIT.window === DRAWING_FIT.window && FIT.readablePx === 11);
+  const onPage = (l) => {
+    const across = Math.min(2, 760 / l.width);
+    const cap = drawingHeightCap({ windowHeight: 800, viewWidth: l.width, viewHeight: l.height, shownWidth: l.width * across, readableScale: 11 / TEXT.titleSize });
+    const scale = Math.min(across, cap / l.height);
+    return { title: TEXT.titleSize * scale, height: l.height * scale };
+  };
+  const shownBefore = { owner: 6.2, icons: 7.5, pipeline: 8.7 };
+  for (const [name, input] of [['owner', ownerPipeline], ['icons', iconsFixture], ['pipeline', pipeline]]) {
     const auto = layoutDiagram(valid(input));
-    check(`${name}: auto keeps the way its titles are largest as the page shows them (or within 5 %)`, shown(auto) >= Math.max(...both.map(shown)) * 0.95 - 1e-9, `${auto.direction}: titles ${shown(auto).toFixed(1)} px; right ${shown(both[0]).toFixed(1)}, down ${shown(both[1]).toFixed(1)}`);
+    const p = onPage(auto);
+    check(`${name}: auto's titles show at 11 px or more in a 760 px column of an 800 px window (was ${shownBefore[name]})`, p.title >= 11 - 1e-9, `${auto.direction}: ${p.title.toFixed(1)} px, ${Math.round(p.height)} px tall`);
+    const other = layoutDiagram({ ...valid(input), direction: auto.direction === 'right' ? 'down' : 'right' });
+    const q = onPage(other);
+    check(`${name}:   and of the ways that read, the shorter on the page (within 5 %)`, q.title < 11 - 1e-9 || p.height <= q.height * 1.05 + 1e-9, `${auto.direction} ${Math.round(p.height)} px against ${other.direction} ${Math.round(q.height)} px (${q.title.toFixed(1)} px titles)`);
+    check(`${name}:   shownSize agrees with the page's rule`, Math.abs(shownSize(auto).title - p.title) < 1e-9 && Math.abs(shownSize(auto).height - p.height) < 1e-9);
   }
   // The rule itself, on boxes only.
   const box = (width, height, tag) => ({ width, height, tag });
-  check('larger text wins: 897 wide beats 1,422 wide', chooseDirection(box(1422, 511, 'r'), box(897, 991, 'd')).tag === 'd');
-  check('  however well the other is shaped, when its text is over 5 % smaller', chooseDirection(box(900, 560, 'r'), box(760, 500, 'd')).tag === 'd');
-  check('  the height cap counts: a drawing 1,400 tall loses to one 1,000 wide', chooseDirection(box(1000, 300, 'r'), box(600, 1400, 'd')).tag === 'r');
-  check('  both within the column and the cap: the shape closer to 16:10 decides', chooseDirection(box(700, 300, 'r'), box(400, 560, 'd')).tag === 'r' && chooseDirection(box(700, 120, 'r'), box(400, 260, 'd')).tag === 'd');
-  check('  within 5 % of each other, the shape decides too', chooseDirection(box(800, 500, 'r'), box(780, 560, 'd')).tag === 'r');
+  check('readable beats unreadable: 897 wide beats 1,422 wide', chooseDirection(box(1422, 511, 'r'), box(897, 991, 'd')).tag === 'd');
+  check('  however tall: 600 × 1,400 (readable, taller) beats 1,000 × 300 (titles 10.6 px)', chooseDirection(box(1000, 300, 'r'), box(600, 1400, 'd')).tag === 'd');
+  check('  both readable: the shorter on the page wins', chooseDirection(box(900, 560, 'r'), box(760, 500, 'd')).tag === 'r' && chooseDirection(box(700, 120, 'r'), box(400, 260, 'd')).tag === 'r');
+  check('  neither readable: the larger titles win', chooseDirection(box(1600, 400, 'r'), box(1400, 900, 'd')).tag === 'd');
+  check('  within 5 % on the page, the shape closer to 16:10 decides', chooseDirection(box(760, 470, 'r'), box(760, 476, 'd')).tag === 'd');
   check('  and a tie keeps right', chooseDirection(box(800, 500, 'r'), box(800, 500, 'd')).tag === 'r');
-  check('"right" and "down" still force their way', layoutDiagram(valid({ ...chain(8), direction: 'right' })).direction === 'right' && layoutDiagram(valid({ ...fan, direction: 'down' })).direction === 'down');
+  check('"right" and "down" still force their way', layoutDiagram(valid({ ...chain(8), direction: 'right' })).direction === 'right' && layoutDiagram(valid({ ...fan, direction: 'right' })).direction === 'right');
 }
 
 section('icons: twelve of them, each drawn, an unknown one refused');

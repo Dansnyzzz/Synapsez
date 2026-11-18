@@ -9,6 +9,8 @@
  * its marks is one letter. Pure.
  */
 
+import { DRAWING_FIT } from '../../public/js/drawing-fit.js';
+
 // The characters counted a full em wide (the set widgetCheck has always used).
 export const HAN = /[㐀-䶿一-鿿豈-﫿]/;
 
@@ -33,12 +35,22 @@ export const TEXT = Object.freeze({
 export const lineHeight = (size) => size * TEXT.lineHeight;
 
 // Where a drawing is read (review, 2026-11-18: the owner's standard is text a person can read
-// in the conversation). A reply's column is about 760 px wide, and the page scales a drawing
-// down to fit 72 % of the window's height rather than scroll it (public/js/render.js
-// fitDrawing: max(240, innerHeight × 0.72), 800 when the window is unknown — so 576). "auto"
-// keeps the direction whose text is largest within both; within 5 % of each other, the shape
-// closer to 16:10 wins. A drawing wider than 1,200 is drawn 1,200 wide, through its viewBox.
-export const FIT = Object.freeze({ column: 760, height: 0.72 * 800, near: 0.05, aspect: 16 / 10, maxWidth: 1200 });
+// in the conversation): the page's own rule, from the module it sizes drawings with
+// (public/js/drawing-fit.js) — a 760 px column, a narrow drawing grown up to twice its size,
+// a height cap of 72 % of an 800 px window that a server-laid-out diagram's titles never fall
+// under 11 px for. "auto" scores both directions by it (layout.js chooseDirection); within 5 %
+// the shape closer to 16:10 decides. Wider than 1,200, a drawing is drawn 1,200 wide.
+export const FIT = Object.freeze({
+  column: DRAWING_FIT.column,
+  widen: DRAWING_FIT.widen,
+  window: DRAWING_FIT.window,
+  readablePx: DRAWING_FIT.readablePx,
+  near: 0.05,
+  aspect: 16 / 10,
+  maxWidth: 1200,
+});
+// The scale at which a title reads at 11 px: what a diagram's widget tells the page.
+export const READABLE_SCALE = DRAWING_FIT.readablePx / TEXT.titleSize;
 
 /** How wide a line of text is drawn at `size` px. */
 export function textWidth(text, size, bold = false) {

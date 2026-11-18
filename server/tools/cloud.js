@@ -31,6 +31,7 @@ import { checkDiagram } from '../widgetCheck.js';
 import { validateDiagram } from '../diagram/validate.js';
 import { layoutDiagram } from '../diagram/layout.js';
 import { renderDiagram } from '../diagram/render.js';
+import { READABLE_SCALE } from '../diagram/measure.js';
 import { searchConnectorsTool, suggestConnectorsTool } from '../connectorDirectory.js';
 import { codeContextTool } from './codeContext.js';
 import { getPrefs, getApiKey, maskPersonalFor } from '../settings.js';
@@ -1394,7 +1395,9 @@ async function showDiagram(caption, diagram, { userId, chatId }) {
   const way = layout.direction === 'down' ? 'top to bottom' : 'left to right';
   return {
     content: `Drew the diagram "${caption}" in the conversation, laid out ${way}${kept ? ', and kept it as a file of the conversation' : ''}. The user can see it, so say what it shows rather than listing its boxes again.`,
-    widget: { title: caption, markup, kind: 'svg', canvas: checked.diagram.theme === 'dark' ? 'dark' : 'light' },
+    // readableScale: the page never shrinks it so far its titles fall under 11 px (fix round 3).
+    // Set here, on the widget, where a model cannot reach: a hand-drawn svg never carries it.
+    widget: { title: caption, markup, kind: 'svg', canvas: checked.diagram.theme === 'dark' ? 'dark' : 'light', readableScale: READABLE_SCALE },
   };
 }
 

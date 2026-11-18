@@ -15,6 +15,7 @@ import { canonicalInput, TITLED } from './tool-aliases.js';
 import { registerPictures, pictureThumb, pictureUrl, openGallery } from './gallery.js';
 import { doneMark, ICONS } from './icons.js';
 import { withoutStrayTags } from './model-text.js';
+import { drawingHeightCap, isReadableScale } from './drawing-fit.js';
 
 /**
  * The Markdown behind each assistant turn, keyed by the turn's own node.
@@ -1281,8 +1282,12 @@ function soleDrawing(body) {
  * its own size, so three boxes do not become a poster — and no taller than
  * most of the window. `meet`, the default, keeps the proportions and centres
  * whatever room is left. Measured once: a second fit keeps the first view.
+ *
+ * A diagram the server laid out passes `readableScale` (from its widget, which
+ * the server sets): its height cap never shrinks its titles under 11 px — past
+ * that it stands taller, and the conversation scrolls (drawing-fit.js).
  */
-function fitDrawing(svg) {
+function fitDrawing(svg, readableScale) {
   const view = svg.ownerDocument.defaultView;
   if (!svg.dataset.fitted) {
     let box = null;
@@ -1322,7 +1327,15 @@ function fitDrawing(svg) {
     svg.dataset.fitted = '1';
   }
   // The page's window, not the frame's: see the note on the frame's style.
-  svg.style.maxHeight = `${Math.round(Math.max(240, (globalThis.innerHeight || view?.innerHeight || 800) * 0.72))}px`;
+  const box = svg.viewBox?.baseVal;
+  const cap = drawingHeightCap({
+    windowHeight: globalThis.innerHeight || view?.innerHeight || 800,
+    viewWidth: box?.width,
+    viewHeight: box?.height,
+    shownWidth: svg.getBoundingClientRect().width,
+    readableScale,
+  });
+  svg.style.maxHeight = `${Math.round(cap)}px`;
 }
 
 /** The conversation's ground, which a drawing is shown and exported on. */
@@ -1448,6 +1461,10 @@ export function widgetFrame(widget) {
   const frame = document.createElement('iframe');
   frame.className = 'widget__frame';
   frame.title = widget.title || t('chat.diagram');
+  // A diagram the server laid out stands as tall as its readable size needs, and the
+  // conversation scrolls past it (fix round 3); capped, its frame cut it off with no bar to show
+  // it. Every other widget keeps the CSS cap.
+  if (isReadableScale(widget.readableScale)) frame.style.maxHeight = 'none';
   /**
    * No `allow-scripts`: a widget is a finished picture. Anything that needs to
    * run is a `create_file` artifact, which has its own frame and its own warning.
@@ -1475,7 +1492,7 @@ export function widgetFrame(widget) {
       const body = frame.contentDocument?.body;
       if (!body) return;
       const drawing = soleDrawing(body);
-      if (drawing) fitDrawing(drawing);
+      if (drawing) fitDrawing(drawing, widget.readableScale);
       const height = Math.ceil(Math.max(body.scrollHeight, body.getBoundingClientRect().height));
       if (height > 0) frame.style.height = `${height}px`;
     } catch {
