@@ -1,7 +1,8 @@
 /*
- * How big text is drawn, for the diagram layout and for widgetCheck. Kept apart from the
- * layout so the checker can measure a hand-drawn SVG without loading the whole engine, and
- * so there is one copy of the estimate: a box the layout sized is one the check passes.
+ * How big text is drawn, for the diagram layout, and for widgetCheck, which will import this
+ * rather than keep its own copy. Kept apart from the layout so the checker can measure a
+ * hand-drawn SVG without loading the whole engine, and so there is one estimate: a box the
+ * layout sized is one the check passes.
  *
  * No renderer on the server, so this estimates: 0.55 em a letter, 0.6 em bold, 1 em a CJK
  * character. Text is counted in composed form, so a Vietnamese letter typed as a base and
@@ -25,6 +26,8 @@ export const TEXT = Object.freeze({
   labelPadding: 4,
   labelMaxWidth: 160,
   groupTitleMaxWidth: 160,
+  iconSize: 16,
+  iconGap: 6,
 });
 
 export const lineHeight = (size) => size * TEXT.lineHeight;
@@ -73,8 +76,9 @@ export function wrapText(text, maxWidth, size, bold = false) {
  * A box's size from its text: the title (14 px bold) and lines (12.5 px) wrapped inside the
  * 260 px maximum, padded by 12 (a pill 8 more at its rounded ends), never under 120 wide. The
  * height is the padding, the title lines and, when there are lines, a 4 px gap and the lines,
- * each line 1.35 em, rounded up to a whole pixel. `textW` × `textH` is the text block itself:
- * a box the layout grows for its arrows keeps this block, centred.
+ * each line 1.35 em, rounded up to a whole pixel. An icon sits centred above the title, 16 px
+ * and a 6 px gap. `textW` × `textH` is the text block itself, icon included: a box the layout
+ * grows for its arrows keeps this block, centred.
  */
 export function measureNode(node) {
   const padX = TEXT.padding + (node.kind === 'pill' ? TEXT.pillExtra : 0);
@@ -83,7 +87,8 @@ export function measureNode(node) {
   const lines = (node.lines || []).flatMap((line) => wrapText(line, room, TEXT.lineSize));
   const widest = Math.max(0, ...titleLines.map((l) => textWidth(l, TEXT.titleSize, true)), ...lines.map((l) => textWidth(l, TEXT.lineSize)));
   const w = Math.min(TEXT.maxWidth, Math.max(TEXT.minWidth, Math.ceil(widest + 2 * padX)));
-  const textH = titleLines.length * lineHeight(TEXT.titleSize) + (lines.length ? TEXT.titleGap + lines.length * lineHeight(TEXT.lineSize) : 0);
+  const iconH = node.icon ? TEXT.iconSize + TEXT.iconGap : 0;
+  const textH = iconH + titleLines.length * lineHeight(TEXT.titleSize) + (lines.length ? TEXT.titleGap + lines.length * lineHeight(TEXT.lineSize) : 0);
   return { w, h: Math.ceil(2 * TEXT.padding + textH), titleLines, lines, textW: w - 2 * padX, textH };
 }
 

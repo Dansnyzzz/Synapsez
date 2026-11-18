@@ -12,12 +12,20 @@
  * text in composed Unicode (a Vietnamese letter typed as a base and its marks is one letter,
  * for counting and for width) with its whitespace collapsed, and a number taken as text.
  * Pure: no store, no network, no clock.
+ *
+ * `direction` defaults to "auto": the layout tries both ways and keeps the better-shaped one
+ * (layout.js). `theme` is the canvas it is drawn for, and `icon` one of a fixed set
+ * (icons.js), so a box can carry a picture without the model drawing one.
  */
 
+import { ICON_NAMES } from './icons.js';
+
 export const LIMITS = Object.freeze({ nodes: 40, edges: 80, groups: 8, id: 40, title: 60, lines: 6, line: 80, label: 60 });
-export const DIRECTIONS = Object.freeze(['right', 'down']);
+export const DIRECTIONS = Object.freeze(['auto', 'right', 'down']);
+export const THEMES = Object.freeze(['light', 'dark']);
 export const KINDS = Object.freeze(['box', 'pill', 'note']);
 export const STYLES = Object.freeze(['solid', 'dashed']);
+export { ICON_NAMES };
 
 // Built from the limit, so the rule and the number in its refusal cannot drift apart.
 const ID = new RegExp(`^[A-Za-z0-9_-]{1,${LIMITS.id}}$`);
@@ -55,8 +63,10 @@ const idOf = (value) => (typeof value === 'number' && Number.isFinite(value) ? S
 function read(input) {
   if (!isObject(input)) throw new DiagramError('A diagram is an object: { direction, nodes, groups, edges }.');
 
-  const direction = choice(input.direction, 'right');
-  if (!DIRECTIONS.includes(direction)) throw new DiagramError(`direction is "${shown(input.direction)}": use "right" or "down".`);
+  const direction = choice(input.direction, 'auto');
+  if (!DIRECTIONS.includes(direction)) throw new DiagramError(`direction is "${shown(input.direction)}": use "auto", "right" or "down".`);
+  const theme = choice(input.theme, 'light');
+  if (!THEMES.includes(theme)) throw new DiagramError(`theme is "${shown(input.theme)}": use "light" or "dark".`);
 
   // Counts first, so a vast input is refused before any of it is read.
   if (!Array.isArray(input.nodes) || input.nodes.length === 0) throw new DiagramError('A diagram needs nodes: a list of at least one { id, title }.');
@@ -102,11 +112,12 @@ function read(input) {
     if (!title) throw new DiagramError(`node "${id}" needs a title.`);
     if (count(title) > LIMITS.title) throw new DiagramError(`the title of node "${id}" has ${count(title)} characters: keep it to ${LIMITS.title}.`);
 
-    // One text with line breaks is taken as its lines; blank ones are dropped.
+    // A text with line breaks is taken as its lines, alone or in the list (the tool's schema
+    // turns one text into a list of one); blank ones are dropped.
     const rawLines = raw.lines ?? [];
-    const listed = typeof rawLines === 'string' ? rawLines.split(/\r?\n/) : rawLines;
+    const listed = typeof rawLines === 'string' ? [rawLines] : rawLines;
     if (!Array.isArray(listed) || listed.some((l) => text(l) === null)) throw new DiagramError(`lines of node "${id}" must be a list of short texts.`);
-    const lines = listed.map(text).filter(Boolean);
+    const lines = listed.flatMap((l) => String(l).split(/\r?\n/)).map(text).filter(Boolean);
     if (lines.length > LIMITS.lines) throw new DiagramError(`node "${id}" has ${lines.length} lines: keep it to ${LIMITS.lines}, or split the box in two.`);
     lines.forEach((line, k) => {
       if (count(line) > LIMITS.line) throw new DiagramError(`line ${k + 1} of node "${id}" has ${count(line)} characters: keep each line to ${LIMITS.line}.`);
@@ -115,11 +126,17 @@ function read(input) {
     const kind = choice(raw.kind, 'box');
     if (!KINDS.includes(kind)) throw new DiagramError(`node "${id}" has kind "${shown(raw.kind)}": use "box", "pill" or "note".`);
 
+    // Refused rather than dropped, with the whole set: a model that guessed one name learns them all.
+    const icon = choice(raw.icon, null);
+    if (icon !== null && !ICON_NAMES.includes(icon)) {
+      throw new DiagramError(`node "${id}" has the icon "${shown(raw.icon)}": use one of ${ICON_NAMES.join(', ')}, or leave icon out.`);
+    }
+
     const group = idOf(raw.group) || null;
     if (group !== null && !groupIds.has(group)) {
       throw new DiagramError(`node "${id}" is in group "${shown(raw.group)}", which is not a group id: add it to groups, or leave group out.`);
     }
-    nodes.push({ id, title, lines, kind, group });
+    nodes.push({ id, title, lines, kind, group, icon });
   });
 
   const known = [...nodeIds];
@@ -150,7 +167,7 @@ function read(input) {
     if (!nodes.some((n) => n.group === g.id)) throw new DiagramError(`group "${g.id}" has no nodes: put "group": "${g.id}" on the nodes that belong in it.`);
   }
 
-  return { direction, nodes, groups, edges };
+  return { direction, theme, nodes, groups, edges };
 }
 
 /**
@@ -158,7 +175,7 @@ function read(input) {
  * as `error`, worded for the model.
  *
  * @param {unknown} input
- * @returns {{ ok: true, diagram: { direction: string, nodes: Array<{ id: string, title: string, lines: string[], kind: string, group: string | null }>, groups: Array<{ id: string, title: string }>, edges: Array<{ from: string, to: string, label: string | null, style: string }> } } | { ok: false, error: string }}
+ * @returns {{ ok: true, diagram: { direction: string, theme: string, nodes: Array<{ id: string, title: string, lines: string[], kind: string, group: string | null, icon: string | null }>, groups: Array<{ id: string, title: string }>, edges: Array<{ from: string, to: string, label: string | null, style: string }> } } | { ok: false, error: string }}
  */
 export function validateDiagram(input) {
   try {

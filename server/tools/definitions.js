@@ -32,6 +32,7 @@ import { canonicalInput } from '../../public/js/tool-aliases.js';
 import { BOT_TOOL_NAMES, botToolRisk } from '../bots/tools.js';
 import { RUN_CONTROL_NAMES } from './runControl.js';
 import { THEME_NAMES as OFFICE_THEMES } from '../office/theme.js';
+import { LIMITS as DIAGRAM, DIRECTIONS, THEMES as DIAGRAM_THEMES, KINDS, STYLES, ICON_NAMES } from '../diagram/validate.js';
 
 /**
  * What a command is for, in the model's own words — the title of its step in
@@ -1388,7 +1389,8 @@ export const TOOLS = [
     description:
       'Draw something in the conversation itself — a diagram, a chart, a table, a small illustration. ' +
       'It appears inline where you called it, so the user reads it in the flow of what you are saying rather than opening a file. ' +
-      'Give `svg` for a diagram or chart, or `html` for anything richer; inline every style, because nothing is fetched. ' +
+      'Give `diagram` for anything with boxes and arrows (a flow, an architecture, a pipeline, an org chart): you name the boxes and arrows, and Ephapse lays them out so every arrow connects. ' +
+      'Give `svg` for an illustration or any other kind of drawing, after reading the drawing skill; or `html` for anything richer. Inline every style, because nothing is fetched. ' +
       'SVG text does not wrap: keep each label inside its box (break a long one into <tspan> lines), everything inside the viewBox, labels beside arrows rather than over boxes, text that stands out from what is behind it, every word in the language the user writes in. It is checked before it is shown, and you are told what to fix. ' +
       '\n\n' +
       '**Not for charts.** Anything with numbers in it goes to `chart`, which draws it to scale from the data — a chart ' +
@@ -1402,7 +1404,53 @@ export const TOOLS = [
       type: 'object',
       properties: {
         title: { type: 'string', description: 'A short caption, so the picture is labelled.' },
-        svg: { type: 'string', description: 'A complete <svg> element. Best for diagrams and charts.' },
+        // Owner, 2026-11-17: the model names the boxes and arrows, the server places them. The
+        // limits come from validate.js, so the schema and the refusal cannot disagree.
+        diagram: {
+          type: 'object',
+          description: 'Boxes and arrows, laid out for you; no coordinates.',
+          properties: {
+            direction: { type: 'string', enum: [...DIRECTIONS], description: 'Default auto: the better shape.' },
+            theme: { type: 'string', enum: [...DIAGRAM_THEMES] },
+            nodes: {
+              type: 'array',
+              maxItems: DIAGRAM.nodes,
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string', maxLength: DIAGRAM.id },
+                  title: { type: 'string', maxLength: DIAGRAM.title },
+                  lines: { type: 'array', maxItems: DIAGRAM.lines, items: { type: 'string', maxLength: DIAGRAM.line } },
+                  kind: { type: 'string', enum: [...KINDS], description: 'pill: a start or end; note: an aside.' },
+                  group: { type: 'string', description: 'A group id.' },
+                  icon: { type: 'string', enum: [...ICON_NAMES] },
+                },
+                required: ['id', 'title'],
+              },
+            },
+            groups: {
+              type: 'array',
+              maxItems: DIAGRAM.groups,
+              items: { type: 'object', properties: { id: { type: 'string', maxLength: DIAGRAM.id }, title: { type: 'string', maxLength: DIAGRAM.title } }, required: ['id'] },
+            },
+            edges: {
+              type: 'array',
+              maxItems: DIAGRAM.edges,
+              items: {
+                type: 'object',
+                properties: {
+                  from: { type: 'string' },
+                  to: { type: 'string' },
+                  label: { type: 'string', maxLength: DIAGRAM.label },
+                  style: { type: 'string', enum: [...STYLES] },
+                },
+                required: ['from', 'to'],
+              },
+            },
+          },
+          required: ['nodes'],
+        },
+        svg: { type: 'string', description: 'A complete <svg> element, for a drawing `diagram` cannot express.' },
         html: {
           type: 'string',
           description:

@@ -28,6 +28,9 @@ import { normaliseSteps } from '../workflows.js';
 import { CONNECTOR_CALLS } from '../connectors.js';
 import { sendTelegramNow } from '../outbox.js';
 import { checkDiagram } from '../widgetCheck.js';
+import { validateDiagram } from '../diagram/validate.js';
+import { layoutDiagram } from '../diagram/layout.js';
+import { renderDiagram } from '../diagram/render.js';
 import { searchConnectorsTool, suggestConnectorsTool } from '../connectorDirectory.js';
 import { codeContextTool } from './codeContext.js';
 import { getPrefs, getApiKey, maskPersonalFor } from '../settings.js';
@@ -1263,15 +1266,16 @@ async function memoryRead({ key }, { userId, chatId }) {
  */
 const MAX_WIDGET_BYTES = 96 * 1024;
 
-async function showWidgetTool({ title, svg, html }, { userId = null, chatId = null } = {}) {
+async function showWidgetTool({ title, svg, html, diagram }, { userId = null, chatId = null } = {}) {
   const caption = String(title || '').trim();
   if (!caption) throw new Error('Give the picture a short title, so it is labelled.');
 
+  const given = [diagram, svg, html].filter((v) => v !== undefined && v !== null && v !== '');
+  if (given.length > 1) throw new Error('Give one of `diagram`, `svg` or `html`, not two: each is a different picture.');
+  if (diagram !== undefined && diagram !== null && diagram !== '') return showDiagram(caption, diagram, { userId, chatId });
+
   let markup = String(svg || html || '').trim();
-  if (!markup) throw new Error('Give either `svg` or `html` to draw.');
-  if (svg && html) {
-    throw new Error('Give `svg` or `html`, not both — they are two different pictures.');
-  }
+  if (!markup) throw new Error('Give `diagram`, `svg` or `html` to draw.');
   /*
    * The parts of a drawing sent without the <svg> round them — `<rect …><text …>`
    * — are still a drawing, so they get their element rather than a refusal. No
@@ -1317,13 +1321,8 @@ async function showWidgetTool({ title, svg, html }, { userId = null, chatId = nu
    * and the canvas it was drawn for, which the page gives it (server/widgetCheck.js).
    */
   const check = svg ? checkDiagram(markup) : { issues: [], canvas: null };
-  // A clean diagram is kept as a file of the conversation too, in its panel, to open,
-  // copy or download (owner, 2026-11-11). One with problems waits for its redraw.
-  let kept = null;
-  if (svg && !check.issues.length && userId) {
-    const name = `${caption.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Diagram'}.svg`;
-    kept = await saveGenerated(userId, { name, mime: 'image/svg+xml', data: Buffer.from(markup, 'utf8').toString('base64'), source: markup, chatId }).catch(() => null);
-  }
+  // One with problems waits for its redraw before it is kept.
+  const kept = svg && !check.issues.length && userId ? await keepDrawing(userId, chatId, caption, markup) : null;
   const content = check.issues.length
     ? [
         `Drew "${caption}" in the conversation, but the user will see these problems:`,
@@ -1334,6 +1333,68 @@ async function showWidgetTool({ title, svg, html }, { userId = null, chatId = nu
   return {
     content,
     widget: { title: caption, markup, kind: svg ? 'svg' : 'html', ...(check.canvas ? { canvas: check.canvas } : {}) },
+  };
+}
+
+// A clean drawing is kept as a file of the conversation too, in its panel, to open, copy or
+// download (owner, 2026-11-11).
+function keepDrawing(userId, chatId, caption, markup) {
+  const name = `${caption.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Diagram'}.svg`;
+  return saveGenerated(userId, { name, mime: 'image/svg+xml', data: Buffer.from(markup, 'utf8').toString('base64'), source: markup, chatId }).catch(() => null);
+}
+
+// What the drawing check found, named by kind only: its sentences quote the drawing's text,
+// which is the person's, so a log line carries none of them.
+const CHECK_KINDS = [
+  { said: /runs off the side/, kind: 'off the drawing' },
+  { said: /wider than its box/, kind: 'wider than its box' },
+  { said: /hard to read/, kind: 'low contrast' },
+  { said: /on top of each other/, kind: 'text over text' },
+  { said: /too small to read/, kind: 'tiny text' },
+  { said: /Chinese characters/, kind: 'other script' },
+];
+const checkKinds = (issues) => [...new Set(issues.map((s) => CHECK_KINDS.find((k) => k.said.test(s))?.kind || 'other'))].join(', ');
+
+/**
+ * A `diagram` drawn by Ephapse (owner, 2026-11-17: arrows that pointed at nothing, because the
+ * model placed every one by hand). The model says what is in it; the server checks it, lays it
+ * out — both ways when the direction is "auto" — and draws it, so every arrow starts and ends
+ * on a box's edge and runs through no box.
+ *
+ * A refusal is the model's to fix and comes back as the tool's error, worded by validate.js.
+ * Anything else that goes wrong is this code's fault: logged, and the model told to draw it
+ * by hand instead. The drawing check still runs, and what it finds is a layout bug: logged
+ * by kind, and the drawing shown and kept anyway, since the model cannot fix it.
+ */
+async function showDiagram(caption, diagram, { userId, chatId }) {
+  let checked;
+  let layout;
+  let markup;
+  try {
+    checked = validateDiagram(diagram);
+    if (checked.ok) {
+      layout = layoutDiagram(checked.diagram);
+      markup = renderDiagram(layout, { theme: checked.diagram.theme, title: caption });
+    }
+  } catch (err) {
+    log.error('show_widget: a diagram could not be drawn', err, { nodes: Array.isArray(diagram?.nodes) ? diagram.nodes.length : null, edges: Array.isArray(diagram?.edges) ? diagram.edges.length : null });
+    throw new Error('Ephapse could not lay this diagram out, through a fault of its own rather than in what you sent. Draw it with `svg` instead.');
+  }
+  if (!checked.ok) throw new Error(checked.error);
+  // Within the limits a diagram's drawing stays under this unless its boxes are walls of text.
+  if (markup.length > MAX_WIDGET_BYTES) {
+    throw new Error(`This diagram comes to ${Math.round(markup.length / 1024)}KB drawn, over the ${MAX_WIDGET_BYTES / 1024}KB a picture in the conversation may be: shorten the lines in its boxes, or split it into two drawings.`);
+  }
+
+  const check = checkDiagram(markup);
+  if (check.issues.length) {
+    log.warn('show_widget: a diagram Ephapse laid out has drawing problems', { problems: checkKinds(check.issues), direction: layout.direction, nodes: layout.nodes.length, edges: layout.edges.length });
+  }
+  const kept = userId ? await keepDrawing(userId, chatId, caption, markup) : null;
+  const way = layout.direction === 'down' ? 'top to bottom' : 'left to right';
+  return {
+    content: `Drew the diagram "${caption}" in the conversation, laid out ${way}${kept ? ', and kept it as a file of the conversation' : ''}. The user can see it, so say what it shows rather than listing its boxes again.`,
+    widget: { title: caption, markup, kind: 'svg', canvas: checked.diagram.theme === 'dark' ? 'dark' : 'light' },
   };
 }
 

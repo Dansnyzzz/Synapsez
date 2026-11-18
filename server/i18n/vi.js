@@ -730,8 +730,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     '{0} không có bản v{1}. Bản hiện tại là v{2}; gọi không kèm revision để xem các bản nháp còn lưu.',
   '"{0}" cannot be used as a note name. Pick a plain descriptive name.': '"{0}" không dùng làm tên ghi chú được. Hãy chọn tên mô tả đơn giản.',
   'Give the picture a short title, so it is labelled.': 'Hãy đặt tiêu đề ngắn cho hình để có nhãn.',
-  'Give either `svg` or `html` to draw.': 'Hãy cung cấp `svg` hoặc `html` để vẽ.',
-  'Give `svg` or `html`, not both — they are two different pictures.': 'Chỉ cung cấp `svg` hoặc `html`, không cả hai — đó là hai hình khác nhau.',
+  'Give `diagram`, `svg` or `html` to draw.': 'Hãy cung cấp `diagram`, `svg` hoặc `html` để vẽ.',
+  'Give one of `diagram`, `svg` or `html`, not two: each is a different picture.': 'Chỉ cung cấp một trong `diagram`, `svg` hoặc `html`, không phải hai: mỗi thứ là một hình khác nhau.',
   'That is {0}KB of markup, over the {1}KB limit. A widget is re-read every time the conversation is opened. For something this large use `create_file` with format "html", which is a document rather than an inline picture.':
     'Đó là {0}KB mã, vượt giới hạn {1}KB. Widget được đọc lại mỗi lần mở cuộc trò chuyện. Với nội dung lớn như vậy hãy dùng `create_file` với format "html", là một tài liệu thay vì hình nhúng.',
   '`svg` has to start with an <svg> element. Use `html` for anything else.': '`svg` phải bắt đầu bằng thẻ <svg>. Dùng `html` cho mọi thứ khác.',
@@ -1692,7 +1692,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   /* ── sơ đồ do server dàn trang (show_widget diagram) ── */
   // Gửi cho mô hình để nó sửa rồi gửi lại; tên trường (nodes, edges, title…) giữ nguyên vì mô hình phải viết đúng như vậy.
   'A diagram is an object: { direction, nodes, groups, edges }.': 'Sơ đồ phải là một đối tượng: { direction, nodes, groups, edges }.',
-  'direction is "{0}": use "right" or "down".': 'direction đang là "{0}": hãy dùng "right" hoặc "down".',
+  'direction is "{0}": use "auto", "right" or "down".': 'direction đang là "{0}": hãy dùng "auto", "right" hoặc "down".',
+  'theme is "{0}": use "light" or "dark".': 'theme đang là "{0}": hãy dùng "light" hoặc "dark".',
   'A diagram needs nodes: a list of at least one { id, title }.': 'Sơ đồ cần có nodes: một danh sách gồm ít nhất một { id, title }.',
   'A diagram has at most {0} nodes, and this one has {1}: merge some, or split it into two drawings.':
     'Một sơ đồ có tối đa {0} nút, sơ đồ này có {1}: hãy gộp bớt, hoặc tách thành hai hình.',
@@ -1718,6 +1719,7 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'node "{0}" has {1} lines: keep it to {2}, or split the box in two.': 'Nút "{0}" có {1} dòng: hãy giữ trong {2} dòng, hoặc tách hộp làm hai.',
   'line {0} of node "{1}" has {2} characters: keep each line to {3}.': 'Dòng {0} của nút "{1}" có {2} ký tự: hãy giữ mỗi dòng trong {3} ký tự.',
   'node "{0}" has kind "{1}": use "box", "pill" or "note".': 'Nút "{0}" có kind là "{1}": hãy dùng "box", "pill" hoặc "note".',
+  'node "{0}" has the icon "{1}": use one of {2}, or leave icon out.': 'Nút "{0}" có icon là "{1}": hãy dùng một trong {2}, hoặc bỏ icon đi.',
   'node "{0}" is in group "{1}", which is not a group id: add it to groups, or leave group out.':
     'Nút "{0}" thuộc nhóm "{1}", nhưng đó không phải id của nhóm nào: hãy thêm nhóm đó vào groups, hoặc bỏ group đi.',
   'edge {0} is not an object: write { from, to }.': 'Mũi tên thứ {0} không phải là một đối tượng: hãy viết { from, to }.',
@@ -1727,4 +1729,12 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'the label of edge {0} must be text.': 'Nhãn của mũi tên thứ {0} phải là chữ.',
   'the label of edge {0} has {1} characters: keep it to {2}.': 'Nhãn của mũi tên thứ {0} có {1} ký tự: hãy giữ trong {2} ký tự.',
   'group "{0}" has no nodes: put "group": "{1}" on the nodes that belong in it.': 'Nhóm "{0}" chưa có nút nào: hãy ghi "group": "{1}" vào các nút thuộc nhóm đó.',
+  'Ephapse could not lay this diagram out, through a fault of its own rather than in what you sent. Draw it with `svg` instead.':
+    'Ephapse không dàn trang được sơ đồ này, do lỗi của chính Ephapse chứ không phải ở nội dung bạn gửi. Hãy vẽ nó bằng `svg`.',
+  'This diagram comes to {0}KB drawn, over the {1}KB a picture in the conversation may be: shorten the lines in its boxes, or split it into two drawings.':
+    'Sơ đồ này khi vẽ ra nặng {0}KB, vượt quá {1}KB cho phép với một hình trong cuộc trò chuyện: hãy rút gọn các dòng trong hộp, hoặc tách thành hai hình.',
+
+  /* ── giới hạn trong lược đồ tham số của công cụ (server/tools/validate.js) ── */
+  '{0} has {1} items, and at most {2} are allowed.': '{0} có {1} mục, trong khi tối đa chỉ được {2}.',
+  '{0} is {1} characters long, and at most {2} are allowed.': '{0} dài {1} ký tự, trong khi tối đa chỉ được {2}.',
 };

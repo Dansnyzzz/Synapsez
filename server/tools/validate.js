@@ -18,8 +18,9 @@
  * nothing stopped it.
  *
  * Deliberately not a general JSON Schema implementation. The catalogue uses
- * exactly six keywords — `type`, `description`, `properties`, `required`,
- * `enum`, `items` — and no combinators, so this covers those six completely
+ * exactly eight keywords — `type`, `description`, `properties`, `required`,
+ * `enum`, `items`, and since `show_widget`'s `diagram` (2026-11-18) `maxItems`
+ * and `maxLength` — and no combinators, so this covers those eight completely
  * rather than a larger set approximately. A tool that starts using another
  * keyword is covered by the test that asserts the catalogue still only uses
  * these, so the gap cannot open silently.
@@ -38,7 +39,13 @@
  *   - `"5"` for a number and `"true"` for a boolean are **coerced**, because
  *     models send them constantly and refusing would turn a working call into
  *     a retry that costs a full step;
- *   - a number or boolean where a string is wanted becomes that string.
+ *   - a number or boolean where a string is wanted becomes that string;
+ *   - a list longer than its `maxItems`, or a text longer than its `maxLength`,
+ *     is refused with the limit named — the tool would refuse it anyway, and a
+ *     vast list is turned away before any of it is read. A text is counted as it
+ *     reads: in characters (a Vietnamese letter typed as a base and its marks is
+ *     one), with runs of spaces as one, so it is never longer than the count
+ *     JSON Schema gives and nothing JSON Schema allows is refused.
  *
  * Returns `{ ok: true, input, notes }` with the coerced input and anything that
  * was set aside, or `{ ok: false, error }` with a sentence written for the
@@ -47,9 +54,10 @@
 
 import { canonicalInput } from '../../public/js/tool-aliases.js';
 
-export const SUPPORTED_KEYWORDS = new Set(['type', 'description', 'properties', 'required', 'enum', 'items']);
+export const SUPPORTED_KEYWORDS = new Set(['type', 'description', 'properties', 'required', 'enum', 'items', 'maxItems', 'maxLength']);
 
 const kindOf = (value) => (Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value);
+const lengthOf = (text) => [...text.normalize('NFC').replace(/\s+/g, ' ').trim()].length;
 
 function coerce(value, type) {
   if (type === 'integer' || type === 'number') {
@@ -301,6 +309,13 @@ function check(value, schema, where, notes = []) {
       ok: false,
       error: `${where} must be one of ${schema.enum.map((e) => JSON.stringify(e)).join(', ')}, but got ${JSON.stringify(value)}.`,
     };
+  }
+
+  if (Array.isArray(value) && Number.isInteger(schema.maxItems) && value.length > schema.maxItems) {
+    return { ok: false, error: `${where} has ${value.length} items, and at most ${schema.maxItems} are allowed.` };
+  }
+  if (typeof value === 'string' && Number.isInteger(schema.maxLength) && lengthOf(value) > schema.maxLength) {
+    return { ok: false, error: `${where} is ${lengthOf(value)} characters long, and at most ${schema.maxLength} are allowed.` };
   }
 
   if (Array.isArray(value) && schema.items) {

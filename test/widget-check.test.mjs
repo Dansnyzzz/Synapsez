@@ -95,6 +95,67 @@ section('show_widget says what is wrong, and keeps a clean diagram as a file');
   const files = await store.listGeneratedFiles(user.id, chatId);
   check('a clean one is kept as a file of the conversation, for its panel', files.length === 1 && files[0].name === 'Luồng đặt giao.svg' && /kept it as a file/.test(good.content), JSON.stringify(files.map((f) => f.name)));
   check('  and the page is told its canvas', good.widget?.canvas === 'light');
+
+  section('show_widget draws a `diagram` it lays out itself (1.34.0)');
+  const { validateDiagram } = await import('../server/diagram/validate.js');
+  const pipeline = {
+    groups: [{ id: 'client', title: 'Phía người dùng' }, { id: 'server', title: 'Máy chủ Ephapse' }],
+    nodes: [
+      { id: 'user', title: 'Người dùng', kind: 'pill', icon: 'user' },
+      { id: 'app', title: 'Tầng 1 — Ứng dụng', lines: ['RAPTOR: cây tóm tắt', 'MemGPT, Mem0'], group: 'client' },
+      { id: 'gw', title: 'Tầng 2 — Cổng API', lines: ['Nén prompt'], group: 'server', icon: 'server' },
+      { id: 'db', title: 'Cơ sở dữ liệu', group: 'server', icon: 'database' },
+      { id: 'done', title: 'Trả lời', kind: 'pill' },
+    ],
+    edges: [
+      { from: 'user', to: 'app', label: 'câu hỏi' },
+      { from: 'app', to: 'gw', label: 'prompt đã nén' },
+      { from: 'gw', to: 'db', style: 'dashed' },
+      { from: 'gw', to: 'done' },
+    ],
+  };
+  const before = (await store.listGeneratedFiles(user.id, chatId)).length;
+  const drawn = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Đường đi của một câu hỏi', diagram: pipeline }, { userId: user.id, chatId });
+  check('a diagram comes back as an SVG widget for a light canvas', drawn.widget?.kind === 'svg' && drawn.widget.canvas === 'light' && /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg"/.test(drawn.widget.markup), JSON.stringify(drawn.widget || {}).slice(0, 120));
+  check('  with nothing for the drawing check to find', checkDiagram(drawn.widget.markup).issues.length === 0, checkDiagram(drawn.widget.markup).issues.join(' | '));
+  const after = await store.listGeneratedFiles(user.id, chatId);
+  check('  kept as a file of the conversation, named from its title', after.length === before + 1 && after.some((f) => f.name === 'Đường đi của một câu hỏi.svg') && /kept it as a file/.test(drawn.content), JSON.stringify(after.map((f) => f.name)));
+  check('  and the model is told which way it was laid out, not to redraw it', /laid out (left to right|top to bottom)/.test(drawn.content) && !/draw it again|problems/i.test(drawn.content), drawn.content);
+  const dark = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Tối', diagram: { ...pipeline, theme: 'dark' } }, { userId: user.id, chatId });
+  check('a dark diagram is for a dark canvas, and the check reads it so', dark.widget.canvas === 'dark' && checkDiagram(dark.widget.markup).canvas === 'dark' && checkDiagram(dark.widget.markup).issues.length === 0);
+  const unsaved = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Không lưu', diagram: pipeline }, {});
+  check('with no account it is drawn and not kept', unsaved.widget?.markup?.startsWith('<svg') && !/kept it as a file/.test(unsaved.content));
+
+  const broken = { nodes: [{ id: 'app', title: 'App' }], edges: [{ from: 'app', to: 'gw' }] };
+  const said = validateDiagram(broken).error;
+  const failed = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Hỏng', diagram: broken }, { userId: user.id, chatId }).then(() => null, (err) => err.message);
+  check('a bad diagram fails with the validation message as the tool\'s error', failed === said && /"gw"/.test(said), failed);
+  check('  and nothing is kept', (await store.listGeneratedFiles(user.id, chatId)).length === before + 2);
+  const two = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Hai', diagram: pipeline, svg: '<svg></svg>' }, {}).then(() => null, (err) => err.message);
+  check('a diagram with an svg as well is refused: one picture at a time', /one of `diagram`, `svg` or `html`/.test(two || ''), two);
+  const none = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Trống' }, {}).then(() => null, (err) => err.message);
+  check('  and nothing at all names all three', /`diagram`, `svg` or `html`/.test(none || ''), none);
+  const wall = 'Định tuyến mô hình theo chi phí và độ trễ cho từng yêu cầu của người dùng cuối nhé'.slice(0, 80);
+  const icons = ['user', 'server', 'database', 'cloud', 'cache', 'gear', 'document', 'chat', 'lock', 'chart', 'search', 'bolt'];
+  const huge = {
+    groups: Array.from({ length: 8 }, (_, i) => ({ id: `g${i}`, title: wall.slice(0, 60) })),
+    nodes: Array.from({ length: 40 }, (_, i) => ({ id: `n${i}`, title: wall.slice(0, 60), lines: Array.from({ length: 6 }, () => wall), icon: icons[i % 12], ...(i < 16 ? { group: `g${i % 8}` } : {}) })),
+    edges: Array.from({ length: 80 }, (_, k) => ({ from: `n${k % 40}`, to: `n${(k * 7 + 3) % 40}`, label: wall.slice(0, 60) })),
+  };
+  const tooBig = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Quá lớn', diagram: huge }, {}).then(() => null, (err) => err.message);
+  check('every limit at its ceiling draws past the widget size, and the model is told how to shrink it', /KB drawn, over the 96KB/.test(tooBig || '') && /split it into two/.test(tooBig || ''), tooBig);
+
+  // The way a model's call really arrives: the schema first, then the tool.
+  const { executeTool } = await import('../server/tools/execute.js');
+  const run = (input) => executeTool({ user, name: 'show_widget', input, chatId });
+  const viaTool = await run({ title: 'Qua công cụ', diagram: pipeline });
+  check('through executeTool: the schema lets a diagram through, and it is drawn', viaTool.isError === false && viaTool.widget?.kind === 'svg', viaTool.content?.slice(0, 160));
+  const refusedVia = await run({ title: 'Hỏng', diagram: broken });
+  check('  a bad one comes back as an error the model reads, never a throw', refusedVia.isError === true && refusedVia.content.includes(said), refusedVia.content);
+  const tooMany = await run({ title: 'Nhiều', diagram: { nodes: Array.from({ length: 41 }, (_, i) => ({ id: `n${i}`, title: 'x' })) } });
+  check('  41 boxes are turned away by the schema\'s maxItems, naming 40', tooMany.isError === true && /diagram\.nodes has 41 items, and at most 40/.test(tooMany.content), tooMany.content);
+  const longTitle = await run({ title: 'Dài', diagram: { nodes: [{ id: 'a', title: 'x'.repeat(61) }] } });
+  check('  a 61-character title by its maxLength, naming 60', longTitle.isError === true && /diagram\.nodes\[0\]\.title is 61 characters long, and at most 60/.test(longTitle.content), longTitle.content);
 }
 
 console.log(failures ? `\n\x1b[31m${failures} failed\x1b[0m` : '\n\x1b[32mall passed\x1b[0m');

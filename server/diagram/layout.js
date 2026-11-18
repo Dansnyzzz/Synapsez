@@ -28,9 +28,15 @@
  * Coordinates are the drawing's own units; the renderer scales through the viewBox. Pure and
  * deterministic: the same diagram always gives the same layout, which is what makes a redraw
  * reproducible and the tests exact.
+ *
+ * "auto", the default direction, lays the drawing out both ways and keeps the better shape
+ * (owner, 2026-11-17: "flexible adaptive"): see chooseDirection.
  */
 
 import { TEXT, lineHeight, textWidth, wrapText, measureNode, measureLabel } from './measure.js';
+
+// The shape "auto" aims for, and the most a drawing may shrink to fit the widest it is drawn.
+export const FIT = Object.freeze({ aspect: 16 / 10, maxWidth: 1200, minScale: 0.8 });
 
 export const LAYOUT = Object.freeze({
   rankGap: Object.freeze({ right: 72, down: 56 }),
@@ -136,11 +142,33 @@ function orderTurns(list) {
 }
 
 /**
- * @param {{ direction?: string, nodes: Array<{ id: string, title: string, lines?: string[], kind?: string, group?: string | null }>, groups?: Array<{ id: string, title?: string }>, edges?: Array<{ from: string, to: string, label?: string | null, style?: string }> }} diagram
- *   a diagram validateDiagram accepted
+ * Of a drawing laid out both ways, the one to keep: the one whose box is closer to 16:10,
+ * provided it fits 1,200 px wide at a scale of 0.8 or more; otherwise the narrower. Closeness
+ * is measured on a log scale, so twice too wide and twice too tall are equally far off. A tie
+ * keeps "right", the way a flow is read.
+ */
+export function chooseDirection(right, down) {
+  const off = (l) => Math.abs(Math.log(l.width / l.height / FIT.aspect));
+  const fits = (l) => l.width * FIT.minScale <= FIT.maxWidth;
+  const closer = off(down) < off(right) ? down : right;
+  if (fits(closer)) return closer;
+  return down.width < right.width ? down : right;
+}
+
+/**
+ * @param {{ direction?: string, nodes: Array<{ id: string, title: string, lines?: string[], kind?: string, group?: string | null, icon?: string | null }>, groups?: Array<{ id: string, title?: string }>, edges?: Array<{ from: string, to: string, label?: string | null, style?: string }> }} diagram
+ *   a diagram validateDiagram accepted; a direction other than "right" or "down" is "auto"
  */
 export function layoutDiagram(diagram) {
-  const direction = diagram.direction === 'down' ? 'down' : 'right';
+  if (diagram.direction === 'right' || diagram.direction === 'down') return layoutOne(diagram, diagram.direction);
+  return chooseDirection(layoutOne(diagram, 'right'), layoutOne(diagram, 'down'));
+}
+
+/**
+ * @param {Parameters<typeof layoutDiagram>[0]} diagram
+ * @param {'right' | 'down'} direction
+ */
+function layoutOne(diagram, direction) {
   // Ranks run along x for "right", along y for "down"; "main" is that axis and "cross" the other.
   const right = direction === 'right';
   const M = LAYOUT.groupMargin;
@@ -151,7 +179,7 @@ export function layoutDiagram(diagram) {
     // A pill's ends stay as round as its text alone would make them, so a pill grown to take
     // many arrows keeps a straight middle where they arrive.
     const radius = kind === 'pill' ? Math.min(m.w, m.h) / 2 : 8;
-    return { index, id: n.id, title: n.title, kind, group: n.group ?? null, w: m.w, h: m.h, textW: m.textW, textH: m.textH, radius, titleLines: m.titleLines, lines: m.lines, rank: 0, mainStart: 0, item: null, loops: [] };
+    return { index, id: n.id, title: n.title, kind, group: n.group ?? null, icon: n.icon ?? null, w: m.w, h: m.h, textW: m.textW, textH: m.textH, radius, titleLines: m.titleLines, lines: m.lines, rank: 0, mainStart: 0, item: null, loops: [] };
   });
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const edges = (diagram.edges || []).map((e, index) => {
@@ -486,8 +514,7 @@ export function layoutDiagram(diagram) {
     for (const h of d.ins) h.t = d.start;
   }
   // Nearly straight is made straight, so a line never gets a jog too small to read as a turn.
-  // Ports are 8 or more apart (unless a capped width squeezes a big fan-in), so moving one by
-  // under 2 keeps it clear of the next.
+  // Ports are 8 or more apart, so moving one by under 2 keeps it clear of the next.
   for (const e of edges) {
     e.hops.forEach((h, k) => {
       if (Math.abs(h.s - h.t) < 2) h.t = h.s;
@@ -676,7 +703,7 @@ export function layoutDiagram(diagram) {
     direction,
     width: maxX - minX + 2 * LAYOUT.margin,
     height: maxY - minY + 2 * LAYOUT.margin,
-    nodes: nodes.map((n, i) => ({ id: n.id, ...move(nodeBoxes[i]), radius: n.radius, textBox: move(textBoxes[i]), title: n.title, titleLines: n.titleLines, lines: n.lines, kind: n.kind, group: n.group })),
+    nodes: nodes.map((n, i) => ({ id: n.id, ...move(nodeBoxes[i]), radius: n.radius, textBox: move(textBoxes[i]), title: n.title, titleLines: n.titleLines, lines: n.lines, kind: n.kind, group: n.group, icon: n.icon })),
     groups: groups.map((g) => ({ id: g.id, title: g.title, titleLines: g.titleLines, titleBox: move(g.titleBox), ...move(g.box) })),
     edges: edges.map((e) => ({
       from: e.from.id,
