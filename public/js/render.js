@@ -1486,9 +1486,18 @@ export function widgetFrame(widget) {
    * there is something to scroll.
    */
   const scroller = readable ? document.createElement('div') : null;
+  // Where scrollbars overlay, a clipped box at the edge was the only sign the drawing goes on
+  // (fix round 5): the side that still has drawing beyond it fades out, until scrolled to its end.
+  const edges = () => {
+    if (!scroller) return;
+    const rest = scroller.scrollWidth - scroller.clientWidth;
+    scroller.classList.toggle('widget__scroll--before', rest > 1 && scroller.scrollLeft > 1);
+    scroller.classList.toggle('widget__scroll--after', rest > 1 && scroller.scrollLeft < rest - 1);
+  };
   if (scroller) {
     scroller.className = 'widget__scroll';
     scroller.append(frame);
+    scroller.addEventListener('scroll', edges, { passive: true });
   }
   /**
    * No `allow-scripts`: a widget is a finished picture. Anything that needs to
@@ -1533,6 +1542,7 @@ export function widgetFrame(widget) {
           scroller.removeAttribute('role');
           scroller.removeAttribute('aria-label');
         }
+        edges();
       }
       const height = Math.ceil(Math.max(body.scrollHeight, body.getBoundingClientRect().height));
       if (height > 0) frame.style.height = `${height}px`;

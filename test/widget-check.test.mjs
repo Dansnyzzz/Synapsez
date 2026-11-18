@@ -191,16 +191,93 @@ section('show_widget says what is wrong, and keeps a clean diagram as a file');
   // and the frame's padding, so a style change cannot silently drift from it. It was 760, about
   // 50 px wider than a drawing is ever shown.
   const css = (await import('node:fs')).readFileSync(new URL('../public/css/app.css', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-  const rule = (sel) => (css.match(new RegExp(`(?:^|\\n)${sel.replace('.', '\\.')} \\{([^}]*)\\}`)) || [])[1] || '';
-  const prop = (block, name) => (block.match(new RegExp(`(?:^|[;\\s])${name}:\\s*([^;]+);`)) || [])[1] || '';
-  const msgWidth = parseFloat(prop(rule('.msg'), 'max-width'));
-  const msgPad = prop(rule('.msg'), 'padding').trim().split(/\s+/);
-  const msgSide = parseFloat(msgPad[1] ?? msgPad[0]);
-  const border = parseFloat((prop(rule('.widget'), 'border').match(/([\d.]+)px/) || [])[1]);
+  // Fix round 5: every rule that reaches the reply's column at desktop width is read, in cascade
+  // order: top-level rules, and those in a media query that holds in a 1280 px window (any query
+  // not about width counts as holding). Padding or a border later given to .msg__body, .widget or
+  // the scroller, or a desktop override of .msg, changes the column and fails this.
+  const cssBlocks = [];
+  const flatCss = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const holds = (query) => {
+    const min = /min-width:\s*([\d.]+)px/.exec(query);
+    const max = /max-width:\s*([\d.]+)px/.exec(query);
+    return (!min || +min[1] <= 1280) && (!max || +max[1] >= 1280);
+  };
+  const walkCss = (text, applies) => {
+    let i = 0;
+    while (i < text.length) {
+      const open = text.indexOf('{', i);
+      if (open < 0) break;
+      const head = text.slice(i, open).trim();
+      let depth = 1;
+      let j = open + 1;
+      for (; j < text.length && depth; j += 1) {
+        if (text[j] === '{') depth += 1;
+        else if (text[j] === '}') depth -= 1;
+      }
+      const body = text.slice(open + 1, j - 1);
+      if (head.startsWith('@media')) walkCss(body, applies && holds(head));
+      else if (!head.startsWith('@')) cssBlocks.push({ selectors: head.split(',').map((x) => x.trim()), body, applies });
+      i = j;
+    }
+  };
+  walkCss(flatCss, true);
+  const cssDecl = (selectors, name) => {
+    let value = '';
+    for (const b of cssBlocks) {
+      if (!b.applies || !b.selectors.some((x) => selectors.includes(x))) continue;
+      for (const m of b.body.matchAll(new RegExp(`(?:^|[;\\s])(${name}(?:-left|-right)?):\\s*([^;]+);?`, 'g'))) value = `${value}|${m[1]}=${m[2].trim()}`;
+    }
+    return value;
+  };
+  // The horizontal room a declaration list takes on each side (padding or border, shorthand or not).
+  const across = (list) => {
+    let left = 0;
+    let right = 0;
+    for (const item of list.split('|').filter(Boolean)) {
+      const [name, value] = item.split('=');
+      const px = (v) => parseFloat((/([\d.]+)px/.exec(v) || [0, 0])[1]) || 0;
+      if (/^border(-width)?$/.test(name) || name === 'border') {
+        left = right = px(value);
+      } else if (name.endsWith('-left')) left = px(value);
+      else if (name.endsWith('-right')) right = px(value);
+      else {
+        const parts = value.split(/\s+/);
+        left = px(parts[3] ?? parts[1] ?? parts[0]);
+        right = px(parts[1] ?? parts[0]);
+      }
+    }
+    return left + right;
+  };
+  const MSG = ['.msg'];
+  const BODY = ['.msg__body', '.msg--assistant .msg__body', '.msg .msg__body', '.msg > .msg__body'];
+  const WIDGET = ['.widget'];
+  const SCROLL = ['.widget__scroll'];
+  const widths = cssDecl(MSG, 'max-width').split('|').filter(Boolean);
+  const msgWidth = parseFloat((widths.at(-1) || '').split('=')[1]);
+  const msgPad = across(cssDecl(MSG, 'padding'));
+  const bodyRoom = across(cssDecl(BODY, 'padding')) + across(cssDecl(BODY, 'border'));
+  const widgetRoom = across(cssDecl(WIDGET, 'padding')) + across(cssDecl(WIDGET, 'border'));
+  const scrollRoom = across(cssDecl(SCROLL, 'padding')) + across(cssDecl(SCROLL, 'border'));
   const bodyPad = parseFloat((page.match(/'body\{padding:([\d.]+)px\}/) || [])[1]);
   const borderBox = /\* \{\s*box-sizing: border-box;/.test(css);
-  const column = msgWidth - 2 * msgSide - 2 * border - 2 * bodyPad;
-  check(`the column a drawing is laid out for is the page's: .msg ${msgWidth} − 2×${msgSide} − 2×${border} border − 2×${bodyPad} frame padding = ${column}`, borderBox && Number.isFinite(column) && DRAWING_FIT.column === column, `DRAWING_FIT.column ${DRAWING_FIT.column}`);
+  const column = msgWidth - msgPad - bodyRoom - widgetRoom - scrollRoom - 2 * bodyPad;
+  check(`the column a drawing is laid out for is the page's: .msg ${msgWidth} − ${msgPad} padding − .msg__body ${bodyRoom} − .widget ${widgetRoom} − scroller ${scrollRoom} − 2×${bodyPad} frame padding = ${column}`, borderBox && Number.isFinite(column) && DRAWING_FIT.column === column, `DRAWING_FIT.column ${DRAWING_FIT.column}`);
+  // The reader itself, on what it must catch: padding on the reply's body, a thicker widget
+  // border, and a desktop media query narrowing .msg; a phone-only query is not read.
+  const sample = (extra) => {
+    const saved = cssBlocks.splice(0);
+    walkCss(`${flatCss}\n${extra}`, true);
+    const out = cssDecl(BODY, 'padding') + cssDecl(WIDGET, 'border') + cssDecl(MSG, 'max-width');
+    cssBlocks.splice(0, cssBlocks.length, ...saved);
+    return out;
+  };
+  check(
+    '  and it reads padding on .msg__body, a .widget border, and a desktop override of .msg — but not a phone-only one',
+    across(sample('.msg__body { padding: 0 6px; }').split('|').filter((x) => x.startsWith('padding')).join('|')) === 12 &&
+      sample('@media (min-width: 1000px) { .msg { max-width: 700px; } }').endsWith('max-width=700px') &&
+      !sample('@media (max-width: 860px) { .msg { max-width: 600px; } }').endsWith('max-width=600px') &&
+      sample('.widget { border: 2px solid red; }').includes('border=2px solid red'),
+  );
   check('  and a narrow drawing grows by the shared factor, not a number of its own', page.includes('Math.round(natural * DRAWING_FIT.widen)') && !/natural \* 2\b/.test(page));
   // Fix round 4: too wide for the column at 11 px, a laid-out diagram is shown at 11 px and its
   // frame scrolls sideways; a hand-drawn one keeps shrinking. The page's rule, over many shapes.
@@ -215,6 +292,17 @@ section('show_widget says what is wrong, and keeps a clean diagram as a file');
       if (readableWidth({ viewWidth, shownWidth: at })) wideWrong.push(`${viewWidth}: a hand-drawn one widened`);
     }
   }
+  // Fix round 5: where scrollbars overlay, the side with drawing still beyond it fades out, set
+  // by the scroll position (no animation), and only on a laid-out diagram's scroller.
+  check(
+    'a sideways-scrolling diagram fades out on the side that goes on, and not once scrolled to its end',
+    page.includes("scroller.addEventListener('scroll', edges, { passive: true });") &&
+      page.includes("scroller.classList.toggle('widget__scroll--after', rest > 1 && scroller.scrollLeft < rest - 1);") &&
+      page.includes("scroller.classList.toggle('widget__scroll--before', rest > 1 && scroller.scrollLeft > 1);") &&
+      /\.widget__scroll--after \{[^}]*mask-image: linear-gradient\(to right/.test(css) &&
+      /\.widget__scroll--before \{[^}]*mask-image: linear-gradient\(to left/.test(css) &&
+      !/\.widget__scroll[^{]*\{[^}]*(transition|animation)/.test(css),
+  );
   check('a laid-out diagram too wide for the column is shown at 11 px, to scroll sideways; a hand-drawn one never is', wideWrong.length === 0, wideWrong.slice(0, 3).join(' | '));
   check(
     '  the scroller is the page\'s, focusable with a name while it scrolls, observed for width; the drawing is not padded again',

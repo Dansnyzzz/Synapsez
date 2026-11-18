@@ -4915,6 +4915,20 @@ ul.onb__facts { padding-left: 28px; }
   scrollbar-width: thin;
   scrollbar-color: var(--line) transparent;
 }
+/* The side that still has drawing beyond it fades out (render.js widgetFrame): a cue that it goes
+   on where scrollbars overlay and show nothing. Set by scroll position, never animated. */
+.widget__scroll--after {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+}
+.widget__scroll--before {
+  -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 40px), transparent);
+  mask-image: linear-gradient(to left, #000 calc(100% - 40px), transparent);
+}
+.widget__scroll--before.widget__scroll--after {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 40px, #000 calc(100% - 40px), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 40px, #000 calc(100% - 40px), transparent);
+}
 .widget__scroll:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
