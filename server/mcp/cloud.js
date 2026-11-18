@@ -39,7 +39,7 @@ import { chargeCloud, machineForUser, portAddress, sandboxConfigured, scratchMac
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SETTING = 'mcpBridge';
-const DIR = '.synz-mcp';
+const DIR = '.eph-mcp';
 const START_MS = 45_000;
 const PEEK_MS = 3_000;
 /**
@@ -96,13 +96,13 @@ export function bridgeStartScript() {
   return [
     'set -e',
     `mkdir -p ${DIR} && cd ${DIR}`,
-    'printf %s "$SYNZ_BRIDGE" | base64 -d > bridge.mjs',
+    'printf %s "$EPH_BRIDGE" | base64 -d > bridge.mjs',
     'if [ -f bridge.pid ]; then kill "$(cat bridge.pid)" 2>/dev/null || true; sleep 0.3; fi',
     'echo $$ > bridge.pid',
     'echo "starting $(date -u +%FT%TZ) node $(node -v)" > bridge.log',
     // In a file only its owner reads, which the bridge deletes — not in node's starting environment (SEC-061).
-    '( umask 077; printf %s "$SYNZ_MCP_KEY" > bridge.key )',
-    'exec env -u SYNZ_MCP_KEY SYNZ_MCP_KEY_FILE="$PWD/bridge.key" node bridge.mjs >> bridge.log 2>&1',
+    '( umask 077; printf %s "$EPH_MCP_KEY" > bridge.key )',
+    'exec env -u EPH_MCP_KEY EPH_MCP_KEY_FILE="$PWD/bridge.key" node bridge.mjs >> bridge.log 2>&1',
   ].join('\n');
 }
 
@@ -133,7 +133,7 @@ export async function bridgeCall(conn, route, body, timeoutMs) {
   try {
     const res = await fetch(`${conn.url}${route}`, {
       method: body === undefined ? 'GET' : 'POST',
-      headers: { 'x-synz-key': conn.key, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+      headers: { 'x-eph-key': conn.key, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
       body: body === undefined ? undefined : JSON.stringify(body),
       redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs),
@@ -165,7 +165,7 @@ export async function startBridge(machine, { signal } = {}) {
   const conn = { url, key: newKey(), build };
   // No login profile first (HAR-001, shellFor): the bridge's key is in this environment.
   await machine.runCommand({
-    ...shellFor(bridgeStartScript(), { SYNZ_BRIDGE: source.toString('base64'), SYNZ_MCP_KEY: conn.key, PORT: String(MCP_PORT) }),
+    ...shellFor(bridgeStartScript(), { EPH_BRIDGE: source.toString('base64'), EPH_MCP_KEY: conn.key, PORT: String(MCP_PORT) }),
     detached: true,
     signal,
   });

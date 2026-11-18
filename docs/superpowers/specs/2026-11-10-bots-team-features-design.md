@@ -3,7 +3,7 @@
 Wave 2, on top of spec A (the `pending` queue, questions, origins, memory
 upgrade). Ideas from OpenBot (behaviour only), DS Bot (design), dsh-superagent
 (MIT); research in `docs/research/2026-11-10-*-study.md`. Every item keeps the
-rules that make Synapsez safer than all three: account scoping, the approval gate,
+rules that make Ephapse safer than all three: account scoping, the approval gate,
 the hand-off ceiling, incognito, a private chat never entering a group.
 
 ## B.1 Chief starts a group's work
@@ -44,7 +44,7 @@ Counts equal the rows. Healthy takes no space. Read from one route
 
 - **Pause** (`bots.paused_at`): its tasks pause, it is not called in groups (a call to it gets "X đang tạm dừng"), its chat stays readable; Resume skips missed runs.
 - **Duplicate**: name "X (bản sao)", same role, instructions, face (next hue), memory copied, tasks copied paused.
-- **Export / import** (JSON, `synapsez-bots/1`): bots, groups, notices, memory (no secrets — the memory check runs again on import), task prompts and schedules (imported paused). Import shows what it will add and adds each item or none (per-item rollback); names that clash get " (2)".
+- **Export / import** (JSON, `ephapse-bots/1`): bots, groups, notices, memory (no secrets — the memory check runs again on import), task prompts and schedules (imported paused). Import shows what it will add and adds each item or none (per-item rollback); names that clash get " (2)".
 - **Migrate from another assistant**: a ready prompt (vi/en) the person pastes into ChatGPT/Gemini/Claude that answers in the export format (≤ 60 facts of ≤ 300 characters), then imports it.
 - **Colour**: a hue picker in the bot form (the `hue` column exists).
 

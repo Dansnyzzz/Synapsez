@@ -51,7 +51,7 @@
  */
 (function () {
   try {
-    const scene = localStorage.getItem('synapsez:scene');
+    const scene = localStorage.getItem('ephapse:scene');
     if (scene) document.documentElement.dataset.scene = scene;
   } catch (e) {
     /* storage refused: the plain page until the app has asked the server */

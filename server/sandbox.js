@@ -231,7 +231,7 @@ function credentials(env = process.env) {
  */
 export function sandboxName(userId) {
   const digest = crypto.createHash('sha256').update(`machine:${userId}`).digest('hex');
-  return `synz-${digest.slice(0, 32)}`;
+  return `eph-${digest.slice(0, 32)}`;
 }
 
 /**
@@ -371,7 +371,7 @@ async function machineFor(name, { signal } = {}) {
     // again next time — only the newest snapshot, kept a month after last use.
     persistent: true,
     keepLastSnapshots: { count: 1, expiration: SNAPSHOT_DAYS * 24 * 60 * 60 * 1000, deleteEvicted: true },
-    tags: { app: 'synapsez' },
+    tags: { app: 'ephapse' },
     // The browser's and the MCP bridge's ports, reachable as https://….vercel.run.
     // Machines made before either existed gain them in `portAddress`.
     ports: PORTS,
@@ -412,7 +412,7 @@ export async function scratchMachine({ signal } = {}) {
       resources: { vcpus: STAND_IN_VCPUS },
       networkPolicy: 'allow-all',
       persistent: false,
-      tags: { app: 'synapsez', role: 'mcp-check' },
+      tags: { app: 'ephapse', role: 'mcp-check' },
       ports: [MCP_PORT],
       signal,
     });
@@ -460,7 +460,7 @@ export async function portAddress(machine, port, { signal } = {}) {
 /** One file off the account's machine, as the account: the path goes as a value, never as a command. */
 export async function removeFromMachine(userId, file) {
   const machine = await machineForUser(userId);
-  await machine.runCommand({ ...shellFor('rm -f -- "$SYNZ_FILE"', { SYNZ_FILE: file }, { userBin: true }), timeoutMs: 10_000 });
+  await machine.runCommand({ ...shellFor('rm -f -- "$EPH_FILE"', { EPH_FILE: file }, { userBin: true }), timeoutMs: 10_000 });
 }
 
 /**
@@ -471,7 +471,7 @@ export async function expireMachineUploads(store, { days = 30, limit = 20 } = {}
   for (const row of await store.expiredMachineUploads(days, limit)) {
     if (e2bConfigured()) {
       const machine = await e2bExistingMachine(row.user_id).catch(() => null);
-      await machine?.runCommand({ ...shellFor('rm -f -- "$SYNZ_FILE"', { SYNZ_FILE: row.source }, { userBin: true }), timeoutMs: 10_000 }).catch(() => {});
+      await machine?.runCommand({ ...shellFor('rm -f -- "$EPH_FILE"', { EPH_FILE: row.source }, { userBin: true }), timeoutMs: 10_000 }).catch(() => {});
     }
     await store.takeUpload(row.user_id, row.id);
   }
@@ -616,7 +616,7 @@ const SYSTEM_PROFILE = '_home="$HOME"; HOME=/nonexistent; source /etc/profile >/
  * before anything of the account's has run. E2B's /usr/local, where the image
  * has it, is writable by everyone on a running machine.
  */
-export const ROOT_NODE_DIR = '/opt/synz-node';
+export const ROOT_NODE_DIR = '/opt/eph-node';
 /** The system's folders, where root looks first and for the programs its checks run, by full path. */
 const ROOT_SYSTEM_PATH = '/usr/sbin:/usr/bin:/sbin:/bin';
 
@@ -874,7 +874,7 @@ async function handOver(machine, { path, keep = false, replaces = null, userId, 
   }
   let removed = false;
   if (!keep) {
-    const gone = await machine.runCommand({ ...shellFor('rm -f -- "$SYNZ_FILE"', { SYNZ_FILE: path }, { userBin: true }), timeoutMs: 10_000, signal }).catch(() => null);
+    const gone = await machine.runCommand({ ...shellFor('rm -f -- "$EPH_FILE"', { EPH_FILE: path }, { userBin: true }), timeoutMs: 10_000, signal }).catch(() => null);
     removed = gone?.exitCode === 0;
   }
   return { file: { id: saved.id, name: saved.name, mime: saved.mime, kind: saved.kind, bytes: saved.bytes }, note: handedNote(name, saved.id, { removed }) };
@@ -899,9 +899,9 @@ const CLEARED = /^(?:\/tmp\/|(?:\.\/|~\/|\/home\/[^/]+\/)?(?:incoming|downloads)
 export async function keptAside(machine, path, signal) {
   if (!CLEARED.test(path) || !machine.runCommand) return path;
   const script =
-    'mkdir -p -- "$HOME/handed" && n="$(basename -- "$SYNZ_FILE")" && t="$HOME/handed/$n" && ' +
-    '{ [ ! -e "$t" ] || t="$HOME/handed/$(date +%s)-$n"; } && mv -n -- "$SYNZ_FILE" "$t" && [ -e "$t" ] && printf "%s" "$t"';
-  const moved = await machine.runCommand({ ...shellFor(script, { SYNZ_FILE: path }, { userBin: true }), timeoutMs: 30_000, signal }).catch(() => null);
+    'mkdir -p -- "$HOME/handed" && n="$(basename -- "$EPH_FILE")" && t="$HOME/handed/$n" && ' +
+    '{ [ ! -e "$t" ] || t="$HOME/handed/$(date +%s)-$n"; } && mv -n -- "$EPH_FILE" "$t" && [ -e "$t" ] && printf "%s" "$t"';
+  const moved = await machine.runCommand({ ...shellFor(script, { EPH_FILE: path }, { userBin: true }), timeoutMs: 30_000, signal }).catch(() => null);
   if (moved?.exitCode !== 0) return path;
   const to = String(await moved.stdout()).trim().split('\n').pop() || '';
   return to.startsWith('/') && !/[\r\n]/.test(to) ? to : path;
@@ -911,7 +911,7 @@ export async function keptAside(machine, path, signal) {
 async function missingFileNote(machine, path, signal) {
   const folder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '.';
   const listing = await machine
-    .runCommand({ ...shellFor('ls -la -- "$SYNZ_DIR" 2>&1 | head -40', { SYNZ_DIR: folder }, { userBin: true }), timeoutMs: 10_000, signal })
+    .runCommand({ ...shellFor('ls -la -- "$EPH_DIR" 2>&1 | head -40', { EPH_DIR: folder }, { userBin: true }), timeoutMs: 10_000, signal })
     .then((done) => done.stdout())
     .catch(() => '');
   return `${path} was not handed over: it does not exist on the computer, so the command above did not make it there.${listing ? `\nIn ${folder}:\n${String(listing).trim()}` : ''}`;

@@ -852,7 +852,7 @@ function footerXml(palette, vietnamese) {
  * @param theme    a palette name (theme.js), a palette, or nothing — picked from the words
  * @returns a Buffer holding the whole package
  */
-export function writeDocx({ blocks, title = 'Document', author = 'Synapsez', created = new Date(), theme = null } = {}) {
+export function writeDocx({ blocks, title = 'Document', author = 'Ephapse', created = new Date(), theme = null } = {}) {
   const model = normaliseBlocks(blocks);
   const text = blocksToText(model);
   const palette = theme && typeof theme === 'object' && theme.primary ? theme : pickTheme(theme, `${title}\n${text}`);

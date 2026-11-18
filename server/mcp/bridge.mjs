@@ -11,7 +11,7 @@
  * Copied to the machine and started by server/mcp/cloud.js. No dependencies, no
  * imports from the app: the machine has Node and nothing of ours.
  *
- * **One key.** Every request carries `x-synz-key`, a random value made at each
+ * **One key.** Every request carries `x-eph-key`, a random value made at each
  * start and known only to the server; the machine's address is public, so
  * without it anybody who found the address could run programs on it.
  *
@@ -37,8 +37,8 @@ import { spawn } from 'node:child_process';
  * stays readable at /proc/<pid>/environ by any program of the same account.
  */
 function readKey() {
-  const file = process.env.SYNZ_MCP_KEY_FILE;
-  if (!file) return process.env.SYNZ_MCP_KEY || '';
+  const file = process.env.EPH_MCP_KEY_FILE;
+  if (!file) return process.env.EPH_MCP_KEY || '';
   try {
     return fs.readFileSync(file, 'utf8').trim();
   } catch {
@@ -59,7 +59,7 @@ const MAX_WAIT_MS = 280_000;
 const programs = new Map();
 
 function authorised(req) {
-  const got = Buffer.from(String(req.headers['x-synz-key'] || ''));
+  const got = Buffer.from(String(req.headers['x-eph-key'] || ''));
   const want = Buffer.from(KEY);
   return KEY.length >= 16 && got.length === want.length && crypto.timingSafeEqual(got, want);
 }
@@ -97,7 +97,7 @@ function start(id, spec) {
   if (!command) throw new Error('No command to start.');
   const args = Array.isArray(spec?.args) ? spec.args.map(String) : [];
   const env = spec?.env && typeof spec.env === 'object' ? spec.env : {};
-  const child = spawn(command, args, { env: { ...process.env, ...env, SYNZ_MCP_KEY: '' }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(command, args, { env: { ...process.env, ...env, EPH_MCP_KEY: '' }, stdio: ['pipe', 'pipe', 'pipe'] });
   const program = { child, pending: new Map(), seq: 0, init: null, initialized: false, stderr: '', closed: null, usedAt: Date.now() };
   programs.set(id, program);
   // A write to a program that has just died fails with EPIPE on this stream; the
@@ -186,7 +186,7 @@ async function greet(program, message, timeoutMs) {
 }
 
 /** What the bridge says when it has to greet a program itself. */
-const BRIDGE_HELLO = { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'synapsez-bridge', version: '1.0.0' } };
+const BRIDGE_HELLO = { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'ephapse-bridge', version: '1.0.0' } };
 
 /** One JSON-RPC message to one program; its answer, or `{ failed }`. */
 async function deliver(id, spec, message, timeoutMs) {

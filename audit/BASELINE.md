@@ -48,7 +48,7 @@
 | Analytics/APM/error tracker trong code | grep Sentry/posthog/gtag/@vercel/analytics | **0 SDK** (chỉ tên Sentry trong catalogue MCP) | [FACT] |
 | Secret hardcode (hình dạng key) | regex `sk-ant-/sk-or-/sk-proj-/sk-orca-…`, `AIza…`, `ghp_…`, `xoxb-/xoxp-…`, PEM | **0** | [FACT] |
 | TODO/FIXME/XXX/HACK | grep | 1 | [FACT] |
-| Prod | `HEAD https://synapsez.vercel.app/` | 200, CSP đúng `vercel.json`, `X-Vercel-Cache: HIT` | [FACT] |
+| Prod | `HEAD https://www.ephapse.net/` | 200, CSP đúng `vercel.json`, `X-Vercel-Cache: HIT` | [FACT] |
 
 ---
 

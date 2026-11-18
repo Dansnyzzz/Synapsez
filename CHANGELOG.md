@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-11-17 — Synapsez is now Ephapse (1.33.0)
+
+**The product is renamed, at its own domain.** Synapsez is now Ephapse, at https://www.ephapse.net. The name changes everywhere it is seen: the pages, the legal pages, the emails and receipts, the documents the assistant writes, the prompts, the README and these notes. Nothing else changed.
+
+**What people will notice once.** Settings kept in the browser on a device (the scene, drafts, the skills view) start fresh. Webhooks are signed and delivered with `X-Ephapse-Timestamp`, `X-Ephapse-Signature` and `X-Ephapse-Delivery`, and the old `X-Synapsez-*` headers are no longer read. Exports are named `ephapse-export-…json` and `ephapse-bots-…json` (format `ephapse-export`, `ephapse-bots/1`); a file saved under the old names still imports. The TOTP issuer is Ephapse; an authenticator entry already set up keeps its old label, which changes nothing. The cloud computer template is `ephapse-computer`, and sandboxes are tagged `app: ephapse`.
+
+**Deploy order.** Rebuild the template as `ephapse-computer` (`npm run e2b:template`) before deploying. The machine's version is raised (`BASE_VERSION` 3), so once the new template is there each account's cloud computer is moved to a new machine on its next use, with its home folder carried across (the existing move, all or nothing, tried again later if it fails). Until the template is rebuilt, new machines are made from E2B's basic template, and an existing machine keeps being used but its cloud browser and MCP checks stop answering, because the names inside it changed. The short internal name used inside the machine (its folders, service key header, environment names and machine names) and in two cookies is renamed too, so remembered devices and shared-link sessions reset once.
+
+**Telemetry.** The model-call span attribute `ephapse.key` replaces the old attribute of the same shape; a dashboard that filters on the old name needs updating.
+
+**What deliberately keeps the old name.** Three strings that derive a key or a signature (the masking key, its local fallback and the image-link fallback), because changing them would orphan every pseudonym and void every signed link; the reserved username `synapsez` (`ephapse` is reserved too); the repository address, until the repository is renamed; and this paragraph, the mascot notice and the one rename line on each legal page, which say what the name was.
+
+**The legal pages are not re-accepted.** Their text carries the new name and one line saying the name changed; their version ids are unchanged, so nobody is asked to agree again.
+
+**The guide's provider videos lose their caption.** The line under each key-step video ("the real page, recorded in November 2026 ...") is gone, as redundant; the video keeps its accessible name.
+
+**A scan keeps it that way.** A test reads every tracked text file and fails on the old name anywhere but the places listed above.
+
+**Not verified live:** the new domain's DNS and certificate, Google sign-in on the new address, the SePay webhook and the E2B template under its new name; each needs the owner's step.
+
 ## 2026-11-17 — Every plan gets the free share (1.32.0)
 
 **The Free plan keeps its free share, even with a balance.** Each month's free searches and cloud computer time are used first, then the balance; topping up no longer takes them away.
@@ -182,7 +202,7 @@ Privacy notice privacy-2026-11-11.
 
 ## 2026-11-11 — Work that starts outside the app (1.22.0)
 
-**A bot's task can wait for a request** (`server/hooks.js`; schema 47). Choose "When a request arrives" in its form: an address and a secret, the secret shown once. A request is `POST /api/hooks/<id>` with JSON `{ "type", "occurredAt"?, "data"? }` (≤ 64 KB) and three headers — `X-Synapsez-Timestamp` (seconds, within five minutes), `X-Synapsez-Delivery` (an id, used once), `X-Synapsez-Signature` (`sha256=` and the hex HMAC-SHA256 of `timestamp.delivery.body` with the secret). The signature is checked on the raw bytes, in constant time, before the body is read; a delivery seen before runs nothing; filters on the type and on values in the data (JSON Pointers, up to five). It is answered 202 at once and the bot's turn runs behind it, the request's data in front of it as data it must not obey, and nothing it says can change the team. Per hook 30 a minute and 500 a day; Send a test and Rotate (the old secret stops at once) on its panel, with its last deliveries and why one was ignored. The secret is kept encrypted, not hashed, because the signature is checked with it.
+**A bot's task can wait for a request** (`server/hooks.js`; schema 47). Choose "When a request arrives" in its form: an address and a secret, the secret shown once. A request is `POST /api/hooks/<id>` with JSON `{ "type", "occurredAt"?, "data"? }` (≤ 64 KB) and three headers — `X-Ephapse-Timestamp` (seconds, within five minutes), `X-Ephapse-Delivery` (an id, used once), `X-Ephapse-Signature` (`sha256=` and the hex HMAC-SHA256 of `timestamp.delivery.body` with the secret). The signature is checked on the raw bytes, in constant time, before the body is read; a delivery seen before runs nothing; filters on the type and on values in the data (JSON Pointers, up to five). It is answered 202 at once and the bot's turn runs behind it, the request's data in front of it as data it must not obey, and nothing it says can change the team. Per hook 30 a minute and 500 a day; Send a test and Rotate (the old secret stops at once) on its panel, with its last deliveries and why one was ignored. The secret is kept encrypted, not hashed, because the signature is checked with it.
 
 **Waits.** A bot can park what it cannot settle now (`wait_for`: "tell me when the build ends"); its next scheduled run, or a request for it, is told each one and closes what it settles (`close_wait`). They are chips above its box, each closed with ✕, and under Needs you once a day old. A wait is a row, not something left running.
 
@@ -204,7 +224,7 @@ Privacy notice privacy-2026-11-11.
 
 **Scheduled runs that know when to keep quiet.** A run is offered `no_update` and `run_failed`: nothing new folds the run away (no unread mark, no preview), a failure is recorded with its reason and listed under Needs you. A task can skip a run the daily cron missed, or run it once (the default). A task set in a group belongs to the group: its prompt starts a round.
 
-**Managing bots.** Pause a bot (its tasks wait, rounds pass it by with a word, its chat refuses to answer; Resume lets the missed runs go). Duplicate one with its memory, its tasks paused. Export the team as `synapsez-bots/1` (no conversations, no keys) and import one — what it adds shown first, each bot or group whole or not at all, memory through the same secret check as typing, tasks paused, clashing names "(2)" — including the answer another assistant gives to the ready migrate prompt. A colour of its own, from twelve, in the bot's form.
+**Managing bots.** Pause a bot (its tasks wait, rounds pass it by with a word, its chat refuses to answer; Resume lets the missed runs go). Duplicate one with its memory, its tasks paused. Export the team as `ephapse-bots/1` (no conversations, no keys) and import one — what it adds shown first, each bot or group whole or not at all, memory through the same secret check as typing, tasks paused, clashing names "(2)" — including the answer another assistant gives to the ready migrate prompt. A colour of its own, from twelve, in the bot's form.
 
 **Ask aside**: one question about a bot's conversation, answered in a card from its newest 60 messages with no tools, kept nowhere; the tab keeps the last five.
 
@@ -244,7 +264,7 @@ Designs from the studies of OpenBot (ideas only), DS Bot and dsh-superagent (MIT
 
 **Sources, free only**: VNDirect (raw and adjusted prices side by side), KBS, Vietcap (statements labelled from its own metadata; its analyst ratings and targets are never shown), Yahoo (HOSE only for Vietnam — the old table that sent HNX/UPCoM codes, `^VN30.VN` and `^HNX.VN` is gone), SEC EDGAR, CoinGecko, Frankfurter, the ECB, open.er-api, Vietcombank's posted rates, SJC gold, the World Bank, FRED, NSO and FMarket. One fetch helper (`server/finance/http.js`) gives every call an honest User-Agent and no borrowed Referer/Origin, paces each source, stands a source aside after a 403/429, and switches one off with `FIN_SOURCE_<NAME>=off`. One cache (`finance_cache`, schema 45) is shared by every account: a price asked twice is fetched once. New pooled ceilings in `server/freeTier.js`, with minute and hour periods. `convert_units` converts money through the same rates, with the credit its source asks for.
 
-**Owner actions**: set `SEC_USER_AGENT="Synapsez <contact email>"` for US statements; optionally `COINGECKO_DEMO_KEY` and `FRED_API_KEY`; run `npm run finance:probe` where Vercel Sandbox credentials are set (it could not run where this was built — see `docs/research/2026-11-10-finance-probe-iad1.md`); ask VNDirect and KBS for written permission. Settings in `docs/vercel-config.md`; credits in `NOTICE`. The privacy notice lists the market data providers (only symbols, dates and indicator codes go to them), without a new version: no personal data is sent.
+**Owner actions**: set `SEC_USER_AGENT="Ephapse <contact email>"` for US statements; optionally `COINGECKO_DEMO_KEY` and `FRED_API_KEY`; run `npm run finance:probe` where Vercel Sandbox credentials are set (it could not run where this was built — see `docs/research/2026-11-10-finance-probe-iad1.md`); ask VNDirect and KBS for written permission. Settings in `docs/vercel-config.md`; credits in `NOTICE`. The privacy notice lists the market data providers (only symbols, dates and indicator codes go to them), without a new version: no personal data is sent.
 
 ## 2026-11-10 — The Bot page as the team changes (1.19.0)
 
@@ -258,7 +278,7 @@ Designs from the studies of OpenBot (ideas only), DS Bot and dsh-superagent (MIT
 
 ## 2026-11-10 — A tab on the sign-in page goes in when another tab signs in (1.18.1)
 
-Signed in in another tab of the same browser — the confirmation link in the email, most often — a tab still on the sign-in page goes straight into the app, without a reload and without anything typed again (`public/js/app.js` `enterIfSignedInElsewhere`). The tab that signed in says so through `localStorage` (`synapsez:signed-in-at`, a time and nothing else); a sign-in no tab announced is found when the waiting tab is looked at again, with one `GET /api/session`.
+Signed in in another tab of the same browser — the confirmation link in the email, most often — a tab still on the sign-in page goes straight into the app, without a reload and without anything typed again (`public/js/app.js` `enterIfSignedInElsewhere`). The tab that signed in says so through `localStorage` (`ephapse:signed-in-at`, a time and nothing else); a sign-in no tab announced is found when the waiting tab is looked at again, with one `GET /api/session`.
 
 ## 2026-11-10 — The Bot page on the home chat, a plan in Plan mode, skills that share themselves
 
@@ -278,7 +298,7 @@ Privacy notice privacy-2026-11-10-2.
 
 **Progress** (`public/js/plan-window.js`, `public/js/uploads-view.js`, `public/js/rail.js`). A line down the Progress list instead of a blue band; while it runs, the current step, the two before it and what is still to come, the rest behind "N earlier steps"; once finished, the last two with the tick; "Step x of y". **Used in this session** sits above Outputs, a row per message that brought files, and opens an Uploaded files window with the list on the left and the preview on the right (pictures, PDFs, workbooks with their sheets).
 
-**Skills people share** (`server/skills.js`, `public/js/customize.js`; schema 41). A skill can be shared to Discover, skill by skill (off by default), after a safety scan that runs again on every edit. Discover lists shared skills newest first, under the author's public name; adding one keeps a reference, so the author's edit reaches everyone who added it, and an un-shared or deleted one says why. Administrators can take one off Discover. Synapsez's own skills are no longer listed, and still work.
+**Skills people share** (`server/skills.js`, `public/js/customize.js`; schema 41). A skill can be shared to Discover, skill by skill (off by default), after a safety scan that runs again on every edit. Discover lists shared skills newest first, under the author's public name; adding one keeps a reference, so the author's edit reaches everyone who added it, and an un-shared or deleted one says why. Administrators can take one off Discover. Ephapse's own skills are no longer listed, and still work.
 
 **Sign-up confirms the email** (`server/auth.js`). A 6-digit code (or the link) before the account is used, wherever mail can be sent (`EMAIL_CONFIRMATION`); an address never confirmed is held a day. Event emails go only to confirmed addresses. A browser that signed in with the right password is remembered, so strangers guessing from many addresses cannot lock its owner out of signing in or resetting.
 
@@ -299,7 +319,7 @@ Privacy notice privacy-2026-11-10-2.
 
 **Bot** (`public/js/bot.js`, `public/js/bot-status.js`, `server/routes/bot.js`). Workflows and scheduled tasks are one sidebar item with two tabs, from a study of Fei2411/DS-Bot. Every row says its state in words; the rail counts what needs you; Run now and Stop on the row; a workflow keeps its last ten runs and takes permissions and a project (schema 40); a resumed step is told to check what it already did.
 
-**Title creatures** (`public/js/mascots/`). An engine on a 64×64 grid with shared props drawn by anchors, and eleven creatures drawn for Synapsez (no pixel taken from the whale). The worn title's creature stands on the writing box in all eight states; no title keeps the whale, which now scales smoothly. The whale art is used with its artist's permission, not under MIT as this file once said.
+**Title creatures** (`public/js/mascots/`). An engine on a 64×64 grid with shared props drawn by anchors, and eleven creatures drawn for Ephapse (no pixel taken from the whale). The worn title's creature stands on the writing box in all eight states; no title keeps the whale, which now scales smoothly. The whale art is used with its artist's permission, not under MIT as this file once said.
 
 **Themes** (`server/themes.js`, `public/js/themes-panel.js`, `public/js/reward-facts.js`). Periods turn at midnight in Vietnam; a period's theme shows from its first day and an event's three days early, except to administrators. The aurora is an event from 24 to 31 December 2026 (2,000,000 tokens, 100 places). Sponsor titles count `top_ups`. Earned things are given at the end of a turn and put on. Twelve a page, an order, and the owner's shape for what earns each.
 
@@ -319,7 +339,7 @@ Privacy notice privacy-2026-11-10-2.
 
 **The second free model really is a fallback.** It was only used to choose a suggestion. When the first runs out or stops answering, it now takes that turn (`server/recommend.js` `freeFallbackFor`), then Auto.
 
-**Usage** (`public/js/usage-math.js`, `usage-detail.js`, `server/usageReport.js`, `server/providerOutcomes.js`). The Overview adds every provider's free requests into one line and spending limits into another; the warning above the composer goes by the provider of the model in use, since a total can have plenty left on a provider this model cannot use. OrcaRouter's wallet is read from `/v1/tools/balance`, not from a key's ceiling, and its workspace from `/metrics/workspace`. Google has no usage API: its page is what Synapsez counted, failures now kept by status (`provider_outcomes`), and a daily ceiling is learned from a 429 where one says it. The grounding model that answered every search with 404 is replaced.
+**Usage** (`public/js/usage-math.js`, `usage-detail.js`, `server/usageReport.js`, `server/providerOutcomes.js`). The Overview adds every provider's free requests into one line and spending limits into another; the warning above the composer goes by the provider of the model in use, since a total can have plenty left on a provider this model cannot use. OrcaRouter's wallet is read from `/v1/tools/balance`, not from a key's ceiling, and its workspace from `/metrics/workspace`. Google has no usage API: its page is what Ephapse counted, failures now kept by status (`provider_outcomes`), and a daily ceiling is learned from a 429 where one says it. The grounding model that answered every search with 404 is replaced.
 
 **Themes** (schema 39, `public/js/scenes/`, `scene-worker.js`, `theme-picker.js`). Each scene is its own module and runs in a worker, so choosing one never waits for it to be painted; a tile is a picture made ahead of time (`npm run scenes:stills`). Twelve new scenes. A theme no longer decides light or dark. `/theme` in the box. The last press wins, on themes, titles, the whale and the effort dial (`latest.js`), and two preferences saved together both land.
 
@@ -463,9 +483,9 @@ privacy policy was not enough. Everything here stays on the free tier.
 - **The home page is provably the owner's**: Search Console's verification file is served at
   `/google19190bbd34c2487c.html`.
 - **A privacy policy Google can accept** (`/privacy.html`, version privacy-2026-10-18, Vietnamese and English): it
-  names Synapsez and its contact, says what is read from each Google product and why, who may see it, how it is
+  names Ephapse and its contact, says what is read from each Google product and why, who may see it, how it is
   stored, how to stop and delete it, and carries Google's Limited Use statement. New accounts agree to this version.
-- **The sign-in screen says what Synapsez is and links the policy**, so someone without an account can read both.
+- **The sign-in screen says what Ephapse is and links the policy**, so someone without an account can read both.
 - **What is read from Google goes only to models that do not train on it.** A conversation that has read Gmail,
   Drive, Calendar or any other Google product, or holds a file attached from Drive, is sent only to Anthropic,
   OpenAI, or OpenRouter restricted to zero-retention endpoints — never through a Gemini key or OrcaRouter. A model
@@ -986,7 +1006,7 @@ EXP-005, LAW-001. Deferred: ACC-017. Each row in the ledger says why and what th
 - **Incognito conversations**: never listed, searched, exported or shared; no memory, no chat search, no
   `skill_write`; deleted when you leave, swept after a day otherwise.
 - **Your data**: streamed export of the whole account (no keys, no tokens); import from Claude's or ChatGPT's
-  `conversations.json` or a Synapsez export, in batches; delete the account with password and code.
+  `conversations.json` or an Ephapse export, in batches; delete the account with password and code.
 - **Security activity** (schema 28, `audit_events`): sign-ins and failed attempts, password and two-factor
   changes, keys, exports, imports, shared links, privacy changes — with the address cut to its network. Kept 180
   days; administrators see every account's.

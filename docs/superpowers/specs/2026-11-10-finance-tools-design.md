@@ -70,7 +70,7 @@ data change. `FIN_SOURCE_<NAME>=off` removes a source everywhere.
 | macro | World Bank → NSO PX-Web | FRED (when `FRED_API_KEY`) → World Bank | World Bank, ECB | — |
 
 Optional settings (free, no card): `COINGECKO_DEMO_KEY` (100/min instead of the
-shared IP), `FRED_API_KEY`, and `SEC_USER_AGENT` ("Synapsez <contact>") — **the owner
+shared IP), `FRED_API_KEY`, and `SEC_USER_AGENT` ("Ephapse <contact>") — **the owner
 supplies the contact**; until set, the SEC rows fall through to Yahoo and the result
 says so. These go in docs/vercel-config.md, never in a committed env file.
 

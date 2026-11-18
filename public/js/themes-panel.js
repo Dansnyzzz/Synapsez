@@ -12,7 +12,7 @@ const PER_PAGE = 12;
 const SORTS = ['got-new', 'got-old', 'out-new', 'out-old', 'kind'];
 /** The kinds in the order the owner listed them: the default, events, the boards' prizes, achievements. */
 const KIND_ORDER = { none: 0, exclusive_event: 1, top_quarter: 2, top_year: 2, achievement: 3 };
-const SORT_KEY = 'synapsez.themes.sort';
+const SORT_KEY = 'ephapse.themes.sort';
 
 /**
  * The themes in the chosen order. A date nobody has (a theme not held, or always out)
@@ -59,7 +59,7 @@ export function sortThemes(list, by) {
  * @typedef {{ id: string, badge: Badge, owned: boolean, grantedAt: string|null, grant: Badge|null, needs: { tokens?: number, spend?: number, event?: EventStanding }|null }} Theme
  */
 
-const STORE_KEY = 'synapsez:scene';
+const STORE_KEY = 'ephapse:scene';
 
 export const LOCK = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5Zm-3 8V7a3 3 0 0 1 6 0v3H9Zm3 4a2 2 0 0 1 1 3.7V20h-2v-2.3A2 2 0 0 1 12 14Z"/></svg>';
 
@@ -140,7 +140,7 @@ export function createThemes({ page, admin, toast, mascot, setMascot, mascotStat
       if (id === 'default') localStorage.removeItem(STORE_KEY);
       else localStorage.setItem(STORE_KEY, id);
       // Written by an older version of this page, when a scene decided light or dark.
-      localStorage.removeItem('synapsez:scene-mode');
+      localStorage.removeItem('ephapse:scene-mode');
     } catch {
       /* private browsing refuses storage; the choice still holds this session */
     }

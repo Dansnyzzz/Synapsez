@@ -9,13 +9,13 @@ import { CONNECTORS, CONNECTOR_BY_ID, CATEGORIES, relatedTo } from './connector-
 /**
  * Settings → Customize: Skills, Connectors and Plugins, after Claude's (owner,
  * 2026-10-31). Each has "Yours" — what this account has, as a list with a ⋯ menu
- * per row — and "Discover" — what else Synapsez offers, as cards with a +. Only
+ * per row — and "Discover" — what else Ephapse offers, as cards with a +. Only
  * what the app really has: the services it can connect, the families of
  * built-in tools. No catalogue, and no install counts.
  *
  * Skills' Discover is what people on this site share (owner, 2026-11-09):
  * newest made first, each by its author's public name, added by reference so an
- * author's edit reaches everyone who added it. Synapsez's own skills are not
+ * author's edit reaches everyone who added it. Ephapse's own skills are not
  * listed in either view unless a filter asks for them — they still do their
  * work, and the + menu still offers them. While the page is open it asks again
  * every little while and when it is looked at, so what others share or change
@@ -268,7 +268,7 @@ export function createCustomize(deps) {
    * was last changed, its name, or its plugin's. Remembered in this browser —
    * a view, not a setting.
    */
-  const VIEW_KEY = 'synapsez.skillsView';
+  const VIEW_KEY = 'ephapse.skillsView';
   let view = { plugin: 'all', by: 'all', sort: 'edited' };
   try {
     view = { ...view, ...JSON.parse(localStorage.getItem(VIEW_KEY) || '{}') };
@@ -363,13 +363,13 @@ export function createCustomize(deps) {
   }
 
   /**
-   * Yours: what this account made, and what it added from Discover. Synapsez's
-   * own are not listed unless the filter asks for them (Created by → Synapsez, or
+   * Yours: what this account made, and what it added from Discover. Ephapse's
+   * own are not listed unless the filter asks for them (Created by → Ephapse, or
    * a plugin) — they are always at work, and the + menu offers them.
    */
   function drawSkills() {
     const { skills = [], builtin = [], added = [] } = skillData;
-    const theirs = view.by === 'synapsez' || view.plugin !== 'all' ? builtin.map((s) => ({ ...s, kind: 'synapsez' })) : [];
+    const theirs = view.by === 'ephapse' || view.plugin !== 'all' ? builtin.map((s) => ({ ...s, kind: 'ephapse' })) : [];
     const mine = skills.map((s) => ({ ...s, kind: 'you', plugin: null }));
     const others = added.map((s) => ({ ...s, kind: 'others', plugin: null, updated_at: s.updatedAt || s.addedAt }));
     const keep = (s) => (view.by === 'all' || view.by === s.kind) && (view.plugin === 'all' || s.plugin === view.plugin);
@@ -389,10 +389,10 @@ export function createCustomize(deps) {
         icon: ICON.skill,
         name: s.kind === 'others' ? s.knownAs || s.name : s.name,
         tag: s.kind === 'you' ? ownTag(s) : s.kind === 'others' ? t('skills.tagAdded') : pluginName(s.plugin),
-        by: s.kind === 'you' ? t('settings.byYou') : s.kind === 'others' ? authorOf(s.author) : t('settings.fromSynapsez'),
+        by: s.kind === 'you' ? t('settings.byYou') : s.kind === 'others' ? authorOf(s.author) : t('settings.fromEphapse'),
         desc: s.description || '',
         warn: s.kind === 'others' && s.status !== 'ok' ? t(GONE[s.status] || 'skills.goneUnshared') : '',
-        meta: s.kind === 'synapsez' ? '' : day(s.updated_at || s.created_at),
+        meta: s.kind === 'ephapse' ? '' : day(s.updated_at || s.created_at),
         search: `${s.name} ${s.description || ''} ${pluginName(s.plugin)} ${s.author || ''}`,
       });
     const shownTheirs = theirs.filter(keep).sort(order);
@@ -402,7 +402,7 @@ export function createCustomize(deps) {
     const ownPart = view.plugin === 'all' && (view.by === 'all' || view.by === 'you');
     const addedPart = view.plugin === 'all' && (view.by === 'others' || (view.by === 'all' && others.length > 0));
     list.innerHTML =
-      (shownTheirs.length ? group(t('settings.fromSynapsez'), shownTheirs.length) + shownTheirs.map(row).join('') : '') +
+      (shownTheirs.length ? group(t('settings.fromEphapse'), shownTheirs.length) + shownTheirs.map(row).join('') : '') +
       (ownPart ? group(t('settings.madeByYou'), shownMine.length) + (shownMine.map(row).join('') || empty(t(mine.length ? 'skills.noneMatch' : 'skills.empty'))) : '') +
       (addedPart ? group(t('skills.addedFromDiscover'), shownOthers.length) + (shownOthers.map(row).join('') || empty(t(others.length ? 'skills.noneMatch' : 'skills.noneAdded'))) : '');
     for (const btn of /** @type {NodeListOf<HTMLElement>} */ (list.querySelectorAll('[data-more]'))) {
@@ -511,7 +511,7 @@ export function createCustomize(deps) {
 
   /**
    * Discover: the skills people on this site share, newest made first (owner,
-   * 2026-11-09), then a card to make one. Synapsez's own are not here.
+   * 2026-11-09), then a card to make one. Ephapse's own are not here.
    */
   function drawDiscover() {
     const { skills: shared = [], moderator = false } = sharedData;
@@ -573,12 +573,12 @@ export function createCustomize(deps) {
       },
       {
         label: t('skills.createdBy'),
-        // All is yours and what you added; Synapsez brings its own back into the list.
+        // All is yours and what you added; Ephapse brings its own back into the list.
         sub: () => [
           { label: t('skills.all'), checked: view.by === 'all', run: choose('by', 'all') },
           { label: t('skills.byYou'), checked: view.by === 'you', run: choose('by', 'you') },
           { label: t('skills.byOthers'), checked: view.by === 'others', run: choose('by', 'others') },
-          { label: 'Synapsez', checked: view.by === 'synapsez', run: choose('by', 'synapsez') },
+          { label: 'Ephapse', checked: view.by === 'ephapse', run: choose('by', 'ephapse') },
         ],
       },
     ]);
@@ -1091,7 +1091,7 @@ export function createCustomize(deps) {
     const resting = PLUGINS.filter((p) => off.has(p.id));
     const list = document.getElementById('plugin-list');
     list.innerHTML =
-      group(t('settings.fromSynapsez'), on.length) +
+      group(t('settings.fromEphapse'), on.length) +
       (on.map((p) => listRow({ key: p.id, icon: ICON.plugin, name: text(p).name, by: t('settings.builtIn'), desc: text(p).desc, meta: t('settings.toolsN', { n: String(p.tools.length) }), search: `${text(p).name} ${text(p).desc}` })).join('') ||
         empty(t('settings.allPluginsOff')));
     for (const btn of /** @type {NodeListOf<HTMLElement>} */ (list.querySelectorAll('[data-more]'))) {

@@ -417,9 +417,9 @@ function takeUrlToken(name) {
  * in. Kept for the tab, so a sign-up with an emailed code still ends in the
  * conversation they asked for.
  */
-const CONTINUE_KEY = 'synapsez:continue-shared';
+const CONTINUE_KEY = 'ephapse:continue-shared';
 /** A shared conversation a bare `?continue=` link named: shown, not copied, once signed in (SEC-050). */
-const SHOW_KEY = 'synapsez:show-shared';
+const SHOW_KEY = 'ephapse:show-shared';
 
 async function boot() {
   session = await api.session();
@@ -542,7 +542,7 @@ function rememberEmail(email) {
  * Never a password or a code — only the boxes anybody looking at the screen could read —
  * and gone once they are in (`start`). Half an hour is how long a confirmation code lasts.
  */
-const GATE_DRAFT = 'synapsez:gate-draft';
+const GATE_DRAFT = 'ephapse:gate-draft';
 const GATE_DRAFT_MS = 30 * 60_000;
 const GATE_FIELDS = ['gate-username', 'gate-email'];
 const GATE_MODES = ['signin', 'signup', 'forgot', 'reset', 'confirm'];
@@ -743,7 +743,7 @@ $('gate-form').addEventListener('change', saveGateDraft);
  * fires `storage` here); coming back to this tab asks the server once, for a sign-in no
  * tab announced. Only while the gate is up; otherwise nothing is asked.
  */
-const SIGNED_IN_AT = 'synapsez:signed-in-at';
+const SIGNED_IN_AT = 'ephapse:signed-in-at';
 let lookingElsewhere = false;
 
 async function enterIfSignedInElsewhere() {
@@ -815,7 +815,7 @@ $('gate-resend').addEventListener('click', async () => {
   }
 });
 
-// What Synapsez is, under the form: one press away rather than a paragraph
+// What Ephapse is, under the form: one press away rather than a paragraph
 // filling the card (owner, 2026-10-26) — and still on the home page Google reads.
 $('gate-what').addEventListener('click', () => {
   const about = $('gate-about');
@@ -4554,7 +4554,7 @@ async function streamOnce(run, decision, answers, handoff = false) {
           const theme = newly?.worn?.sceneTheme || null;
           if (title) {
             state.boot.prefs = { ...state.boot.prefs, equippedTitle: title };
-            window.dispatchEvent(new window.CustomEvent('synapsez:title', { detail: title }));
+            window.dispatchEvent(new window.CustomEvent('ephapse:title', { detail: title }));
           }
           if (theme) void themesPanel.sync();
           const titleName = title ? t(`ranking.title.${title}`) : '';
@@ -5311,7 +5311,7 @@ const mascot = createMascot({ host: /** @type {HTMLElement} */ ($('composer').qu
 /** A press on a whale saves only the last of a run of presses. */
 const mascotSaver = latestOnly((value) => api.savePrefs({ mascot: value }), { failed: (err) => toast(err.message, 'error') });
 // The title worn, saved on the Ranking page or earned in a turn: its creature takes the whale's place (owner, 2026-11-08).
-window.addEventListener('synapsez:title', (event) => {
+window.addEventListener('ephapse:title', (event) => {
   const id = /** @type {CustomEvent} */ (event).detail || null;
   if (state.boot) state.boot.prefs = { ...state.boot.prefs, equippedTitle: id };
   void mascot.setCreature(id);
@@ -5946,7 +5946,7 @@ $('ext-export').addEventListener('click', async () => {
     const blob = new Blob([JSON.stringify({ mcpServers }, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'synapsez-mcp-servers.json';
+    a.download = 'ephapse-mcp-servers.json';
     document.body.append(a);
     a.click();
     a.remove();

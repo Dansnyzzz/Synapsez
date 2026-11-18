@@ -767,9 +767,9 @@ section('agreeing to the terms: recorded at sign-up, asked of an account that ne
 
 /*
  * Settings → Usage (owner, 2026-10-31): per provider, what the provider says
- * is left of each of the account's own keys, and what Synapsez counted.
+ * is left of each of the account's own keys, and what Ephapse counted.
  */
-section('usage: what each provider reports, and what Synapsez counted');
+section('usage: what each provider reports, and what Ephapse counted');
 {
   const { usageReport, readOpenRouterKey, providerOf } = await import('../server/usageReport.js');
   check('a model id names its provider', providerOf('openrouter/nvidia/nemotron-3.5-super-vl:free') === 'openrouter' && providerOf('google/gemini-2.5-flash') === 'google' && providerOf('auto') === 'other');
@@ -1063,8 +1063,8 @@ section('export is the whole account, streamed, without secrets');
 {
   await alice.call('PUT', '/api/providers/openai/key', { apiKey: 'sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456' });
   const res = await alice.call('GET', '/api/account/export');
-  check('it downloads as a file', res.status === 200 && /attachment; filename="synapsez-export-/.test(res.headers.get('content-disposition') || ''));
-  check('it is one valid JSON document', !!res.body && res.body.format === 'synapsez-export', res.text.slice(0, 120));
+  check('it downloads as a file', res.status === 200 && /attachment; filename="ephapse-export-/.test(res.headers.get('content-disposition') || ''));
+  check('it is one valid JSON document', !!res.body && res.body.format === 'ephapse-export', res.text.slice(0, 120));
   check('it says how providers answered and which event places are held, as the notice promises', Array.isArray(res.body?.eventPlaces) && Array.isArray(res.body?.providerAnswers));
   check('with the conversations', res.body.chats.some((c) => c.messages.some((m) => /zebra budget/.test(m.text || ''))));
   check('  but never an incognito one', !res.text.includes('zebra merger'));
@@ -1161,7 +1161,7 @@ section('export is the whole account, streamed, without secrets');
   check('every conversation is exported exactly once across pages', titles.length === 123 && new Set(titles).size === 123, `${titles.length} exported, ${new Set(titles).size} distinct`);
 }
 
-section('import reads Claude, ChatGPT and Synapsez exports');
+section('import reads Claude, ChatGPT and Ephapse exports');
 {
   const { normaliseImport, detectSource, batchesOf } = await import('../public/js/import-formats.js');
   const claude = [
@@ -1204,7 +1204,7 @@ section('import reads Claude, ChatGPT and Synapsez exports');
   }
   check('Claude is recognised', detectSource(claude) === 'claude');
   check('ChatGPT is recognised', detectSource(chatgpt) === 'chatgpt');
-  check('Synapsez is recognised', detectSource(globalThis.exported) === 'synapsez');
+  check('Ephapse is recognised', detectSource(globalThis.exported) === 'ephapse');
   check('anything else is refused', (() => { try { normaliseImport({ hello: 1 }); return false; } catch { return true; } })());
   const c = normaliseImport(claude).conversations[0];
   check('Claude: content blocks are read when text is empty', c.messages[1].text === 'Day one: the citadel.');
@@ -1212,7 +1212,7 @@ section('import reads Claude, ChatGPT and Synapsez exports');
   check('ChatGPT: only the kept branch is read', g.messages.map((m) => m.text).join('|') === 'How much for rent?|About 30%.|Thanks', g.messages.map((m) => m.text).join('|'));
   check('ChatGPT: seconds become dates', g.createdAt === '2026-01-01T00:00:00.000Z', g.createdAt);
   const s = normaliseImport(globalThis.exported);
-  check('Synapsez: account notes travel, project notes do not', s.memory.every((n) => n.key) && s.memory.length > 0);
+  check('Ephapse: account notes travel, project notes do not', s.memory.every((n) => n.key) && s.memory.length > 0);
   const many = Array.from({ length: 120 }, (_, i) => ({ title: `c${i}`, messages: [{ role: 'user', text: 'x'.repeat(1000) }] }));
   const batches = batchesOf(many, 50_000);
   check('batches stay under the size and count limits', batches.every((b) => b.length <= 50 && JSON.stringify(b).length < 50_000) && batches.flat().length === 120);

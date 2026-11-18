@@ -1,4 +1,4 @@
-# Synapsez
+# Ephapse
 
 A self-hosted, multi-user, multi-provider agentic AI workspace you drive from any device — including
 your phone.
@@ -66,7 +66,7 @@ internet ever connects inward to your machine.
 | **Memory** | Notes read back at the start of every conversation, project notes first, within a budget; `memory_search` for the rest. Identifiers are never saved and sensitive topics only if you allow it. Every note editable in Settings → Memory. |
 | **Earlier conversations** | `search_chats` looks back through what was said, scoped to the project you are in, as Claude's chat search does; `read_chat` reads more of one it found. Switchable. |
 | **Incognito** | A conversation kept out of history, search, export and memory, deleted when you leave it. |
-| **Your data** | Export everything as one file; import conversations from Claude, ChatGPT or another Synapsez; delete the account; a security record of sign-ins, key and privacy changes; automatic deletion after 30–365 days if you want it. |
+| **Your data** | Export everything as one file; import conversations from Claude, ChatGPT or another Ephapse; delete the account; a security record of sign-ins, key and privacy changes; automatic deletion after 30–365 days if you want it. |
 | **Phone-first** | Responsive down to small screens, safe-area aware, installable to the home screen. |
 | **Cost** | Token counts every turn, and dollar estimates where pricing is known. |
 
@@ -376,7 +376,7 @@ Three constraints on that endpoint, each closing a hole:
 - **It cannot be told to do anything.** One route, GET only, returning an identifier. There is no
   verb there to abuse.
 - **CORS names exactly one origin**: the deployment that worker answers to, matched in full rather
-  than by prefix. With `*`, every site you visit could quietly learn that you run Synapsez and what
+  than by prefix. With `*`, every site you visit could quietly learn that you run Ephapse and what
   your machine is called.
 
 Order of precedence when choosing a machine:
@@ -647,7 +647,7 @@ not there, the model can install, and what an account installs is put back on a 
   to the chat leaves the machine, and the model is told when the disk passes 80%. The tidy has three
   tiers by how full the disk is (below 70%, 70–85%, above): caches that fill themselves again go an
   entry at a time and never through a link, only real (ELF) core dumps go, what the cloud browser
-  downloaded goes after a week untouched — never a file a card points at (`SYNZ_KEEP`) — and large
+  downloaded goes after a week untouched — never a file a card points at (`EPH_KEEP`) — and large
   files in `/tmp` are listed with the largest things, never deleted for their size. A file too large
   for the conversation stays on the machine, moved out of `/tmp`, `incoming/` or `downloads/` to
   `~/handed/` first so its card keeps working (`tidyScript`, `keptAside`).
@@ -1527,9 +1527,9 @@ version (PRV-006). Both tools ask first, and neither is offered in an incognito 
 
 **Discover** lists the skills people on this site share — every account's, newest made first, each with
 its author's public name (the boards' rule, `server/themes.js` `publicName`; never an email) and a
-short description. Synapsez's own skills (Word, Excel, slides, PDF, small tools, `skill-creator` …) are
+short description. Ephapse's own skills (Word, Excel, slides, PDF, small tools, `skill-creator` …) are
 no longer listed in either view — they are always at work, the + menu still offers them, and **Filter
-by → Created by → Synapsez** (or a plugin) brings them back into Yours.
+by → Created by → Ephapse** (or a plugin) brings them back into Yours.
 
 - **Every new skill shares itself** (owner, 2026-11-10) — the editor's, an upload's, or one the assistant
   writes — unless its author turns **Share to Discover** off (the editor says everyone on this site will
@@ -1558,7 +1558,7 @@ by → Created by → Synapsez** (or a plugin) brings them back into Yours.
 
 Administrators with the `themes` permission choose each theme's badge and give or take a theme, under Settings → People. Which theme a period's prize is follows the badge: one naming that period wins, otherwise the one marked for any period.
 
-The whale on the writing box follows what the assistant is doing, or holds one state, or is off; the choice is on the Theme page. Wearing a title puts that title's creature there instead, drawn in pixels with the same eight states (`public/js/mascots/`; the minnow, the electric ray and the golden whale so far, the whale standing in for the rest). The whale's art is by calmly-eating-bugs, taken from Nwflower/dsh-claude-style, where it ships by the artist's permission to that plugin; Synapsez holds no licence of its own for it (`public/assets/mascot/NOTICE.txt`).
+The whale on the writing box follows what the assistant is doing, or holds one state, or is off; the choice is on the Theme page. Wearing a title puts that title's creature there instead, drawn in pixels with the same eight states (`public/js/mascots/`; the minnow, the electric ray and the golden whale so far, the whale standing in for the rest). The whale's art is by calmly-eating-bugs, taken from Nwflower/dsh-claude-style, where it ships by the artist's permission to that plugin; Ephapse holds no licence of its own for it (`public/assets/mascot/NOTICE.txt`).
 
 ---
 
@@ -1876,7 +1876,7 @@ Settings → Privacy → **Your data**:
   account does not hit the host's response limit. API keys, connector tokens and uploaded files' bytes
   are not in it; incognito conversations are not part of the record.
 - **Import conversations** reads `conversations.json` from Claude or ChatGPT (only the branch ChatGPT
-  kept, not abandoned edits) or a Synapsez export, in the browser, and sends it fifty conversations at a
+  kept, not abandoned edits) or an Ephapse export, in the browser, and sends it fifty conversations at a
   time. Only user and assistant text comes in; original dates are kept.
 - **Delete account** asks for the password, and the authenticator code when two-factor is on, then
   removes everything at once. The last administrator of a shared deployment must hand over first.
@@ -1898,7 +1898,7 @@ groups — **Preferences** (Providers, General, Account, Privacy, Usage, Capabil
 computer** (System, Extensions, Developer), **Customize** (Skills, Connectors, Plugins), and
 **Administration** (People, Feedback) for administrators only. Each section is rows: what a setting
 is and does on the left, its switch or choice on the right, saved the moment it changes — there is no
-Save button. Only what Synapsez really does is there: System's browser and computer switches are the
+Save button. Only what Ephapse really does is there: System's browser and computer switches are the
 cloud browser and cloud computer plugins; Extensions are MCP servers, and Developer adds one by hand;
 Customize has **Yours** (a list, with a ⋯ menu per row) and **Discover** (the skills people here share,
 the services not yet connected, the plugins switched off — no catalogue, no install counts). Old section
@@ -1960,9 +1960,9 @@ Language, Get help, **Give feedback**, **View changelog**, Learn more and Sign o
   credit), spend today, this week and this month, and the key's own limit or budget with its reset. The
   deployment's shared key is never asked — its figures are the deployment's. OrcaRouter reports a key's
   credit (`GET /v1/dashboard/billing/subscription`) and no remaining allowance, so its free-model bar is
-  Synapsez's own count against the ceiling OrcaRouter publishes; which ceiling applies is shown only once
+  Ephapse's own count against the ceiling OrcaRouter publishes; which ceiling applies is shown only once
   it is known, because no endpoint reports what a workspace has paid. Google's Gemini API reports nothing,
-  so for it, and for every provider, the page shows what Synapsez counted: requests by day and by model, the week hour by hour (a grid, or a table of every hour that
+  so for it, and for every provider, the page shows what Ephapse counted: requests by day and by model, the week hour by hour (a grid, or a table of every hour that
   scrolls in its own box), and the pace against last week (`server/usageReport.js`,
   `public/js/usage-panel.js`). The line at the top projects the tightest limit at the pace of its
   period so far — on track, or about when it runs out before it resets — and names the model most of
@@ -2065,7 +2065,7 @@ and search the web; only your own machine can touch your files.
 ```bash
 git init
 git add .
-git commit -m "Synapsez"
+git commit -m "Ephapse"
 git branch -M main
 git remote add origin https://github.com/<you>/ai-remote.git
 git push -u origin main
@@ -2128,7 +2128,7 @@ step, with the optional certificate and how to bring data over from another data
 | `SEPAY_ACCOUNT_NAME` | optional | The account holder's name shown beside the QR. |
 | `SEPAY_WEBHOOK_SECRET` | optional | The secret of SePay's webhook (HMAC-SHA256, set in SePay's dashboard when the webhook is made): `POST /api/billing/sepay` is checked on its raw bytes with it and answers 404 while it is unset. Without it the webhook answers 404 (the backup poll, with `SEPAY_API_TOKEN`, can still take transfers). |
 | `SEPAY_API_TOKEN` | optional | A SePay API key (Cài đặt công ty → API Keys) for the backup poll of `userapi.sepay.vn`, which takes transfers the webhook missed. Without it nothing is polled. |
-| `BILLING_SELLER_NAME` | optional | The seller's name printed on receipts (default `Synapsez`). |
+| `BILLING_SELLER_NAME` | optional | The seller's name printed on receipts (default `Ephapse`). |
 | `BILLING_TAX_RATE` | optional | A VAT percentage (for example `10`). Receipts, e-invoices and the checkout's summary carry a tax line ("of which VAT") only when this is a number; unset means none. Prices include the tax. A receipt is never a VAT invoice either way. |
 | `SEPAY_EINVOICE_CLIENT_ID` | optional | The client id of SePay's e-invoice API. E-invoices are built but stay **off** until this, the secret and the template are all set - and they need a tax code and a digital signature registered with SePay. With them off nothing reaches SePay. |
 | `SEPAY_EINVOICE_CLIENT_SECRET` | optional | The client secret of SePay's e-invoice API (Basic auth to get a 24-hour token). Never logged or returned. |
@@ -2143,7 +2143,7 @@ step, with the optional certificate and how to bring data over from another data
 | `FIRECRAWL_API_KEY` | optional | Firecrawl (firecrawl.dev, Free or Hobby plan, the owner's being Hobby; one key is the environment's, the owner may add more and choose one as the paid key in Settings → Free allowances): a search engine, pages that refuse this server, a site's pages, code discussions and the free paper and law indexes. See "Searching the web". |
 | `FIRECRAWL_FREE_CREDITS`, `FIRECRAWL_SEARCH_FREE`, `FIRECRAWL_SCRAPE_FREE`, `FIRECRAWL_MORE_FREE`, `FIRECRAWL_INDEX_FREE_DAILY` | optional | `FIRECRAWL_FREE_CREDITS` is each key's fallback month (950), used until Firecrawl reports the key's plan — the live plan wins (95% of it; Hobby's 5,000 → 4,750). `FIRECRAWL_INDEX_FREE_DAILY` is each key's free-index calls a day (950). `FIRECRAWL_SEARCH_FREE`, `FIRECRAWL_SCRAPE_FREE` and `FIRECRAWL_MORE_FREE` fix the searches, pages read, and site maps, crawls and code shares outright; unset, they are 60% / 35% / 5% of the summed capacity of all Firecrawl keys. |
 | more keys for `EXA_API_KEY`, `TAVILY_API_KEY`, `FIRECRAWL_API_KEY` | in the app | The variable is key 1; up to 10 per service, key 1 among them, are added by the owner in Settings → People → Free allowances (in the Administration group), with one optional paid key each. |
-| `SEC_USER_AGENT` | recommended | Market data: how SEC EDGAR is asked, as SEC requires — `Synapsez <contact email>`, the owner's real contact. Without it SEC is never asked, and US statements, filings and the US screen fall back to Yahoo or say so. See `docs/vercel-config.md`. |
+| `SEC_USER_AGENT` | recommended | Market data: how SEC EDGAR is asked, as SEC requires — `Ephapse <contact email>`, the owner's real contact. Without it SEC is never asked, and US statements, filings and the US screen fall back to Yahoo or say so. See `docs/vercel-config.md`. |
 | `COINGECKO_DEMO_KEY` | optional | Market data: CoinGecko's free Demo key (no card) — 100 calls a minute of the deployment's own instead of a share of the server address's. |
 | `FRED_API_KEY` | optional | Market data: FRED's free key, for US rates, inflation, unemployment and GDP. Without it US series come from the World Bank (annual). |
 | `FIN_SOURCE_<NAME>` | optional | `off` switches one market data source off everywhere at once — `YAHOO`, `VNDIRECT`, `KBS`, `VIETCAP`, `SEC`, `COINGECKO`, `FRANKFURTER`, `ECB`, `ERAPI`, `VIETCOMBANK`, `SJC`, `WORLDBANK`, `FRED`, `NSO`, `FMARKET`. For a source that objects or keeps refusing. `on` asks a source this server would otherwise leave alone: on Vercel, SJC is off (a bot check turns datacenters away) and so is Vietcap outside Asia (it refuses US addresses) — measured in `docs/research/2026-11-10-finance-probe-iad1.md`. |
@@ -2217,7 +2217,7 @@ assuming a fresh one, and that the serverless-only branches behave.
 | `RESEARCH_REPUTABLE_DOMAINS` | Comma-separated sites deep research counts as reputable, on top of its built-in list. |
 | `SANDBOX_DISABLED` | `1` hides the cloud sandbox. On Vercel it is offered automatically; elsewhere it needs `VERCEL_TOKEN`, `VERCEL_TEAM_ID` and `VERCEL_PROJECT_ID`. |
 | `E2B_API_KEY` | Runs each account's cloud computer on E2B first (`server/e2b.js`), with the Vercel Sandbox standing in when E2B cannot: no key, this month's share of the credit spent, all twenty E2B machines running, or E2B not answering. An E2B machine pauses after ten idle minutes, keeping its memory and disk, and is not billed while paused. Every command is sent as root and drops to the account with `setpriv`; none reads a login file, the account's or root's. When the app first meets a machine it closes what E2B leaves open: `/usr/local` becomes root's alone and the account loses its `sudo`, so root is only `as_root`, which asks first. Use a Hobby key with no card on the team, so a spent credit is a refusal and never a bill. |
-| `E2B_TEMPLATE` | The E2B template machines are made from. Leave it unset: the default is `synapsez-computer`, built by `npm run e2b:template` (2 vCPU and 2 GiB, or `E2B_TEMPLATE_CPUS` / `E2B_TEMPLATE_MEMORY_MB`). A machine's memory is fixed when it is made, so this decides everything the cloud browser can do. If the template is not found, machines fall back to `base` for ten minutes and say so. Set this only to use a template of your own. |
+| `E2B_TEMPLATE` | The E2B template machines are made from. Leave it unset: the default is `ephapse-computer`, built by `npm run e2b:template` (2 vCPU and 2 GiB, or `E2B_TEMPLATE_CPUS` / `E2B_TEMPLATE_MEMORY_MB`). A machine's memory is fixed when it is made, so this decides everything the cloud browser can do. If the template is not found, machines fall back to `base` for ten minutes and say so. Set this only to use a template of your own. |
 | `E2B_CREDIT_MILLS` / `E2B_CREDIT_EXPIRES` / `E2B_CREDIT_LASTING_MILLS` | The E2B credit, in thousandths of a dollar: the part that lapses (default `100000`), the day it lapses (default `2027-12-01`), and the part that never does (default `5000`). A month may spend what was left of the lapsing part when it began, divided by the months left before it lapses, so a quiet month passes its share on and none of it lapses unused; then the lasting part. Each is taken at 97%. The use and this month's ceiling are in Settings → People → Free allowances (in the Administration group). |
 | `E2B_ACCOUNT_SHARE` | The most of the month's E2B credit one account's machine may use (a fraction, default `0.34`; its share is worked out from the people using it, between `E2B_ACCOUNT_MIN_MILLS` and this). Past it, that account's cloud computer runs on the Vercel stand-in, so one busy account cannot spend the month for everybody. |
 | `CLOUD_ACTIONS_PER_DAY` / `CLOUD_ACTIONS_TOTAL_PER_DAY` | Cloud browser and sandbox actions a day, per account (default `60`) and in all (default `400`) — sized to Hobby's CPU allowance. Raise them on a paid plan. |
@@ -2231,6 +2231,8 @@ assuming a fresh one, and that the serverless-only branches behave.
 | `ALLOW_MCP_STDIO` | `true` lets stdio MCP servers (`npx -y gitnexus@latest mcp`) run as programs beside the server, on a single-owner machine. Off by default, and never on Vercel: on a shared server that is running a command somebody typed, with every account's keys in reach. Without it, stdio servers run on each account's own cloud computer (on E2B, or the Vercel Sandbox, so `SANDBOX_DISABLED` switches them off too): started only when a tool is called, and checked once on a scratch machine the first time anybody adds a command, so the next account to add the same one has it at once. |
 | `LOG_LEVEL` / `LOG_FORMAT` | `debug` adds debug lines. `json` or `text` overrides the format, which is JSON on Vercel and readable text elsewhere. Every model call is one `gen_ai.span` line with the OpenTelemetry GenAI attributes (`gen_ai.request.model`, `gen_ai.usage.input_tokens`, `error.type`, `duration_ms`…) beside the request's trace id — never any content — so a collector that reads JSON logs can lift them as spans. |
 | `REPO_URL` | The repository the "connect a computer" command clones. Default this project's; set it on a fork. |
+
+> **Deploying 1.33.0 (the rename to Ephapse): rebuild the cloud computer template first.** The machines, the cloud browser and the MCP checks run from a template named `ephapse-computer`, and its internal names changed with the product. Run `npm run e2b:template` before deploying. The machine's version is raised (`BASE_VERSION` 3), so after the rebuild each account's cloud computer moves to a new machine on its next use, with its home folder carried across. Until the rebuild, new machines are made from E2B's basic template and existing ones keep running, but the cloud browser and the MCP checks do not answer on them. Remembered devices and shared-link sessions (their cookies were renamed) reset once.
 
 </details>
 
@@ -2430,7 +2432,7 @@ people want.
 
 > **A Windows VM costs money, per hour, whether or not anything is happening.** A small always-on
 > instance is roughly the price of a streaming subscription; the smallest ones will run the worker
-> and struggle with a browser. This is the one part of Synapsez with an unavoidable bill attached,
+> and struggle with a browser. This is the one part of Ephapse with an unavoidable bill attached,
 > which is why it is opt-in and last in this document rather than assumed.
 
 ---
@@ -2860,7 +2862,7 @@ message. The same rows are in the deploy table under "Deploy"; this is the list 
 | `SEPAY_BANK_CODE` | The bank's short code as SePay's QR image expects it. |
 | `SEPAY_ACCOUNT_NAME` | The account holder's name shown beside the QR. |
 | `SEPAY_EINVOICE_CLIENT_ID`, `SEPAY_EINVOICE_CLIENT_SECRET` | The e-invoice API's credentials. E-invoices are built and stay **off** until these and `SEPAY_EINVOICE_TEMPLATE` are all set; they also need a tax code and a digital signature registered with SePay. `SEPAY_EINVOICE_SANDBOX=1` points them at SePay's sandbox. |
-| `BILLING_SELLER_NAME` | The seller's name on receipts (default `Synapsez`). |
+| `BILLING_SELLER_NAME` | The seller's name on receipts (default `Ephapse`). |
 | `BILLING_TAX_RATE` | A VAT percentage. Unset means receipts carry no tax line. A receipt is not a VAT invoice either way. |
 | `E2B_CONCURRENT_LIMIT` | How many cloud-computer machines E2B lets this deployment run at once (default 20); the administrators' Billing card shows how many are running against it. |
 | `DATABASE_INCLUDED_GB` | The database size the hosting plan includes (default 8); the card shows the database against it, amber at 75% and red at 90%. |
@@ -2918,7 +2920,7 @@ storage, which must come before going live; and switching `BILLING_MODE` to `liv
 
 ## Cost
 
-You pay your providers directly; Synapsez adds nothing. Verified per-million-token pricing is shown
+You pay your providers directly; Ephapse adds nothing. Verified per-million-token pricing is shown
 for Claude models and for anything loaded from the OpenRouter catalogue. Where a price is not
 verified the app shows token counts rather than inventing a number — check your provider's pricing
 page.

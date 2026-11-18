@@ -8,7 +8,7 @@ has a daily quota far above what one person uses.
 
 ## 1. Create the OAuth client (once, ~10 minutes)
 
-1. Open <https://console.cloud.google.com/> and create a project (any name, e.g. "Synapsez").
+1. Open <https://console.cloud.google.com/> and create a project (any name, e.g. "Ephapse").
 2. **APIs & Services → Library** — enable each of these:
    Gmail API, Google Calendar API, Google Drive API, Google Docs API, Google Sheets API,
    Google Forms API, Google Tasks API, People API.
@@ -20,7 +20,7 @@ has a daily quota far above what one person uses.
 4. **APIs & Services → Credentials → Create credentials → OAuth client ID**:
    - Application type **Web application**.
    - **Authorised redirect URI**: `https://YOUR-DOMAIN/api/connectors/google/callback`
-     — for example `https://synapsez.vercel.app/api/connectors/google/callback`. The whole
+     — for example `https://www.ephapse.net/api/connectors/google/callback`. The whole
      path, not just the domain: the domain alone is what *Authorised JavaScript origins*
      takes, and putting it here gives `Error 400: redirect_uri_mismatch`.
      For a local run also add `http://localhost:5173/api/connectors/google/callback`

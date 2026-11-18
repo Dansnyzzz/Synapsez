@@ -1,6 +1,6 @@
 # Domain security: keeping visitors on the real site
 
-How Synapsez protects people from DNS spoofing and look-alike phishing. What the code
+How Ephapse protects people from DNS spoofing and look-alike phishing. What the code
 already does, what only the owner can do, and how to check it live.
 
 ## Check it
@@ -32,14 +32,16 @@ Both run the same checks (`server/domainCheck.js`), live, against public resolve
 
 ## What only the owner can do
 
-`synapsez.vercel.app` is a name in **Vercel's** zone. Vercel does not sign `vercel.app` with
-DNSSEC and offers no setting to do so, and Vercel's own nameservers do not support DNSSEC
-for custom domains either (Vercel community answers, January–April 2026). It is still well
-protected: `.app` is on the HSTS preload list as a whole top-level domain, so every browser
-uses HTTPS for it from the first visit, and `vercel.app` has CAA records limiting issuance to
-Let's Encrypt and Google Trust Services.
+Until 1.33.0 the app ran at a name in **Vercel's** zone (`vercel.app`). Vercel does not sign
+`vercel.app` with DNSSEC and offers no setting to do so, and Vercel's own nameservers do not
+support DNSSEC for custom domains either (Vercel community answers, January–April 2026). That
+address was still well protected: `.app` is on the HSTS preload list as a whole top-level
+domain, and `vercel.app` has CAA records limiting issuance to Let's Encrypt and Google Trust
+Services.
 
-For full DNS authentication, move to a domain of your own:
+The app now has a domain of its own, `www.ephapse.net` (2026-11-17), which is not covered by
+that preload, and whose DNSSEC, CAA and mail records depend on where its DNS is hosted. Run the
+check against it; for full DNS authentication, work through these steps for that domain:
 
 1. Buy a domain at a registrar that supports DNSSEC (most do).
 2. Host its DNS at a provider that signs zones — Cloudflare DNS is free and does. Point the

@@ -95,7 +95,7 @@ section('the guide: a key, step by step');
     drawing: !!document.querySelector('.onbk__page'),
     clip: (() => {
       const v = document.querySelector('.onbk__video video');
-      return v && { src: v.getAttribute('src'), poster: v.getAttribute('poster'), muted: v.muted, loop: v.loop, inline: v.hasAttribute('playsinline'), name: v.getAttribute('aria-label'), playing: !v.paused, caption: document.querySelector('.onbk__sample')?.textContent };
+      return v && { src: v.getAttribute('src'), poster: v.getAttribute('poster'), muted: v.muted, loop: v.loop, inline: v.hasAttribute('playsinline'), name: v.getAttribute('aria-label'), playing: !v.paused, caption: !!document.querySelector('.onbk__sample, .onbk__clip figcaption') };
     })(),
     box: document.querySelector('[data-key-box]')?.tagName,
   }));
@@ -106,7 +106,7 @@ section('the guide: a key, step by step');
   check('no clip of somebody typing a key', !seen.video);
   check('the real page as a video, not a drawing, and one box to paste into', !seen.drawing && seen.box === 'INPUT');
   check('  OpenRouter\'s video: its own file, muted, looping, inline, still frame first, named', seen.clip?.src === '/onboarding/keys/openrouter.webm' && seen.clip.poster === '/onboarding/keys/openrouter.jpg' && seen.clip.muted && seen.clip.loop && seen.clip.inline && /OpenRouter/.test(seen.clip.name || ''), JSON.stringify(seen.clip));
-  check('  and says it is the real page as of November 2026', /November 2026/.test(seen.clip?.caption || ''), seen.clip?.caption);
+  check('  and carries no visible caption under the video', seen.clip?.caption === false, String(seen.clip?.caption));
   await shot('guide-keys');
   await page.click('.onbk__card[data-key-provider="google"]');
   await page.waitForTimeout(100);

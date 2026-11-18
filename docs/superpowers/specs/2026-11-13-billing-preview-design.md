@@ -391,7 +391,7 @@ From spec A's final review, all needed before a held call reaches the owner's pa
 
 - In Vercel: `SEPAY_WEBHOOK_SECRET`, `SEPAY_BANK_ACCOUNT`, `SEPAY_BANK_CODE` (e.g. `MBBank`),
   `SEPAY_ACCOUNT_NAME`, optionally `SEPAY_API_TOKEN`; `BILLING_MODE` may stay unset (preview).
-- In SePay: the payment-code prefix `SZ`; a webhook to `https://synapsez.vercel.app/api/billing/sepay`
+- In SePay: the payment-code prefix `SZ`; a webhook to `https://www.ephapse.net/api/billing/sepay`
   with HMAC and the same secret; "resend automatically when the server returns an error" on.
 - Give the `billing` permission to any administrator who should see the money.
 - Test: a simulated transfer, then one small real transfer (50,000đ top-up) on your own account.

@@ -265,7 +265,7 @@ section('orders: paid from the balance, or a QR for the rest');
 {
   process.env.SEPAY_BANK_ACCOUNT = '0123456789';
   process.env.SEPAY_BANK_CODE = 'MBBank';
-  process.env.SEPAY_ACCOUNT_NAME = 'SYNAPSEZ';
+  process.env.SEPAY_ACCOUNT_NAME = 'EPHAPSE';
   const rich = await makeUser();
   await store.creditBalance(rich.id, 200000, { kind: 'topup', topup: true });
   const paid = await orders.createOrder(rich.id, { kind: 'plan', plan: 'plus', period: 'month' }, { now: NOW });
@@ -280,7 +280,7 @@ section('orders: paid from the balance, or a QR for the rest');
   const short = await orders.createOrder(poor.id, { kind: 'plan', plan: 'plus', period: 'month' }, { now: NOW });
   check('a short balance leaves the order pending with the rest to transfer', short.paidNow === false && short.order.status === 'pending' && short.due.vnd === 100000, JSON.stringify(short.due));
   const qr = short.due.qr;
-  check('  the QR names the amount and the order code', qr.image === `https://qr.sepay.vn/img?acc=0123456789&bank=MBBank&amount=100000&des=${short.order.code}` && /^SZ\d{10}$/.test(qr.content) && qr.content === short.order.code && qr.holder === 'SYNAPSEZ', JSON.stringify(qr));
+  check('  the QR names the amount and the order code', qr.image === `https://qr.sepay.vn/img?acc=0123456789&bank=MBBank&amount=100000&des=${short.order.code}` && /^SZ\d{10}$/.test(qr.content) && qr.content === short.order.code && qr.holder === 'EPHAPSE', JSON.stringify(qr));
   check('  the order is good for 30 minutes at the locked price', +short.order.expiresAt === NOW.getTime() + 1_800_000 && short.order.priceVnd === 129000 && short.order.rate === 25655.85);
   check('  nothing was taken from the balance and no plan started', (await balanceOf(poor.id)) === 29000 && (await store.getSubscription(poor.id)) === null);
   const bankOnly = await orders.createOrder(poor.id, { kind: 'plan', plan: 'plus', period: 'month', useBalance: false }, { now: NOW });

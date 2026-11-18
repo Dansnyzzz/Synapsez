@@ -95,7 +95,7 @@ function wrapText(ctx, text, width) {
 export async function drawReceipt(receipt, { language = 'en', seller, env = process.env } = {}) {
   const { PDFDocument, GlobalFonts } = await import('@napi-rs/canvas');
   const vi = lang(language) === 'vi';
-  const name = seller || env.BILLING_SELLER_NAME || 'Synapsez';
+  const name = seller || env.BILLING_SELLER_NAME || 'Ephapse';
   if (!GlobalFonts.has(FONT)) GlobalFonts.register(fs.readFileSync(FONT_FILE), FONT);
 
   const title = vi ? 'Biên nhận thanh toán' : 'Payment receipt';

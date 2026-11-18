@@ -137,7 +137,7 @@ const iso = (date) => new Date(date).toISOString().replace(/\.\d+Z$/, 'Z');
  * description, identifier, keywords, language, lastModifiedBy, lastPrinted,
  * modified, revision, subject, title, version.
  */
-export function corePropsXml({ title = '', author = 'Synapsez', created = new Date(), description = '' } = {}) {
+export function corePropsXml({ title = '', author = 'Ephapse', created = new Date(), description = '' } = {}) {
   const stamp = iso(created);
   const parts = [
     `<dcterms:created xsi:type="dcterms:W3CDTF">${stamp}</dcterms:created>`,
@@ -175,7 +175,7 @@ export function corePropsXml({ title = '', author = 'Synapsez', created = new Da
  *   rather than being handed in as a blob of markup, because a blob has to be
  *   inserted somewhere and there is no one place that is correct for all of them.
  */
-export function appPropsXml({ application = 'Synapsez', counts = {} } = {}) {
+export function appPropsXml({ application = 'Ephapse', counts = {} } = {}) {
   const slot = (name) =>
     counts[name] == null ? '' : `<${name}>${escapeXml(String(counts[name]))}</${name}>`;
 

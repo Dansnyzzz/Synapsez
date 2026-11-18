@@ -44,7 +44,7 @@ const stand = (world) => {
 };
 const verdicts = (result) => Object.fromEntries(result.checks.map((c) => [c.id, c.verdict]));
 
-section('a platform address that is not signed (synapsez.vercel.app today)');
+section('a platform address that is not signed (an address under vercel.app)');
 {
   const world = stand({
     signed: false,
@@ -54,7 +54,7 @@ section('a platform address that is not signed (synapsez.vercel.app today)');
     hsts: 'max-age=63072000; includeSubDomains; preload',
     preloaded: ['app'],
   });
-  const result = await checkDomain({ url: 'https://synapsez.vercel.app', mailFrom: 'someone@gmail.com', fetchImpl: world.fetchImpl, now: new Date('2026-11-09T10:00:00Z') });
+  const result = await checkDomain({ url: 'https://ephapse.vercel.app', mailFrom: 'someone@gmail.com', fetchImpl: world.fetchImpl, now: new Date('2026-11-09T10:00:00Z') });
   const v = verdicts(result);
   const dnssec = result.checks.find((c) => c.id === 'dnssec');
   check('DNSSEC is missing, and the unsigned zone is named as the platform\'s', v.dnssec === 'fail' && dnssec.facts.unsignedZone === 'vercel.app' && dnssec.facts.platform === true, JSON.stringify(dnssec));
@@ -62,7 +62,7 @@ section('a platform address that is not signed (synapsez.vercel.app today)');
   check('preloaded by its top-level domain', v.preload === 'ok' && result.checks.find((c) => c.id === 'preload').facts.by === 'app');
   check('CAA found on the parent, with its issuers', v.caa === 'ok' && JSON.stringify(result.checks.find((c) => c.id === 'caa').facts.issuers) === '["letsencrypt.org","pki.goog"]');
   check('gmail.com: SPF, but DMARC only p=none, so could be better', v.mail === 'warn' && result.checks.find((c) => c.id === 'mail').facts.dmarc === 'none');
-  check('nothing but this address, its parents and the sender\'s domain was asked about', world.asked.every((a) => /synapsez\.vercel\.app|vercel\.app|\?app$|gmail\.com|^synapsez\.vercel\.app\/$/.test(a)), world.asked.filter((a) => !/vercel\.app|app$|gmail\.com/.test(a)).join(', '));
+  check('nothing but this address, its parents and the sender\'s domain was asked about', world.asked.every((a) => /ephapse\.vercel\.app|vercel\.app|\?app$|gmail\.com|^ephapse\.vercel\.app\/$/.test(a)), world.asked.filter((a) => !/vercel\.app|app$|gmail\.com/.test(a)).join(', '));
 }
 
 section('a domain of its own, done right');

@@ -67,7 +67,7 @@ def _shell(command):
     importlib.invalidate_caches()
 
 
-namespace["__synz_shell__"] = _shell
+namespace["__eph_shell__"] = _shell
 
 
 def _transform(code):
@@ -77,10 +77,10 @@ def _transform(code):
         body = line.lstrip()
         indent = line[: len(line) - len(body)]
         if body.startswith("!"):
-            lines.append("%s__synz_shell__(%r)" % (indent, body[1:]))
+            lines.append("%s__eph_shell__(%r)" % (indent, body[1:]))
         elif body.startswith("%pip ") or body.startswith("%pip\t"):
             command = "%s -m pip %s" % (shlex.quote(sys.executable), body[5:])
-            lines.append("%s__synz_shell__(%r)" % (indent, command))
+            lines.append("%s__eph_shell__(%r)" % (indent, command))
         else:
             lines.append(line)
     return "\n".join(lines)

@@ -45,7 +45,7 @@ on a transparent track (no background band), the current tab is scrolled into vi
 soft fades at the edges say there is more. Touch and trackpad scroll it; arrow keys already move between
 tabs.
 
-**A to Z (owner asks whether it is complete).** Today: 1 What Synapsez does · 2 API key · 3 Model & limits ·
+**A to Z (owner asks whether it is complete).** Today: 1 What Ephapse does · 2 API key · 3 Model & limits ·
 4 Cloud computer · 5 Freedom level · 6 First task. Missing for a new person: where their work lives and how
 to make it carry on without them. **Owner chose (2026-11-16) one step, added before "First task":**
 - **Automations & Bot** — schedule a task, the Bot page, what runs while you are away.
@@ -117,7 +117,7 @@ near 15–20% after compacting.
 
 ## 6. Billing screens like Claude's, the rate once a day, yearly saves 17% (owner, 2026-11-16)
 
-Asked with screens of Synapsez's plans sheet and checkout next to claude.ai's upgrade pages. Decisions taken
+Asked with screens of Ephapse's plans sheet and checkout next to claude.ai's upgrade pages. Decisions taken
 the same day: Frankfurter first (no attribution needed); a "coming soon" Team tab; yearly prices that save 17%.
 
 **Rate.** Order of sources becomes **Frankfurter v2** (`/v2/rates?base=USD&quotes=VND`: about twenty central
@@ -163,7 +163,7 @@ plan falls from about 37% to about 28%; monthly plans keep about 40%. Saved as "
   SePay, and "Dùng số dư (x ₫)" when there is a balance.
 - Right: a summary card — "Gói <Plan>", the line, any upgrade credit, Tạm tính, a tax line only if
   `BILLING_TAX_RATE` is set, **Tổng cần thanh toán hôm nay**; an info box "Gói tự gia hạn ngày <date> từ số
-  dư; nếu số dư không đủ, chúng tôi gửi email kèm mã QR 3 ngày trước."; a consent checkbox (Synapsez takes
+  dư; nếu số dư không đủ, chúng tôi gửi email kèm mã QR 3 ngày trước."; a consent checkbox (Ephapse takes
   the amount above now and renews it each period until you cancel, under the Terms; you can cancel any time
   in Settings → Billing) — the button **"Đăng ký"** stays disabled until it is ticked; then the QR step as
   today.
@@ -174,7 +174,7 @@ plan falls from about 37% to about 28%; monthly plans keep about 40%. Saved as "
 
 ## 7. Clearing old tool output before summarising (owner, 2026-11-16)
 
-Asked after a review of the four layers of context compression. Synapsez owns layer 1 and part of layer 2;
+Asked after a review of the four layers of context compression. Ephapse owns layer 1 and part of layer 2;
 layers 3–4 run inside the providers. Prompt caching is already on (`cache_control` for Claude, the date last
 and date-only in the system prompt). What layer 1 lacks is the cheap step that providers' own "context
 editing" does (Anthropic `clear_tool_uses`) and that research found about as good as summarising, for no

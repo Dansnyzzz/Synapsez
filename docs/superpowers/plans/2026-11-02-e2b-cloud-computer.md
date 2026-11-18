@@ -153,7 +153,7 @@ Spec: `docs/superpowers/specs/2026-11-02-e2b-cloud-computer-design.md`.
 - [ ] Probe dùng adapter thật (`e2bScratch`) và key trong `.env`. Nó kiểm từng điều trong
   mục "Kiểm chứng" của spec, in ✓/✗, và luôn `kill` máy ở `finally`.
 - [ ] Template: `Template().fromBaseImage().aptInstall([...fonts], …)` rồi
-  `Template.build(t, 'synapsez-computer', { cpuCount: 2, memoryMB: 2048 })`.
+  `Template.build(t, 'ephapse-computer', { cpuCount: 2, memoryMB: 2048 })`.
 - [ ] `npm run lint` và `npm run typecheck`.
 - [ ] Commit.
 

@@ -122,14 +122,18 @@ export function e2bConfigured(env = process.env) {
  * MiB, where Chromium cannot start: every cloud browser call failed, for everybody,
  * for as long as nobody set a setting (owner's screenshots, 2026-11-05).
  */
-export const TEMPLATE_NAME = 'synapsez-computer';
+export const TEMPLATE_NAME = 'ephapse-computer';
 /**
  * The size that template is built at. Two gibibytes is what Chromium and a pandas
  * frame together fit in; there is swap on the disk behind it (`CLOSE_MACHINE`).
  */
 export const TEMPLATE_SIZE = { cpu: TEMPLATE_SIZE_CPU, memMb: TEMPLATE_SIZE_MEM };
-/** Raise it when the template changes: machines made from an older build move to the new one, keeping their files. */
-export const BASE_VERSION = 2;
+/**
+ * Raise it when the template changes: machines made from an older build move to the new one, keeping their files.
+ * 3: the product's rename (1.33.0) renamed the folders, key header and environment inside the machine, so a machine made
+ * from the old template would no longer answer the server; each account is moved across, home folder and all.
+ */
+export const BASE_VERSION = 3;
 /** After E2B says the template is not there, how long before asking again: `base` works meanwhile. */
 const TEMPLATE_RECHECK_MS = 10 * 60_000;
 /** Moving to a newer machine: how long each half may take, the most it carries, how long before another try. */
@@ -358,7 +362,7 @@ const onMachine = (file) => {
   return raw.startsWith('/') ? raw : path.posix.join(HOME, raw);
 };
 
-const NO_LOGIN_SHELL = Symbol('synz.noLoginShell');
+const NO_LOGIN_SHELL = Symbol('eph.noLoginShell');
 
 /**
  * Commands on this machine start without a login shell (SBX-008).
@@ -642,7 +646,7 @@ function machine(box, { userId, record, paid = false } = {}) {
       const wanted = this.listCheckpoints().find((c) => c.id === id);
       if (!wanted) throw new Error(`There is no checkpoint ${id} on this computer.`);
       const { Sandbox } = await loadSdk();
-      const next = await Sandbox.create(id, { ...connection(), timeoutMs: IDLE_MS, metadata: box.metadata || { app: 'synapsez', machine: record.name }, lifecycle: { onTimeout: 'pause', autoResume: false }, network: NETWORK });
+      const next = await Sandbox.create(id, { ...connection(), timeoutMs: IDLE_MS, metadata: box.metadata || { app: 'ephapse', machine: record.name }, lifecycle: { onTimeout: 'pause', autoResume: false }, network: NETWORK });
       await box.kill().catch(() => {});
       record.id = next.sandboxId;
       await getStore().setUserSetting(userId, SETTING, record);
@@ -726,7 +730,7 @@ async function makeBox(Sandbox, name) {
     const box = await Sandbox.create(from, {
       ...connection(),
       timeoutMs: IDLE_MS,
-      metadata: { app: 'synapsez', machine: name },
+      metadata: { app: 'ephapse', machine: name },
       lifecycle: { onTimeout: 'pause', autoResume: false },
       network: NETWORK,
     });
@@ -774,7 +778,7 @@ async function moveMachine(Sandbox, userId, name, record, old, { paid = false } 
   let receipt = null;
   /** @type {any} */
   let box = null;
-  const file = `/tmp/synz-move-${old.sandboxId}.tgz`;
+  const file = `/tmp/eph-move-${old.sandboxId}.tgz`;
   try {
     const packed = await old.runCommand({
       cmd: 'bash',
@@ -799,8 +803,8 @@ async function moveMachine(Sandbox, userId, name, record, old, { paid = false } 
     const arrived = machine(box, { userId, record: next, paid });
     const unpacked = await arrived.runCommand({
       cmd: 'bash',
-      args: ['--noprofile', '--norc', '-c', `curl -fsS --max-time ${Math.floor(MOVE_STEP_MS / 1000) - 5} "$SYNZ_FROM" | tar xzf - -C ${HOME}`],
-      env: { SYNZ_FROM: await old.downloadUrl(file) },
+      args: ['--noprofile', '--norc', '-c', `curl -fsS --max-time ${Math.floor(MOVE_STEP_MS / 1000) - 5} "$EPH_FROM" | tar xzf - -C ${HOME}`],
+      env: { EPH_FROM: await old.downloadUrl(file) },
       timeoutMs: MOVE_STEP_MS,
     });
     if (unpacked.exitCode !== 0) throw new Error(`unpacking ended with ${unpacked.exitCode}`);
@@ -938,7 +942,7 @@ export async function e2bScratch({ ms = SCRATCH_MS, userId, internet = true, rol
   /** @type {{ cpu: number, memMb: number, paidUntil?: number }} */
   const record = { ...ASSUMED };
   const receipt = await payUntil(record, Date.now() + ms, userId, { paid });
-  const options = { ...connection(), timeoutMs: ms, metadata: { app: 'synapsez', role }, network: NETWORK, ...(internet ? {} : { allowInternetAccess: false }) };
+  const options = { ...connection(), timeoutMs: ms, metadata: { app: 'ephapse', role }, network: NETWORK, ...(internet ? {} : { allowInternetAccess: false }) };
   /** @type {any} */
   let box;
   try {

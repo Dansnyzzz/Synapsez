@@ -755,13 +755,13 @@ section('a billable account\'s cloud computer window is held and given back');
   const live = (await meter.periodUsage(admin.id)).month;
   const bucket = `bill:sandbox:${admin.id}:${month(live.start)}`;
   state.createError = named('Error', 'all busy');
-  await e2b.e2bMachineFor(admin.id, 'synz-bm').then(() => null, (e) => e);
+  await e2b.e2bMachineFor(admin.id, 'eph-bm').then(() => null, (e) => e);
   check('a start that fails gives its window back to the plan', (await counter(bucket)) === 0, String(await counter(bucket)));
   state.createError = null;
-  await e2b.e2bMachineFor(admin.id, 'synz-bm');
+  await e2b.e2bMachineFor(admin.id, 'eph-bm');
   check('a machine that starts keeps its window: 4 minutes of the plan', (await counter(bucket)) === 240, String(await counter(bucket)));
   const other = await makeUser('user');
-  await e2b.e2bMachineFor(other.id, 'synz-other');
+  await e2b.e2bMachineFor(other.id, 'eph-other');
   check('an account that is not billable writes no billing counter', Number((await query("SELECT COUNT(*) AS c FROM rate_limits WHERE bucket LIKE $1", [`bill:%:${other.id}:%`]))[0].c) === 0);
   check('a billed window is not also drawn from a free share', Number((await query("SELECT COALESCE(SUM(count),0) AS c FROM rate_limits WHERE bucket LIKE $1", ['free:e2b:%:user:' + admin.id]))[0].c) === 0);
   const pool = async () => Number((await query("SELECT COALESCE(SUM(count),0) AS c FROM rate_limits WHERE bucket LIKE 'free:e2b:%' AND bucket NOT LIKE '%:user:%'"))[0].c);
@@ -966,14 +966,14 @@ section('end to end: a share-paid call counts, and a dry free pool is the balanc
   await clearE2b();
 
   const onShare = await fresh();
-  await e2b.e2bMachineFor(onShare.id, 'synz-fb1');
+  await e2b.e2bMachineFor(onShare.id, 'eph-fb1');
   const cost = await poolMonth();
   check('a window the share pays for goes on a free key, and the share is spent once: the balance is untouched', cost > 0 && (await machineShareCount(onShare)) === cost && (await balanceOf(onShare)) === 10_000, `pool ${cost} share ${await machineShareCount(onShare)} balance ${await balanceOf(onShare)}`);
 
   await tiers.exhaust('e2b');
   await pool.setPaidKey('e2b', 'env', 1_000_000);
   const onBalance = await fresh();
-  const started = await e2b.e2bMachineFor(onBalance.id, 'synz-fb2').then((m) => m.provider, (err) => err.name);
+  const started = await e2b.e2bMachineFor(onBalance.id, 'eph-fb2').then((m) => m.provider, (err) => err.name);
   check('  E2B\'s free month used up: the share is not used, the window is charged to the balance and starts on the paid key', started === 'e2b' && (await machineShareCount(onBalance)) === 0 && (await balanceOf(onBalance)) < 10_000 && (await counter(`paid:e2b@env:${thisMonth}`)) > 0, `${started} ${await balanceOf(onBalance)}`);
   await pool.setPaidKey('e2b', null);
   await clearE2b();
@@ -981,7 +981,7 @@ section('end to end: a share-paid call counts, and a dry free pool is the balanc
   // A share hold the free keys cannot serve after all is given back, and nothing stays counted.
   const stuck = await fresh();
   await pool.markKey('e2b', 'env', 'exhausted');
-  const refusedStart = await e2b.e2bMachineFor(stuck.id, 'synz-fb3').then(() => 'started', (err) => err.name);
+  const refusedStart = await e2b.e2bMachineFor(stuck.id, 'eph-fb3').then(() => 'started', (err) => err.name);
   await pool.markKey('e2b', 'env', 'ok');
   check('  and a start no key can serve is refused with the balance and the share untouched', refusedStart === 'E2BOutOfCredit' && (await balanceOf(stuck)) === 10_000 && (await machineShareCount(stuck)) === 0, `${refusedStart} ${await balanceOf(stuck)}`);
   e2b.__testing.useSdk(null);

@@ -281,7 +281,7 @@ const scout = await team.createBot(aliceId, { name: 'Scout', role: 'Finds things
 
   const body = (await alice.call('GET', '/api/account/export')).body;
   const bot = body?.team?.bots?.find((b) => b.name === 'Scout');
-  check('the team is in it, in the Bot page format', body?.team?.format === 'synapsez-bots/1', JSON.stringify(body?.team)?.slice(0, 200));
+  check('the team is in it, in the Bot page format', body?.team?.format === 'ephapse-bots/1', JSON.stringify(body?.team)?.slice(0, 200));
   check('  each bot with its instructions and memory', bot?.instructions === 'Look before you answer.' && bot?.memory?.some((m) => m.text === 'Alice prefers short answers.'), JSON.stringify(bot));
   const group = body?.team?.groups?.find((g) => g.name === 'Desk');
   check('  each group with its members and memory', group?.members?.includes(bot?.key) && group?.memory?.some((m) => m.text === 'The desk meets on Mondays.'), JSON.stringify(group));
@@ -411,7 +411,7 @@ section('skill_edit changes one exact piece and keeps the version before');
   const twice = await run('skill_edit', { name: 'Freight quote', old_string: 'c', new_string: 'k' }, 'c-here');
   check('  as is text that appears more than once', twice.isError && /appears \d+ times/.test(twice.content));
   const builtin = await run('skill_edit', { name: 'docx', old_string: 'a', new_string: 'b' }, 'c-here');
-  check("Synapsez's own skills cannot be changed", builtin.isError && /Synapsez's own/.test(builtin.content), builtin.content);
+  check("Ephapse's own skills cannot be changed", builtin.isError && /Ephapse's own/.test(builtin.content), builtin.content);
   const secret = await run('skill_edit', { name: 'Freight quote', old_string: 'Short', new_string: 'Long' }, 'c-inc');
   check('nothing is changed from an incognito conversation', secret.isError && /incognito/.test(secret.content) && (await skill())?.instructions.startsWith('Short,'));
   const draftInIncognito = await run('skill_write', { name: 'Secret skill', description: 'Never.', instructions: 'Never saved.' }, 'c-inc');

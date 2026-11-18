@@ -162,7 +162,7 @@ export const api = {
   giveTheme: (id, userId) => request('POST', `/api/admin/themes/${encodeURIComponent(id)}/holders`, { userId }),
   takeTheme: (id, userId) => request('DELETE', `/api/admin/themes/${encodeURIComponent(id)}/holders/${encodeURIComponent(userId)}`),
 
-  /** Settings → Usage: each provider's own figures for the account's keys, and what Synapsez counted. */
+  /** Settings → Usage: each provider's own figures for the account's keys, and what Ephapse counted. */
   usageReport: () => request('GET', '/api/usage/report'),
   /** The same without the hours: what the warning above the composer needs. */
   usageLimits: () => request('GET', '/api/usage/report?part=limits'),

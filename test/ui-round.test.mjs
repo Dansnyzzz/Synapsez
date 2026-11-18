@@ -246,7 +246,7 @@ section('Usage: the Overview adds up, and warns only about what is being spent')
   await page.waitForTimeout(150);
   const orca = await read();
   check('OrcaRouter with no ceiling known draws no bar, and says both', orca.bars.length === 0 && /30 free model requests today/.test(orca.money) && /50 a day/.test(orca.money) && /800 a day from 20 USD/.test(orca.money), orca.money.slice(0, 200));
-  check('  says the count is ours and the limit per workspace', /Synapsez’s own/.test(orca.money) && /per workspace/.test(orca.money));
+  check('  says the count is ours and the limit per workspace', /Ephapse’s own/.test(orca.money) && /per workspace/.test(orca.money));
   check('  with its balance', /Balance OrcaRouter reports: \$6\.00/.test(orca.money));
   await page.unroute('**/api/usage/report*');
   await closeDialogs();
@@ -947,7 +947,7 @@ section('the gate holds still: a wrong password, a trip to another tab, a reload
   await visitor.fill('#gate-username', 'half.done');
   await visitor.fill('#gate-email', 'half.done@test.local');
   await visitor.fill('#gate-password', 'never-kept-anywhere');
-  const kept = await visitor.evaluate(() => localStorage.getItem('synapsez:gate-draft') || '');
+  const kept = await visitor.evaluate(() => localStorage.getItem('ephapse:gate-draft') || '');
   check('what is typed is kept as it is typed, never the password', /half\.done@test\.local/.test(kept) && !/never-kept-anywhere/.test(kept), kept);
   await visitor.reload({ waitUntil: 'domcontentloaded' });
   await visitor.waitForSelector('#gate:not([hidden])');
@@ -1064,7 +1064,7 @@ section('signing up asks for the code sent to the email, then lets you in');
   await guest.waitForSelector('#model-chip', { timeout: 15_000 }).catch(() => {});
   const inside = await guest.evaluate(() => ({ gate: !document.getElementById('gate').hidden, app: !document.getElementById('app').hidden }));
   check('the right code lets you in', /^\d{6}$/.test(code) && !inside.gate && inside.app, `${code} ${JSON.stringify(inside)}`);
-  check('  and what was typed on the way is no longer kept', (await guest.evaluate(() => localStorage.getItem('synapsez:gate-draft'))) === null);
+  check('  and what was typed on the way is no longer kept', (await guest.evaluate(() => localStorage.getItem('ephapse:gate-draft'))) === null);
   await guest.close();
   delete process.env.EMAIL_CONFIRMATION;
 }

@@ -1,8 +1,8 @@
-# DS Bot (Fei2411/DS-Bot) — design and mechanisms, and the gap to Synapsez's Bot page
+# DS Bot (Fei2411/DS-Bot) — design and mechanisms, and the gap to Ephapse's Bot page
 
 Research date: 2026-11-10. Clone read: `scratchpad/repos/DS-Bot-src/DS-Bot` at `8e0013e` (depth 1; DS Bot 0.3.2, tracks DeepSeek Harness "DSH" 0.2.2-rc.1). Read-only: nothing in the clone was run, nothing in `d:\AI remote` was changed.
 
-Licence note: DS Bot is Apache-2.0. Synapsez takes its **design only** (NOTICE, "Bot page" section). Everything below describes DS Bot's mechanisms in my own words; where a number or a rule is load-bearing it is stated as a fact, not as quoted prompt text. Recommendations in §6 say *what* to build, never "copy this prompt".
+Licence note: DS Bot is Apache-2.0. Ephapse takes its **design only** (NOTICE, "Bot page" section). Everything below describes DS Bot's mechanisms in my own words; where a number or a rule is load-bearing it is stated as a fact, not as quoted prompt text. Recommendations in §6 say *what* to build, never "copy this prompt".
 
 ---
 
@@ -23,9 +23,9 @@ Licence note: DS Bot is Apache-2.0. Synapsez takes its **design only** (NOTICE, 
 9. **Per-Bot runtime**: own model + thinking level, permission preset, working folder, capabilities, connector switches, private flag, own browser profile, computer-use level; a Bot can be a local agent CLI.
 10. **A polished, motion-led UI**: animated characters whose motion shows state (thinking/searching/working/sending/waiting/alert/done), a header "island" that stretches for events, one capsule above the composer for everyone at work, a Usage page with ranges/compare/heatmap/drill-down, and a written UI standard (springs, radii, type scale, colours, a11y).
 
-**Synapsez today** already has the core shape (Chief, admin-first groups with `@Name` hand-offs, bot + group memory as data, details panel, settings with usage, scheduled tasks per bot, faces, notices) and is stricter in several places that must not regress (tenant scoping, approval for memory/instruction writes after outside reads, a hard cost ceiling, incognito, a private chat that never enters a group).
+**Ephapse today** already has the core shape (Chief, admin-first groups with `@Name` hand-offs, bot + group memory as data, details panel, settings with usage, scheduled tasks per bot, faces, notices) and is stricter in several places that must not regress (tenant scoping, approval for memory/instruction writes after outside reads, a hard cost ceiling, incognito, a private chat that never enters a group).
 
-**Biggest gaps, ranked** (detail in §6): (1) a *security* gap Synapsez has that DS Bot's structure also has — text relayed by another bot in a group does not count as "outside content", so Chief can plant instructions/memory unasked; (2) the user cannot write into a group while it answers (409) — DS Bot folds it into the running round; (3) memory sits in the system prompt and changes it per turn (cache misses) — DS Bot freezes + sends deltas; (4) missing group **notice**, "admin passed" notice, per-member stop/status, live status in `list_bots`; (5) memory panel lacks edit/pin/until/summary/history/undo; (6) no Bot-to-Bot private delegation (`message_bot`), `post_to_group`, `stop_bot`, `read_group_chat`/own-chat search; (7) Usage page lacks compare/heatmap/drill-down/"what for"; (8) no first-run guided Chief onboarding; (9) sidebar lacks unread/approval/working states, pin, context menu, search.
+**Biggest gaps, ranked** (detail in §6): (1) a *security* gap Ephapse has that DS Bot's structure also has — text relayed by another bot in a group does not count as "outside content", so Chief can plant instructions/memory unasked; (2) the user cannot write into a group while it answers (409) — DS Bot folds it into the running round; (3) memory sits in the system prompt and changes it per turn (cache misses) — DS Bot freezes + sends deltas; (4) missing group **notice**, "admin passed" notice, per-member stop/status, live status in `list_bots`; (5) memory panel lacks edit/pin/until/summary/history/undo; (6) no Bot-to-Bot private delegation (`message_bot`), `post_to_group`, `stop_bot`, `read_group_chat`/own-chat search; (7) Usage page lacks compare/heatmap/drill-down/"what for"; (8) no first-run guided Chief onboarding; (9) sidebar lacks unread/approval/working states, pin, context menu, search.
 
 ---
 
@@ -67,7 +67,7 @@ Legend: **F** read fully · **P** read in part (structure + the parts that bear 
 ### DS Bot — tests
 - – `ds-bot/test/*` (≈200 files): names listed only; behaviour was read from source and plans instead.
 
-### Synapsez (`d:\AI remote`)
+### Ephapse (`d:\AI remote`)
 - F `NOTICE` · F `server/bots/memory.js` · F `server/bots/prompt.js` · F `server/bots/rounds.js` · F `server/bots/team.js` · F `server/bots/tools.js` · F `server/routes/bots.js`
 - F `public/js/bots.js` · F `public/js/bots-settings.js` · F `public/js/bots-usage.js` · F `public/js/bot-mentions.js` · F `public/js/bot-avatar.js`
 - P `server/agent.js` (bot persona, withheld tools, `MEMORY_WRITES`, `turnReadOutside`, model choice) · P `server/store/pg.js` (schema 42/43 bot tables) · P `server/scheduler.js` (bot tasks) · P `server/redact.js` · P `public/js/app.js` (home-chat lending L3160–3257) · P `public/css/app.css` (Bot page media queries L12474–12490) · P `public/js/locales/{en,vi}.js` (142 `bots.*` keys each)
@@ -341,12 +341,12 @@ Order of what a Bot's Session sees:
 
 ---
 
-## 5. Gap table: DS Bot → Synapsez
+## 5. Gap table: DS Bot → Ephapse
 
 Status: **Same** · **Diff** (exists, works differently) · **Missing**. "Deliberate" = said so in NOTICE, `server/bots/rounds.js` L8–34, `server/bots/memory.js` L6–22, `server/bots/team.js` L40–48, or an owner-dated comment.
 
 ### 5.1 Team, Chief, bots
-| # | DS Bot | Synapsez (file:line) | Status | Deliberate? | Recommendation |
+| # | DS Bot | Ephapse (file:line) | Status | Deliberate? | Recommendation |
 |---|---|---|---|---|---|
 | 1 | Main Bot made on first open | `ensureChief` team.js:155; GET /bots routes/bots.js:45 | Same | — | keep |
 | 2 | Several Main Bots, hand-over, Main star | single `is_main`, star in tile bots.js:172 | Diff | implicit ("the main bot, Chief") | keep single Chief unless asked; cheap win: none |
@@ -354,7 +354,7 @@ Status: **Same** · **Diff** (exists, works differently) · **Missing**. "Delibe
 | 4 | Guided first-run (goal card → suggested Bots, ≤3 model calls, no-model fallbacks) | empty-state text `bots.emptyChief` en.js:97 | Missing | no | **add** (P2): a no-model "what do you want help with" card in Chief's empty chat with preset Bot suggestions; create on click |
 | 5 | Kickoff greeting by each new Bot (model call) | none; `bots.empty` "Say hello to {name}" | Diff | cost (implicit) | keep no-call; optionally show a fixed, non-model intro line built from role+instructions |
 | 6 | `create_bot` brief → first context | params name/role/instructions/creature tools.js:30–42 | Missing | no | add optional `brief`, stored as the first memory entry (source "by Chief"), no model call |
-| 7 | Name ≤40; reserved all/everyone/user/you; held during create | `nameProblem` bot-mentions.js:40; NAME_MAX 32→40; RESERVED adds `me`, `<>`, tab | Same+ | — | keep (Synapsez stricter) |
+| 7 | Name ≤40; reserved all/everyone/user/you; held during create | `nameProblem` bot-mentions.js:40; NAME_MAX 32→40; RESERVED adds `me`, `<>`, tab | Same+ | — | keep (Ephapse stricter) |
 | 8 | Role label ≤24 | role ≤40 team.js:31 | Diff | — | fine |
 | 9 | Instructions unbounded | ≤4,000 team.js:32 | Diff | — | keep (cost guard) |
 | 10 | Avatar: 20 chars × 12 colours, photo, library | creatures + automatic hue team.js:99–146 | Diff | yes (NOTICE: own creatures, not DS Bot art) | add a **colour (hue) picker** in the form (hue column exists, schema 43) |
@@ -362,10 +362,10 @@ Status: **Same** · **Diff** (exists, works differently) · **Missing**. "Delibe
 | 12 | Inline rename in details | none | Missing | — | P3 add |
 | 13 | Profile-change notice into the Bot's chat | none (prompt re-read per turn) | Diff | — | P3: optional; prompt already fresh each turn |
 | 14 | Duplicate Bot | none | Missing | — | P3 |
-| 15 | Delete: user only, two-click, archives, admin → none | DELETE routes/bots.js:97; two-press 3 s bots-settings.js:270; admin → first member team.js:323 | Same/Diff | — | keep; Synapsez admin hand-over is friendlier |
+| 15 | Delete: user only, two-click, archives, admin → none | DELETE routes/bots.js:97; two-press 3 s bots-settings.js:270; admin → first member team.js:323 | Same/Diff | — | keep; Ephapse admin hand-over is friendlier |
 | 16 | Delete tells waiting Bots, archives memory | memory rows deleted with bot (FK), notices in groups team.js:313 | Diff | memory.js says no archive | keep |
 | 17 | Sidebar pin / hide / mark unread / sections / search / context menu | none (list sorted by activity) bots.js:166–194 | Missing | — | P2: unread dot + running/approval marks first; pin; right-click/long-press menu (Open, Settings, Pin, Delete) |
-| 18 | Private Bots | none | Missing | — | P3 (web app: other bots only read via tools Synapsez lacks; revisit if `recall` across bots is added) |
+| 18 | Private Bots | none | Missing | — | P3 (web app: other bots only read via tools Ephapse lacks; revisit if `recall` across bots is added) |
 | 19 | Per-Bot model + thinking level | top-bar model for all | Diff | **yes** (owner 2026-11-10) | keep |
 | 20 | Permission presets, working folders, local agents, computer use, IM | none | Missing | N/A for hosted web | keep out |
 | 21 | Per-Bot connector switches | account connectors for every bot | Missing | — | P3: per-bot "connectors off" list (withhold tools by prefix, like DS Bot) |
@@ -373,7 +373,7 @@ Status: **Same** · **Diff** (exists, works differently) · **Missing**. "Delibe
 | 23 | Account limits | none | bots 24 / groups 20 / members 12 team.js:27–38 | Diff | yes (loop stop) | keep |
 
 ### 5.2 Prompt and tools
-| # | DS Bot | Synapsez | Status | Deliberate? | Recommendation |
+| # | DS Bot | Ephapse | Status | Deliberate? | Recommendation |
 |---|---|---|---|---|---|
 | 24 | Identity + instructions + Main rules + team rules, byte-stable | `botPersona` prompt.js:55; TEAM_RULES :22, MAIN_RULES :30 | Same shape | — | keep |
 | 25 | **Memory frozen per part; changes as appended "update" messages** | memory re-read every turn into the system prompt prompt.js:62–89, agent.js:1575 | **Diff** | no — prompt.js:19–20 claims "kept stable", but memory changes it | **P1**: freeze the memory section per chat (store snapshot on first turn) and append later changes as a short message; same for group memory (as a message, not system text) |
@@ -392,7 +392,7 @@ Status: **Same** · **Diff** (exists, works differently) · **Missing**. "Delibe
 | 38 | Refusals tell the model what to do instead | refusal texts tools.js:143, :165 | Same | — | keep |
 
 ### 5.3 Group chat
-| # | DS Bot | Synapsez | Status | Deliberate? | Recommendation |
+| # | DS Bot | Ephapse | Status | Deliberate? | Recommendation |
 |---|---|---|---|---|---|
 | 39 | Min 2 Bots | min 1 team.js:246 | Diff | — | fine (a 1-bot "group" is a project room) |
 | 40 | Auto name from members | name required team.js:240 | Diff | — | P3 |
@@ -416,7 +416,7 @@ Status: **Same** · **Diff** (exists, works differently) · **Missing**. "Delibe
 | 58 | Approval in group → Allow once/Reject in details, notification | member stops, notice, moves on rounds.js:178–180 | Diff | **yes** | keep; P3: add a "Open {bot}'s chat" link in the notice |
 | 59 | Failure row with code + log line for later speakers | 'failed' notice, redacted ≤200 rounds.js:186–188 | Same | — | keep |
 | 60 | Promise-only auto-continue once | prompt asks "never a promise" only | Missing | — | P2: if a called member's reply has no tool call and reads as a promise, run it once more (counts toward the ceiling) |
-| 61 | Idle guard (6 tool-less ack turns → pause till user) | hard ceiling 6 hand-offs/message team.js:48 | Diff | **yes** | keep ceiling (Synapsez better for billing) |
+| 61 | Idle guard (6 tool-less ack turns → pause till user) | hard ceiling 6 hand-offs/message team.js:48 | Diff | **yes** | keep ceiling (Ephapse better for billing) |
 | 62 | Stop all + per-member stop | one Stop for the group routes/bots.js:257, button in details bots.js:399 | Diff | — | P2: per-member stop needs per-member abort signals; low priority |
 | 63 | Work capsule above composer | `botchat__working` rows bots.js:344–354 | Same-ish | — | P2: friendly phrases from tool names (reuse render.js step labels) instead of raw `using {tool}` |
 | 64 | Event rows: started/paused/finished/looked up/restart | notices: made/joined/left/renamed/admin/deleted/botRenamed/approval/failed/ceiling/time/stopped team.js:370, rounds.js | Diff | — | keep; add "admin passed" (#55) |
@@ -428,7 +428,7 @@ Status: **Same** · **Diff** (exists, works differently) · **Missing**. "Delibe
 | 70 | Group log kept forever + searchable | all messages in DB | Same | — | keep |
 
 ### 5.4 Memory
-| # | DS Bot | Synapsez | Status | Deliberate? | Recommendation |
+| # | DS Bot | Ephapse | Status | Deliberate? | Recommendation |
 |---|---|---|---|---|---|
 | 71 | Scopes bot / group / team | bot + group; team = account notes | Diff | **yes** memory.js:14–18 | keep |
 | 72 | Markdown files, topics, journal, undo | DB rows | Diff | **yes** (NOTICE, memory.js:14) | keep DB; add undo via a soft-delete column (P2) |
@@ -439,14 +439,14 @@ Status: **Same** · **Diff** (exists, works differently) · **Missing**. "Delibe
 | 77 | Pin, until (expiry), id, source, by | text, source user/bot, created_at | Missing | — | P2: `pinned`, `until` columns; prompt shows id + day |
 | 78 | Key/password/ID refusal (`looksSecret`) | `redactSecrets` keys/KEY=value/URL pw memory.js:44 | Diff | — | P2: also refuse "password is …" prose and ≥15-digit / labelled ID numbers |
 | 79 | "Memory is data" in prompt + don't save what content asks | MEMORY_ABOUT_* prompt.js:41–46 | Same | — | keep |
-| 80 | **Approval gate on memory/instruction writes after outside reads** | HAR-005 `MEMORY_WRITES` agent.js:925 | **Synapsez better** | — | keep; extend per §6.3 A |
-| 81 | Incognito | bot incognito chats, memory withheld routes/bots.js:156, prompt.js:85 | **Synapsez better** | — | keep |
+| 80 | **Approval gate on memory/instruction writes after outside reads** | HAR-005 `MEMORY_WRITES` agent.js:925 | **Ephapse better** | — | keep; extend per §6.3 A |
+| 81 | Incognito | bot incognito chats, memory withheld routes/bots.js:156, prompt.js:85 | **Ephapse better** | — | keep |
 | 82 | Panel: summary, all entries, history+undo, ask-or-update, move between scopes | inline list + add + two-press forget in details bots.js:444–451, :899–915 | Missing (most) | — | P2: a memory dialog with entries, edit, pin, and history; summary/ask are model calls — opt-in |
 | 83 | "Memory updated" pill stretch on background changes | step line in home transcript only | Missing | — | P3 |
 | 84 | Members removed lose group memory at once | membership checked at write via scope; reads only in that group | Same | — | keep |
 
 ### 5.5 UI
-| # | DS Bot | Synapsez | Status | Deliberate? | Recommendation |
+| # | DS Bot | Ephapse | Status | Deliberate? | Recommendation |
 |---|---|---|---|---|---|
 | 85 | Left list + middle chat + right details | same three columns bots.js:101–131 | Same | NOTICE | keep |
 | 86 | Main tile: 60 px face, star, name, role | 64 px face, ★, name, role, running dot bots.js:170–176 | Same | — | keep |
@@ -460,7 +460,7 @@ Status: **Same** · **Diff** (exists, works differently) · **Missing**. "Delibe
 | 94 | Settings: one fixed-size dialog, nav, pages | dialog with Bots, Groups, Usage + links bots-settings.js:26–33 | Same | NOTICE | keep |
 | 95 | Usage: ranges, compare, stacked by bot/model, rankings, "what for", heatmap, per-bot/model pages, calendar | ranges + custom, tiles, stacked, legend, two lists bots-usage.js:18–239 | Diff | — | P2: add "vs the span before" on the big tile, per-bot drill-down; P3 heatmap |
 | 96 | Composer `@` menu in groups (+ "Everyone"), in own chat lists other Bots | group only, members bots.js:695–723 | Diff | — | keep |
-| 97 | Coloured @Name while typing | overlay layer under the textarea bots.js:740–791 | **Synapsez better** (DS Bot's known issue shows file chips) | — | keep |
+| 97 | Coloured @Name while typing | overlay layer under the textarea bots.js:740–791 | **Ephapse better** (DS Bot's known issue shows file chips) | — | keep |
 | 98 | "+ → Reference a chat" | none | Missing | — | P3 |
 | 99 | Side chat `/side` | none | Missing | — | P3 (cheap-ish: one tool-less call on a snapshot) |
 | 100 | Repair card per failure code | home chat errors (not checked) | ? | — | verify |
@@ -468,23 +468,23 @@ Status: **Same** · **Diff** (exists, works differently) · **Missing**. "Delibe
 | 102 | System notification for approvals | none on Bot page | Missing | — | P3 (only if permission already granted) |
 | 103 | Phone: list ↔ chat, details cover chat | `is-chatting` toggling, details overlay ≤1100 px app.css:12474–12490 | Same | — | keep |
 | 104 | Reduced motion | app-wide | ? | — | verify bot list/working rows respect it |
-| 105 | a11y: focus rings, menu arrow keys (DS Bot admits gaps) | `role=log aria-live`, listbox picker with `aria-activedescendant`, Escape closes menu bots.js:124, :128, :987 | Synapsez ≥ | — | keep; add arrow keys to the "+" menu |
+| 105 | a11y: focus rings, menu arrow keys (DS Bot admits gaps) | `role=log aria-live`, listbox picker with `aria-activedescendant`, Escape closes menu bots.js:124, :128, :987 | Ephapse ≥ | — | keep; add arrow keys to the "+" menu |
 
 ### 5.6 Scheduling, usage, security
-| # | DS Bot | Synapsez | Status | Deliberate? | Recommendation |
+| # | DS Bot | Ephapse | Status | Deliberate? | Recommendation |
 |---|---|---|---|---|---|
 | 106 | Tasks per Bot and per group; once/daily/weekly/every N min | per bot; free-text "when" via `parseSchedule` routes/bots.js:115–146 | Diff | per-bot only (owner 2026-11-10) | P2 group tasks (#68) |
 | 107 | Bot creates its own tasks from chat (fenced to its own chat) | "made here or by the bot in its chat" routes/bots.js:110–113 | Same | — | keep |
-| 108 | Tokens only, no cost | usage_events has cost_usd (pg.js:705) | Synapsez ≥ | — | P3: show cost too, since it is billed |
+| 108 | Tokens only, no cost | usage_events has cost_usd (pg.js:705) | Ephapse ≥ | — | P3: show cost too, since it is billed |
 | 109 | Usage owners include group Sessions | member turns booked to the bot (usage_events.bot_id) | Same | — | keep |
-| 110 | Tenant isolation | N/A (local) | per-account scoping, 404s routes/bots.js:14–27; test bots.test.mjs:227–241 | **Synapsez better** | keep |
+| 110 | Tenant isolation | N/A (local) | per-account scoping, 404s routes/bots.js:14–27; test bots.test.mjs:227–241 | **Ephapse better** | keep |
 | 111 | Bot-to-Bot text not marked untrusted | same; and HAR-005 does not see group lines (agent.js:942) | Shared gap | — | **P1** — §6.3 A |
 
 ---
 
 ## 6. Ranked recommendations
 
-Cost notes assume Synapsez's constraints: Vercel functions (≤300 s), every model call billed to the user, free-tier friendly. "S/M/L" = effort.
+Cost notes assume Ephapse's constraints: Vercel functions (≤300 s), every model call billed to the user, free-tier friendly. "S/M/L" = effort.
 
 ### 6.1 Add or change (ranked)
 
@@ -505,7 +505,7 @@ Cost notes assume Synapsez's constraints: Vercel functions (≤300 s), every mod
 12. **Own-chat search and group reading for bots** (M): allow `search_chats` over the bot's own chat, and give Chief a read-only "latest lines of group G" tool; this is DS Bot's `read_own_chat` / `read_group_chat` without the private-brief leak.
 13. **Sidebar states** (S/M): unread dot, "working…" preview while running, waiting-for-your-yes mark; then pin and a row menu (Open, Settings, Pin, Delete).
 14. **Friendly working phrases** (S): map tool names to the same labels the home transcript uses (render.js step labels) in `renderWorking` (bots.js:344).
-15. **Usage page** (M): "vs the same span before" on the total tile, per-bot drill-down (tokens by kind, models used), and cost alongside tokens since Synapsez is billed.
+15. **Usage page** (M): "vs the same span before" on the total tile, per-bot drill-down (tokens by kind, models used), and cost alongside tokens since Ephapse is billed.
 16. **Group scheduled tasks** (M): a task that posts its prompt as the person's line in a group and runs a round.
 17. **Promise-only retry** (S): a called member whose reply has no tool call and reads as "on it / will do" gets one more run in the same round (counted as a hand-off).
 18. **First-run for Chief without model calls** (M): a card with 4 goal toggles and preset bot suggestions (editable names/roles), creating bots on click.
@@ -514,7 +514,7 @@ Cost notes assume Synapsez's constraints: Vercel functions (≤300 s), every mod
 **P3 — later / only if asked**
 20. Inline rename, duplicate, colour picker, stacked consecutive messages, per-message time and run duration, "Memory updated" pill stretch, animated details face (or fix bot-avatar.js:11), side chat, reference a chat, approval notifications, per-member stop, `@all` from the person, group goal, sections, opt-in memory review, per-bot connector switches, private bots.
 
-### 6.2 Where Synapsez is already better — do not regress
+### 6.2 Where Ephapse is already better — do not regress
 - **Tenant scoping**: every store call scoped to the account, other accounts' ids 404 (routes/bots.js:14–27; tests bots.test.mjs:227–241). DS Bot is single-user.
 - **Approval gate on durable writes** after outside reads (HAR-005, agent.js:922–925) for `remember`, `create_bot`, `update_bot`. DS Bot only has prompt rules.
 - **Hard cost ceiling** (6 hand-offs per message, team.js:40–48) and a round deadline with an honest "out of time" notice (rounds.js:196–201). DS Bot relies on the user watching.
@@ -539,4 +539,4 @@ Cost notes assume Synapsez's constraints: Vercel functions (≤300 s), every mod
 
 ---
 
-*Method note:* DS Bot behaviour was read from source and decided-design docs, not by running it; Synapsez line numbers are from the working tree on 2026-11-10. What a real model does with either app's prompts is not tested here.
+*Method note:* DS Bot behaviour was read from source and decided-design docs, not by running it; Ephapse line numbers are from the working tree on 2026-11-10. What a real model does with either app's prompts is not tested here.

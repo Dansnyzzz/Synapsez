@@ -294,7 +294,7 @@ async function machineRoom(userId, now, plan) {
   - the committed set-aside.
 
 - [ ] **Step 1:** Write the pins, then run `node test/features.test.mjs`. It should fail.
-- [ ] **Step 2:** Update the files. The changelog is written for the people who use Synapsez, in plain words with no file
+- [ ] **Step 2:** Update the files. The changelog is written for the people who use Ephapse, in plain words with no file
   names:
   - the Free plan keeps its free searches and computer time even after topping up;
   - a paid plan always gets at least the free share;

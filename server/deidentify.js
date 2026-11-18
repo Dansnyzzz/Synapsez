@@ -234,6 +234,8 @@ const OPAQUE = new Set(['id', 'toolCallId', 'mime', 'signature', 'thumb']);
  *
  * @param {{ key?: string | Buffer }} [options]  the account's hashing key; see providers/index.js
  */
+// The default key keeps its old text on purpose: it derives the placeholders, so renaming it would change
+// every pseudonym already made. No person ever sees it.
 export function createShield({ key = 'synapsez-deidentify' } = {}) {
   /** value → placeholder, and back, for this call only. */
   const byValue = new Map();

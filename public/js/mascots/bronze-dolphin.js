@@ -5,7 +5,7 @@ import { ACCENTS, Mask } from './pixels.js';
  * resting on the floor, facing left, cast in bronze. A round brow over a short beak,
  * a darker back, a pale copper belly, a curved dorsal fin, its tail lifted with the
  * flukes up, a light that runs along its back and one glint. The plainest of the
- * three places, as third should be. Drawn from scratch for Synapsez.
+ * three places, as third should be. Drawn from scratch for Ephapse.
  */
 
 const palette = Object.freeze({

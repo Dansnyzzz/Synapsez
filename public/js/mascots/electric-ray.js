@@ -4,7 +4,7 @@ import { ACCENTS, Mask } from './pixels.js';
  * The electric ray, worn for ten million tokens (owner, 2026-11-08): a teal ray resting
  * on the floor, seen from above and in front, its wings spread to two points. Lightning
  * runs along the wings and turns white as they beat, and a tail curls up behind with a
- * spark at the end. Drawn from scratch for Synapsez.
+ * spark at the end. Drawn from scratch for Ephapse.
  *
  * Its face is on the front edge, in the middle, so it is symmetric about column 38.
  */

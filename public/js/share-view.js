@@ -29,7 +29,7 @@ applyI18n();
  */
 function signInToCarryOn() {
   try {
-    sessionStorage.setItem('synapsez:continue-shared', token);
+    sessionStorage.setItem('ephapse:continue-shared', token);
   } catch {
     /* no storage: after signing in they are shown the conversation and press again */
   }
@@ -69,7 +69,7 @@ async function show() {
     return;
   }
   const data = await res.json();
-  document.title = `${data.title} · Synapsez`;
+  document.title = `${data.title} · Ephapse`;
   $('share-title').textContent = data.title || t('sharechat.untitled');
   const when = data.sharedAt ? new Date(data.sharedAt).toLocaleString(currentLanguage(), { dateStyle: 'medium', timeStyle: 'short' }) : '';
   $('share-meta').textContent = t('sharechat.meta', { when });

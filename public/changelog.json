@@ -1,6 +1,38 @@
 {
   "entries": [
     {
+      "version": "1.33.0",
+      "date": "2026-11-17",
+      "new": {
+        "vi": [
+          "Synapsez nay là Ephapse, tại www.ephapse.net. Mọi thứ khác giữ nguyên."
+        ],
+        "en": [
+          "Synapsez is now Ephapse, at www.ephapse.net. Everything else stays the same."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Các cài đặt trình duyệt đã lưu trên thiết bị này (cảnh nền, bản nháp, kiểu xem kỹ năng) được đặt lại một lần.",
+          "Webhook giờ dùng các tiêu đề X-Ephapse-Timestamp, X-Ephapse-Signature và X-Ephapse-Delivery; bên gửi cần đổi tên tiêu đề.",
+          "Tệp xuất có tên mới (ephapse-export-… và ephapse-bots-…); tệp xuất cũ vẫn nhập được.",
+          "Ứng dụng xác thực đã cài sẵn giữ nhãn cũ; nhãn đó không ảnh hưởng gì.",
+          "Video hướng dẫn lấy key không còn dòng chú thích bên dưới.",
+          "Máy tính đám mây của mỗi người được chuyển sang một máy mới ở lần dùng tiếp theo, mang theo toàn bộ tệp trong thư mục của bạn.",
+          "Thiết bị đã nhớ và phiên liên kết chia sẻ được đặt lại một lần."
+        ],
+        "en": [
+          "Browser settings saved on this device (the scene, drafts, the skills view) reset once.",
+          "Webhooks now use the X-Ephapse-Timestamp, X-Ephapse-Signature and X-Ephapse-Delivery headers; senders need to rename the headers.",
+          "Exports have new file names (ephapse-export-… and ephapse-bots-…); old export files still import.",
+          "Authenticator apps already set up keep the old label; the label changes nothing.",
+          "The guide's provider videos no longer carry a caption.",
+          "Each cloud computer moves to a new machine on its next use, with every file in your home folder carried across.",
+          "Remembered devices and shared-link sessions reset once."
+        ]
+      }
+    },
+    {
       "version": "1.32.0",
       "date": "2026-11-17",
       "new": {
@@ -45,10 +77,10 @@
       "date": "2026-11-17",
       "improved": {
         "vi": [
-          "Thêm khoá Exa từ một tài khoản khác (mỗi tài khoản một nhóm riêng) không còn bị báo nhầm là bị từ chối: khi bước kiểm tra Websets của Exa báo khoá không hợp lệ, Synapsez hỏi lại phần tìm kiếm — phần mà Synapsez thực sự dùng — bằng một yêu cầu rỗng (Exa kiểm tra khoá trước khi xử lý yêu cầu). Khoá sai vẫn bị từ chối như trước."
+          "Thêm khoá Exa từ một tài khoản khác (mỗi tài khoản một nhóm riêng) không còn bị báo nhầm là bị từ chối: khi bước kiểm tra Websets của Exa báo khoá không hợp lệ, Ephapse hỏi lại phần tìm kiếm — phần mà Ephapse thực sự dùng — bằng một yêu cầu rỗng (Exa kiểm tra khoá trước khi xử lý yêu cầu). Khoá sai vẫn bị từ chối như trước."
         ],
         "en": [
-          "Adding an Exa key from another account (each account its own team) is no longer wrongly refused: when Exa's Websets check calls the key invalid, Synapsez asks Exa's search — what Synapsez actually uses — once more, with an empty request (Exa checks the key before the request). A wrong key is still refused."
+          "Adding an Exa key from another account (each account its own team) is no longer wrongly refused: when Exa's Websets check calls the key invalid, Ephapse asks Exa's search — what Ephapse actually uses — once more, with an empty request (Exa checks the key before the request). A wrong key is still refused."
         ]
       }
     },
@@ -551,13 +583,13 @@
         "vi": [
           "Mục Bot mới, theo DS Bot: Chief (Chánh văn phòng) tạo bot và nhóm chat khi bạn nhờ; mỗi bot có mô hình, vai trò, hướng dẫn và ghi nhớ riêng; trong nhóm, quản trị viên trả lời và giao việc bằng @Tên; xem mức dùng theo bot và theo mô hình.",
           "Chuỗi việc và việc chạy theo giờ chuyển sang mục Tự động hoá (biểu tượng đồng hồ).",
-          "Chia sẻ kỹ năng lên Khám phá cho mọi người cùng dùng, mới nhất trước; người thêm luôn nhận bản mới nhất của tác giả. Kỹ năng mặc định của Synapsez không còn hiện ra nhưng vẫn hoạt động.",
+          "Chia sẻ kỹ năng lên Khám phá cho mọi người cùng dùng, mới nhất trước; người thêm luôn nhận bản mới nhất của tác giả. Kỹ năng mặc định của Ephapse không còn hiện ra nhưng vẫn hoạt động.",
           "Mục \"Đã dùng trong phiên này\" trên bảng bên phải: mỗi tin nhắn có tệp là một dòng, bấm vào mở cửa sổ Tệp đã tải lên có xem trước."
         ],
         "en": [
           "A new Bot page, after DS Bot: Chief (Chief of Staff) makes bots and group chats when asked; each bot has its own model, role, instructions and memory; in a group the admin answers and hands work on with @Name; usage by bot and by model.",
           "Workflows and scheduled tasks moved to Automations (the clock).",
-          "Share a skill to Discover for everyone to use, newest first; whoever added it always has the author's latest. Synapsez's own skills are no longer listed, and still work.",
+          "Share a skill to Discover for everyone to use, newest first; whoever added it always has the author's latest. Ephapse's own skills are no longer listed, and still work.",
           "\"Used in this session\" in the right panel: a row per message that brought files, opening an Uploaded files window with previews."
         ]
       },
@@ -609,7 +641,7 @@
         "vi": [
           "Theme và danh hiệu tự trao ngay khi đủ điều kiện sau mỗi lượt chat, và tự được áp dụng. Mô tả ghi rõ điều kiện, số người đang có và ngày bạn nhận.",
           "Theme top quý và top năm chỉ hiện từ 00:00 ngày đầu kỳ (giờ Việt Nam); theme sự kiện hiện trước 3 ngày. Quản trị viên vẫn thấy hết.",
-          "Danh hiệu Nhà tài trợ nhỏ, Nhà tài trợ lớn, Đại gia và theme đi kèm tính theo tiền nạp vào Synapsez.",
+          "Danh hiệu Nhà tài trợ nhỏ, Nhà tài trợ lớn, Đại gia và theme đi kèm tính theo tiền nạp vào Ephapse.",
           "Trang \"Dữ liệu của bạn đi đâu\" chỉ còn cài đặt hiện tại và bảng bộ che bắt được bao nhiêu, đo ngay lúc bạn mở trang, kèm số mục đã che trong hội thoại của bạn.",
           "Máy tính đám mây tự dọn ổ đĩa theo mức đầy, cho xem dung lượng ở Cài đặt → Hệ thống; trình duyệt Playwright tự cài lại trên máy mới.",
           "Ghi chú \"Kiểm tra nguồn / số liệu\" thành dòng ghi chú dưới câu trả lời, không bị copy. Copy sang Google Docs ghi trích dẫn thành \"Tên nguồn: link\"."
@@ -617,7 +649,7 @@
         "en": [
           "Themes and titles are given as soon as they are earned, at the end of a turn, and put on. Each says what earns it, how many hold it and the day you got it.",
           "A quarter's or a year's theme shows from midnight on its first day, Vietnam's time; an event's three days before it starts. Administrators still see them all.",
-          "The sponsor titles and their themes count money put into Synapsez.",
+          "The sponsor titles and their themes count money put into Ephapse.",
           "\"Where your data goes\" keeps only your settings and how much the mask catches, measured as you open it, with what was hidden in your own conversations.",
           "The cloud computer tidies its disk by how full it is and shows it in Settings → System; Playwright browsers come back on a new machine.",
           "What the source and figure checks say is a note under the answer, never copied. A citation pastes into Google Docs as \"Name: link\"."
@@ -1048,7 +1080,7 @@
           "Chạy trong hạn mức miễn phí: mỗi dịch vụ tìm kiếm tính phí (Exa, Tavily, Brave, Google, Stack Exchange) dừng ở hạn mức miễn phí của nó, tìm kiếm tự chuyển sang công cụ miễn phí; mỗi tài khoản có phần chia đều mỗi ngày; câu tìm lặp lại trong 10 phút không tốn lượt."
         ],
         "en": [
-          "Feedback on each answer: a thumb left of the copy button opens Claude's dialog — a problem (optional), what was unsatisfying (optional) — and sends how that answer ran, so the people who run Synapsez can find and fix it.",
+          "Feedback on each answer: a thumb left of the copy button opens Claude's dialog — a problem (optional), what was unsatisfying (optional) — and sends how that answer ran, so the people who run Ephapse can find and fix it.",
           "Drag the pictures in the composer into another order (or Alt+← / Alt+→); that order is the order they are sent and shown to the assistant.",
           "Inside the free tiers: each metered search service (Exa, Tavily, Brave, Google, Stack Exchange) stops at its free allowance and searches move to the free engines; each account has a fair share a day; the same search within ten minutes costs nothing."
         ]
@@ -1209,16 +1241,16 @@
       "date": "2026-10-31",
       "new": {
         "vi": [
-          "Mục Mức sử dụng trong menu tài khoản: Cài đặt → Mức sử dụng cho xem riêng từng nhà cung cấp bạn có gắn khoá. Với OpenRouter là số liệu chính OpenRouter báo cho từng khoá — lượt model miễn phí hôm nay, số đã chi hôm nay, tuần này, tháng này và hạn mức của khoá; với mọi nhà cung cấp là những gì Synapsez đã đếm — yêu cầu theo ngày và theo model, tuần của bạn theo từng giờ, và nhịp độ so với tuần trước.",
+          "Mục Mức sử dụng trong menu tài khoản: Cài đặt → Mức sử dụng cho xem riêng từng nhà cung cấp bạn có gắn khoá. Với OpenRouter là số liệu chính OpenRouter báo cho từng khoá — lượt model miễn phí hôm nay, số đã chi hôm nay, tuần này, tháng này và hạn mức của khoá; với mọi nhà cung cấp là những gì Ephapse đã đếm — yêu cầu theo ngày và theo model, tuần của bạn theo từng giờ, và nhịp độ so với tuần trước.",
           "Thiết bị: Cài đặt → Mức sử dụng → Theo thiết bị liệt kê mọi trình duyệt đang đăng nhập tài khoản của bạn, và đăng xuất riêng từng cái. Đăng xuất giờ chấm dứt hẳn phiên của trình duyệt đó.",
-          "Gửi góp ý trong menu tài khoản: chọn phần và loại góp ý, kể điều đã xảy ra và mức ảnh hưởng, kèm một cuộc trò chuyện nếu bạn muốn. Góp ý được gửi tới người vận hành Synapsez.",
+          "Gửi góp ý trong menu tài khoản: chọn phần và loại góp ý, kể điều đã xảy ra và mức ảnh hưởng, kèm một cuộc trò chuyện nếu bạn muốn. Góp ý được gửi tới người vận hành Ephapse.",
           "Xem nhật ký thay đổi trong menu tài khoản — chính là trang này.",
           "Cảnh báo khi gần chạm giới hạn: từ 80% (rồi 90% và khi đã hết), một dòng phía trên ô nhập cho biết bạn đã dùng bao nhiêu, khi nào đặt lại, cách có thêm và đường tới Mức sử dụng; thanh hạn mức chuyển sang màu hổ phách, rồi đỏ."
         ],
         "en": [
-          "Usage in the account menu: Settings → Usage shows each provider you have a key for on its own. For OpenRouter, the figures OpenRouter itself reports for each key — free-model requests today, what it has spent today, this week and this month, and the key's own limit; for every provider, what Synapsez counted — requests by day and by model, your week hour by hour, and the pace against last week.",
+          "Usage in the account menu: Settings → Usage shows each provider you have a key for on its own. For OpenRouter, the figures OpenRouter itself reports for each key — free-model requests today, what it has spent today, this week and this month, and the key's own limit; for every provider, what Ephapse counted — requests by day and by model, your week hour by hour, and the pace against last week.",
           "Devices: Settings → Usage → By device lists every browser your account is signed in on, and signs out any one of them. Signing out now ends that browser's session for good.",
-          "Give feedback in the account menu: choose the area and the kind, say what happened and how much it affects you, and include a conversation if you choose. It goes to the people who run Synapsez.",
+          "Give feedback in the account menu: choose the area and the kind, say what happened and how much it affects you, and include a conversation if you choose. It goes to the people who run Ephapse.",
           "View changelog in the account menu — this page.",
           "A warning near a limit: from 80% (again at 90%, and when it is used up), a line above the message box says how much you have used, when it resets, how to get more and the way to Usage; the limit's bar turns amber, then red."
         ]

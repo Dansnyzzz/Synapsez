@@ -1,5 +1,5 @@
 /* ─────────────────────────────────────────────────────────────
-   Synapsez — a dark, terminal-adjacent workspace.
+   Ephapse — a dark, terminal-adjacent workspace.
    Signal green for the assistant, amber for machine activity.
    ───────────────────────────────────────────────────────────── */
 
@@ -4704,7 +4704,6 @@ details.block > summary > .mark--pending { margin: 0 3.5px; }
 .onbk__clip { display: grid; gap: 4px; margin: 0; }
 .onbk__video { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .onbk__video video { display: block; width: 100%; height: auto; }
-.onbk__sample { margin: 0; color: var(--text-faint); font-size: 11.5px; line-height: 1.4; }
 .onbk__do { display: flex; flex-wrap: wrap; gap: 8px; }
 .onbk__do .btn { text-decoration: none; }
 .onbk__keys { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
@@ -8501,7 +8500,7 @@ h3.spane__label:focus-visible { outline: 2px solid var(--accent); outline-offset
 .plusmenu--account { min-width: 264px; }
 .plusmenu--account .plusmenu__item > .plusmenu__icon:empty { display: none; }
 .plusmenu--account > .plusmenu__note:first-child { padding: 8px 10px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* About Synapsez, and the list of shortcuts — from Learn more. */
+/* About Ephapse, and the list of shortcuts — from Learn more. */
 .about { display: grid; justify-items: center; gap: 12px; text-align: center; }
 .about__mark { display: block; }
 .about__what { margin: 0; color: var(--text-dim); line-height: 1.6; }

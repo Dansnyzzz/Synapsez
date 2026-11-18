@@ -14,7 +14,7 @@ process.env.DATA_DIR = path.join(os.tmpdir(), `ai-remote-billing-docs-test-${pro
 for (const name of ['DATABASE_URL', 'POSTGRES_URL', 'VERCEL', 'BILLING_MODE', 'BILLING_TAX_RATE', 'BILLING_SELLER_NAME', 'SEPAY_API_TOKEN', 'SEPAY_EINVOICE_CLIENT_ID', 'SEPAY_EINVOICE_CLIENT_SECRET', 'SEPAY_EINVOICE_TEMPLATE', 'SEPAY_EINVOICE_SANDBOX', 'E2B_API_KEY', 'RESEND_API_KEY', 'GMAIL_USER', 'GMAIL_APP_PASSWORD']) delete process.env[name];
 process.env.SEPAY_BANK_ACCOUNT = '0123456789';
 process.env.SEPAY_BANK_CODE = 'MBBank';
-process.env.SEPAY_ACCOUNT_NAME = 'SYNAPSEZ TEST';
+process.env.SEPAY_ACCOUNT_NAME = 'EPHAPSE TEST';
 process.env.EMAIL_CONFIRMATION = 'off';
 removeTemp(process.env.DATA_DIR);
 
@@ -108,7 +108,7 @@ section('the receipt is a PDF with what a receipt must say');
   check('  the amount written 129.000 ₫', viText.includes('129.000 ₫'), viText);
   check('  the Vietnamese date and time (14/11/2026, 00:30 in Vietnam)', /14\/11\/2026/.test(viText) && /00:30/.test(viText), viText);
   check('  the buyer opened from the sealed copy, stacked vowels intact', viText.includes('Trần Văn Ánh') && viText.includes('12 Lê Lợi') && viText.includes('0312345678'), viText);
-  check('  the reference and the seller (Synapsez by default)', viText.includes('SZ0123456789') && viText.includes('Synapsez'));
+  check('  the reference and the seller (Ephapse by default)', viText.includes('SZ0123456789') && viText.includes('Ephapse'));
   check('  the plan line', viText.includes('Gói Plus (tháng)'));
   check('  no tax line without BILLING_TAX_RATE', !/Trong đó thuế/.test(viText));
 

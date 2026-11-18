@@ -31,7 +31,7 @@ import { toast } from './render.js';
  * the last person's draft — and their first keystroke saved it to their own
  * account. The old shared key is dropped on sight; nobody can tell whose it was.
  */
-const LOCAL_PREFIX = 'synapsez.skillDraft';
+const LOCAL_PREFIX = 'ephapse.skillDraft';
 const MAX_FILE_CHARS = 20_000;
 const MAX_FILES = 10;
 

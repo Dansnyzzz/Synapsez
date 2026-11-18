@@ -1112,7 +1112,7 @@ export function createApp() {
 
   /**
    * Settings → Usage (owner, 2026-10-31): each provider's own figures for the
-   * account's own keys where the provider reports them, and what Synapsez
+   * account's own keys where the provider reports them, and what Ephapse
    * counted for every provider, hour by hour — see server/usageReport.js.
    * Asked when the tab opens and on ↻, not on every page.
    */
@@ -2886,7 +2886,7 @@ export function createApp() {
       const said = /** @type {{ reason?: string, plan?: string }} */ (checked);
       if (!checked.ok) {
         const error =
-          said.reason === 'template' ? 'The Synapsez template is not built in this E2B account.'
+          said.reason === 'template' ? 'The Ephapse template is not built in this E2B account.'
           : said.reason === 'unreachable' ? `${spec.label} could not be reached to check it — try again.`
           : `${spec.label} refused this key.`;
         return res.status(422).json({ error });

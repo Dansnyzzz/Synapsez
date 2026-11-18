@@ -7,7 +7,7 @@ import { escapeHtml } from './markdown.js';
  *
  * Whose number each one is matters here, and is said. OrcaRouter answers for its
  * whole workspace, from its own records. Google has no API for any of this, so
- * Gemini's page is what Synapsez counted, beside the free tier's limits where they
+ * Gemini's page is what Ephapse counted, beside the free tier's limits where they
  * are known and a link to where the project's exact ones are.
  *
  * @typedef {{ count: (n: number) => string, money: (n: number | null) => string, pct: (n: number) => string,

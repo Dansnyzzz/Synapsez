@@ -9,7 +9,7 @@ self-chained continuation) and B (task runs, Needs you).
 ## C.1 Webhooks that start a bot's task
 
 - A scheduled task's trigger can be **Khi có yêu cầu đến** (when a request arrives). Creating one makes a route id and a secret; the secret is shown once (copy), stored hashed; Rotate invalidates at once.
-- `POST /api/hooks/:routeId`, body `{ type, occurredAt?, data? }` ≤ 64 KB. Headers `X-Synapsez-Timestamp` (±5 min), `X-Synapsez-Delivery` (id), `X-Synapsez-Signature` = HMAC-SHA256(secret, `timestamp.delivery.body`), checked in constant time **before** the body is parsed.
+- `POST /api/hooks/:routeId`, body `{ type, occurredAt?, data? }` ≤ 64 KB. Headers `X-Ephapse-Timestamp` (±5 min), `X-Ephapse-Delivery` (id), `X-Ephapse-Signature` = HMAC-SHA256(secret, `timestamp.delivery.body`), checked in constant time **before** the body is parsed.
 - Filters (optional): exact `type`, and JSON-Pointer equality on `data` (≤ 5).
 - Receipts for 7 days (`hook_receipts`: route, delivery id, status, reason, at — never the body): a repeated delivery id answers 200 "duplicate" and runs nothing; the task's page lists recent deliveries and why one was ignored.
 - Answers **202** at once, then runs the bot's turn under `waitUntil` with `origin: 'webhook'`: the payload is given as untrusted external data (the same envelope as web pages), cannot change tools or approvals, and team-changing tools are refused (A.1).

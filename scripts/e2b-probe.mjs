@@ -203,7 +203,7 @@ try {
   await asRoot('true');
   const afterRoot = await rootRan();
   check('  nor does a root command (SBX-007, SBX-008, SBX-010)', afterRoot === '', afterRoot);
-  const started = await machine.runCommand({ ...shellFor(startScript(`probe-${Date.now()}`, { root: true }), { SYNZ_SERVICE: Buffer.from('process.exit(0)').toString('base64'), SYNZ_KERNEL: '', SYNZ_KEY: 'probe' }, { root: true }), sudo: true, timeoutMs: 180_000 });
+  const started = await machine.runCommand({ ...shellFor(startScript(`probe-${Date.now()}`, { root: true }), { EPH_SERVICE: Buffer.from('process.exit(0)').toString('base64'), EPH_KERNEL: '', EPH_KEY: 'probe' }, { root: true }), sudo: true, timeoutMs: 180_000 });
   const afterStart = await rootRan();
   // The template's node is root's whatever happens to /usr/local; on base root then trusts no node, and stops before its install.
   check(template === 'base' ? "  nor does the cloud browser's root start, which finds no node it trusts and stops (SBX-009)" : "  nor does the cloud browser's real root start, its install included (SBX-009)", afterStart === '' && started.exitCode === (template === 'base' ? 127 : 0), `exit ${started.exitCode}${afterStart ? ` · ${afterStart}` : ''}`);
@@ -248,7 +248,7 @@ try {
   check('a background program outlives the stream that watched it', (await alive.stdout()).trim() === 'alive', await said(alive));
 
   section('paused, and resumed with its memory');
-  const paused = await Sandbox.create(template, { apiKey: process.env.E2B_API_KEY, timeoutMs: 5 * 60_000, metadata: { app: 'synapsez', role: 'probe' }, lifecycle: { onTimeout: 'pause', autoResume: false } });
+  const paused = await Sandbox.create(template, { apiKey: process.env.E2B_API_KEY, timeoutMs: 5 * 60_000, metadata: { app: 'ephapse', role: 'probe' }, lifecycle: { onTimeout: 'pause', autoResume: false } });
   machines.push({ delete: () => paused.kill() });
   await paused.commands.run(__testing.CLOSE_MACHINE, { user: 'root' });
   await paused.commands.run('echo kept > /home/user/kept.txt; nohup sleep 900 >/dev/null 2>&1 &', { user: 'user' });
@@ -376,7 +376,7 @@ with sync_playwright() as p:
     await machine.writeFiles([{ path: 'probe-check.txt', content: Buffer.from('before') }]);
     const snapshot = await machine.box.createSnapshot();
     check('saved', !!snapshot?.snapshotId, snapshot?.snapshotId);
-    const fromIt = await Sandbox.create(snapshot.snapshotId, { apiKey: process.env.E2B_API_KEY, timeoutMs: 120_000, metadata: { app: 'synapsez', role: 'probe' } });
+    const fromIt = await Sandbox.create(snapshot.snapshotId, { apiKey: process.env.E2B_API_KEY, timeoutMs: 120_000, metadata: { app: 'ephapse', role: 'probe' } });
     machines.push({ delete: () => fromIt.kill() });
     const kept = await fromIt.commands.run('cat /home/user/probe-check.txt', { user: 'user' });
     check('a machine made from it finds the file', kept.stdout.trim() === 'before', kept.stdout.trim());

@@ -406,7 +406,7 @@ try {
     // Search knows the same keys: a request with no query is turned down after the key is (no search is run, no credit spent).
     answers.set('api.exa.ai/search', (u, h) => (h.get('x-api-key') === KEYS.exa ? json({ error: 'query is required' }, 400) : json({ error: 'Invalid API key', tag: 'INVALID_API_KEY' }, 401)));
     answers.set('api.e2b.app/v2/sandboxes', (u, h) => ([KEYS.e2b, KEYS.noTemplate].includes(h.get('x-api-key')) ? json([]) : json({ code: 401, message: 'Invalid API key' }, 401)));
-    answers.set('api.e2b.app/templates/aliases/synapsez-computer', (u, h) => (h.get('x-api-key') === KEYS.e2b ? json({ templateID: 'x', public: false }) : json({ code: 404, message: 'not found' }, 404)));
+    answers.set('api.e2b.app/templates/aliases/ephapse-computer', (u, h) => (h.get('x-api-key') === KEYS.e2b ? json({ templateID: 'x', public: false }) : json({ code: 404, message: 'not found' }, 404)));
     const good = { exa: KEYS.exa, tavily: KEYS.a, firecrawl: KEYS.fc1, e2b: KEYS.e2b };
     const results = {};
     for (const [service, key] of Object.entries(good)) results[service] = { good: await pool.checkKey(service, key), bad: await pool.checkKey(service, KEYS.bad) };
@@ -414,11 +414,11 @@ try {
     check('Exa, Tavily, Firecrawl, E2B: their own key passes, a wrong one is refused', wrong.length === 0, wrong.join(' | '));
     check('  Tavily and Firecrawl say the plan', results.tavily.good.plan === 'Researcher' && results.firecrawl.good.plan === 'Hobby', JSON.stringify([results.tavily.good, results.firecrawl.good]));
     const hosts = [...new Set(asked.map((q) => `${q.host}${q.path}`))].sort();
-    const fixed = ['api.e2b.app/templates/aliases/synapsez-computer', 'api.e2b.app/v2/sandboxes', 'api.exa.ai/search', 'api.exa.ai/websets/v0/teams/me', 'api.firecrawl.dev/v2/team/credit-usage', 'api.tavily.com/usage'];
+    const fixed = ['api.e2b.app/templates/aliases/ephapse-computer', 'api.e2b.app/v2/sandboxes', 'api.exa.ai/search', 'api.exa.ai/websets/v0/teams/me', 'api.firecrawl.dev/v2/team/credit-usage', 'api.tavily.com/usage'];
     check('  only the fixed addresses were asked, each with the key in its header', hosts.every((h) => fixed.includes(h)) && asked.every((q) => ![...q.query.values()].some((v) => leaks(v).length)), hosts.join(' '));
     const before = asked.length;
     check('Brave has no free check: passed without a call, checked on first use', (await pool.checkKey('brave', KEYS.bad)).ok === true && asked.length === before);
-    check("an E2B account without the Synapsez template is said so", JSON.stringify(await pool.checkKey('e2b', KEYS.noTemplate)) === JSON.stringify({ ok: false, reason: 'template' }));
+    check("an E2B account without the Ephapse template is said so", JSON.stringify(await pool.checkKey('e2b', KEYS.noTemplate)) === JSON.stringify({ ok: false, reason: 'template' }));
     answers.delete('api.exa.ai/websets/v0/teams/me');
     check('a provider that cannot be reached is said so, not called a refusal', (await pool.checkKey('exa', KEYS.exa)).reason === 'unreachable');
     // Since `before`: two calls for E2B's, one for the unreachable Exa.

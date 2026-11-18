@@ -23,7 +23,7 @@ import { networkOf, agentOf } from './audit.js';
 const COOKIE = 'ai_remote_session';
 const MAX_AGE_SEC = 30 * 24 * 60 * 60;
 /** The accounts this browser has signed in to with the right password (`knownDevice`). */
-const DEVICE_COOKIE = 'synz_known';
+const DEVICE_COOKIE = 'eph_known';
 const DEVICE_MAX_AGE_SEC = 365 * 24 * 60 * 60;
 /** How many accounts one browser is remembered for. */
 const DEVICE_ACCOUNTS = 5;
@@ -343,7 +343,8 @@ const USERNAME_RE = /^[a-z][a-z0-9._]{2,23}$/;
 /** Names that would read as the service itself speaking. */
 const RESERVED_USERNAMES = new Set([
   'admin', 'administrator', 'root', 'support', 'help', 'system', 'security', 'owner', 'staff', 'moderator',
-  'synapsez', 'api', 'www', 'mail', 'email', 'noreply', 'no_reply', 'null', 'undefined', 'anonymous',
+  // The old name stays reserved beside the new one: nobody can take either (rename 1.33.0).
+  'ephapse', 'synapsez', 'api', 'www', 'mail', 'email', 'noreply', 'no_reply', 'null', 'undefined', 'anonymous',
 ]);
 
 /**

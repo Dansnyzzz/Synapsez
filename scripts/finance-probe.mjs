@@ -14,7 +14,7 @@
  *   npm run finance:probe -- --region sin1 Singapore, the check §3.9 suggests when iad1 is refused
  *
  * GET only, nothing posted. Every request says who it is
- * (`Synapsez/<version> (+https://github.com/; market data on request)`) with no
+ * (`Ephapse/<version> (+https://github.com/; market data on request)`) with no
  * Referer or Origin — except Yahoo, asked with the `Mozilla/5.0` the app has
  * always sent it (the one exception the plan keeps), and SEC, asked with
  * SEC_USER_AGENT when it is set and skipped when it is not: SEC wants a real
@@ -31,7 +31,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const { version } = JSON.parse(fs.readFileSync(path.resolve(here, '../package.json'), 'utf8'));
-const HONEST_UA = `Synapsez/${version} (+https://github.com/; market data on request)`;
+const HONEST_UA = `Ephapse/${version} (+https://github.com/; market data on request)`;
 
 const regionArg = process.argv.indexOf('--region');
 const region = regionArg > 0 ? String(process.argv[regionArg + 1] || '') : '';
@@ -110,7 +110,7 @@ try {
     resources: { vcpus: 2 },
     networkPolicy: 'allow-all',
     persistent: false,
-    tags: { app: 'synapsez', role: 'finance-probe' },
+    tags: { app: 'ephapse', role: 'finance-probe' },
   });
   await box.writeFiles([{ path: 'finance-probe.mjs', content: Buffer.from(INSIDE) }]);
   const done = await box.runCommand({ cmd: 'node', args: ['finance-probe.mjs'], env: env.SEC_USER_AGENT ? { SEC_USER_AGENT: env.SEC_USER_AGENT } : {}, timeoutMs: 4 * 60 * 1000 });

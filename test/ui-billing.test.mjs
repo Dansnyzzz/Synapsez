@@ -18,7 +18,7 @@ fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });
 for (const name of ['DATABASE_URL', 'POSTGRES_URL', 'VERCEL', 'BILLING_MODE', 'SEPAY_API_TOKEN', 'E2B_API_KEY']) delete process.env[name];
 process.env.SEPAY_BANK_ACCOUNT = '0123456789';
 process.env.SEPAY_BANK_CODE = 'MBBank';
-process.env.SEPAY_ACCOUNT_NAME = 'SYNAPSEZ TEST';
+process.env.SEPAY_ACCOUNT_NAME = 'EPHAPSE TEST';
 
 const realLog = console.log;
 console.log = (...args) => {
@@ -542,7 +542,7 @@ let orderId = '';
       timer: d.querySelector('.pay__timer')?.textContent.trim(),
       status: d.querySelector('.pay__status')?.getAttribute('role'),
       statusText: d.querySelector('.pay__status')?.textContent.trim(),
-      holder: d.textContent.includes('SYNAPSEZ TEST'),
+      holder: d.textContent.includes('EPHAPSE TEST'),
     };
   });
   orderId = qr.order;

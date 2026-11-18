@@ -1022,7 +1022,7 @@ export function createViewer({ onChange, onOpen, onClose } = {}) {
    * @param {{ pdf?: boolean }} [options]  `pdf`: the person wants a file, not
    *   paper. A page cannot choose the dialog's destination for them, so it
    *   says which one to pick — and names the document, because the browser
-   *   uses the page title as the PDF's file name ("Synapsez.pdf" otherwise).
+   *   uses the page title as the PDF's file name ("Ephapse.pdf" otherwise).
    */
   function printIt({ pdf = false } = {}) {
     const name = String(current?.file?.name || '').replace(/\.[^.]+$/, '') || 'document';

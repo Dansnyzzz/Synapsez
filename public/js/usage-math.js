@@ -190,7 +190,7 @@ export function periodOf(interval, now) {
  * `from` and `to` (its reset), either null when the provider does not say.
  *
  *   - `free`: an own OpenRouter key's free-model requests today, as OpenRouter
- *     reports them; or OrcaRouter's, as Synapsez counted them (`counted`), one
+ *     reports them; or OrcaRouter's, as Ephapse counted them (`counted`), one
  *     for the workspace and not per key — OrcaRouter counts by workspace, and a
  *     free id with a ladder of its own has a `bucket` of its own.
  *     Gemini's the same (`counted`), once a refusal has said what its ceiling is.

@@ -1,6 +1,6 @@
 # Hồ sơ đánh giá tác động chuyển dữ liệu cá nhân ra nước ngoài — bản mẫu
 
-> Bản mẫu do mã nguồn cung cấp (LAW-001), để bên vận hành một bản triển khai Synapsez lập hồ sơ theo Luật
+> Bản mẫu do mã nguồn cung cấp (LAW-001), để bên vận hành một bản triển khai Ephapse lập hồ sơ theo Luật
 > Bảo vệ dữ liệu cá nhân số 91/2025/QH15 (hiệu lực 01/01/2026) và văn bản hướng dẫn. Phần mô tả kỹ thuật dưới
 > đây đúng với phần mềm tại phiên bản `privacy-2026-11-03`; phần pháp lý — biểu mẫu, thời hạn nộp, cơ quan tiếp
 > nhận, căn cứ điều khoản — **phải được luật sư đối chiếu với văn bản hiện hành**. Đây không phải tư vấn pháp lý.
@@ -69,6 +69,6 @@
 
 ## 7. Việc bên vận hành cần làm
 
-1. Điền mục 1, 3 (cột trống) và 5. (`public/privacy.html` mục 1 đã có tên và liên hệ: Synapsez — <herozombie06@gmail.com>, từ 2026-10-18.)
+1. Điền mục 1, 3 (cột trống) và 5. (`public/privacy.html` mục 1 đã có tên và liên hệ: Ephapse — <herozombie06@gmail.com>, từ 2026-10-18.)
 2. Nhờ luật sư xác nhận hồ sơ và thông báo theo văn bản hiện hành; nộp hồ sơ theo yêu cầu (nếu có).
 3. Khi thông báo thay đổi nội dung: tăng phiên bản (`privacy-YYYY-MM-DD`) ở `public/privacy.html` và `PRIVACY_NOTICE` trong `public/js/app.js` (test giữ hai chỗ khớp nhau).

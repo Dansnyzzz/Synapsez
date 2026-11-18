@@ -1,7 +1,7 @@
 /**
  * Plugins: the assistant's built-in tools, in groups a person can switch off.
  *
- * Claude's composer has a Plugins menu (owner, 2026-10-14). Synapsez has no
+ * Claude's composer has a Plugins menu (owner, 2026-10-14). Ephapse has no
  * plugins to install, but it does have whole families of tools that a given
  * account may never want — a cloud computer, a cloud browser, office documents —
  * and each one is schema the model is sent on every step. So a plugin here is

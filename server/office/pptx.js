@@ -236,9 +236,9 @@ function themeXml(palette = THEMES.ocean) {
     '<a:prstDash val="solid"/></a:ln>';
 
   return (
-    `${XML_DECLARATION}<a:theme xmlns:a="${DRAWING_NS}" name="Synapsez">` +
+    `${XML_DECLARATION}<a:theme xmlns:a="${DRAWING_NS}" name="Ephapse">` +
     '<a:themeElements>' +
-    '<a:clrScheme name="Synapsez">' +
+    '<a:clrScheme name="Ephapse">' +
     colour('dk1', 'windowText') +
     colour('lt1', 'window') +
     // The document's palette as the theme's own colours, so a shape somebody
@@ -254,11 +254,11 @@ function themeXml(palette = THEMES.ocean) {
     colour('hlink', '0563C1') +
     colour('folHlink', '954F72') +
     '</a:clrScheme>' +
-    '<a:fontScheme name="Synapsez">' +
+    '<a:fontScheme name="Ephapse">' +
     '<a:majorFont><a:latin typeface="Calibri Light"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>' +
     '<a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>' +
     '</a:fontScheme>' +
-    '<a:fmtScheme name="Synapsez">' +
+    '<a:fmtScheme name="Ephapse">' +
     `<a:fillStyleLst>${fill}</a:fillStyleLst>` +
     `<a:lnStyleLst>${line(6350)}${line(12700)}${line(19050)}</a:lnStyleLst>` +
     '<a:effectStyleLst>' +
@@ -480,7 +480,7 @@ function notesSlideXml(notes) {
  * @param theme  a palette name (theme.js), a palette, or nothing — picked from the deck's words
  * @returns a Buffer holding the whole package
  */
-export function writePptx({ slides, title = 'Presentation', author = 'Synapsez', created = new Date(), theme = null } = {}) {
+export function writePptx({ slides, title = 'Presentation', author = 'Ephapse', created = new Date(), theme = null } = {}) {
   const list = (Array.isArray(slides) ? slides : []).filter(Boolean);
   // A slide too full to read is continued on the next rather than shrunk to nothing.
   const deck = paginate(list.length ? list : [{ title, bullets: [] }]);

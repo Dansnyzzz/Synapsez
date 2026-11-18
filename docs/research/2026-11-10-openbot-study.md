@@ -1,9 +1,9 @@
-# OpenBot (nightly-labs/openbot) — research for the Synapsez Bot page
+# OpenBot (nightly-labs/openbot) — research for the Ephapse Bot page
 
 Researched 2026-11-10 from the clone at `scratchpad/repos/openbot-src/openbot` (read only; nothing run).
-**Licence: PolyForm Noncommercial 1.0.0.** Synapsez may take ideas and behaviour only. Every description
+**Licence: PolyForm Noncommercial 1.0.0.** Ephapse may take ideas and behaviour only. Every description
 below is a paraphrase written for this report: no code, prompt text or UI wording from OpenBot is to be
-copied into Synapsez. Where a number is quoted, it is a fact about OpenBot's behaviour, not a constant to
+copied into Ephapse. Where a number is quoted, it is a fact about OpenBot's behaviour, not a constant to
 paste.
 
 Working notes with more raw detail: `scratchpad/research/openbot-notes.md` and `notes-02…notes-10*.md`.
@@ -65,7 +65,7 @@ OpenBot source (verification)
 - [x] `src/backend/agent/plan-continuation.ts` (comments + core), `agent/side-question.ts` (head), `agent/delivery-content.ts` (outline), `agent/openbot-tool-router.ts` (plan card, 935–1004), `agent/duplication-gate.ts` (head), `agent/usage-limit-gate.ts` (comments), `agent/memory-hold.ts`, `agent/step-labels.ts`, `agent/instructions-changes.ts` (comments)
 - [x] `packages/contracts/src/input-limits.ts` (full), `ipc-agent-memories.ts` (full), `agent-memory-context.ts`, `ui-blocks.ts` (limits, states, auto-answer), `ipc-agents.ts` (AgentSummary, defaults), `ipc-queue.ts` (statuses, busy modes, delivery), `ipc-chat-channels.ts` (limits), `ipc-agent-tasks.ts` (task limits)
 
-Synapsez (read only, for the gap analysis)
+Ephapse (read only, for the gap analysis)
 - [x] `server/bots/memory.js`, `prompt.js`, `rounds.js`, `team.js`, `tools.js` (all full)
 - [x] `server/routes/bots.js` (full)
 - [x] `public/js/bots.js` (header, outline, 340–470: working rows, details panel, tasks, memory), `bots-settings.js` (header), `bots-usage.js`, `bot-avatar.js` (outlines), `bot-mentions.js` (full)
@@ -487,9 +487,9 @@ Each item: **Sees** (what the user sees), **Works** (mechanism, states, edge cas
 
 ---
 
-## 4. Gap analysis against the Synapsez Bot page
+## 4. Gap analysis against the Ephapse Bot page
 
-Synapsez facts used (from the files checked): bots ≤24, groups ≤20, members ≤12, role ≤40, instructions
+Ephapse facts used (from the files checked): bots ≤24, groups ≤20, members ≤12, role ≤40, instructions
 ≤4,000, memory entry ≤300 chars, ≤60 entries per bot/group, ≤4,000 chars of each scope in the prompt (newest
 kept), names ≤40 with reserved `all/everyone/user/you/me`; group round: admin answers un-addressed messages,
 any "@Name" in a post hands work on, members called together run in parallel, `[PASS]` = silence,
@@ -501,10 +501,10 @@ incognito); Vercel `maxDuration` 300, crons once a day (+ browser nudges / exter
 
 Legend — Has: yes / partly / no. Fit: fits a serverless web app? Value: H/M/L. Effort: S/M/L.
 
-| # | Feature | Synapsez has it? (file checked) | Fit | Value | Effort | Adaptation notes |
+| # | Feature | Ephapse has it? (file checked) | Fit | Value | Effort | Adaptation notes |
 |---|---|---|---|---|---|---|
 | 1 | Prompt-driven creation of teammates | yes — Chief `create_bot` (`server/bots/tools.js`) | yes | — | — | Missing only the "first task" argument (new bot starts its first job) — S. |
-| 2 | New bot inherits creator's limits | n/a (no per-bot access) | — | L | — | Synapsez has no per-bot permissions; skip. |
+| 2 | New bot inherits creator's limits | n/a (no per-bot access) | — | L | — | Ephapse has no per-bot permissions; skip. |
 | 3 | **Person-only gate for team/management tools** | **no** — `runBotTool` checks only `is_main` (`tools.js`); a group member's @Chief, or a scheduled task in Chief's chat, can run `create_bot`/`update_group`; any bot can rewrite its own instructions from injected text | yes | **H** | S | Record the turn's origin (person / bot hand-off / scheduled / webhook) and refuse create/update/delete tools unless a person started the turn. Security fix class, not a feature. |
 | 4 | Welcome turn with 3 suggested first tasks | no (`createBot` + "ready" line) | yes | M | S | On first open of a new bot's chat, run one cheap turn that greets in the UI language and offers 3 tasks as question buttons (`tools/askOptions.js`). |
 | 5 | Exact colours / chat bubble colour | partly — creature + 12 hues, distinct faces (`team.js pickHue`) | yes | L | S | Bubble tint per bot from its hue is cheap polish. |
@@ -543,9 +543,9 @@ Legend — Has: yes / partly / no. Fit: fits a serverless web app? Value: H/M/L.
 | 38 | Rolling group summary in the member packet | no — a member reads new lines since it last looked; its per-group conversation grows | yes | M | M | Keep a short group summary (cheap model, after a round, like OpenBot's background summary) and give it to members whose `seen` is far behind or new. |
 | 39 | Isolated channel memory | yes — group memory scope (`memory.js`, `tools.js remember`) | yes | — | — | Already the default in a group. |
 | 40 | Questions/approvals answerable inside a group | no — an approval stops the member with a notice (`rounds.js`) | partly | M | M | Show the question card in the group log and resume that member's turn on answer (needs a resumable member turn). |
-| 41 | Notify once when a group's work ends | no (no web push; `bots.js`) | partly | M | M | Synapsez has event mail; a "round finished" browser notification when the tab is hidden is cheap. |
+| 41 | Notify once when a group's work ends | no (no web push; `bots.js`) | partly | M | M | Ephapse has event mail; a "round finished" browser notification when the tab is hidden is cheap. |
 | 42 | **Essential vs searchable memory + search tool** | no — newest 4,000 chars per scope, older silently dropped (`memory.js memorySection`) | yes | **H** | M | Pin flag (`essential`), byte budget; Postgres `tsvector('simple')` + `unaccent` for Vietnamese; a `recall` tool; "search before saying you don't know". |
-| 43 | Memory dedupe / forget by id / secret refusal | yes (`memory.js`) | — | — | — | Synapsez forget-by-substring with ambiguity refusal is good. |
+| 43 | Memory dedupe / forget by id / secret refusal | yes (`memory.js`) | — | — | — | Ephapse forget-by-substring with ambiguity refusal is good. |
 | 44 | Larger cap with background additions | partly — 60 × 300 | yes | M | S | Raise once #42 exists (only essentials cost prompt space). |
 | 45 | **Staged memory commits** (only if the turn completes; cleared-epoch guard) | no — `remember` writes immediately (`memory.js`) | yes | M | S | Collect bot-tool writes per turn and flush on success; drop on stop/error. |
 | 46 | **Memory-changes line after a turn** with undo | partly — tool calls show as event lines (`bots.js TEAM_EVENTS`) | yes | M | S | One summary line "saved 2, forgot 1" with Undo per entry. |
@@ -577,7 +577,7 @@ Legend — Has: yes / partly / no. Fit: fits a serverless web app? Value: H/M/L.
 | 72 | Workspace (connection) facts memory | no | yes | L | S | Only with #71. |
 | 73 | Usage by bot | yes (`routes/bots.js /bots/usage`, `bots-usage.js`) | — | — | — | Add per-group totals and skill breakdown later. |
 | 74 | Per-bot access roles for team members | no (bots are per account) | — | L | — | Only if bots become shareable in a team. |
-| 75 | i18n of server messages by template matching | partly (vi/en, tests) | yes | L | — | Synapsez already enforces vi/en by tests. |
+| 75 | i18n of server messages by template matching | partly (vi/en, tests) | yes | L | — | Ephapse already enforces vi/en by tests. |
 | 76 | Collapsed "N steps" row incl. memory changes | yes in home chat (memory index: run gallery/steps) | — | — | — | Include memory changes in it (#46). |
 | 77 | Tool discovery / context-budget CI gate | partly (`token-budget` skill, tool loading) | yes | L | S | A byte-budget test for the bot prompt section would stop silent growth. |
 
@@ -585,7 +585,7 @@ Legend — Has: yes / partly / no. Fit: fits a serverless web app? Value: H/M/L.
 
 ## 5. Ranked shortlist (what to carry over first)
 
-Ranked by value × fit ÷ effort, adapted to Synapsez (Express on Vercel, 300 s functions, daily cron plus
+Ranked by value × fit ÷ effort, adapted to Ephapse (Express on Vercel, 300 s functions, daily cron plus
 browser/pinger nudges, Postgres, vanilla JS, vi/en).
 
 **1. Person-only gate for team-changing tools (security, S).** Give every bot turn an `origin` that the
@@ -704,9 +704,9 @@ answerable only by the requester.
 ## 6. Things NOT to carry over, and why
 
 - **Code, prompts, tool descriptions, UI copy** — PolyForm Noncommercial forbids use in a commercial
-  product; Synapsez must re-implement behaviours in its own words (this report already paraphrases).
+  product; Ephapse must re-implement behaviours in its own words (this report already paraphrases).
 - **Local CLI providers, per-agent workspaces, `AGENTS.md` files, provider sessions/handoff of captured
-  work steps, idle-session pools, process groups** — desktop-only; Synapsez runs one agent loop on hosted
+  work steps, idle-session pools, process groups** — desktop-only; Ephapse runs one agent loop on hosted
   models with no per-bot filesystem.
 - **Per-bot model, backup-model lists, provider accounts, usage-reset credits** — the owner chose one model
   from the top bar for every bot (2026-11-10); app-wide fallback already exists.
@@ -716,7 +716,7 @@ answerable only by the requester.
 - **Model-based routing turn before every un-addressed group message** — one extra paid call per message;
   the admin's own turn already routes. Use deterministic rules (#11) instead.
 - **Embedded browser takeovers, Computer Use, screen capture, local sign-in windows, vault autofill** —
-  desktop-only; Synapsez has its own cloud browser and sandbox with their own safety model.
+  desktop-only; Ephapse has its own cloud browser and sandbox with their own safety model.
 - **Local scripts loopback API as designed** (127.0.0.1, token files) — no localhost on Vercel; only the idea
   of a per-bot opt-in API with an hourly limit survives (#57, later).
 - **WebRTC Team API, iPhone Live Activities, push "away" detection via keyboard idle time** — different
@@ -725,12 +725,12 @@ answerable only by the requester.
   socket that serverless cannot hold; **Slack auto-joining every public channel** — noisy and needs a relay
   that keeps events within 2.5 s.
 - **Shared SQL tables that agents create and query** — letting a model run SQL on the production Postgres is
-  a large injection and quota risk; Synapsez has notes, memory and files instead.
+  a large injection and quota risk; Ephapse has notes, memory and files instead.
 - **Static site hosting, public GitHub issue filing by agents, status-page webhooks, routine iCal feed,
   workflow canvas with an animated "agent cursor"** — cost/abuse surface or low value for the Bot page.
 - **`html_render` pages with scripts** — would need an isolated origin and size limits; existing chart/card
   tools cover the need with less risk.
-- **Roles per bot for team members and an access audit log** — Synapsez bots belong to one account; revisit
+- **Roles per bot for team members and an access audit log** — Ephapse bots belong to one account; revisit
   only if bots become shared within a team.
 - **Danger-by-default access** (OpenBot agents run with full access and no approvals after first consent) —
-  the opposite of Synapsez's approval policy; keep Synapsez's stricter defaults.
+  the opposite of Ephapse's approval policy; keep Ephapse's stricter defaults.

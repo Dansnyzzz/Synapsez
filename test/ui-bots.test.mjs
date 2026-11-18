@@ -941,7 +941,7 @@ section('needs you, unread, pins, the row menu, pause, who is called, ask aside,
   await page.click('[data-act="new"]');
   await page.click('[data-act="team-files"]');
   await page.waitForSelector('dialog.botport[open]', { timeout: 4000 }).catch(() => {});
-  await page.fill('.botport [data-port-text]', 'Sure:\n```json\n{"format":"synapsez-bots/1","bots":[{"name":"Pasted","role":"Notes","memory":["Prefers tea."]}]}\n```');
+  await page.fill('.botport [data-port-text]', 'Sure:\n```json\n{"format":"ephapse-bots/1","bots":[{"name":"Pasted","role":"Notes","memory":["Prefers tea."]}]}\n```');
   await page.click('.botport [data-port="check"]');
   await page.waitForSelector('.botport__plan', { timeout: 5000 }).catch(() => {});
   const plan = await page.evaluate(() => document.querySelector('.botport__plan')?.textContent.replace(/\s+/g, ' ').trim());

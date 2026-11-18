@@ -671,10 +671,10 @@ section('the worn title’s creature on the writing box');
   check('  and back on automatic it stands there again', true);
 
   // Wearing none brings the whale back.
-  await member.evaluate(() => window.dispatchEvent(new window.CustomEvent('synapsez:title', { detail: null })));
+  await member.evaluate(() => window.dispatchEvent(new window.CustomEvent('ephapse:title', { detail: null })));
   await member.waitForSelector('.composer__box img.mascot');
   check('wearing no title brings the whale back', !(await member.$('.composer__box canvas.mascot')));
-  await member.evaluate(() => window.dispatchEvent(new window.CustomEvent('synapsez:title', { detail: 'newcomer' })));
+  await member.evaluate(() => window.dispatchEvent(new window.CustomEvent('ephapse:title', { detail: 'newcomer' })));
   await member.waitForSelector('.composer__box canvas.mascot[data-creature="minnow"]');
 }
 
@@ -784,7 +784,7 @@ section('signed out, the sign-in page covers everything');
 {
   const out = await browser.newContext({ viewport: { width: 1280, height: 860 } });
   const gate = await out.newPage();
-  await gate.addInitScript(() => localStorage.setItem('synapsez:scene', 'aurora-peak'));
+  await gate.addInitScript(() => localStorage.setItem('ephapse:scene', 'aurora-peak'));
   await gate.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
   await gate.waitForSelector('#gate:not([hidden])');
   await gate.waitForTimeout(500);

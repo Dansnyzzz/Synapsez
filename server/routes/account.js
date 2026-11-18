@@ -464,7 +464,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
 
       const stamp = new Date().toISOString().slice(0, 10);
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      res.setHeader('Content-Disposition', `attachment; filename="synapsez-export-${stamp}.json"`);
+      res.setHeader('Content-Disposition', `attachment; filename="ephapse-export-${stamp}.json"`);
       res.setHeader('Cache-Control', 'no-store');
 
       /*
@@ -588,7 +588,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
 
       // The same reader the browser used, over the same shape it produced.
       const { conversations } = incoming.length
-        ? normaliseImport({ format: 'synapsez-export', chats: incoming })
+        ? normaliseImport({ format: 'ephapse-export', chats: incoming })
         : { conversations: [] };
       const store = getStore();
       let imported = 0;
@@ -613,7 +613,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
         }
       }
 
-      // Notes from a Synapsez export travel only in the batch that says so.
+      // Notes from an Ephapse export travel only in the batch that says so.
       let notes = 0;
       if (Array.isArray(req.body?.memory) && req.body.memory.length) {
         const prefs = await getPrefs(req.user.id);
@@ -624,7 +624,7 @@ export function mountAccountRoutes(api, admin, { wrap }) {
             const { text } = redactSecrets(String(n?.content ?? ''));
             if (!text.trim() || text.length > MAX_NOTE_CHARS) continue;
             if (memoryRefusal(text, { allowSensitive: prefs.memorySensitive === true })) continue;
-            // A Synapsez export says what kind each note is (2026-11-12); anything else comes in as a fact.
+            // An Ephapse export says what kind each note is (2026-11-12); anything else comes in as a fact.
             let kind = null;
             let expires = null;
             try {
@@ -800,7 +800,7 @@ async function writeExport(write, { store, userId, user, prefs, memory, botMemor
   // The indexed folders and the bot team are in it too (owner, 2026-11-12).
   const added = (await store.listAddedSkills?.(userId)) || [];
   await write(
-    `{"format":"synapsez-export","version":1,"exportedAt":${JSON.stringify(new Date().toISOString())},` +
+    `{"format":"ephapse-export","version":1,"exportedAt":${JSON.stringify(new Date().toISOString())},` +
       `"account":${JSON.stringify({ name: user.name, username: user.username ?? null, email: user.email, createdAt: user.created_at })},` +
       `"prefs":${JSON.stringify(prefs)},` +
       `"memory":${JSON.stringify(memory)},` +
@@ -837,7 +837,7 @@ async function writeExport(write, { store, userId, user, prefs, memory, botMemor
       // is (owner, 2026-11-12). Not the passages' text — a copy of files still on the
       // person's computer — and not the embeddings, which nobody can read.
       `"indexedDocuments":${JSON.stringify(foldersOf(indexed))},` +
-      // The bot team as the Bot page exports it (synapsez-bots/1): bots, their memory,
+      // The bot team as the Bot page exports it (ephapse-bots/1): bots, their memory,
       // groups, their tasks — so the one export holds them too, and the Bot page can read it back.
       `"team":${JSON.stringify(team || null)},` +
       // Billing: the information given for receipts (opened for its owner), orders, every ledger entry, receipts, the plan and the balance.

@@ -179,7 +179,7 @@ Exactly as spec §6 "Plans sheet": segmented **Cá nhân · Nhóm**; four cards 
 
 - [ ] **Step 1: Failing checks:** the segmented control has Individual and Team, no month/year at the top; four cards in order with icon, tagline, price lines and ticks; the toggle in a paid card switches every paid card and the second line; the "Không ràng buộc" line only under monthly; a member on Plus monthly sees the info box and "Chuyển sang Plus theo năm" which opens checkout on yearly; the rate line has no link for Frankfurter and has the link for erapi; Team tab → the card → "Báo tôi khi mở" stores once and says so; the admin card shows the count; both themes readable (contrast 4.5:1 on the new text); 360 px no sideways scroll; keyboard reaches every control.
 - [ ] **Step 2: Run** — fails.
-- [ ] **Step 3: Implement.** Icons are inline SVG drawn for Synapsez (no external images, nothing copied from Anthropic).
+- [ ] **Step 3: Implement.** Icons are inline SVG drawn for Ephapse (no external images, nothing copied from Anthropic).
 - [ ] **Step 4: Run** `node test/ui-billing.test.mjs`, billing-routes, i18n, features, lint, typecheck — pass.
 - [ ] **Step 5: Commit** `feat(billing): the plans sheet laid out like Claude's — Individual and Team, the year inside each card`.
 

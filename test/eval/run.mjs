@@ -103,7 +103,9 @@ const { buildSystemPrompt, promptVersion } = await import('../../server/agent.js
 // skills index. No case rests on either.
 // 66bab8a338c2: a file somebody attached and asks to change is changed in place, or
 // asked about (owner, 2026-11-05). No case rests on the old wording.
-const PROMPT_STAMP = '152dd64d7718';
+// 35eb3daf5c5c: the product's new name, Ephapse, in the opening line only (owner, 2026-11-17).
+// All 18 cases still pass for the reasons they state.
+const PROMPT_STAMP = '35eb3daf5c5c';
 
 const bold = (s) => `\x1b[1m${s}\x1b[0m`;
 const green = (s) => `\x1b[32m${s}\x1b[0m`;

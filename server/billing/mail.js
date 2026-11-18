@@ -66,7 +66,7 @@ function pieces(kind, language, data, links) {
           ? (vi ? `Gói ${named} của bạn đã được gia hạn.` : `Your ${named} plan has been renewed.`)
           : (vi ? `Gói ${named} của bạn đã được kích hoạt.` : `Your ${named} plan is now active.`);
       return {
-        subject: vi ? `Synapsez đã nhận ${money(data.amountVnd)}` : `Synapsez received ${money(data.amountVnd)}`,
+        subject: vi ? `Ephapse đã nhận ${money(data.amountVnd)}` : `Ephapse received ${money(data.amountVnd)}`,
         title: vi ? 'Đã nhận thanh toán' : 'Payment received',
         lead,
         facts: [
@@ -201,7 +201,7 @@ export function buildBillingMail(kind, { language = 'en', data = {}, baseUrl = p
   const p = pieces(BILLING_MAIL_KINDS.includes(kind) ? kind : 'late-money', l, data || {}, links);
   const facts = p.facts.filter(([label, value]) => label && value);
   const brand = senderName();
-  const why = l === 'vi' ? 'Bạn nhận được email này vì tài khoản Synapsez của bạn có thanh toán hoặc gói. Xem tất cả ở Cài đặt → Thanh toán:' : 'You are getting this because your Synapsez account has billing or a plan. See everything in Settings → Billing:';
+  const why = l === 'vi' ? 'Bạn nhận được email này vì tài khoản Ephapse của bạn có thanh toán hoặc gói. Xem tất cả ở Cài đặt → Thanh toán:' : 'You are getting this because your Ephapse account has billing or a plan. See everything in Settings → Billing:';
   const contentHtml =
     `<h2 style="margin:0 0 12px;font-size:22px;line-height:1.3;color:#111827">${escapeHtml(p.title)}</h2>` +
     `<p style="margin:0 0 16px;font-size:15px;line-height:1.6;color:#374151">${escapeHtml(p.lead)}</p>` +

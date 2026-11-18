@@ -54,7 +54,7 @@ const hookSecretOf = (route) => {
 const UNCHECKABLE = Object.freeze({ status: 503, body: { error: 'This hook cannot be checked. Rotate its secret.' } });
 
 /**
- * The signature a sender puts in `X-Synapsez-Signature`: HMAC-SHA256 with the secret over
+ * The signature a sender puts in `X-Ephapse-Signature`: HMAC-SHA256 with the secret over
  * `timestamp.delivery.body`, hex, after "sha256=".
  *
  * @param {string} secret @param {{ timestamp: string | number, delivery: string, body: Buffer | string }} parts
@@ -144,12 +144,12 @@ export async function acceptHook({ routeId, raw, headers, req = null, now = Date
     const hit = await store.hitRateLimit?.(`hook:${route.id}:${suffix}`, limit, windowMs).catch(() => null);
     if (hit && !hit.allowed) return { status: 429, body: { error: `This hook takes at most ${limit} requests a ${suffix === 'min' ? 'minute' : 'day'}.` } };
   }
-  const timestamp = header(headers, 'x-synapsez-timestamp');
-  const delivery = header(headers, 'x-synapsez-delivery');
-  const signature = header(headers, 'x-synapsez-signature');
+  const timestamp = header(headers, 'x-ephapse-timestamp');
+  const delivery = header(headers, 'x-ephapse-delivery');
+  const signature = header(headers, 'x-ephapse-signature');
   const ts = Number(timestamp);
   if (!/^\d{9,11}$/.test(timestamp) || Math.abs(now / 1000 - ts) > HOOK_SKEW_S) return { status: 401, body: { error: 'The timestamp is missing or more than five minutes off.' } };
-  if (!/^[\w.:-]{1,100}$/.test(delivery)) return { status: 400, body: { error: 'X-Synapsez-Delivery needs an id of letters, digits, ".", ":", "_" or "-".' } };
+  if (!/^[\w.:-]{1,100}$/.test(delivery)) return { status: 400, body: { error: 'X-Ephapse-Delivery needs an id of letters, digits, ".", ":", "_" or "-".' } };
   const body = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw ?? ''));
   if (body.length > HOOK_BODY_MAX) return { status: 413, body: { error: 'A hook body is at most 64 KB.' } };
   let secret;
@@ -212,12 +212,12 @@ export async function sendTestHook({ userId, taskId, start = startHookRun }) {
   const store = getStore();
   const route = await store.getHookRouteForTask(userId, taskId);
   if (!route) return { status: 404, body: { error: 'This task has no hook.' } };
-  const body = Buffer.from(JSON.stringify({ type: 'test', occurredAt: new Date().toISOString(), data: { test: true, note: 'A test sent from Synapsez.' } }));
+  const body = Buffer.from(JSON.stringify({ type: 'test', occurredAt: new Date().toISOString(), data: { test: true, note: 'A test sent from Ephapse.' } }));
   const timestamp = String(Math.floor(Date.now() / 1000));
   const delivery = `test-${crypto.randomUUID()}`;
   // A secret that will not open is said, never signed over as "" and reported a success.
   const secret = hookSecretOf(route);
   if (!secret) return UNCHECKABLE;
   const signature = signHook(secret, { timestamp, delivery, body });
-  return acceptHook({ routeId: route.id, raw: body, headers: { 'x-synapsez-timestamp': timestamp, 'x-synapsez-delivery': delivery, 'x-synapsez-signature': signature }, start });
+  return acceptHook({ routeId: route.id, raw: body, headers: { 'x-ephapse-timestamp': timestamp, 'x-ephapse-delivery': delivery, 'x-ephapse-signature': signature }, start });
 }

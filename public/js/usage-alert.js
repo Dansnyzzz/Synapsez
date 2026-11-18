@@ -32,7 +32,7 @@ import { moreLink, limitName } from './usage-panel.js';
  */
 
 /** Before closes were kept per account; whose it was cannot be told, so it is dropped. */
-const UNSCOPED = 'synapsez.usageAlert';
+const UNSCOPED = 'ephapse.usageAlert';
 /** Asked at most this often unless something has just happened that moves a limit. */
 const QUIET_MS = 20_000;
 

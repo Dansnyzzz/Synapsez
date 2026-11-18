@@ -1,6 +1,6 @@
 # Audit: thiết kế thanh toán SePay + bảng gói/hạn mức (2026-11-12)
 
-Đối chiếu hai tài liệu chủ web gửi — `Synapsez.pdf` (thiết kế thanh toán SePay, 11/11/2026) và
+Đối chiếu hai tài liệu chủ web gửi — `Ephapse.pdf` (thiết kế thanh toán SePay, 11/11/2026) và
 `Bang-limit-va-chi-phi-co-dinh.md` (bảng gói, hạn mức, chi phí, 04/11/2026) — với nguồn chính thức
 đọc ngày 12/11/2026, và với code hiện có. Chi tiết từng dữ kiện kèm URL:
 [sepay-payments](2026-11-12-sepay-payments.md), [sepay-einvoice](2026-11-12-sepay-einvoice.md),
@@ -32,7 +32,7 @@ Ký hiệu: ✅ đúng · ❌ sai (kèm số đúng) · ⚠️ đúng một ph�
 
 ---
 
-## 2. Thanh toán qua SePay (Synapsez.pdf)
+## 2. Thanh toán qua SePay (Ephapse.pdf)
 
 | # | Tài liệu nói | Kết quả | Đúng là / sửa thế nào |
 |---|---|---|---|

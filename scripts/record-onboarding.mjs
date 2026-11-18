@@ -30,7 +30,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(root, 'public', 'onboarding');
-const RAW = fs.mkdtempSync(path.join(os.tmpdir(), 'synapsez-onb-raw-'));
+const RAW = fs.mkdtempSync(path.join(os.tmpdir(), 'ephapse-onb-raw-'));
 const SIZE = { width: 1280, height: 800 };
 /** Each clip must stay under this; the encoder is asked again, harder, until it does. */
 const MAX_BYTES = 600 * 1024;
@@ -61,8 +61,8 @@ function findFfmpeg() {
 const FFMPEG = findFfmpeg();
 
 // ── the app, on a database of its own ────────────────────────────────
-process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'synapsez-onb-data-'));
-process.env.WORKSPACE = fs.mkdtempSync(path.join(os.tmpdir(), 'synapsez-onb-ws-'));
+process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'ephapse-onb-data-'));
+process.env.WORKSPACE = fs.mkdtempSync(path.join(os.tmpdir(), 'ephapse-onb-ws-'));
 process.env.ENCRYPTION_KEY ||= 'onboarding-recording-key';
 process.env.SESSION_SECRET ||= 'onboarding-recording-secret';
 for (const name of ['DATABASE_URL', 'POSTGRES_URL', 'VERCEL']) delete process.env[name];

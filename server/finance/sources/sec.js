@@ -5,7 +5,7 @@ import { num } from '../util.js';
 /**
  * SEC EDGAR: US companies' reported figures, filings and a light cross-section —
  * public data, free for any use (research §1). SEC asks every client to say who
- * it is: http.js sends `SEC_USER_AGENT` ("Synapsez <contact email>", set by the
+ * it is: http.js sends `SEC_USER_AGENT` ("Ephapse <contact email>", set by the
  * owner) and does not ask SEC at all without it, so the chain falls through to
  * Yahoo and the answer says why.
  *
