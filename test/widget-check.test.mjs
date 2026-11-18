@@ -246,6 +246,29 @@ section('lines and arrows: where a translate puts things, and where nothing can 
   // But what stands where it is known is still crossed-checked.
   check('  an arrow through a known box is still found beside a rotated one', checkLines(diamond.replace(arrow('M200 227L200 300'), arrow('M200 227L200 360'))).some((s) => /runs through the box "Bước 2"/.test(s)));
 
+  // Fix round 2: a scale, or a matrix with no turn in it, is followed as a translate is, composed
+  // in order through every group, so a scaled drawing is judged where it is drawn.
+  const scaled = wrapped('<g transform="translate(450 230) scale(0.5) translate(-450 -230)">', '</g>');
+  const halfway = checkLines(scaled);
+  check('the owner\'s flawed drawing scaled by half about its middle: the same four, where they are drawn', halfway.length === 4 && halfway.some((s) => s.startsWith('an arrow at (490, 180)')) && halfway.some((s) => s.startsWith('an arrow at (565, 223)')), halfway.join(' | '));
+  check('  and through matrix(1,0,0,1,0,0) and scale(1), as bare', JSON.stringify(checkLines(wrapped('<g transform="matrix(1,0,0,1,0,0)"><g transform="scale(1)">', '</g></g>'))) === JSON.stringify(bare));
+  const nodesScaled = perNode.replace(/<g transform="translate\((\d+),60\)">/g, '<g transform="matrix(2,0,0,2,$1,60)"><g transform="scale(0.5)">').replace(/<\/text><\/g>/g, '</text></g></g>');
+  check('  boxes placed by matrix() and scale(), arrows in plain numbers: nothing found', checkLines(nodesScaled).length === 0 && checkDiagram(nodesScaled).issues.length === 0, [...checkLines(nodesScaled), ...checkDiagram(nodesScaled).issues].join(' | '));
+  const doubled = `<svg viewBox="0 0 600 400"><g transform="scale(2)">${dangling('').replace(/^<svg[^>]*>/, '').replace('</svg>', '')}</g></svg>`;
+  check('  a dangling arrow in a group scaled by 2 is found at twice its numbers', checkLines(doubled).some((s) => s.startsWith('an arrow at (300, 200), from "Nguồn", points at nothing')), checkLines(doubled).join(' | '));
+
+  // A turned text — an axis label — is no target, and spares only the arrow ends near it: one
+  // pointing at it is not blamed, and a fault elsewhere in the drawing is still found.
+  const axisLabel = '<text x="30" y="240" text-anchor="middle" font-size="13" fill="#111" transform="rotate(-90 30 240)">Tác động</text>';
+  const chart = (extra) => `<svg viewBox="0 0 500 500">${MARKER}<rect width="500" height="500" fill="#fff"/>
+    <line x1="60" y1="440" x2="460" y2="440" stroke="#333" stroke-width="2" marker-end="url(#ah)"/><line x1="60" y1="440" x2="60" y2="40" stroke="#333" stroke-width="2" marker-end="url(#ah)"/>${axisLabel}
+    ${[['Làm ngay', 80, 60], ['Lên kế hoạch', 270, 60], ['Giao việc', 80, 250], ['Bỏ qua', 270, 250]].map(([t, x, y]) => `<rect x="${x}" y="${y}" width="170" height="170" fill="#f8fafc" stroke="#64748b"/><text x="${x + 85}" y="${y + 90}" text-anchor="middle" font-size="14" fill="#111">${t}</text>`).join('')}${extra}</svg>`;
+  check('a chart with a turned axis label finds nothing of its own', checkLines(chart('')).length === 0, checkLines(chart('')).join(' | '));
+  const elsewhere = checkLines(chart(arrow('M440 335L485 335')));
+  check('  and a dangling arrow elsewhere in it is still found', elsewhere.some((s) => /^an arrow at \(485, 335\), from "Bỏ qua", points at nothing/.test(s)), elsewhere.join(' | '));
+  const atLabel = checkLines(chart('<line x1="80" y1="200" x2="44" y2="200" stroke="#333" marker-end="url(#ah)"/>'));
+  check('  but an arrow pointing at the turned label is not blamed', atLabel.length === 0, atLabel.join(' | '));
+
   // Arrows meant to end in open space: an axis, a timeline's spine. A free end is told only when
   // the arrow's other end is on a shape or at a text.
   const matrix = `<svg viewBox="0 0 500 500">${MARKER}<rect width="500" height="500" fill="#fff"/>
@@ -303,13 +326,13 @@ section('lines and arrows: a server-drawn diagram finds nothing, and no markup b
   // 20 px, and each is found pointing at nothing — the labelled ones too, whose head then stops
   // just past their own label. (Cut back less, an arrow may stop on a group's border, which is
   // a place an arrow may point.)
-  // Without icons: an icon is a scaled group, and where a scaled group lands is not known, so with
-  // one in the drawing no end is judged (fix round 1's ruling).
+  // With its icons: each a `translate(…) scale(…)` group, which is followed (fix round 2), so a
+  // server drawing with icons has its ends judged too.
   const missed = [];
   let cutCount = 0;
-  const plainBase = { ...base, nodes: base.nodes.map((n) => Object.fromEntries(Object.entries(n).filter(([k]) => k !== 'icon'))) };
+  check('  (its boxes carry icons, drawn through translate and scale)', base.nodes.filter((n) => n.icon).length === 4 && /<g transform="translate\([^)]*\) scale\(/.test(renderDiagram(layoutDiagram(validateDiagram(base).diagram))));
   for (const direction of ['down', 'right']) {
-    const laid = layoutDiagram(validateDiagram({ ...plainBase, direction }).diagram);
+    const laid = layoutDiagram(validateDiagram({ ...base, direction }).diagram);
     const solids = [...laid.nodes, ...laid.groups, ...laid.edges.filter((e) => e.labelBox).map((e) => e.labelBox)];
     const clearance = ([x, y]) => Math.min(...solids.map((r) => {
       const inside = x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;

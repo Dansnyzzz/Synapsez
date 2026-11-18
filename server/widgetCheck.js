@@ -139,27 +139,48 @@ const pick = (style) => {
   for (const k of INHERITED) if (style[k] !== undefined) out[k] = style[k];
   return out;
 };
-// How a transform, as an attribute or in its style, moves what it is on: by [x, y] when it is
-// only translate() calls (a model's commonest wrapper, and a node drawn at its own origin);
-// null when it rotates, scales, skews or is anything else, so where things land is not known.
+// A transform, as an attribute or in its style, as the matrix [a, b, c, d, e, f] it multiplies
+// by (SVG's matrix(): x' = a·x + c·y + e, y' = b·x + d·y + f), its functions taken in order;
+// null when it holds anything this does not read. Where it is axis-aligned — translate, scale,
+// matrix(a,0,0,d,e,f) — a box stays a box and is followed (fix rounds 1 and 2: a model's
+// translate wrapper, a node drawn at its own origin, the server's scaled icons); a rotate or a
+// skew leaves where a box lands unknown, though one point, a text's anchor, can still be found.
+const IDENTITY = Object.freeze([1, 0, 0, 1, 0, 0]);
+const PLAIN = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?$/i;
 const LENGTH = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?(?:px)?$/i;
-function offsetOf(transform) {
+const ANGLE = /^[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?(?:deg)?$/i;
+const times = (m, n) => [m[0] * n[0] + m[2] * n[1], m[1] * n[0] + m[3] * n[1], m[0] * n[2] + m[2] * n[3], m[1] * n[2] + m[3] * n[3], m[0] * n[4] + m[2] * n[5] + m[4], m[1] * n[4] + m[3] * n[5] + m[5]];
+const mapPoint = (m, [x, y]) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+const aligned = (m) => Math.abs(m[1]) < 1e-9 && Math.abs(m[2]) < 1e-9 && Math.abs(m[0]) > 1e-9 && Math.abs(m[3]) > 1e-9;
+function matrixOf(transform) {
   const v = typeof transform === 'string' ? transform.trim() : '';
-  if (!v || v.toLowerCase() === 'none') return [0, 0];
-  // No plain translate is this long; reading one that is would only cost time.
+  if (!v || v.toLowerCase() === 'none') return IDENTITY;
+  // No transform a drawing needs is this long; reading one that is would only cost time.
   if (v.length > 256) return null;
-  let x = 0;
-  let y = 0;
+  let m = IDENTITY;
   let rest = v;
-  for (const m of v.matchAll(/([a-zA-Z]+)\s*\(([^()]*)\)/g)) {
-    const args = m[2].trim().split(/[\s,]+/).filter(Boolean);
-    if (m[1].toLowerCase() !== 'translate' || !args.length || args.length > 2 || !args.every((a) => LENGTH.test(a))) return null;
-    x += parseFloat(args[0]);
-    y += args.length > 1 ? parseFloat(args[1]) : 0;
-    rest = rest.replace(m[0], '');
+  for (const fn of v.matchAll(/([a-zA-Z]+)\s*\(([^()]*)\)/g)) {
+    const args = fn[2].trim().split(/[\s,]+/).filter(Boolean);
+    const n = args.map((a) => parseFloat(a));
+    const name = fn[1].toLowerCase();
+    const rad = (k) => (n[k] * Math.PI) / 180;
+    let step = null;
+    if (name === 'translate' && args.length >= 1 && args.length <= 2 && args.every((a) => LENGTH.test(a))) step = [1, 0, 0, 1, n[0], n[1] ?? 0];
+    else if (name === 'scale' && args.length >= 1 && args.length <= 2 && args.every((a) => PLAIN.test(a))) step = [n[0], 0, 0, n[1] ?? n[0], 0, 0];
+    else if (name === 'matrix' && args.length === 6 && args.every((a) => PLAIN.test(a))) step = n;
+    else if (name === 'rotate' && (args.length === 1 || args.length === 3) && ANGLE.test(args[0]) && args.slice(1).every((a) => LENGTH.test(a))) {
+      const [cos, sin] = [Math.cos(rad(0)), Math.sin(rad(0))];
+      const [cx, cy] = [n[1] ?? 0, n[2] ?? 0];
+      step = [cos, sin, -sin, cos, cx - cos * cx + sin * cy, cy - sin * cx - cos * cy];
+    } else if ((name === 'skewx' || name === 'skewy') && args.length === 1 && ANGLE.test(args[0])) {
+      step = name === 'skewx' ? [1, 0, Math.tan(rad(0)), 1, 0, 0] : [1, Math.tan(rad(0)), 0, 1, 0, 0];
+    }
+    if (!step || !step.every((x) => Number.isFinite(x) && Math.abs(x) <= 1e6)) return null;
+    m = times(m, step);
+    rest = rest.replace(fn[0], '');
   }
   // Anything left over is a function this does not read, or not a transform at all.
-  return /^[\s,]*$/.test(rest) && Math.abs(x) <= 1e6 && Math.abs(y) <= 1e6 ? [x, y] : null;
+  return /^[\s,]*$/.test(rest) && m.every((x) => Number.isFinite(x) && Math.abs(x) <= 1e9) ? m : null;
 }
 const opaque = (v) => v === undefined || (num(v) ?? 1) > 0.95;
 // A fill or a stroke: whether it paints, and its colour when it is a plain one.
@@ -370,16 +391,18 @@ function readDrawing(svg) {
   const texts = [];
   const shapes = [];
   const lines = [];
-  // Each open group: whether what it holds is moved where this cannot follow (`moved`), or not
-  // drawn there at all (`hidden`: <defs>, a <marker>…), and the translate it adds (`dx`, `dy`).
-  const stack = [{ name: '', moved: false, hidden: false, dx: 0, dy: 0, inherit: Object.create(null) }];
+  // Each open group: whether what it holds is not drawn there at all (`hidden`: <defs>, a
+  // <marker>…), and the matrix it is drawn through (`m`), null where that cannot be read.
+  const stack = [{ name: '', hidden: false, m: IDENTITY, inherit: Object.create(null) }];
+  // Texts turned or slanted (an axis label): where each stands, and how far it may reach.
+  const tilted = [];
   let deeper = 0;
   let order = 0;
   let segments = 0;
   let seenRoot = false;
   // Whether the read stopped at a limit: then what an arrow points at may be past it, unread.
   let cut = false;
-  // Whether something is drawn where this cannot tell — rotated, scaled, a <use>, an <image>: an
+  // Whether something is drawn where this cannot tell — rotated, skewed, a <use>, an <image>: an
   // arrow may point at it, so no arrow is said to point at nothing (fix round 1).
   let unknown = false;
   // Where the next `</text>` and the next `<text` are, kept as the read moves on, so finding a
@@ -477,9 +500,9 @@ function readDrawing(svg) {
         cut = true;
         continue;
       }
-      const off = offsetOf(a.transform);
+      const own = matrixOf(a.transform);
       const hidden = top.hidden || UNPLACED.has(name) || String(a.display || '').trim() === 'none';
-      stack.push({ name, moved: hidden || top.moved || nested || !off, hidden, dx: top.dx + (off ? off[0] : 0), dy: top.dy + (off ? off[1] : 0), inherit: pick(styleOf(name, a, top.inherit)) });
+      stack.push({ name, hidden, m: !nested && top.m && own ? times(top.m, own) : null, inherit: pick(styleOf(name, a, top.inherit)) });
       continue;
     }
     if (name === 'use' || name === 'image') {
@@ -488,33 +511,48 @@ function readDrawing(svg) {
     }
     if (!['rect', 'text', 'circle', 'ellipse', 'polygon', 'polyline', 'line', 'path'].includes(name)) continue;
     const own = attrs(whole);
-    const off = offsetOf(own.transform);
-    const moved = top.moved || deeper > 0 || !off;
-    if (moved && shown) unknown = true;
-    // Where it is drawn: its numbers, moved by every translate round it and its own.
-    const dx = moved ? 0 : top.dx + off[0];
-    const dy = moved ? 0 : top.dy + off[1];
+    const ownM = matrixOf(own.transform);
+    // The matrix it is drawn through; followed when it keeps boxes boxes. A text must also read
+    // the right way round, or it is taken as turned.
+    const M = !deeper && top.m && ownM ? times(top.m, ownM) : null;
+    const straight = !!M && aligned(M) && (name !== 'text' || (M[0] > 0 && M[3] > 0));
+    const moved = top.hidden || deeper > 0 || !straight;
+    // A turned text is set aside on its own (below); anything else drawn where this cannot follow
+    // leaves no end judged.
+    if (moved && shown && !(name === 'text' && M)) unknown = true;
+    const T = straight ? M : IDENTITY;
+    const place = (p) => mapPoint(T, p);
+    // A box through the matrix: its corners carried over, still a box since the matrix is aligned.
+    const boxOf = (x0, y0, x1, y1) => {
+      const [p, q] = [place([x0, y0]), place([x1, y1])];
+      return [Math.min(p[0], q[0]), Math.min(p[1], q[1]), Math.max(p[0], q[0]), Math.max(p[1], q[1])];
+    };
+    const [sx, sy] = [Math.abs(T[0]), Math.abs(T[3])];
     const s = styleOf(name, own, top.inherit);
 
     if (name === 'rect') {
       // As the text checks have always read a rect: its own fill, or one its classes or group give it.
-      const r = { x: (num(s.x) ?? 0) + dx, y: (num(s.y) ?? 0) + dy, w: num(s.width), h: num(s.height), fill: colour(s.fill), moved };
-      if (r.w > 0 && r.h > 0) {
-        rects.push(r);
+      const w = num(s.width);
+      const h = num(s.height);
+      if (w > 0 && h > 0) {
+        const lx = num(s.x) ?? 0;
+        const ly = num(s.y) ?? 0;
+        const b = boxOf(lx, ly, lx + w, ly + h);
+        rects.push({ x: b[0], y: b[1], w: b[2] - b[0], h: b[3] - b[1], fill: colour(s.fill), moved });
         // Its corners' radius, as a browser reads rx and ry: one stands for both, at most half a side.
         const rx = num(s.rx) ?? num(s.ry) ?? 0;
         const ry = num(s.ry) ?? num(s.rx) ?? 0;
-        const round = Math.max(0, Math.min(rx, r.w / 2, ry, r.h / 2));
-        addShape('rect', [r.x, r.y, r.x + r.w, r.y + r.h], { round }, s, moved);
+        const round = Math.max(0, Math.min(rx, w / 2, ry, h / 2)) * Math.min(sx, sy);
+        addShape('rect', b, { round }, s, moved);
       }
       continue;
     }
     if (name === 'circle' || name === 'ellipse') {
-      const cx = (num(s.cx) ?? 0) + dx;
-      const cy = (num(s.cy) ?? 0) + dy;
-      const rx = name === 'circle' ? num(s.r) : num(s.rx) ?? num(s.ry);
-      const ry = name === 'circle' ? num(s.r) : num(s.ry) ?? num(s.rx);
-      if (rx > 0 && ry > 0) addShape(name === 'circle' || rx === ry ? 'circle' : 'ellipse', [cx - rx, cy - ry, cx + rx, cy + ry], { cx, cy, rx, ry }, s, moved);
+      const [cx, cy] = place([num(s.cx) ?? 0, num(s.cy) ?? 0]);
+      const r1 = name === 'circle' ? num(s.r) : num(s.rx) ?? num(s.ry);
+      const r2 = name === 'circle' ? num(s.r) : num(s.ry) ?? num(s.rx);
+      const [rx, ry] = [r1 * sx, r2 * sy];
+      if (rx > 0 && ry > 0) addShape(Math.abs(rx - ry) < 1e-9 ? 'circle' : 'ellipse', [cx - rx, cy - ry, cx + rx, cy + ry], { cx, cy, rx, ry }, s, moved);
       continue;
     }
     if (name === 'polygon' || name === 'polyline' || name === 'line' || name === 'path') {
@@ -536,10 +574,7 @@ function readDrawing(svg) {
         }
         pieces = pts.length > 1 ? [{ pts, straight: pts.slice(1).map(() => true), near: pts.slice(1), far: pts.slice(0, -1), closed: name === 'polygon' }] : [];
       }
-      if (dx || dy) {
-        const by = ([x, y]) => [x + dx, y + dy];
-        pieces = pieces.map((p) => ({ ...p, pts: p.pts.map(by), near: p.near.map(by), far: p.far.map(by), ...(p.box ? { box: [p.box[0] + dx, p.box[1] + dy, p.box[2] + dx, p.box[3] + dy] } : {}) }));
-      }
+      if (T !== IDENTITY) pieces = pieces.map((p) => ({ ...p, pts: p.pts.map(place), near: p.near.map(place), far: p.far.map(place), ...(p.box ? { box: boxOf(...p.box) } : {}) }));
       // A closed piece is a shape — a polygon by its corners where every side is straight, else
       // its box; an open one is a line.
       for (const p of pieces) {
@@ -588,21 +623,31 @@ function readDrawing(svg) {
     }
     // A line's y: its own, or the line before's moved by its dy (in em or units).
     const shift = (raw) => (/em$/.test(String(raw || '').trim()) ? (num(raw) ?? 0) * size : num(raw) ?? 0);
-    let runY = (num(s.y) ?? 0) + dy + shift(own.dy);
+    let runY = (num(s.y) ?? 0) + shift(own.dy);
     const read = spans.length && spans.some(([tag]) => /\s(x|dy)\s*=/.test(tag))
       ? spans.map(([tag, body]) => {
           const sa = attrs(tag);
-          const y = num(sa.y);
-          runY = y === null ? runY + shift(sa.dy) : y + dy;
-          return { text: decode(body), x: (num(sa.x) ?? num(s.x) ?? 0) + dx, y: runY };
+          runY = num(sa.y) ?? runY + shift(sa.dy);
+          return { text: decode(body), x: num(sa.x) ?? num(s.x) ?? 0, y: runY };
         })
-      : [{ text: decode(inner), x: (num(s.x) ?? 0) + dx, y: runY }];
+      : [{ text: decode(inner), x: num(s.x) ?? 0, y: runY }];
     const [up, down] = BASELINES[baseline] || [0.8, 0.25];
     for (const line of read) {
       if (!line.text) continue;
-      const w = textWidth(line.text, size, bold);
-      const x0 = anchor === 'middle' ? line.x - w / 2 : anchor === 'end' ? line.x - w : line.x;
-      texts.push({ ...line, size, bold, anchor, fill, moved, order, box: { x0, x1: x0 + w, y0: line.y - size * up, y1: line.y + size * down, w } });
+      // Measured where it is written, then carried through the matrix: its size by the scale down,
+      // its width by the scale across.
+      const [x, y] = place([line.x, line.y]);
+      const sized = size * sy;
+      const w = textWidth(line.text, size, bold) * sx;
+      const x0 = anchor === 'middle' ? x - w / 2 : anchor === 'end' ? x - w : x;
+      texts.push({ text: line.text, x, y, size: sized, bold, anchor, fill, moved, order, box: { x0, x1: x0 + w, y0: y - sized * up, y1: y + sized * down, w } });
+      // Turned or slanted, it is no target; an arrow end near where it stands is spared instead:
+      // its anchor, as far as the larger of its width and height reach, and 14 px more.
+      if (moved && shown && M) {
+        const k = Math.sqrt(Math.abs(M[0] * M[3] - M[1] * M[2]));
+        const [ax, ay] = mapPoint(M, [line.x, line.y]);
+        tilted.push({ x: ax, y: ay, reach: Math.max(textWidth(line.text, size, bold), size * 1.05) * k + LINE_CHECK.reach });
+      }
     }
   }
 
@@ -612,7 +657,7 @@ function readDrawing(svg) {
   const darkInk = inks.filter((c) => luminance(c) < 0.4).length;
   const canvas = /** @type {'light' | 'dark' | null} */ (backdrop ? (luminance(backdrop.fill) > 0.4 ? 'light' : 'dark') : inks.length ? (darkInk >= inks.length / 2 ? 'light' : 'dark') : null);
   const canvasColour = backdrop?.fill || (canvas === 'dark' ? [15, 23, 32] : [255, 255, 255]);
-  return { view, rects, texts, shapes, lines, backdrop, canvas, canvasColour, cut, unknown };
+  return { view, rects, texts, shapes, lines, backdrop, canvas, canvasColour, cut, unknown, tilted };
 }
 
 // The markup with its comments taken out, read once from start to end.
@@ -918,7 +963,7 @@ function lineIssues(d) {
   }
 
   // No end is judged where a position is not known: the read stopped at a limit, something is
-  // drawn rotated, scaled or by <use>, or the crossing checks ran out of their work (below).
+  // drawn rotated, skewed or by <use>, or the crossing checks ran out of their work (below).
   let blind = d.cut || d.unknown;
   let work = 0;
   arrows: for (const line of arrows) {
@@ -939,6 +984,8 @@ function lineIssues(d) {
       return !!seen.edge || seen.on.length > 0 || !!seen.text;
     };
     for (const end of blind || line.cut ? [] : line.ends) {
+      // Near a turned text (an axis label), which may be what it points at (fix round 2).
+      if (d.tilted.some((t) => Math.abs(end.p[0] - t.x) <= t.reach && Math.abs(end.p[1] - t.y) <= t.reach)) continue;
       const { edge, on, text } = look(end);
       const other = end === first ? last : first;
       if (end.head) {
