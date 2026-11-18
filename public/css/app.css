@@ -8575,23 +8575,8 @@ h3.spane__label:focus-visible { outline: 2px solid var(--accent); outline-offset
   color: var(--text-faint);
   font-size: 12.5px;
 }
-.plusmenu__note.is-loading,
-.plusmenu__drive .plusmenu__note { padding-left: 10px; }
+.plusmenu__note.is-loading { padding-left: 10px; }
 .plusmenu__back .plusmenu__label { font-weight: 600; }
-.plusmenu__drive { display: grid; gap: 4px; min-width: 300px; }
-.plusmenu__search {
-  width: 100%;
-  margin: 2px 0 4px;
-  padding: 9px 11px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-size: 13.5px;
-}
-.plusmenu__search:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.plusmenu__drivelist { display: grid; }
 @media (prefers-reduced-motion: reduce) {
   .plusmenu__switch,
   .plusmenu__switch::after { transition: none; }

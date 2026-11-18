@@ -10723,12 +10723,60 @@ section('the + opens a menu of files, skills, connectors and plugins');
     mcpPatches.push({ url: route.request().url(), body: JSON.parse(route.request().postData() || '{}') });
     return route.fulfill(json({ ok: true }));
   });
-  await page.route('**/api/connectors/google/drive*', (route) =>
-    route.fulfill(json({ files: [{ id: 'drive-file-0001', name: 'Thesis draft', mime: 'application/vnd.google-apps.document', modified: '2026-10-01T08:00:00Z' }] })),
-  );
-  await page.route('**/api/connectors/google/drive/*/attach', (route) =>
-    route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ attachment: { id: 'att-drive-ui', name: 'Thesis draft.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 2048 } }) }),
-  );
+  // Google Drive opens Google's own Picker (owner, 2026-11-18): with drive.file, the files a
+  // person picks there are the only ones Ephapse may open. Google's loader is stood in for —
+  // nothing in this suite reaches Google. It keeps how each Picker was built, and answers as
+  // the person would: first "loaded", then whatever `__picker.answer` says.
+  const FAKE_PICKER = `(() => {
+    const keep = (calls, name, args) => calls.push([name, ...args.map((a) => (typeof a === 'function' ? 'fn' : a))]);
+    window.__picker = { builds: [], answer: { action: 'picked', docs: [{ id: 'f-1', name: 'Plan.pdf' }] } };
+    window.gapi = { load: (name, then) => { window.__picker.loaded = name; setTimeout(typeof then === 'function' ? then : then.callback, 0); } };
+    // Only methods Google's Picker has: a misspelt one throws here as it would there.
+    class DocsView {
+      constructor(id) { this.calls = [['DocsView', id]]; }
+      setMode(mode) { keep(this.calls, 'setMode', [mode]); return this; }
+      setSelectFolderEnabled(on) { keep(this.calls, 'setSelectFolderEnabled', [on]); return this; }
+    }
+    class PickerBuilder {
+      constructor() { this.calls = []; window.__picker.builds.push(this.calls); }
+      addView(view) { this.calls.push(['addView', ...view.calls]); return this; }
+      setCallback(fn) { this.callback = fn; keep(this.calls, 'setCallback', [fn]); return this; }
+      build() {
+        const { calls, callback } = this;
+        return {
+          setVisible(on) {
+            calls.push(['setVisible', on]);
+            if (on) setTimeout(() => { callback({ action: 'loaded' }); callback(window.__picker.answer); }, 0);
+          },
+          dispose() { calls.push(['dispose']); },
+        };
+      }
+    }
+    for (const name of ['enableFeature', 'setOAuthToken', 'setDeveloperKey', 'setAppId', 'setLocale', 'setOrigin', 'setMaxItems', 'setTitle']) {
+      PickerBuilder.prototype[name] = function (...args) { keep(this.calls, name, args); return this; };
+    }
+    window.google = { picker: {
+      PickerBuilder, DocsView,
+      ViewId: { DOCS: 'all' }, DocsViewMode: { LIST: 'list', GRID: 'grid' },
+      Feature: { MULTISELECT_ENABLED: 'multiselectEnabled' },
+      Action: { PICKED: 'picked', CANCEL: 'cancel', LOADED: 'loaded' },
+      Response: { ACTION: 'action', DOCUMENTS: 'docs' },
+      Document: { ID: 'id', NAME: 'name' },
+    } };
+  })();`;
+  let loaderLoads = 0;
+  await page.route('https://apis.google.com/js/api.js', (route) => {
+    loaderLoads += 1;
+    return route.fulfill({ status: 200, contentType: 'text/javascript', body: FAKE_PICKER });
+  });
+  const PICKER = { token: 'ya29.picker-only', apiKey: 'AIza-picker-key', appId: '123456789012', expiresAt: Date.now() + 3600_000 };
+  let pickerAnswer = json(PICKER);
+  await page.route('**/api/connectors/google/picker', (route) => route.fulfill(pickerAnswer));
+  const attachAsked = [];
+  await page.route('**/api/connectors/google/drive/*/attach', (route) => {
+    attachAsked.push(decodeURIComponent(/\/drive\/([^/]+)\/attach/.exec(route.request().url())?.[1] || ''));
+    return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ attachment: { id: 'att-drive-ui', name: 'Plan.pdf', mime: 'application/pdf', size: 2048 } }) });
+  });
   const prefsPuts = [];
   const onRequest = (request) => {
     if (request.method() === 'PUT' && request.url().endsWith('/api/prefs')) prefsPuts.push(JSON.parse(request.postData() || '{}'));
@@ -10749,7 +10797,7 @@ section('the + opens a menu of files, skills, connectors and plugins');
           sub: r.getAttribute('aria-haspopup') === 'menu',
         })),
         notes: [...node.querySelectorAll('.plusmenu__note')].map((n) => n.textContent.trim()),
-        search: !!node.querySelector('.plusmenu__search'),
+        inputs: node.querySelectorAll('input').length,
       };
     }, level);
   const exact = (text) => new RegExp(`^${String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`);
@@ -10805,7 +10853,8 @@ section('the + opens a menu of files, skills, connectors and plugins');
   check('Connectors lists each connection with its switch', row('GitHub')?.role === 'menuitemcheckbox' && row('GitHub')?.checked === 'true' && row('Figma')?.checked === 'true' && row('Google')?.checked === 'true', JSON.stringify(connectors?.rows));
   check('  one that is not working is marked so, not switched', row('Canva')?.warn === true && row('Canva')?.role === 'menuitem', JSON.stringify(row('Canva')));
   check('  one not connected is not listed', !row('Notion'));
-  check('  with Add connector, Manage connectors, Google Drive and Tool access', connectors && connectors.rows[0].sub && connectors.rows.some((r) => /Google Drive/.test(r.label) && r.sub) && connectors.rows.at(-1).sub, JSON.stringify(connectors?.rows.map((r) => r.label)));
+  check('  with Add connector, Manage connectors, Google Drive and Tool access', connectors && connectors.rows[0].sub && connectors.rows.some((r) => /Google Drive/.test(r.label)) && connectors.rows.at(-1).sub, JSON.stringify(connectors?.rows.map((r) => r.label)));
+  check('  Google Drive opens straight away: no panel of its own, no search box', connectors?.rows.some((r) => /Google Drive/.test(r.label) && !r.sub && r.role === 'menuitem') && connectors.inputs === 0, JSON.stringify(connectors?.rows.find((r) => /Google Drive/.test(r.label))));
   await rowOf(1, 'GitHub').click();
   await page.waitForTimeout(500);
   check('switching GitHub off pauses it on the account, without disconnecting it', prefsPuts.some((p) => JSON.stringify(p.connectorsOff) === '["github"]') && (await panel(1))?.rows.find((r) => r.label === 'GitHub')?.checked === 'false', JSON.stringify(prefsPuts));
@@ -10832,21 +10881,68 @@ section('the + opens a menu of files, skills, connectors and plugins');
   await page.waitForTimeout(800);
 
   const driveLabel = connectors.rows.find((r) => /Google Drive/.test(r.label)).label;
+  const tiles = () => page.evaluate(() => [...document.querySelectorAll('#attachments .stage')].map((s) => s.getAttribute('title')));
+  const alerts = () => page.evaluate(() => [...document.querySelectorAll('#toasts-alert .toast')].map((n) => n.textContent.trim()));
+  const pickerState = () => page.evaluate(() => ({ builds: /** @type {any} */ (window).__picker?.builds || [], loaded: /** @type {any} */ (window).__picker?.loaded || null }));
+
+  // A deployment whose owner has not set the Picker up: said in words a person can act on,
+  // and Google is not contacted at all.
+  pickerAnswer = { status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'The Google Drive picker is not set up on this deployment. The owner sets GOOGLE_PICKER_API_KEY and GOOGLE_PROJECT_NUMBER — see docs/google.md.', code: 'picker_not_set_up' }) };
   await rowOf(1, driveLabel).click();
   await page.waitForTimeout(700);
-  const drive = await panel(2);
-  check('Google Drive opens a search with the newest files', drive?.search && drive.rows.some((r) => r.label === 'Thesis draft'), JSON.stringify(drive));
-  check('  and the search box has the keyboard', await page.evaluate(() => document.activeElement?.classList.contains('plusmenu__search')));
-  await rowOf(2, 'Thesis draft').click();
+  const unset = { menuGone: await page.evaluate(() => !document.querySelector('.plusmenu')), alerts: await alerts(), loads: loaderLoads, picker: await pickerState() };
+  check('Google Drive on a deployment without the Picker says it is not set up, in the app\'s words', unset.menuGone && unset.alerts.some((a) => /not set up|chưa được thiết lập/i.test(a) && !/GOOGLE_PICKER_API_KEY/.test(a)), JSON.stringify(unset));
+  check('  and nothing is loaded from Google', unset.loads === 0 && unset.picker.builds.length === 0, JSON.stringify(unset));
+
+  // Picked: Google's Picker is built as the brief says, and the file lands in the tray.
+  pickerAnswer = json(PICKER);
+  await page.click('#attach');
   await page.waitForTimeout(500);
-  const attached = await page.evaluate(() => ({
-    menuGone: !document.querySelector('.plusmenu'),
-    tile: [...document.querySelectorAll('#attachments .stage')].map((s) => s.getAttribute('title')),
-  }));
-  check('picking a Drive file attaches it to the message', attached.menuGone && attached.tile.includes('Thesis draft.docx'), JSON.stringify(attached));
+  await hoverRow(0, root.rows[2].label);
+  await rowOf(1, driveLabel).click();
+  await page.waitForFunction(() => document.querySelectorAll('#attachments .stage').length > 0, null, { timeout: 4000 }).catch(() => {});
+  const built = await pickerState();
+  const calls = built.builds[0] || [];
+  const call = (name) => calls.find((c) => c[0] === name);
+  const view = call('addView') || [];
+  const lang = await page.evaluate(() => document.documentElement.lang);
+  const origin = await page.evaluate(() => location.origin);
+  check('picking from Drive loads Google\'s loader once and the picker library', loaderLoads === 1 && built.loaded === 'picker', JSON.stringify({ loaderLoads, loaded: built.loaded }));
+  check('  builds the Picker with the token, key and app id the server gave', call('setOAuthToken')?.[1] === PICKER.token && call('setDeveloperKey')?.[1] === PICKER.apiKey && call('setAppId')?.[1] === PICKER.appId, JSON.stringify(calls));
+  check('  in the app\'s language and from this page\'s origin', call('setLocale')?.[1] === lang && /^(vi|en)$/.test(lang) && call('setOrigin')?.[1] === origin, JSON.stringify({ lang, origin, locale: call('setLocale'), from: call('setOrigin') }));
+  check('  showing Drive files as a list, folders not selectable, several at once', JSON.stringify(view.slice(1)) === JSON.stringify([['DocsView', 'all'], ['setMode', 'list'], ['setSelectFolderEnabled', false]]) && call('enableFeature')?.[1] === 'multiselectEnabled', JSON.stringify(view));
+  check('  no more than the message still has room for', Number.isInteger(call('setMaxItems')?.[1]) && call('setMaxItems')[1] > 0, JSON.stringify(call('setMaxItems')));
+  check('  with a callback, and shown', !!call('setCallback') && calls.some((c) => c[0] === 'setVisible' && c[1] === true), JSON.stringify(calls));
+  check('  and put away once a file is picked, not at "loaded"', calls.filter((c) => c[0] === 'dispose').length === 1 && calls.findIndex((c) => c[0] === 'dispose') > calls.findIndex((c) => c[0] === 'setVisible'), JSON.stringify(calls));
+  check('the picked file is attached through the server, by its id', JSON.stringify(attachAsked) === '["f-1"]', JSON.stringify(attachAsked));
+  check('  and lands in the tray like an upload', (await tiles()).includes('Plan.pdf'), JSON.stringify(await tiles()));
+  const notes = await page.evaluate(() => [...document.querySelectorAll('#toasts .toast')].map((n) => n.textContent.trim()));
+  check('  saying, politely, that it is being added', notes.some((n) => /^(Adding from Google Drive…|Đang thêm từ Google Drive…)$/.test(n)), JSON.stringify(notes));
+  check('  with the keyboard back on the +', await page.evaluate(() => document.activeElement?.id === 'attach'));
   await page.evaluate(() => {
     for (const drop of document.querySelectorAll('#attachments .stage__remove')) /** @type {HTMLElement} */ (drop).click();
   });
+
+  // Cancelled, from the keyboard: nothing attached, nothing said, and the loader not fetched again.
+  await page.evaluate(() => { /** @type {any} */ (window).__picker.answer = { action: 'cancel' }; });
+  const alertsBefore = await alerts();
+  await page.focus('#attach');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(400);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  const focusedLabel = () => page.evaluate(() => document.activeElement?.querySelector('.plusmenu__label')?.textContent || '');
+  for (let i = 0; i < 6 && (await focusedLabel()) !== root.rows[2].label; i++) await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowRight');
+  await page.waitForFunction(() => document.activeElement?.closest('.plusmenu')?.dataset.level === '1', null, { timeout: 2000 }).catch(() => {});
+  for (let i = 0; i < 15 && (await focusedLabel()) !== driveLabel; i++) await page.keyboard.press('ArrowDown');
+  const reached = (await focusedLabel()) === driveLabel;
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(800);
+  const cancelled = { builds: (await pickerState()).builds.length, loads: loaderLoads, asked: attachAsked.length, tiles: await tiles(), alerts: await alerts(), focus: await page.evaluate(() => document.activeElement?.id) };
+  check('Google Drive is reached by keyboard alone: Enter, ↓, →, ↓', reached);
+  check('cancelling the Picker attaches nothing', cancelled.builds === 2 && cancelled.asked === 1 && cancelled.tiles.length === 0, JSON.stringify(cancelled));
+  check('  says nothing, and does not fetch Google\'s loader again', cancelled.alerts.every((a) => alertsBefore.includes(a)) && cancelled.loads === 1, JSON.stringify(cancelled));
+  check('  and gives the keyboard back to the +', cancelled.focus === 'attach', JSON.stringify(cancelled));
 
   await page.click('#attach');
   await page.waitForTimeout(500);
@@ -10925,8 +11021,9 @@ section('the + opens a menu of files, skills, connectors and plugins');
   await page.unroute('**/api/connectors');
   await page.unroute('**/api/mcp');
   await page.unroute('**/api/mcp/*');
-  await page.unroute('**/api/connectors/google/drive*');
+  await page.unroute('**/api/connectors/google/picker');
   await page.unroute('**/api/connectors/google/drive/*/attach');
+  await page.unroute('https://apis.google.com/js/api.js');
   await page.evaluate(() => {
     for (const drop of document.querySelectorAll('#skill-chips .skillchip__drop')) /** @type {HTMLElement} */ (drop).click();
   });

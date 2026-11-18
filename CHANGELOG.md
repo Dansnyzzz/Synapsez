@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-11-18 — Google on free review: Gmail sends, Drive opens the files you pick (1.33.1)
+
+**Gmail can now only send.** The assistant sends an email from your Gmail when you ask (shown to you first by default), and can no longer search, read, draft, label or delete mail; asking for any of those gets a sentence saying it can only send. Ephapse asks Google for `gmail.send` instead of `gmail.modify`.
+
+**Drive opens the files you pick.** "Add from Google Drive" in the + menu opens Google's own Picker straight away, with no search panel: choose one or more files (as many as the message still has room for) and each lands beside the message box as before, marked as from Drive. Cancelling attaches nothing. Ephapse asks for `drive.file` instead of the whole Drive, so the assistant's Drive tool sees only the files picked there and the ones Ephapse created. The whole-Drive search (`GET /api/connectors/google/drive`) is gone; `GET /api/connectors/google/picker` mints, for each opening, a token that reaches nothing but `drive.file`, never stored and never cached. The token is asked for before anything is loaded from Google, so a deployment without the Picker set up, or an account without Drive, never contacts Google from the page.
+
+**Why.** Restricted scopes need a paid yearly security assessment; with only sensitive and non-sensitive scopes, Google's verification is free (owner, 2026-11-18). `docs/google.md` now has the scopes table, the list to paste under Data Access, the Picker setup, a ready-to-paste justification for each sensitive scope with the Limited Use commitment, and the demo-video shot list.
+
+**People connected before this release.** Their connection keeps working until it ends: the older, wider grants count as covering the new scopes, and Gmail only sends either way. Reconnecting gives the narrower access, but only after disconnecting: Ephapse asks Google to include earlier grants, so connecting again on top of an old connection keeps the old scopes. To narrow it, disconnect every Google product in use in Settings → Connectors (the last one revokes the grant at Google), then connect again. Drive users from before must do this before the Drive picker works for them: their old grant never held `drive.file` as such, so Google can refuse the Picker's token, which shows as "Reconnect Google". Until then the Drive tool can still see their whole Drive.
+
+**Owner steps.** Enable the Google Picker API; create a browser API key restricted to the websites `https://www.ephapse.net/*` and `https://docs.google.com/*` and to the Google Picker API only; set `GOOGLE_PICKER_API_KEY` and the project number as `GOOGLE_PROJECT_NUMBER` on Vercel; replace the scopes under Google Auth Platform → Data Access; then Publish app and submit for verification. Until both variables are set, "Add from Google Drive" says it is not set up here.
+
+**Privacy notice privacy-2026-11-18.** It lists `gmail.send` and `drive.file`, says the browser now loads Google's picker straight from Google and receives a short-lived Drive-only token for it, and says how an older connection narrows. Asked once, by the banner, as the notice itself promises for any change. The terms and the usage policy keep their versions: only their contact address changed, said in a dated line, as the rename's line was.
+
+**A new public contact address.** The legal pages and the data-transfer assessment write to support@ephapse.net instead of a personal address. A scan test fails if that personal address comes back into any tracked file.
+
+**Content-Security-Policy.** As Task 1 set it: `https://apis.google.com` in script-src and `https://docs.google.com` in frame-src, identical in `server/securityHeaders.js` and `vercel.json`. Opening the Picker in Playwright's full Chromium against Google's real loader, at desktop and phone size, recorded no violation, so nothing else was added.
+
+**Not verified live:** whether Google narrows the scope on a refresh (the owner's first Picker test shows it; a "Reconnect Google" or "did not confirm" refusal means it did not), the Picker with a real key, and attaching a picked file through the stored grant.
+
 ## 2026-11-17 — Synapsez is now Ephapse (1.33.0)
 
 **The product is renamed, at its own domain.** Synapsez is now Ephapse, at https://www.ephapse.net. The name changes everywhere it is seen: the pages, the legal pages, the emails and receipts, the documents the assistant writes, the prompts, the README and these notes. Nothing else changed.

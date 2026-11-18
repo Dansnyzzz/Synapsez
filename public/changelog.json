@@ -1,6 +1,30 @@
 {
   "entries": [
     {
+      "version": "1.33.1",
+      "date": "2026-11-18",
+      "new": {
+        "vi": [
+          "Gmail giờ chỉ gửi thư: trợ lý gửi thư từ Gmail của bạn khi bạn nhờ, và không còn đọc, tìm, soạn nháp hay thay đổi thư của bạn.",
+          "Thêm từ Google Drive giờ mở bộ chọn tệp của chính Google: chọn một hay nhiều tệp và chúng nằm ngay cạnh ô nhập tin nhắn. Drive giờ chỉ mở được tệp bạn chọn và tệp Ephapse tạo ra."
+        ],
+        "en": [
+          "Gmail now only sends: the assistant sends an email from your Gmail when you ask, and can no longer read, search, draft or change your mail.",
+          "Add from Google Drive opens Google's own file picker: choose one or more files and they land beside the message box. Drive now opens only the files you pick and the ones Ephapse creates."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Nếu bạn đã kết nối Google trước bản cập nhật này, kết nối vẫn chạy cho tới khi hết hạn. Để chuyển sang quyền hẹp hơn, hãy ngắt kết nối mọi sản phẩm Google đang dùng ở Cài đặt → Kết nối rồi kết nối lại; trước khi làm vậy, Thêm từ Google Drive có thể yêu cầu bạn kết nối lại Google.",
+          "Chính sách quyền riêng tư đã ghi rõ những điều trên, và bạn sẽ được hỏi đồng ý một lần. Địa chỉ liên hệ trên các trang pháp lý nay là support@ephapse.net."
+        ],
+        "en": [
+          "If you connected Google before this update, it keeps working until the connection ends. To get the narrower access, disconnect every Google product you use in Settings → Connectors, then connect again; until you do, Add from Google Drive may ask you to reconnect Google.",
+          "The privacy policy says all this, and you are asked once to agree to it. The contact address on the legal pages is now support@ephapse.net."
+        ]
+      }
+    },
+    {
       "version": "1.33.0",
       "date": "2026-11-17",
       "new": {

@@ -966,7 +966,9 @@ section('the privacy notice a new account agrees to is the one it can read (LAW-
   check('  in both languages, saying where data goes outside Vietnam and what rights there are', /ra nước ngoài/.test(notice) && /outside Vietnam/.test(notice) && /Quyền của bạn/.test(notice) && /Your rights/.test(notice));
   check('  names who runs it and how to reach them, not a placeholder', !/\[[^\]]*(email|điền|person|Tên)[^\]]*\]/i.test(notice) && /mailto:[^"]+@/.test(notice));
   // Google's OAuth verification reads this page (owner, 2026-10-18).
-  check('  says what is read from Google and why, in both languages', /Dữ liệu từ tài khoản Google/.test(notice) && /Google user data/.test(notice) && /gmail\.modify/.test(notice) && /contacts\.readonly/.test(notice));
+  // Since 1.33.1 Gmail only sends and Drive is drive.file: no restricted scope, so Google's review stays free.
+  check('  says what is read from Google and why, in both languages', /Dữ liệu từ tài khoản Google/.test(notice) && /Google user data/.test(notice) && (notice.match(/<code>gmail\.send<\/code>/g) || []).length >= 2 && (notice.match(/<code>drive\.file<\/code>/g) || []).length >= 2 && /contacts\.readonly/.test(notice));
+  check('  and names no restricted scope as one Ephapse asks for', !/<code>(gmail\.(modify|readonly|compose|metadata)|drive|drive\.readonly|drive\.metadata)<\/code>/.test(notice));
   check('  and carries the Limited Use statement, with the policy it names', /use and transfer to any other app of information received from Google APIs will adhere to the\s*<a href="https:\/\/developers\.google\.com\/terms\/api-services-user-data-policy">Google API Services User Data Policy<\/a>,\s*including the Limited Use requirements/.test(notice));
   check('the sign-in page links it for someone not signed in', /<a class="gate__legal" href="\/privacy\.html"/.test(fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')));
   check('the Search Console verification file is served as Google wrote it', fs.readFileSync(new URL('../public/google19190bbd34c2487c.html', import.meta.url), 'utf8').trim() === 'google-site-verification: google19190bbd34c2487c.html');
@@ -3068,7 +3070,8 @@ section('the product is Ephapse: the old name is nowhere but where it must stay 
   check('  every exception is still used (a stale one would hide a new miss)', ALLOWED.every((a) => files.some((f) => a.file.test(f) && !BINARY.test(f) && read(f).split(/\r?\n/).some((l) => a.line.test(l)))));
 
   const { LEGAL } = await import('../server/legal.js');
-  check('the legal version ids are unchanged: nobody is asked to agree again', LEGAL.notice === 'privacy-2026-11-12' && LEGAL.terms === 'terms-2026-11-03' && LEGAL.usage === 'usage-2026-10-26', JSON.stringify(LEGAL));
+  // The rename moved no id. The notice moved on in 1.33.1, for the narrower Google access (its own section below).
+  check('the legal version ids the rename left alone are unchanged: nobody was asked to agree again for it', LEGAL.notice === 'privacy-2026-11-18' && LEGAL.terms === 'terms-2026-11-03' && LEGAL.usage === 'usage-2026-10-26', JSON.stringify(LEGAL));
   for (const page of ['privacy', 'terms', 'usage-policy']) {
     const html = read(`public/${page}.html`);
     check(`  ${page}.html says the name changed, in both languages, with the date`, html.includes(`${OLD[0].toUpperCase()}${OLD.slice(1)} nay đổi tên thành Ephapse (www.ephapse.net)`) && html.includes(`${OLD[0].toUpperCase()}${OLD.slice(1)} is now Ephapse (www.ephapse.net)`) && html.includes('Đổi tên: 17/11/2026') && html.includes('Renamed: 17 November 2026'));
@@ -3090,6 +3093,51 @@ section('the product is Ephapse: the old name is nowhere but where it must stay 
   check('the cloud computer template is ephapse-computer, in the code and in the script that builds it', TEMPLATE_NAME === 'ephapse-computer' && /TEMPLATE_NAME/.test(read('scripts/e2b-template.mjs')));
   const log133 = JSON.parse(read('public/changelog.json')).entries.find((e) => e.version === '1.33.0');
   check('1.33.0 is released in both languages, says the old name once, and CHANGELOG.md carries it', !!log133 && log133.new.vi.length === log133.new.en.length && log133.improved.vi.length === log133.improved.en.length && /www\.ephapse\.net/.test(log133.new.en.join(' ')) && /www\.ephapse\.net/.test(log133.new.vi.join(' ')) && /X-Ephapse-Signature/.test(log133.improved.en.join(' ')) && read('CHANGELOG.md').includes('(1.33.0)'));
+}
+
+section('Google on free review and the public contact address (1.33.1)');
+{
+  const { execSync } = await import('node:child_process');
+  const root = new URL('../', import.meta.url);
+  const read = (p) => fs.readFileSync(new URL(p, root), 'utf8');
+  // The owner's personal address gave way to support@ephapse.net (owner, 2026-11-18). Its local
+  // part is built from two pieces, so this file does not hold what it looks for.
+  const PERSONAL = new RegExp(['hero', 'zombie06'].join(''), 'i');
+  const files = execSync('git ls-files -z', { cwd: root, maxBuffer: 1 << 28 }).toString('utf8').split('\0').filter(Boolean);
+  const BINARY = /\.(png|jpe?g|gif|webp|webm|mp4|ico|pdf|woff2?|ttf|otf|zip|gz|docx|xlsx|pptx)$/i;
+  const hits = [];
+  let scanned = 0;
+  for (const file of files) {
+    if (BINARY.test(file) || !fs.existsSync(new URL(file, root))) continue;
+    const buf = fs.readFileSync(new URL(file, root));
+    if (buf.includes(0)) continue;
+    scanned += 1;
+    if (PERSONAL.test(buf.toString('utf8'))) hits.push(file);
+  }
+  check('the scan read the tracked text files', scanned > 700, String(scanned));
+  check("the owner's personal address is in no tracked file", hits.length === 0, hits.join(', '));
+  for (const page of ['privacy', 'terms', 'usage-policy']) {
+    const html = read(`public/${page}.html`);
+    const mailto = [...html.matchAll(/href="mailto:([^"]+)"/g)].map((m) => m[1]);
+    check(`  ${page}.html writes to support@ephapse.net in both languages, as the link and as the words`, mailto.length === 2 && mailto.every((m) => m === 'support@ephapse.net') && (html.match(/>support@ephapse\.net<\/a>/g) || []).length === 2, JSON.stringify(mailto));
+  }
+  for (const page of ['terms', 'usage-policy']) {
+    const html = read(`public/${page}.html`);
+    check(`  ${page}.html keeps its version and says the address changed, with the date`, html.includes('Địa chỉ liên hệ mới: 18/11/2026') && html.includes('New contact address: 18 November 2026'));
+  }
+  const notice = read('public/privacy.html');
+  check('the privacy notice says what changed since privacy-2026-11-12, in both languages', notice.includes('So với bản privacy-2026-11-12:') && notice.includes('Since privacy-2026-11-12:'));
+  check('  and that the Picker hands the browser a short-lived Drive token, where it said none ever reached it', /mã ngắn hạn/.test(notice) && /short-lived token/.test(notice) && !/never sent to the browser/.test(notice));
+  check('  and how a connection made before narrows: disconnect, then connect again', /made before 18 November 2026/.test(notice) && /tạo trước ngày 18\/11\/2026/.test(notice));
+
+  const log = JSON.parse(read('public/changelog.json')).entries.find((e) => e.version === '1.33.1');
+  const en = [...(log?.new?.en || []), ...(log?.improved?.en || [])].join(' ');
+  const vi = [...(log?.new?.vi || []), ...(log?.improved?.vi || [])].join(' ');
+  check('1.33.1 is released in both languages: Gmail only sends, Drive opens the files you pick', !!log && /only send/i.test(en) && /Google Picker|pick/i.test(en) && /chỉ (còn )?gửi/i.test(vi) && /chọn/.test(vi), en.slice(0, 200));
+  check('  and says a connection from before narrows only by disconnecting and connecting again', /disconnect/i.test(en) && /ngắt kết nối/i.test(vi));
+  check('  CHANGELOG.md carries it, and the owner\'s guide has the Picker setup', read('CHANGELOG.md').includes('(1.33.1)') && /GOOGLE_PICKER_API_KEY/.test(read('docs/google.md')) && /GOOGLE_PROJECT_NUMBER/.test(read('docs/google.md')));
+  const guide = read('docs/google.md');
+  check('  and the guide asks for no restricted scope', !/auth\/(gmail\.(modify|readonly|compose|metadata)|drive\.readonly|drive\.metadata)\b|auth\/drive(?![.\w])|mail\.google\.com/.test(guide));
 }
 
 console.log(failures === 0 ? '\n\x1b[32mAll feature checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);

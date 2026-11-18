@@ -8,9 +8,11 @@
  * or agreed to an older version — is asked once, by a banner, through
  * `/api/consent`. Each page carries its own string ("Phiên bản …" / "Version
  * …"), held to these by test/features: change a page, change its version here.
+ * A fix that changes nothing a person agrees to — the 1.33.0 rename, the
+ * 1.33.1 contact address — keeps the id and says so in a dated line on the page.
  */
 export const LEGAL = Object.freeze({
-  notice: 'privacy-2026-11-12',
+  notice: 'privacy-2026-11-18',
   terms: 'terms-2026-11-03',
   usage: 'usage-2026-10-26',
 });
