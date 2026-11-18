@@ -3184,7 +3184,12 @@ section('a public home page that says what Ephapse is, and no sexual imagery (1.
   const differ = same.filter((s) => !words.includes(s));
   check('  the Limited Use statement, in the privacy policy\'s own words, in both languages', differ.length === 0, differ.map((s) => s.slice(0, 60)).join(' | '));
   check('  and a link to the privacy policy\'s Google section, which is there', about.includes('href="/privacy.html#google-user-data"') && about.includes('href="/privacy.html#google"') && read('public/privacy.html').includes('id="google-user-data"') && read('public/privacy.html').includes('id="google"'));
-  check('  pictures: made with the Gemini API, never sexual, nude or intimate, no AI NCII, refused before Google, in both languages', /Google's Gemini API/.test(enHalf) && /never makes sexual, nude or intimate images of anyone/.test(enHalf) && /\(AI NCII\)/.test(enHalf) && /refused before anything is sent to Google/.test(enHalf) && /does not use Google APIs or Google user data to create, edit or share such imagery/.test(enHalf) && /\(AI NCII\)/.test(viHalf) && /trước khi gửi bất cứ thứ gì tới Google/.test(viHalf) && /khoả thân/.test(viHalf));
+  // Fix round 1 (review, 2026-11-18): a rule and a described check, never a guarantee the word list cannot keep.
+  const CHECK_EN = "Ephapse's server checks every picture request for sexual or nude wording, in English and Vietnamese, and refuses a match before any picture is asked of Google. The assistant is also instructed to refuse such requests itself, and every picture request Ephapse does send asks Gemini for its strictest filter for sexually explicit content.";
+  const CHECK_VI = 'Máy chủ của Ephapse kiểm tra mọi yêu cầu tạo ảnh để tìm từ ngữ tình dục hay khoả thân, bằng tiếng Anh và tiếng Việt, và từ chối trước khi yêu cầu Google tạo bất kỳ ảnh nào. Trợ lý cũng được dặn tự từ chối những yêu cầu như vậy, và mọi yêu cầu tạo ảnh Ephapse gửi đi đều đặt bộ lọc nội dung tình dục chặt nhất của Gemini.';
+  check('  pictures: made with the Gemini API, sexual, nude or intimate images not allowed, no AI NCII, in both languages', /Google's Gemini API/.test(enHalf) && /Ephapse does not allow sexual, nude or intimate images of anyone/.test(enHalf) && /\(AI NCII\)/.test(enHalf) && /does not use Google APIs or Google user data to create, edit or share such imagery/.test(enHalf) && /Ephapse không cho phép ảnh tình dục, khoả thân hay riêng tư của bất kỳ ai/.test(viHalf) && /\(AI NCII\)/.test(viHalf));
+  check('  the check described as a check, in the ruled words, in both languages', enHalf.includes(CHECK_EN) && viHalf.includes(CHECK_VI));
+  check('  and the picture tool takes only words: no photo in, so none changed or "undressed", in both languages', /takes only a text description: it cannot take in an existing photo, so it cannot change or "undress" one/.test(enHalf) && /chỉ nhận một mô tả bằng chữ: nó không thể nhận một bức ảnh có sẵn, nên không thể sửa hay "cởi đồ" một bức ảnh/.test(viHalf));
   check('  and the Usage Policy forbids it, suspension possible, with where to report', /Usage Policy forbids it/.test(enHalf) && /suspended/.test(enHalf) && /tạm khoá/.test(viHalf));
   const mailto = [...about.matchAll(/href="mailto:([^"]+)"/g)].map((m) => m[1]);
   check('  writes to support@ephapse.net, and to nothing else', mailto.length >= 2 && mailto.every((m) => m === 'support@ephapse.net') && (about.match(/>support@ephapse\.net<\/a>/g) || []).length === mailto.length, JSON.stringify(mailto));
@@ -3196,8 +3201,8 @@ section('a public home page that says what Ephapse is, and no sexual imagery (1.
   check('  and the hidden paragraph, its toggle and their styles are gone', !/id="gate-about"/.test(gate) && !/gate-what|gate-about/.test(read('public/js/app.js')) && !/\.gate__about\b/.test(read('public/css/app.css')));
 
   const usage = read('public/usage-policy.html');
-  const viBullet = '<li>Tạo, sửa hay chia sẻ hình ảnh, video hay âm thanh tình dục, khoả thân hoặc riêng tư của một người thật khi họ không đồng ý — kể cả nội dung do AI tạo ("deepfake", NCII). Công cụ tạo ảnh của Ephapse từ chối mọi ảnh tình dục hay khoả thân.</li>';
-  const enBullet = '<li>Make, edit or share sexual, nude or intimate images, video or audio of a real person without their consent — including AI-generated ("deepfake") content (NCII). Ephapse\'s picture tool refuses every sexual or nude image.</li>';
+  const viBullet = '<li>Tạo, sửa hay chia sẻ hình ảnh, video hay âm thanh tình dục, khoả thân hoặc riêng tư của một người thật khi họ không đồng ý — kể cả nội dung do AI tạo ("deepfake", NCII). Công cụ tạo ảnh của Ephapse được thiết kế để từ chối ảnh tình dục hay khoả thân.</li>';
+  const enBullet = '<li>Make, edit or share sexual, nude or intimate images, video or audio of a real person without their consent — including AI-generated ("deepfake") content (NCII). Ephapse\'s picture tool is built to refuse sexual or nude images.</li>';
   const after = (html, first, next) => {
     const at = html.indexOf(first);
     return at >= 0 && html.slice(at + first.length).trimStart().startsWith(next);
@@ -3209,12 +3214,28 @@ section('a public home page that says what Ephapse is, and no sexual imagery (1.
   const log = JSON.parse(read('public/changelog.json')).entries.find((e) => e.version === '1.33.1');
   const logEn = [...(log?.new?.en || []), ...(log?.improved?.en || [])].join(' ');
   const logVi = [...(log?.new?.vi || []), ...(log?.improved?.vi || [])].join(' ');
-  check('1.33.1 says, in both languages, there is a public page about Ephapse and pictures are never sexual or nude', /about\.html/.test(logEn) && /sexual or nude/.test(logEn) && /about\.html/.test(logVi) && /tình dục hay khoả thân/.test(logVi) && log.new.vi.length === log.new.en.length && log.improved.vi.length === log.improved.en.length, logEn.slice(-240));
+  check('1.33.1 says, in both languages, there is a public page about Ephapse and sexual or nude pictures are checked for and refused', /about\.html/.test(logEn) && /sexual or nude/.test(logEn) && /about\.html/.test(logVi) && /tình dục hay khoả thân/.test(logVi) && log.new.vi.length === log.new.en.length && log.improved.vi.length === log.improved.en.length, logEn.slice(-240));
   const changelog = read('CHANGELOG.md');
   const section133 = changelog.slice(changelog.indexOf('(1.33.1)'), changelog.indexOf('## 2026-11-17'));
   check('  CHANGELOG.md\'s 1.33.1 section carries it', /about\.html/.test(section133) && /NCII/.test(section133));
   const guide = read('docs/google.md');
-  check("  and the owner's guide says what to set and what to tell Google", /Branding review: home page and AI NCII/.test(guide) && /Application home page.*https:\/\/www\.ephapse\.net\/about\.html|https:\/\/www\.ephapse\.net\/about\.html.*Application home page/s.test(guide) && /I have fixed the issues/.test(guide) && /refused before anything is sent to Google/.test(guide));
+  check("  and the owner's guide says what to set and what to tell Google", /Branding review: home page and AI NCII/.test(guide) && /Application home page.*https:\/\/www\.ephapse\.net\/about\.html|https:\/\/www\.ephapse\.net\/about\.html.*Application home page/s.test(guide) && /I have fixed the issues/.test(guide));
+  // The note to Google carries the ruled sentence in its own voice ("our server", "we do send").
+  const note = guide.slice(guide.indexOf('> Our application home page')).replace(/\n> ?/g, ' ').replace(/\s+/g, ' ');
+  check('  the note to Google describes the check in the ruled words, claims no refusal of "intimate" wording, and says only words go in', note.includes('Our server checks every picture request for sexual or nude wording, in English and Vietnamese, and refuses a match before any picture is asked of Google.') && !/refuse[sd]?[^.]*intimate/.test(note) && /takes only a text description/.test(note), note.slice(0, 120));
+  // The owner makes one real picture before telling Google anything (ruling 2), and knows the check is strict (ruling 5).
+  const steps = guide.slice(guide.indexOf('Once 1.33.1 is deployed'), guide.indexOf('> Our application home page')).replace(/\s+/g, ' ');
+  check('  one ordinary picture with the real key comes before "I have fixed the issues", stopping on an error naming safety_settings', /a lighthouse at sunset/.test(steps) && /safety_settings/.test(steps) && steps.indexOf('a lighthouse at sunset') > 0 && steps.indexOf('a lighthouse at sunset') < steps.indexOf('I have fixed the issues'));
+  check('  and the guide says the picture check is deliberately strict, with a rewording to use', /deliberately strict/.test(guide) && /beige heels/.test(guide));
+  // Ruling 1: the old guarantee is gone from every public and owner-facing place.
+  const OLD = /refused before anything is sent to Google|trước khi gửi bất cứ thứ gì tới Google|never makes sexual, nude or intimate images|refuses every sexual or nude image|từ chối mọi ảnh tình dục/;
+  const where = { 'about.html': about, 'changelog.json 1.33.1': logEn + logVi, 'CHANGELOG.md 1.33.1': section133, 'docs/google.md': guide, 'usage-policy.html': usage };
+  const still = Object.entries(where).filter(([, text]) => OLD.test(text.replace(/\s+/g, ' '))).map(([name]) => name);
+  check('  and the guarantee the word list cannot keep is nowhere: not on the page, the policy, the notes or the guide', still.length === 0, still.join(', '));
+  // Ruling 6: the strongest true safeguard, pinned on the tool itself.
+  const imageTool = TOOLS_BY_NAME.generate_image;
+  const takes = Object.keys(imageTool?.parameters?.properties || {});
+  check("generate_image's schema takes words only (prompt, name, aspect_ratio, count), nothing that could carry a picture", takes.join() === 'prompt,name,aspect_ratio,count' && Object.values(imageTool.parameters.properties).every((p) => p.type === 'string' || p.type === 'integer'), takes.join());
 }
 
 console.log(failures === 0 ? '\n\x1b[32mAll feature checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);

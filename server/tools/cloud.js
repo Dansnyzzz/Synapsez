@@ -55,7 +55,7 @@ import {
   withoutGoogleNotes, heldNotesLine, noteKind, noteDay, kindOf, isLive, isExpired, removedNote, provenanceFor, scopeCapRefusal,
 } from '../memory.js';
 import { carriesGoogleData, googleDataInScope } from '../googleData.js';
-import { sexualImageRequest, IMAGE_SAFETY_SETTINGS } from '../imageSafety.js';
+import { sexualImageRequest, googleSafetyBlock, IMAGE_SAFETY_SETTINGS } from '../imageSafety.js';
 // Only to tell a real tool name from one the model invented — see loadToolsTool.
 import { TOOLS_BY_NAME } from './definitions.js';
 import { dropElements, stripTags } from '../util/markup.js';
@@ -2976,6 +2976,8 @@ const IMAGE_MODEL = 'gemini-3.1-flash-image';
  * Separated from the tool so the request shape and the reading of the response can
  * be pinned with a stand-in client — the real one needs a key and costs money per
  * call. One interaction per image, sent together, because this API returns one.
+ * When nothing comes back and Google blocked a request on safety grounds, it throws
+ * the same Usage Policy refusal as the server's own check, never Google's words.
  *
  * @returns {Promise<{ images: Array<{ data: string, mime: string }>, usage: { input: number, output: number }, refusal: string|null }>}
  */
@@ -2998,8 +3000,11 @@ export async function requestImages(client, { model, prompt, count, aspectRatio 
   const usage = { input: 0, output: 0 };
   let refusal = null;
   let failure = null;
+  let blocked = false;
   for (const outcome of settled) {
     if (outcome.status === 'rejected') {
+      // Google's safety filter answers with a 400 (code `safety`, or an input blocked outright).
+      if (googleSafetyBlock(outcome.reason)) blocked = true;
       failure = failure || outcome.reason;
       continue;
     }
@@ -3009,27 +3014,37 @@ export async function requestImages(client, { model, prompt, count, aspectRatio 
     const image = interaction.output_image;
     if (image?.data) {
       images.push({ data: image.data, mime: image.mime_type || 'image/png' });
-    } else if (!refusal) {
+    } else {
       // A model that declines usually says why in text, or in the errors list.
-      refusal = interaction.errors?.[0]?.message || interaction.output_text || null;
+      if (googleSafetyBlock(interaction.errors?.[0])) blocked = true;
+      refusal = refusal || interaction.errors?.[0]?.message || interaction.output_text || null;
     }
   }
+  // A safety block is the Usage Policy's answer, with "do not try again", not Google's words,
+  // which would only invite the model to reword the request (fix round 1, 2026-11-18).
+  if (!images.length && blocked) throw sexualImageRefusal();
   // Every request failing outright is an error to report, not an empty result.
   if (!images.length && !refusal && failure) throw failure;
   return { images, usage, refusal };
 }
 
+// One refusal for a sexual or nude picture, whichever check caught it: the server's own wording
+// check (imageSafety.js), or Google's filter. True of both, so it says the picture was not made,
+// not that nothing was sent.
+function sexualImageRefusal() {
+  return new Error(
+    'Ephapse does not make sexual, nude or intimate images of anyone, so this picture was not made. ' +
+      'Tell the user plainly that Ephapse does not make sexual or nude images, under its Usage Policy, and do not try again with other words.',
+  );
+}
+
 async function generateImageTool({ prompt, name, aspect_ratio: aspectRatio, count }, { userId, chatId }) {
   const text = String(prompt || '').trim();
   if (!text) throw new Error('Describe the image you want.');
-  // First, before a key is looked up or anything is sent: no sexual or nude picture of anyone is
-  // asked of Google (Google's branding review, 2026-11-18; public/about.html, the Usage Policy).
-  if (sexualImageRequest(text)) {
-    throw new Error(
-      'Ephapse does not make sexual, nude or intimate images of anyone, so nothing was sent to make this picture. ' +
-        'Tell the user plainly that Ephapse does not make sexual or nude images, under its Usage Policy, and do not try again with other words.',
-    );
-  }
+  // First, before a key is looked up or any picture is asked of Google: a request whose wording is
+  // sexual or nude is refused (Google's branding review, 2026-11-18; public/about.html, the Usage
+  // Policy). A check of the words, not a guarantee; Gemini's filter stands behind it.
+  if (sexualImageRequest(text)) throw sexualImageRefusal();
   // Pictures are made through a Gemini key, which may train on the prompt, and a
   // prompt written here may carry what was read from Google (googleData.js).
   if (googleDataInScope()) {

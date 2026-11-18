@@ -748,8 +748,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'There is no workflow with the id "{0}". Call workflow_status to see them.':
     'Không có chuỗi việc nào với id "{0}". Gọi workflow_status để xem danh sách.',
   'Describe the image you want.': 'Hãy mô tả hình bạn muốn.',
-  'Ephapse does not make sexual, nude or intimate images of anyone, so nothing was sent to make this picture. Tell the user plainly that Ephapse does not make sexual or nude images, under its Usage Policy, and do not try again with other words.':
-    'Ephapse không tạo ảnh tình dục, khoả thân hay riêng tư của bất kỳ ai, nên không có gì được gửi đi để tạo ảnh này. Hãy nói rõ với người dùng rằng Ephapse không tạo ảnh tình dục hay khoả thân, theo Chính sách sử dụng của Ephapse, và đừng thử lại bằng cách diễn đạt khác.',
+  'Ephapse does not make sexual, nude or intimate images of anyone, so this picture was not made. Tell the user plainly that Ephapse does not make sexual or nude images, under its Usage Policy, and do not try again with other words.':
+    'Ephapse không tạo ảnh tình dục, khoả thân hay riêng tư của bất kỳ ai, nên ảnh này không được tạo. Hãy nói rõ với người dùng rằng Ephapse không tạo ảnh tình dục hay khoả thân, theo Chính sách sử dụng của Ephapse, và đừng thử lại bằng cách diễn đạt khác.',
   'Making pictures needs a Google API key, and this account has none. Tell the user to add one in Settings → Providers → Google Gemini. Their OpenRouter key cannot do this — image models are not part of that catalogue here.':
     'Tạo hình cần Google API key, mà tài khoản này chưa có. Hãy thêm key trong Cài đặt → Nhà cung cấp → Google Gemini. Key OpenRouter không làm được việc này — model tạo hình không nằm trong danh mục đó ở đây.',
   'Give the `url` of the page to read.': 'Hãy cung cấp `url` của trang cần đọc.',

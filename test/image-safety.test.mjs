@@ -53,6 +53,16 @@ section('a request for a sexual or nude picture is recognised, in English and Vi
     check(`refused: ${label}`, missed.length === 0, missed.join(' | '));
   }
 
+  // Fix round 1 (review, 2026-11-18): plain synonyms and word forms that walked past the first list.
+  const wider = [
+    'an unclothed woman', 'nakedness', 'a nudist beach', 'nudism', 'a sexualized cartoon', 'sexualised', 'a pornstar', 'pornhub style',
+    'an XXX poster', 'an x-rated scene', 'she undresses slowly', 'a woman wearing nothing', 'wearing nothing but a smile',
+    'a man with no clothes', 'people without clothes', 'a model without clothing',
+    'cô gái không mặc quần áo', 'người không mặc gì', 'ảnh nóng của cô ấy', 'khong mac quan ao', 'nguoi khong mac gi',
+  ];
+  const missedWider = wider.filter((p) => !sexualImageRequest(p));
+  check('refused: the wider list, plain synonyms and word forms', missedWider.length === 0, missedWider.join(' | '));
+
   // Word boundaries: a place name or an instrument is not a request for sex.
   const fine = [
     'Essex', 'a farmhouse in Sussex at dawn', 'a brass sextant on a desk', 'Middlesex county map', 'unisex t-shirt mock-up',
@@ -60,6 +70,9 @@ section('a request for a sexual or nude picture is recognised, in English and Vi
     // Vietnamese words that only look like one without their accents: written with them, they pass.
     'logo cho khoa thận của bệnh viện', 'coi đó là một con mèo', 'một cái loa thế này', 'coi quần áo trong tủ', 'còi đỏ trên sân bóng',
     'tình yêu thương gia đình', 'giáo dục mầm non', 'ảnh 2018 ở Hà Nội', '', null, undefined,
+    // The wider list's neighbours.
+    'a lighthouse at sunset', 'a woman wearing a red coat', 'clothes on a rack', 'nothing on the table', 'a man wearing a hat',
+    'ảnh nông thôn Việt Nam', 'tin nóng trong ngày', 'không mặc áo mưa', 'không mặc cả',
   ];
   const caught = fine.filter((p) => sexualImageRequest(p));
   check('passed: place names, look-alike words, and Vietnamese written with its accents', caught.length === 0, caught.join(' | '));
@@ -81,11 +94,11 @@ globalThis.fetch = async (input, init = {}) => {
   let body = init.body;
   if (body === undefined && input && typeof input.clone === 'function') body = await input.clone().text();
   sent.push({ url, body: typeof body === 'string' ? body : '' });
-  return new Response(JSON.stringify({ error: { code: 400, message: 'stub: no network in this test', status: 'INVALID_ARGUMENT' } }), {
-    status: 400,
-    headers: { 'content-type': 'application/json' },
-  });
+  return new Response(JSON.stringify(googleAnswers), { status: 400, headers: { 'content-type': 'application/json' } });
 };
+// What the stand-in Google answers: by default an ordinary 400, not a safety block.
+const ORDINARY_400 = { error: { code: 400, message: 'stub: no network in this test', status: 'INVALID_ARGUMENT' } };
+let googleAnswers = ORDINARY_400;
 
 section('generate_image refuses before anything is sent to Google');
 {
@@ -129,6 +142,44 @@ section('every picture request carries the filter, and the model is told up fron
   check('each of several requests asks for sexually_explicit at block_low_and_above', asked.length === 3 && asked.every((r) => JSON.stringify(r.safety_settings) === JSON.stringify([{ type: 'sexually_explicit', threshold: 'block_low_and_above' }])), JSON.stringify(asked[0]?.safety_settings));
   const description = TOOLS_BY_NAME.generate_image?.description || '';
   check("the tool's description says it never makes sexual, nude or intimate images, so the model refuses without calling it", /never makes sexual, nude or intimate images of anyone/.test(description), description.slice(-200));
+  // Only words go to Google: no photo can be taken in, changed or "undressed" (fix round 1).
+  check('  and only the description goes to Google as input, as text', asked.every((r) => r.input === 'a lighthouse' && !('image' in r) && !('images' in r)), JSON.stringify(asked[0]?.input));
+}
+
+section("Google's own safety block gets the same Usage Policy answer, never the SDK's words (fix round 1)");
+{
+  const { requestImages } = await import('../server/tools/cloud.js');
+  // The shape @google/genai 2.20.0 throws for a 400 (read off the real client): status, the body
+  // Google sent under .error.error ({ code, message }, the SDK's ErrorT), and "400 <message>".
+  const sdkError = (body) =>
+    Object.assign(new Error(`400 ${body.error.message}`), { name: 'BadRequestError', status: 400, statusCode: 400, error: { httpMeta: {}, error: body.error }, body: JSON.stringify(body) });
+  const said = async (client) => requestImages(client, { model: 'gemini-3.1-flash-image', prompt: 'a portrait', count: 2 }).then(() => '(no error)', (err) => String(err?.message || err));
+  const throwing = (body) => ({ interactions: { create: async () => { throw sdkError(body); } } });
+  const blocks = [
+    { error: { code: 'safety', message: 'Request blocked due to safety violations (harmful content). Please modify your input and retry.' } },
+    { error: { code: 'prohibited_content', message: 'Input blocked: prohibited content.' } },
+    { error: { code: 'jailbreak', message: 'Input blocked: jailbreak.' } },
+    { error: { code: 'blocklist', message: 'Input blocked: blocklist.' } },
+    { error: { message: 'Input blocked: no code given.' } },
+  ];
+  for (const body of blocks) {
+    const text = await said(throwing(body));
+    check(`a 400 "${body.error.code || body.error.message}" becomes the Usage Policy refusal, with "do not try again"`, /does not make sexual, nude or intimate images/.test(text) && /Usage Policy/.test(text) && /do not try again with other words/.test(text) && !/Request blocked|Input blocked|400/.test(text), text.slice(0, 160));
+  }
+  // The same code in a finished interaction's errors list (Google's page: background interactions).
+  const failedInteraction = { interactions: { create: async () => ({ status: 'failed', errors: [{ code: 'safety', message: 'Request blocked due to safety violations.' }] }) } };
+  const fromList = await said(failedInteraction);
+  check('  and so does one that comes back failed with a safety code in its errors', /does not make sexual, nude or intimate images/.test(fromList) && !/Request blocked/.test(fromList), fromList.slice(0, 160));
+  // The controls: any other failure keeps its own words.
+  const other = await said(throwing({ error: { code: 400, message: 'API key not valid.', status: 'INVALID_ARGUMENT' } }));
+  check('  while any other 400 keeps its own words', /API key not valid/.test(other) && !/does not make sexual/.test(other), other.slice(0, 160));
+
+  // End to end, through the real SDK: Google answers its documented safety 400.
+  googleAnswers = blocks[0];
+  sent.length = 0;
+  const viaTool = await executeTool({ user, name: 'generate_image', input: { prompt: 'a lighthouse at sunset' }, chatId: null });
+  googleAnswers = ORDINARY_400;
+  check('  through the tool and the real client, the model hears the Usage Policy refusal', sent.length >= 1 && viaTool.isError === true && /does not make sexual, nude or intimate images/.test(viaTool.content) && !/Request blocked/.test(viaTool.content), `${sent.length} sent; ${String(viaTool.content).slice(0, 160)}`);
 }
 
 globalThis.fetch = realFetch;
