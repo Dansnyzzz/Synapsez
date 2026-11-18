@@ -299,6 +299,9 @@ function check(value, schema, where, notes = []) {
     if (near !== undefined) return { ok: true, value: near };
     return {
       enumMiss: true,
+      // Which enum missed, so a note further up lists values only where they are this field's own.
+      missedAt: where,
+      allowed: schema.enum,
       ok: false,
       error: `${where} must be one of ${schema.enum.map((e) => JSON.stringify(e)).join(', ')}, but got ${JSON.stringify(value)}.`,
     };
@@ -336,8 +339,13 @@ function check(value, schema, where, notes = []) {
         const field = check(value[key], sub, name, notes);
         if (!field.ok && field.enumMiss && !(schema.required || []).includes(key)) {
           delete out[key];
-          // The allowed values with it, so the next call can pick one instead of guessing again.
-          notes.push(`${name} ${JSON.stringify(value[key])} is not one it knows, so it was left out and the default used. It takes ${sub.enum.map((v) => JSON.stringify(v)).join(', ')}.`);
+          // The allowed values with it, so the next call can pick one instead of guessing again —
+          // but only when the miss is this field's own enum. A required enum deeper down (an
+          // optional `terminal` whose `action` is wrong) drops the field with the plain note;
+          // reading `sub.enum` there threw, and took executeTool and assessRisk with it.
+          const own = field.missedAt === name && Array.isArray(field.allowed);
+          const takes = own ? ` It takes ${field.allowed.map((v) => JSON.stringify(v)).join(', ')}.` : '';
+          notes.push(`${name} ${JSON.stringify(value[key])} is not one it knows, so it was left out and the default used.${takes}`);
           continue;
         }
         if (!field.ok) return field;

@@ -1719,6 +1719,92 @@ section('the untrusted-content boundary');
   check('  and the model is told what was set aside', /kind "email"/.test((hint.notes || []).join(' ')), (hint.notes || []).join(' '));
   // Fix round 1 (2026-11-18): the note names what the field takes, so the next call picks one.
   check('  and every value it takes', mail.properties.kind.enum.every((v) => (hint.notes || []).join(' ').includes(JSON.stringify(v))), (hint.notes || []).join(' '));
+  /*
+   * Fix round 4 (2026-11-18): the values are listed only where the enum that
+   * missed is this field's own. A *required* enum under an *optional* object —
+   * `sandbox_run`'s `terminal.action`, `checkpoint.action` — reached the note
+   * with no `enum` beside it, and `sub.enum.map` threw out of the validator,
+   * out of assessRisk (needsApproval) and out of executeTool, before its try.
+   */
+  const { readArguments } = await import('../server/tools/validate.js');
+  for (const field of ['terminal', 'checkpoint']) {
+    const bad = { [field]: { action: 'type' } };
+    let read;
+    try {
+      read = validateArguments(byName.sandbox_run.parameters, bad);
+    } catch (e) {
+      read = { thrown: e.message };
+    }
+    check(`sandbox_run ${field}.action outside its enum: the field is dropped, nothing thrown`, read.ok && !(field in read.input), JSON.stringify(read));
+    check('  with the plain note, no values from an enum it does not own', /left out and the default used\.$/.test((read.notes || []).join(' ')), (read.notes || []).join(' '));
+    let risk;
+    try {
+      risk = assessRisk('sandbox_run', bad);
+    } catch (e) {
+      risk = `threw ${e.message}`;
+    }
+    check(`  assessRisk grades it rather than throwing (${field})`, !/^threw/.test(String(risk)), String(risk));
+    const { executeTool: runIt } = await import('../server/tools/execute.js');
+    let ran;
+    try {
+      ran = await runIt({ user: { id: 'nobody' }, name: 'sandbox_run', input: bad, chatId: null });
+    } catch (e) {
+      ran = { thrown: e.message };
+    }
+    check(`  executeTool answers {content, isError} rather than throwing (${field})`, typeof ran?.content === 'string' && !ran.thrown, JSON.stringify(ran));
+  }
+
+  // Every catalogue tool, every field at every depth, sent wrong-typed and
+  // wrong-enum values: the reader answers, it never throws.
+  const WRONG = [123, 1.5, true, 'definitely-not-allowed', '', null, [], [1, 'x', null], {}, { item: [1] }, { a: { b: 1 } }, '[1,2]', 'true'];
+  const filler = (s, depth = 0) => {
+    if (!s || depth > 6) return 'x';
+    if (Array.isArray(s.enum)) return s.enum[0];
+    const t = Array.isArray(s.type) ? s.type[0] : s.type;
+    if (t === 'object') return Object.fromEntries((s.required || []).map((k) => [k, filler(s.properties?.[k], depth + 1)]));
+    if (t === 'array') return [filler(s.items, depth + 1)];
+    if (t === 'integer' || t === 'number') return 1;
+    if (t === 'boolean') return true;
+    return 'x';
+  };
+  const paths = (s, at = [], out = []) => {
+    if (!s || typeof s !== 'object' || at.length > 6) return out;
+    for (const [k, p] of Object.entries(s.properties || {})) {
+      out.push([...at, k]);
+      paths(p, [...at, k], out);
+      if (p.items) paths(p.items, [...at, k, 0], out);
+    }
+    return out;
+  };
+  const setAt = (root, path, v) => {
+    let node = root;
+    for (let i = 0; i < path.length - 1; i += 1) {
+      const k = path[i];
+      if (node[k] === undefined || node[k] === null || typeof node[k] !== 'object') node[k] = typeof path[i + 1] === 'number' ? [] : {};
+      node = node[k];
+    }
+    node[path[path.length - 1]] = v;
+    return root;
+  };
+  let tried = 0;
+  const throws = [];
+  for (const tool of catalogue) {
+    if (!tool.parameters) continue;
+    for (const path of paths(tool.parameters)) {
+      for (const v of WRONG) {
+        const input = setAt(filler(tool.parameters), path, v);
+        tried += 1;
+        try {
+          const r = readArguments(tool.name, tool.parameters, input);
+          if (typeof r?.ok !== 'boolean') throws.push(`${tool.name}.${path.join('.')} = ${JSON.stringify(v)}: no result`);
+          assessRisk(tool.name, input);
+        } catch (e) {
+          if (throws.length < 8) throws.push(`${tool.name}.${path.join('.')} = ${JSON.stringify(v)}: ${e.message}`);
+        }
+      }
+    }
+  }
+  check(`every tool, every field at every depth, wrong-typed and wrong-enum: the reader never throws (${tried} calls)`, tried > 1000 && throws.length === 0, throws.join(' | '));
   const near = validateArguments(mail, { subject: 'S', body: 'B', kind: 'Thank you' });
   check('a near miss is read as what it meant', near.ok && near.input.kind === 'thank_you', JSON.stringify(near.input));
   const exact = validateArguments(mail, { subject: 'S', body: 'B', kind: 'report' });
