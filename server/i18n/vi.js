@@ -759,6 +759,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   '{0} should be {1}, but got {2}.': '{0} phải là {1}, nhưng nhận được {2}.',
   '{0} must be one of {1}, but got {2}.': '{0} phải là một trong {1}, nhưng nhận được {2}.',
   '{0}{1} is required and was not given.': '{0}{1} là bắt buộc nhưng chưa được cung cấp.',
+  'they could not be read. Send each argument as plain JSON of the type the tool lists.':
+    'không đọc được các đối số. Hãy gửi mỗi đối số dưới dạng JSON thuần, đúng kiểu mà công cụ liệt kê.',
 
   /* ── truy cập mạng ─────────────────────────────────────────────── */
   'Only http and https URLs can be fetched — "{0}" is not one.': 'Chỉ tải được URL http và https — "{0}" không phải.',
