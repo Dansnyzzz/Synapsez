@@ -491,6 +491,7 @@ export const en = {
   'chat.drafting': 'writing… {size}',
   'chat.cutOff': 'Cut off before it answered — the server reached its time limit mid-step. The cloud picks the turn up again by itself; a step that only reads is simply run again.',
   'chat.diagram': 'Diagram',
+  'chat.diagramScroll': '{name}, wider than the column: scroll sideways to see all of it',
   'chart.keys': 'use the arrow keys to read each value',
   'chart.share': 'Share',
   'chart.total': 'Total',

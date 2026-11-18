@@ -4905,6 +4905,20 @@ ul.onb__facts { padding-left: 28px; }
 @media (max-width: 860px) {
   .widget__frame { height: 260px; }
 }
+/* A laid-out diagram too wide to read in the column keeps its 11 px titles and scrolls
+   sideways (render.js widgetFrame); the scroller takes focus only while there is width to
+   scroll, so the keyboard can move it. */
+.widget__scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* A bar a mouse can see and take, as on the screen tabs. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.widget__scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 
 /* Copy and download, in a picture's top-right corner, while it is pointed at. */
 .widget,

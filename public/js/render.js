@@ -15,7 +15,7 @@ import { canonicalInput, TITLED } from './tool-aliases.js';
 import { registerPictures, pictureThumb, pictureUrl, openGallery } from './gallery.js';
 import { doneMark, ICONS } from './icons.js';
 import { withoutStrayTags } from './model-text.js';
-import { drawingHeightCap, isReadableScale } from './drawing-fit.js';
+import { DRAWING_FIT, drawingHeightCap, isReadableScale, readableWidth } from './drawing-fit.js';
 
 /**
  * The Markdown behind each assistant turn, keyed by the turn's own node.
@@ -1285,7 +1285,9 @@ function soleDrawing(body) {
  *
  * A diagram the server laid out passes `readableScale` (from its widget, which
  * the server sets): its height cap never shrinks its titles under 11 px — past
- * that it stands taller, and the conversation scrolls (drawing-fit.js).
+ * that it stands taller, and the conversation scrolls (drawing-fit.js). Nor does its width: too
+ * wide for the column at 11 px, it is shown at that size and its frame scrolls sideways — the
+ * width it needs is returned (0 when it fits), for widgetFrame to widen the frame.
  */
 function fitDrawing(svg, readableScale) {
   const view = svg.ownerDocument.defaultView;
@@ -1307,7 +1309,9 @@ function fitDrawing(svg, readableScale) {
     const unit = viewWidth > 0 && shownWidth > 0 ? shownWidth / viewWidth : 1;
     let natural = 0;
     if (box && box.width > 1 && box.height > 1) {
-      const pad = Math.max(8 / unit, Math.max(box.width, box.height) * 0.03);
+      // A laid-out diagram brings its own canvas and margin: padded again, a wide one stood in
+      // bands of 65 units above and below (fix round 4, seen in the browser).
+      const pad = isReadableScale(readableScale) ? 0 : Math.max(8 / unit, Math.max(box.width, box.height) * 0.03);
       const parts = [box.x - pad, box.y - pad, box.width + pad * 2, box.height + pad * 2];
       svg.setAttribute('viewBox', parts.map((n) => Math.round(n * 100) / 100).join(' '));
       natural = parts[2] * unit;
@@ -1322,20 +1326,29 @@ function fitDrawing(svg, readableScale) {
     }
     svg.removeAttribute('width');
     svg.removeAttribute('height');
-    svg.style.width = natural > 0 ? `min(100%, ${Math.round(natural * 2)}px)` : '100%';
+    svg.dataset.fitWidth = natural > 0 ? `min(100%, ${Math.round(natural * DRAWING_FIT.widen)}px)` : '100%';
     svg.style.height = 'auto';
     svg.dataset.fitted = '1';
   }
-  // The page's window, not the frame's: see the note on the frame's style.
+  // Measured at the column's width each time, so a window grown wide enough lets it fit again.
+  svg.style.width = svg.dataset.fitWidth || '100%';
+  svg.style.maxWidth = '';
   const box = svg.viewBox?.baseVal;
+  const wide = readableWidth({ viewWidth: box?.width, shownWidth: svg.getBoundingClientRect().width, readableScale });
+  if (wide) {
+    svg.style.width = `${wide}px`;
+    svg.style.maxWidth = 'none';
+  }
+  // The page's window, not the frame's: see the note on the frame's style.
   const cap = drawingHeightCap({
     windowHeight: globalThis.innerHeight || view?.innerHeight || 800,
     viewWidth: box?.width,
     viewHeight: box?.height,
-    shownWidth: svg.getBoundingClientRect().width,
+    shownWidth: wide || svg.getBoundingClientRect().width,
     readableScale,
   });
   svg.style.maxHeight = `${Math.round(cap)}px`;
+  return wide;
 }
 
 /** The conversation's ground, which a drawing is shown and exported on. */
@@ -1464,7 +1477,19 @@ export function widgetFrame(widget) {
   // A diagram the server laid out stands as tall as its readable size needs, and the
   // conversation scrolls past it (fix round 3); capped, its frame cut it off with no bar to show
   // it. Every other widget keeps the CSS cap.
-  if (isReadableScale(widget.readableScale)) frame.style.maxHeight = 'none';
+  const readable = isReadableScale(widget.readableScale);
+  if (readable) frame.style.maxHeight = 'none';
+  /*
+   * Too wide to read in the column, a laid-out diagram is shown at its 11 px size and scrolls
+   * sideways (fix round 4: a 2,160-wide drawing showed its titles at 4.6 px). The scroller is
+   * this page's, so the bar is a real one and the keyboard reaches it; it takes focus only while
+   * there is something to scroll.
+   */
+  const scroller = readable ? document.createElement('div') : null;
+  if (scroller) {
+    scroller.className = 'widget__scroll';
+    scroller.append(frame);
+  }
   /**
    * No `allow-scripts`: a widget is a finished picture. Anything that needs to
    * run is a `create_file` artifact, which has its own frame and its own warning.
@@ -1492,7 +1517,23 @@ export function widgetFrame(widget) {
       const body = frame.contentDocument?.body;
       if (!body) return;
       const drawing = soleDrawing(body);
-      if (drawing) fitDrawing(drawing, widget.readableScale);
+      // Measured at the column's own width: a frame widened before would hide that it fits now.
+      if (scroller) frame.style.width = '';
+      const wide = drawing ? fitDrawing(drawing, widget.readableScale) : 0;
+      if (scroller) {
+        // The body's 12 px padding each side, round the drawing's own width.
+        frame.style.width = wide ? `${wide + 24}px` : '';
+        // Focusable, and named, only while there is width to scroll through.
+        if (wide && scroller.scrollWidth > scroller.clientWidth + 1) {
+          scroller.tabIndex = 0;
+          scroller.setAttribute('role', 'region');
+          scroller.setAttribute('aria-label', t('chat.diagramScroll', { name: widget.title || t('chat.diagram') }));
+        } else {
+          scroller.removeAttribute('tabindex');
+          scroller.removeAttribute('role');
+          scroller.removeAttribute('aria-label');
+        }
+      }
       const height = Math.ceil(Math.max(body.scrollHeight, body.getBoundingClientRect().height));
       if (height > 0) frame.style.height = `${height}px`;
     } catch {
@@ -1525,7 +1566,7 @@ export function widgetFrame(widget) {
       if (!now || now === width) return;
       width = now;
       fit();
-    }).observe(frame);
+    }).observe(scroller || frame);
   }
 
   /**
@@ -1593,7 +1634,7 @@ export function widgetFrame(widget) {
     '</style>' +
     `<body>${widget.markup}</body>`;
 
-  host.append(caption, frame);
+  host.append(caption, scroller || frame);
   // Copy and download, when there is a drawing to take. A fragment of HTML
   // has no single picture to hand over, so it gets none.
   if (/^\s*<svg[\s>]/i.test(String(widget.markup || ''))) {

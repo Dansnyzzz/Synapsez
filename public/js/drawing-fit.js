@@ -10,11 +10,18 @@
  * stands taller and the conversation scrolls past it (fix round 3: the owner's diagram showed
  * its titles at 6.2 px). The floor is never more than the drawing's own height at the width it
  * is shown, so whatever the value, a picture is at most its natural size.
+ *
+ * Width is the same rule across (fix round 4): a server-laid-out diagram too wide for the column
+ * at 11 px titles is shown at the 11 px scale, and its frame scrolls sideways (readableWidth).
+ * A hand-drawn widget keeps shrinking to the column.
  */
 
 export const DRAWING_FIT = Object.freeze({
-  // A reply's column, and how far a narrow drawing may grow to fill it (fitDrawing: twice).
-  column: 760,
+  // The width a drawing is shown in (fix round 4, measured from the page): a reply's `.msg` is
+  // 780 wide less 2 × 22 padding, the `.widget`'s 1 px border each side, and the frame body's
+  // 12 px padding each side (render.js widgetFrame) — 710. A test derives it from app.css and
+  // render.js, so a CSS change cannot drift from it. And how far a narrow drawing may grow.
+  column: 710,
   widen: 2,
   // The cap: this share of the window's height, at least 240; 800 when the window is unknown.
   heightShare: 0.72,
@@ -39,4 +46,17 @@ export function drawingHeightCap({ windowHeight, viewWidth, viewHeight, shownWid
   const ok = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0;
   if (!isReadableScale(readableScale) || !ok(viewWidth) || !ok(viewHeight) || !ok(shownWidth)) return base;
   return Math.max(base, viewHeight * Math.min(shownWidth / viewWidth, readableScale));
+}
+
+/**
+ * The width, in px, a server-laid-out diagram must be shown at so its titles read at 11 px, when
+ * that is wider than the width it now has; 0 when it already reads, or for anything else.
+ *
+ * @param {{ viewWidth?: number, shownWidth?: number, readableScale?: number }} view
+ */
+export function readableWidth({ viewWidth, shownWidth, readableScale } = {}) {
+  const ok = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0;
+  if (!isReadableScale(readableScale) || !ok(viewWidth) || !ok(shownWidth)) return 0;
+  const need = Math.ceil(viewWidth * readableScale);
+  return shownWidth + 0.5 < need ? need : 0;
 }

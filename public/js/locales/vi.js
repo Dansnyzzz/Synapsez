@@ -950,6 +950,7 @@ export const vi = {
   'chat.drafting': 'đang viết… {size}',
   'chat.cutOff': 'Bị ngắt trước khi có kết quả — máy chủ chạm giới hạn thời gian giữa chừng. Cloud sẽ tự chạy tiếp lượt này; bước chỉ đọc dữ liệu sẽ được chạy lại.',
   'chat.diagram': 'Sơ đồ',
+  'chat.diagramScroll': '{name}, rộng hơn khung chat: cuộn ngang để xem hết',
   'chart.keys': 'dùng phím mũi tên để đọc từng giá trị',
   'chart.share': 'Tỉ trọng',
   'chart.total': 'Tổng',

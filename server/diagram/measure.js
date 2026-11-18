@@ -36,7 +36,7 @@ export const lineHeight = (size) => size * TEXT.lineHeight;
 
 // Where a drawing is read (review, 2026-11-18: the owner's standard is text a person can read
 // in the conversation): the page's own rule, from the module it sizes drawings with
-// (public/js/drawing-fit.js) — a 760 px column, a narrow drawing grown up to twice its size,
+// (public/js/drawing-fit.js) — its 710 px column, a narrow drawing grown up to twice its size,
 // a height cap of 72 % of an 800 px window that a server-laid-out diagram's titles never fall
 // under 11 px for. "auto" scores both directions by it (layout.js chooseDirection); within 5 %
 // the shape closer to 16:10 decides. Wider than 1,200, a drawing is drawn 1,200 wide.

@@ -159,7 +159,7 @@ section('show_widget says what is wrong, and keeps a clean diagram as a file');
   // Fix round 3: in the conversation a diagram the server laid out is never shrunk so far its
   // titles fall under 11 px; a hand-drawn drawing keeps the 72 % height cap it always had. The
   // page sizes both with public/js/drawing-fit.js, checked here over many shapes and windows.
-  const { drawingHeightCap, DRAWING_FIT } = await import('../public/js/drawing-fit.js');
+  const { drawingHeightCap, readableWidth, DRAWING_FIT } = await import('../public/js/drawing-fit.js');
   const { READABLE_SCALE, TEXT } = await import('../server/diagram/measure.js');
   check('a diagram\'s widget carries its readable scale, set by the server: 11 px over a 14 px title', drawn.widget.readableScale === READABLE_SCALE && Math.abs(READABLE_SCALE * TEXT.titleSize - 11) < 1e-9);
   check('  a hand-drawn svg\'s never does', good.widget.readableScale === undefined && !('readableScale' in good.widget));
@@ -182,11 +182,44 @@ section('show_widget says what is wrong, and keeps a clean diagram as a file');
   check('a hand-drawn drawing keeps 72 % of the window; a laid-out diagram\'s titles never shrink under 11 px for the height', capWrong.length === 0, capWrong.slice(0, 3).join(' | '));
   const bogus = [0, -1, 2, NaN, Infinity, '0.8', null].map((readableScale) => drawingHeightCap({ windowHeight: 800, viewWidth: 640, viewHeight: 3000, shownWidth: 640, readableScale }));
   check('  any other readable scale is ignored: the 72 % cap stands', bogus.every((cap) => cap === 576), bogus.join(','));
-  check('  the page\'s numbers are the ones the server lays out for', DRAWING_FIT.column === 760 && DRAWING_FIT.window === 800 && DRAWING_FIT.heightShare === 0.72 && DRAWING_FIT.readablePx === 11);
+  check('  the page\'s numbers are the ones the server lays out for', DRAWING_FIT.window === 800 && DRAWING_FIT.heightShare === 0.72 && DRAWING_FIT.readablePx === 11);
   // Its frame grows with it (the CSS caps a widget's frame at 70vh, which cut it off with no
   // bar to show the rest); every other widget's frame keeps that cap. Read from the page code.
   const page = (await import('node:fs')).readFileSync(new URL('../public/js/render.js', import.meta.url), 'utf8');
-  check('  its frame grows with it, and only its: every other widget keeps the 70vh frame', /if \(isReadableScale\(widget\.readableScale\)\) frame\.style\.maxHeight = 'none';/.test(page) && (page.match(/frame\.style\.maxHeight/g) || []).length === 1 && /fitDrawing\(drawing, widget\.readableScale\)/.test(page));
+  check('  its frame grows with it, and only its: every other widget keeps the 70vh frame', /const readable = isReadableScale\(widget\.readableScale\);\s+if \(readable\) frame\.style\.maxHeight = 'none';/.test(page) && (page.match(/frame\.style\.maxHeight/g) || []).length === 1 && /fitDrawing\(drawing, widget\.readableScale\)/.test(page));
+  // Fix round 4: the column the server lays out for is the page's own, derived here from the CSS
+  // and the frame's padding, so a style change cannot silently drift from it. It was 760, about
+  // 50 px wider than a drawing is ever shown.
+  const css = (await import('node:fs')).readFileSync(new URL('../public/css/app.css', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const rule = (sel) => (css.match(new RegExp(`(?:^|\\n)${sel.replace('.', '\\.')} \\{([^}]*)\\}`)) || [])[1] || '';
+  const prop = (block, name) => (block.match(new RegExp(`(?:^|[;\\s])${name}:\\s*([^;]+);`)) || [])[1] || '';
+  const msgWidth = parseFloat(prop(rule('.msg'), 'max-width'));
+  const msgPad = prop(rule('.msg'), 'padding').trim().split(/\s+/);
+  const msgSide = parseFloat(msgPad[1] ?? msgPad[0]);
+  const border = parseFloat((prop(rule('.widget'), 'border').match(/([\d.]+)px/) || [])[1]);
+  const bodyPad = parseFloat((page.match(/'body\{padding:([\d.]+)px\}/) || [])[1]);
+  const borderBox = /\* \{\s*box-sizing: border-box;/.test(css);
+  const column = msgWidth - 2 * msgSide - 2 * border - 2 * bodyPad;
+  check(`the column a drawing is laid out for is the page's: .msg ${msgWidth} − 2×${msgSide} − 2×${border} border − 2×${bodyPad} frame padding = ${column}`, borderBox && Number.isFinite(column) && DRAWING_FIT.column === column, `DRAWING_FIT.column ${DRAWING_FIT.column}`);
+  check('  and a narrow drawing grows by the shared factor, not a number of its own', page.includes('Math.round(natural * DRAWING_FIT.widen)') && !/natural \* 2\b/.test(page));
+  // Fix round 4: too wide for the column at 11 px, a laid-out diagram is shown at 11 px and its
+  // frame scrolls sideways; a hand-drawn one keeps shrinking. The page's rule, over many shapes.
+  const wideWrong = [];
+  for (const viewWidth of [300, 710, 980, 1400, 2160, 3000]) {
+    for (const shownWidth of [320, 710, 1100]) {
+      const at = Math.min(shownWidth, viewWidth * 2);
+      const need = readableWidth({ viewWidth, shownWidth: at, readableScale: READABLE_SCALE });
+      const title = (TEXT.titleSize * (need || at)) / viewWidth;
+      if (title < 11 - 1e-6) wideWrong.push(`${viewWidth} at ${shownWidth}: ${title.toFixed(1)} px`);
+      if (need && at / viewWidth >= READABLE_SCALE) wideWrong.push(`${viewWidth} at ${shownWidth}: widened though it read`);
+      if (readableWidth({ viewWidth, shownWidth: at })) wideWrong.push(`${viewWidth}: a hand-drawn one widened`);
+    }
+  }
+  check('a laid-out diagram too wide for the column is shown at 11 px, to scroll sideways; a hand-drawn one never is', wideWrong.length === 0, wideWrong.slice(0, 3).join(' | '));
+  check(
+    '  the scroller is the page\'s, focusable with a name while it scrolls, observed for width; the drawing is not padded again',
+    page.includes('scroller.tabIndex = 0;') && page.includes('const pad = isReadableScale(readableScale) ? 0 :') && page.includes("scroller.setAttribute('aria-label', t('chat.diagramScroll'") && page.includes('.observe(scroller || frame)') && /\.widget__scroll \{\s*overflow-x: auto;/.test(css),
+  );
 
   // The limits are in words in the schema (Anthropic's strict mode refuses maxItems and
   // maxLength), so validate.js is what turns these away, with its own sentence.
