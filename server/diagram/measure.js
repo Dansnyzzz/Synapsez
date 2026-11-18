@@ -1,5 +1,5 @@
 /*
- * How big text is drawn, for the diagram layout, and for widgetCheck, which will import this
+ * How big text is drawn, for the diagram layout, and for widgetCheck, which imports this
  * rather than keep its own copy. Kept apart from the layout so the checker can measure a
  * hand-drawn SVG without loading the whole engine, and so there is one estimate: a box the
  * layout sized is one the check passes.

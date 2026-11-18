@@ -25,7 +25,10 @@ const check = (label, pass, detail = '') => {
   if (!pass) failures += 1;
 };
 
-const { checkDiagram, contrast, colour } = await import('../server/widgetCheck.js');
+const widgetCheck = await import('../server/widgetCheck.js');
+const { checkDiagram, contrast, colour } = widgetCheck;
+// Read through a guard, so before it exists every check below fails rather than the suite.
+const checkLines = typeof widgetCheck.checkLines === 'function' ? widgetCheck.checkLines : () => ['checkLines is missing'];
 
 section('the owner\'s diagram, as it went wrong');
 {
@@ -80,6 +83,273 @@ section('a clean diagram has nothing to fix');
   check('contrast is WCAG\'s', Math.round(contrast(colour('#000'), colour('#fff'))) === 21 && contrast(colour('#777'), colour('#7a8a88')) < 3);
 }
 
+// One arrowhead for the hand-drawn fixtures below, as a model writes it.
+const MARKER = '<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker></defs>';
+const arrow = (d, extra = '') => `<path d="${d}" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#ah)"${extra}/>`;
+// The owner's screenshot (2026-11-17), drawn again by hand: a pipeline whose arrows stop short
+// of the boxes they mean, one cutting through a note, and one straight through a box.
+const OWNER_FLAWED = `<svg viewBox="0 0 900 460" xmlns="http://www.w3.org/2000/svg">${MARKER}
+    <rect width="900" height="460" fill="#ffffff"/>
+    <text x="450" y="32" text-anchor="middle" font-size="18" font-weight="bold" fill="#111827">Đường đi của một câu hỏi</text>
+    <rect x="40" y="60" width="160" height="56" rx="8" fill="#eef2ff" stroke="#6366f1"/>
+    <text x="120" y="93" text-anchor="middle" font-size="14" fill="#1e1b4b">Người dùng</text>
+    <rect x="260" y="60" width="220" height="90" rx="8" fill="#ecfdf5" stroke="#10b981"/>
+    <text x="370" y="84" text-anchor="middle" font-size="14" font-weight="bold" fill="#064e3b">Tầng 1 — Ứng dụng</text>
+    <text x="370" y="112" text-anchor="middle" font-size="12.5" fill="#065f46">RAPTOR: cây tóm tắt</text>
+    <text x="370" y="132" text-anchor="middle" font-size="12.5" fill="#065f46">MemGPT, Mem0</text>
+    <rect x="560" y="60" width="240" height="90" rx="8" fill="#fff7ed" stroke="#f97316"/>
+    <text x="680" y="100" text-anchor="middle" font-size="14" font-weight="bold" fill="#7c2d12">Tầng 2 — Nén ngữ cảnh</text>
+    <rect x="560" y="260" width="200" height="60" rx="8" fill="#f5f3ff" stroke="#8b5cf6"/>
+    <text x="660" y="295" text-anchor="middle" font-size="14" fill="#3b0764">Câu trả lời</text>
+    <rect x="40" y="330" width="160" height="56" rx="8" fill="#f8fafc" stroke="#64748b"/>
+    <text x="120" y="363" text-anchor="middle" font-size="14" fill="#1f2937">Nhật ký</text>
+    <text x="72" y="168" font-size="12" fill="#374151"><tspan x="72" dy="0">Mỗi tầng bớt token</tspan><tspan x="72" dy="18">trước khi gọi mô hình</tspan></text>
+    ${arrow('M200 88L258 88')}
+    ${arrow('M480 130L530 130')}
+    ${arrow('M680 150L680 215')}
+    ${arrow('M120 116L120 328')}
+    ${arrow('M200 100L558 100')}
+  </svg>`;
+// The same kinds of drawing done right: arrows ending on the edges of boxes, a diamond, a circle
+// and an ellipse; labels beside their arrows; one marker, one arrow headed by a drawn triangle,
+// a curve, a dashed arrow, an arrow through its own group's border, and a legend key.
+const CLEAN_DRAWN = `<svg viewBox="0 0 760 420" xmlns="http://www.w3.org/2000/svg">${MARKER}
+    <style>.edge{fill:none;stroke:#475569;stroke-width:1.5;marker-end:url(#ah)}.lab{font-size:11px;fill:#475569}</style>
+    <rect width="760" height="420" fill="#ffffff"/>
+    <rect x="20" y="20" width="420" height="140" rx="10" fill="#eef4ff" stroke="#93b4f5"/>
+    <text x="36" y="42" font-size="13" font-weight="bold" fill="#1e3a8a">Phía máy chủ</text>
+    <rect x="40" y="60" width="160" height="70" rx="8" fill="#ffffff" stroke="#64748b"/>
+    <text x="120" y="100" text-anchor="middle" font-size="14" fill="#1f2937">Cổng API</text>
+    <rect x="260" y="60" width="160" height="70" rx="8" fill="#ffffff" stroke="#64748b"/>
+    <text x="340" y="100" text-anchor="middle" font-size="14" fill="#1f2937">Bộ định tuyến</text>
+    <line class="edge" x1="200" y1="95" x2="258" y2="95"/>
+    <text class="lab" x="229" y="87" text-anchor="middle">gọi</text>
+    <polygon points="580,40 660,95 580,150 500,95" fill="#fff7e6" stroke="#d97706"/>
+    <text x="580" y="100" text-anchor="middle" font-size="13" fill="#78350f">Đủ quyền?</text>
+    <line class="edge" x1="420" y1="95" x2="498" y2="95"/>
+    <circle cx="580" cy="260" r="40" fill="#ecfdf5" stroke="#059669"/>
+    <text x="580" y="265" text-anchor="middle" font-size="13" fill="#065f46">Cho phép</text>
+    <line class="edge" x1="580" y1="150" x2="580" y2="218"/>
+    <text class="lab" x="588" y="188">có</text>
+    <ellipse cx="120" cy="300" rx="80" ry="34" fill="#f8fafc" stroke="#64748b"/>
+    <text x="120" y="305" text-anchor="middle" font-size="13" fill="#1f2937">Nhật ký</text>
+    <line class="edge" x1="120" y1="130" x2="120" y2="264"/>
+    <text class="lab" x="128" y="200">ghi lại</text>
+    <polyline points="540,260 360,260 360,300 210,300" fill="none" stroke="#475569" stroke-width="1.5"/>
+    <polygon points="200,300 210,295 210,305" fill="#475569"/>
+    <text class="lab" x="450" y="252" text-anchor="middle">báo cáo</text>
+    <path class="edge" d="M340 60C340 12 580 12 580 38"/>
+    <rect x="660" y="230" width="80" height="60" rx="8" fill="#ffffff" stroke="#64748b"/>
+    <text x="700" y="265" text-anchor="middle" font-size="13" fill="#1f2937">Lưu</text>
+    <line class="edge" x1="620" y1="260" x2="658" y2="260" stroke-dasharray="5 4"/>
+    <line x1="40" y1="392" x2="76" y2="392" stroke="#475569" stroke-width="1.5" marker-end="url(#ah)"/>
+    <text x="84" y="396" font-size="12" fill="#374151">luồng dữ liệu</text>
+  </svg>`;
+
+section('lines and arrows: the owner\'s pipeline, as it went wrong (1.34.0)');
+{
+  const found = checkLines(OWNER_FLAWED);
+  const said = found.join('\n');
+  check('an arrow stopping 30 px short of its box points at nothing, at its end', found.some((s) => /^an arrow at \(530, 130\).* points at nothing: end it on the edge of the box it belongs to\.$/.test(s)), said);
+  check('  and one stopping 45 px short, too', found.some((s) => /^an arrow at \(680, 215\).* points at nothing/.test(s)), said);
+  check('an arrow cut through a note is found, the note named', found.some((s) => /^the arrow from "Người dùng" to "Nhật ký" runs through "Mỗi tầng bớt token"/.test(s)), said);
+  check('an arrow straight through a box is found, the box named by its title', found.some((s) => /^the arrow from "Người dùng" to "Tầng 2 — Nén ngữ cảnh" runs through the box "Tầng 1 — Ứng dụng"/.test(s)), said);
+  check('  those four and nothing else: the arrow that is right is not blamed', found.length === 4, said);
+  const all = checkDiagram(OWNER_FLAWED).issues;
+  check('checkDiagram\'s issues include the line check\'s', found.every((s) => all.includes(s)), all.join(' | '));
+  check('every one a sentence the model can act on', found.every((s) => s.length > 40 && /: /.test(s)));
+}
+
+section('lines and arrows: what is drawn right is left alone');
+{
+  check('a clean hand-drawn diagram finds nothing: edges, labels beside, a marker, a drawn head, a curve, a key', checkLines(CLEAN_DRAWN).length === 0 && checkDiagram(CLEAN_DRAWN).issues.length === 0, [...checkLines(CLEAN_DRAWN), ...checkDiagram(CLEAN_DRAWN).issues].join(' | '));
+  // Swimlanes: an arrow between the first lane and the last crosses the one between, as it must.
+  const lanes = `<svg viewBox="0 0 600 330">${MARKER}<rect x="0" y="0" width="600" height="330" fill="#ffffff"/>
+    <rect x="10" y="10" width="580" height="100" fill="#f1f5f9" stroke="#cbd5e1"/><text x="20" y="30" font-size="12" font-weight="bold" fill="#0f172a">Khách</text>
+    <rect x="10" y="115" width="580" height="100" fill="#ecfeff" stroke="#a5f3fc"/><text x="20" y="135" font-size="12" font-weight="bold" fill="#0f172a">Cửa hàng</text>
+    <rect x="10" y="220" width="580" height="100" fill="#f0fdf4" stroke="#bbf7d0"/><text x="20" y="240" font-size="12" font-weight="bold" fill="#0f172a">Kho</text>
+    <rect x="100" y="40" width="140" height="50" rx="6" fill="#ffffff" stroke="#64748b"/><text x="170" y="70" text-anchor="middle" font-size="13" fill="#1f2937">Đặt hàng</text>
+    <rect x="380" y="145" width="140" height="50" rx="6" fill="#ffffff" stroke="#64748b"/><text x="450" y="175" text-anchor="middle" font-size="13" fill="#1f2937">Xác nhận</text>
+    <rect x="100" y="250" width="140" height="50" rx="6" fill="#ffffff" stroke="#64748b"/><text x="170" y="280" text-anchor="middle" font-size="13" fill="#1f2937">Giao hàng</text>
+    ${arrow('M170 90L170 248')}${arrow('M240 65L450 65L450 143')}</svg>`;
+  check('swimlanes: an arrow may cross a lane between, which holds boxes of its own', checkLines(lanes).length === 0, checkLines(lanes).join(' | '));
+  // A label on its line, on a backing drawn after the line, is not run through: the line is under it.
+  const backed = `<svg viewBox="0 0 400 120">${MARKER}<rect width="400" height="120" fill="#ffffff"/>
+    <rect x="10" y="30" width="100" height="50" fill="#fff" stroke="#333"/><text x="60" y="60" text-anchor="middle" font-size="13" fill="#111">Một</text>
+    <rect x="290" y="30" width="100" height="50" fill="#fff" stroke="#333"/><text x="340" y="60" text-anchor="middle" font-size="13" fill="#111">Hai</text>
+    ${arrow('M110 55L288 55')}<rect x="150" y="47" width="60" height="16" fill="#ffffff"/><text x="180" y="59" text-anchor="middle" font-size="11" fill="#475569">dữ liệu</text></svg>`;
+  check('a label on its line over a backing in the canvas colour is fine', checkLines(backed).length === 0, checkLines(backed).join(' | '));
+  check('  but with the backing drawn before the line, the line strikes through it', checkLines(backed.replace(/(<path [^>]*\/>)(<rect x="150"[^>]*\/>)/, '$2$1')).some((s) => /the label "dữ liệu" sits on its own arrow/.test(s)));
+
+  // A dangling arrow is found where it stands, and skipped inside a transformed group.
+  const box = '<rect x="10" y="80" width="80" height="40" fill="#fff" stroke="#333"/><text x="50" y="105" text-anchor="middle" font-size="13" fill="#111">Nguồn</text>';
+  const dangling = `<svg viewBox="0 0 300 200">${MARKER}${box}<line x1="90" y1="100" x2="150" y2="100" stroke="#333" marker-end="url(#ah)"/></svg>`;
+  check('a dangling arrow, as a control', checkLines(dangling).some((s) => /^an arrow at \(150, 100\), from "Nguồn", points at nothing/.test(s)), checkLines(dangling).join(' | '));
+  // An arrow points ahead: the label it carries, just behind its head, is not what it points at.
+  const pastLabel = dangling.replace('</svg>', '<text x="130" y="94" text-anchor="middle" font-size="11" fill="#475569">gửi</text></svg>');
+  check('  and stopping just past its own label, it still points at nothing', checkLines(pastLabel).some((s) => /^an arrow at \(150, 100\).* points at nothing/.test(s)), checkLines(pastLabel).join(' | '));
+  const turned = dangling.replace(/(<line [^>]*\/>)/, '<g transform="translate(40,0)">$1</g>');
+  check('  inside a transformed <g> it is skipped: where it lands is not known', checkLines(turned).length === 0, checkLines(turned).join(' | '));
+  const inDefs = dangling.replace(/(<line [^>]*\/>)/, '<defs>$1</defs>');
+  check('  and in <defs>, which is not drawn where it stands', checkLines(inDefs).length === 0, checkLines(inDefs).join(' | '));
+  // An arrow known by a small filled triangle at its end, rather than a marker.
+  const tipAtEnd = `<svg viewBox="0 0 300 200">${box}<line x1="90" y1="100" x2="150" y2="100" stroke="#333"/><polygon points="150,100 140,95 140,105" fill="#333"/></svg>`;
+  check('a triangle whose tip is the line\'s end makes it an arrow', checkLines(tipAtEnd).some((s) => /^an arrow at \(150, 100\).* points at nothing/.test(s)), checkLines(tipAtEnd).join(' | '));
+  const baseAtEnd = `<svg viewBox="0 0 300 200">${box}<line x1="90" y1="100" x2="140" y2="100" stroke="#333"/><polygon points="150,100 140,95 140,105" fill="#333"/></svg>`;
+  check('  as does one drawn on from the line\'s end, and the tip is where it points', checkLines(baseAtEnd).some((s) => /^an arrow at \(150, 100\).* points at nothing/.test(s)), checkLines(baseAtEnd).join(' | '));
+  const apart = `<svg viewBox="0 0 300 200">${box}<line x1="90" y1="100" x2="140" y2="100" stroke="#333"/><polygon points="170,100 160,95 160,105" fill="#333"/></svg>`;
+  check('  a triangle 20 px away does not, and a plain line is not an arrow', checkLines(apart).length === 0, checkLines(apart).join(' | '));
+  const centred = `<svg viewBox="0 0 400 200">${MARKER}${box}<rect x="250" y="60" width="120" height="80" fill="#fff" stroke="#333"/><text x="310" y="85" text-anchor="middle" font-size="13" fill="#111">Đích</text>${arrow('M90 100L310 100')}</svg>`;
+  check('an arrow ending at a box\'s middle is told to end on its edge, where its head shows', checkLines(centred).some((s) => /^an arrow ends at \(310, 100\), inside "Đích" rather than on its edge/.test(s)), checkLines(centred).join(' | '));
+
+  // A pill's ends are round, and an arrow may end on the curve (the server's pills do): found by
+  // the 80 random layouts, where a loop ended on a tall pill's rounded end at (224, 527).
+  const pill = (rx) => `<svg viewBox="0 0 400 600">${MARKER}<rect x="77" y="273" width="171" height="280" rx="${rx}" fill="#fff" stroke="#333"/><text x="162" y="420" text-anchor="middle" font-size="14" fill="#111">Người dùng</text>${arrow('M248 499L409 499L409 527L224 527')}</svg>`;
+  check('an arrow ending on a pill\'s rounded end is on its edge', checkLines(pill(85.5)).length === 0, checkLines(pill(85.5)).join(' | '));
+  check('  the same point in a box with square corners is inside it', checkLines(pill(0)).some((s) => /^an arrow ends at \(224, 527\), inside "Người dùng"/.test(s)), checkLines(pill(0)).join(' | '));
+
+  const overlap = (b) => `<svg viewBox="0 0 400 200"><rect x="20" y="20" width="160" height="80" fill="#eef2ff" stroke="#6366f1"/><text x="100" y="65" text-anchor="middle" font-size="14" fill="#1e1b4b">Máy chủ</text>${b}</svg>`;
+  const over = overlap('<rect x="150" y="60" width="160" height="80" fill="#ecfdf5" stroke="#10b981"/><text x="235" y="110" text-anchor="middle" font-size="14" fill="#064e3b">Cơ sở dữ liệu</text>');
+  check('two boxes overlapping are found, each named', checkLines(over).some((s) => /^the boxes "Máy chủ" and "Cơ sở dữ liệu" overlap by about 30×40/.test(s)), checkLines(over).join(' | '));
+  check('  not one sharing 4 px of an edge, nor one wholly inside the other', checkLines(overlap('<rect x="176" y="20" width="100" height="80" fill="#fff" stroke="#333"/>')).length === 0 && checkLines(overlap('<rect x="40" y="30" width="60" height="20" fill="#fff" stroke="#333"/>')).length === 0);
+}
+
+section('lines and arrows: a server-drawn diagram finds nothing, and no markup breaks the reader');
+{
+  const { validateDiagram } = await import('../server/diagram/validate.js');
+  const { layoutDiagram } = await import('../server/diagram/layout.js');
+  const { renderDiagram } = await import('../server/diagram/render.js');
+  const drawn = [];
+  const base = {
+    groups: [{ id: 'g1', title: 'Phía máy chủ' }, { id: 'g2', title: 'Lưu trữ' }],
+    nodes: [
+      { id: 'u', title: 'Người dùng', kind: 'pill', icon: 'user' },
+      { id: 'a', title: 'Cổng API', lines: ['xác thực, giới hạn'], group: 'g1', icon: 'server' },
+      { id: 'b', title: 'Bộ định tuyến', group: 'g1' },
+      { id: 'c', title: 'CSDL', group: 'g2', icon: 'database' },
+      { id: 'd', title: 'Bộ nhớ đệm', group: 'g2', icon: 'cache' },
+      { id: 'n', title: 'Ghi chú', kind: 'note' },
+    ],
+    edges: [
+      { from: 'u', to: 'a', label: 'yêu cầu' },
+      { from: 'a', to: 'b' },
+      { from: 'b', to: 'c', label: 'truy vấn', style: 'dashed' },
+      { from: 'b', to: 'd' },
+      { from: 'd', to: 'b', label: 'trúng' },
+      { from: 'c', to: 'n' },
+      { from: 'u', to: 'n', label: 'nhật ký' },
+    ],
+  };
+  for (const theme of ['light', 'dark']) {
+    for (const direction of ['auto', 'right', 'down']) {
+      const checked = validateDiagram({ ...base, theme, direction });
+      const svg = renderDiagram(layoutDiagram(checked.diagram), { theme: checked.diagram.theme, title: 'Thử' });
+      const found = checkLines(svg);
+      if (found.length) drawn.push(`${theme} ${direction}: ${found[0]}`);
+    }
+  }
+  check('a diagram Ephapse lays out — marker in <defs>, label backings, a canvas, groups arrows enter, scoped rules — finds nothing', drawn.length === 0, drawn.slice(0, 2).join(' | '));
+  // Nothing found is only worth something if its arrows are seen: cut each arrow of a laid-out
+  // diagram back along its last stretch, to where it is clear of every box, group and label by
+  // 20 px, and each is found pointing at nothing — the labelled ones too, whose head then stops
+  // just past their own label. (Cut back less, an arrow may stop on a group's border, which is
+  // a place an arrow may point.)
+  const missed = [];
+  let cutCount = 0;
+  for (const direction of ['down', 'right']) {
+    const laid = layoutDiagram(validateDiagram({ ...base, direction }).diagram);
+    const solids = [...laid.nodes, ...laid.groups, ...laid.edges.filter((e) => e.labelBox).map((e) => e.labelBox)];
+    const clearance = ([x, y]) => Math.min(...solids.map((r) => {
+      const inside = x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+      const out = Math.hypot(Math.max(r.x - x, 0, x - r.x - r.w), Math.max(r.y - y, 0, y - r.y - r.h));
+      return inside ? Math.min(x - r.x, r.x + r.w - x, y - r.y, r.y + r.h - y) : out;
+    }));
+    laid.edges.forEach((e, k) => {
+      const [a, b] = e.points.slice(-2);
+      const spot = [0.5, 0.4, 0.6, 0.3, 0.7].map((f) => [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]).find((p) => clearance(p) >= 20);
+      if (e.from === e.to || !spot) return;
+      const cut = structuredClone(laid);
+      cut.edges[k].points[cut.edges[k].points.length - 1] = spot;
+      cutCount += 1;
+      const found = checkLines(renderDiagram(cut, { title: 'Cắt' }));
+      if (!found.some((s) => s.startsWith(`an arrow at (${Math.round(spot[0])}, ${Math.round(spot[1])})`) && /points at nothing/.test(s))) missed.push(`${direction} ${e.from}→${e.to}${e.label ? ` (${e.label})` : ''}: ${found.join(' | ') || 'nothing found'}`);
+    });
+  }
+  check(`  and it sees them: each of ${cutCount} arrows cut short, clear of everything, is found pointing at nothing`, cutCount >= 4 && missed.length === 0, missed.join(' || '));
+
+  // The reader takes any markup without throwing: malformed paths, NaN, numbers past any
+  // drawing, deep nesting, half-written tags, and things that are not text at all.
+  const odd = [
+    '', '<svg', '<svg><path d="M"/></svg>', '<svg><path d="M10 10 L NaN 5 Z"/></svg>', '<svg><path d="M1e999 0L5 5" marker-end="url(#a)"/></svg>',
+    '<svg><path d="M0 0 C 1 1" marker-end="url(#a)"/></svg>', '<svg><path d="m0 0 a 5 5 0 01 10 10 z h-5 v5 q 1 2 3 4 t 5 5 s 1 1 2 2" marker-start="url(#a)"/></svg>',
+    '<svg><polygon points="1,2,3"/><polyline points="x y" marker-end="url(#a)"/><line x1="a" marker-end="url(#a)"/></svg>',
+    `<svg>${'<g>'.repeat(5000)}<line x1="0" y1="0" x2="5" y2="5" marker-end="url(#a)"/>${'</g>'.repeat(5000)}</svg>`,
+    `<svg>${'<g transform="scale(2)">'.repeat(300)}<text>deep</text></svg>`, '<svg><text>open<tspan>half', '<svg><style>.a{marker-end:url(#a)<rect class="a"/>',
+    '<svg><rect x="-1e308" y="1e308" width="1e400" height="-5"/><circle r="-1"/><ellipse rx="0" ry="NaN"/></svg>', '<svg><!-- <line x1="0" marker-end="url(#a)"/>',
+    `<svg>${'<rect '.repeat(4000)}</svg>`, `<svg><rect ${'a'.repeat(50000)}="1"/></svg>`, `<svg><style>${'x'.repeat(50000)}</style></svg>`,
+    `<svg>${'<style>'.repeat(4000)}</svg>`, `<svg><text>${'<tspan>'.repeat(4000)}</text></svg>`, '<svg><rect class="__proto__ constructor" __proto__="1"/><style>__proto__{fill:red}</style></svg>',
+  ];
+  const thrown = [];
+  for (const markup of [...odd, null, undefined, 42, {}, ['<svg/>']]) {
+    for (const fn of [checkLines, checkDiagram]) {
+      try {
+        const out = fn(markup);
+        if (fn === checkLines ? !Array.isArray(out) : !Array.isArray(out?.issues)) thrown.push(`${String(markup).slice(0, 30)}: not a list`);
+      } catch (err) {
+        thrown.push(`${String(markup).slice(0, 30)}: ${err.message}`);
+      }
+    }
+  }
+  check('no markup makes either check throw, and each answers a list', thrown.length === 0, thrown.slice(0, 3).join(' | '));
+  // Past its limits the reader stops; an arrow is then never blamed for what was not read.
+  const target = '<rect x="150" y="80" width="80" height="40" fill="#fff" stroke="#333"/>';
+  const early = `<svg viewBox="0 0 300 200">${MARKER}<rect x="10" y="80" width="80" height="40" fill="#fff" stroke="#333"/><line x1="90" y1="100" x2="148" y2="100" stroke="#333" marker-end="url(#ah)"/>`;
+  check('  read in part, an arrow whose box comes after the limit is not said to point at nothing', checkLines(`${early}${target}</svg>`).length === 0 && checkLines(`${early}${'<g/>'.repeat(3000)}${target}</svg>`).length === 0);
+  // A path longer than the reader takes: its last point read is in mid-air, not where it ends.
+  const zigzag = (n) => `<svg viewBox="0 0 300 200">${MARKER}<rect x="10" y="80" width="80" height="40" fill="#fff" stroke="#333"/>${target}<path d="M90 100L120 100${' L120 140 L120 100'.repeat(n)} L148 100" fill="none" stroke="#333" marker-end="url(#ah)"/></svg>`;
+  check('  nor a path cut short by the reader, whose end was never read', checkLines(zigzag(3)).length === 0 && checkLines(zigzag(600)).length === 0, checkLines(zigzag(600)).join(' | '));
+  // A random sweep over fragments of drawings, glued at random.
+  const bits = ['<svg viewBox="0 0 300 200">', '<g>', '</g>', '<g transform="x">', '<rect x="10" y="10" width="50" height="30"/>', '<line x1="0" y1="0" x2="80" y2="40" marker-end="url(#a)"/>', '<path d="M0 0L', '5 5', 'Z', '"/>', '<text x="5" y="9">a', '</text>', '<tspan dy="1em">b</tspan>', '<polygon points="0,0 9,4 0,9"/>', '<circle cx="5" cy="5" r="3"/>', '<style>.e{marker-end:url(#a)}</style>', '<defs>', '</defs>', '"', '>', '<', 'NaN', '-', 'e', '.'];
+  let seed = 7;
+  const rand = (n) => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed % n;
+  };
+  let sweepFailed = '';
+  for (let i = 0; i < 400 && !sweepFailed; i += 1) {
+    const markup = Array.from({ length: 5 + rand(40) }, () => bits[rand(bits.length)]).join('');
+    try {
+      checkDiagram(markup);
+    } catch (err) {
+      sweepFailed = `${markup}: ${err.message}`;
+    }
+  }
+  check('  nor 400 drawings glued from random pieces', !sweepFailed, sweepFailed.slice(0, 200));
+
+  // The largest a widget may be (96 KB), drawn as densely as markup allows, read in bounded time.
+  const dense = [];
+  for (let i = 0, size = 0; size < 96 * 1024 - 800; i += 1) {
+    const x = (i * 37) % 1100;
+    const y = (i * 53) % 700;
+    dense.push(`<rect x="${x}" y="${y}" width="60" height="30" fill="#fff" stroke="#333"/><text x="${x + 30}" y="${y + 20}" text-anchor="middle" font-size="12">Hộp ${i}</text><path d="M${x + 60} ${y + 15}L${x + 140} ${y + 15}L${x + 140} ${y + 70}" marker-end="url(#ah)" fill="none" stroke="#333"/>`);
+    size += dense.at(-1).length;
+  }
+  const huge = `<svg viewBox="0 0 1200 800">${MARKER}${dense.join('')}</svg>`;
+  const longPath = `<svg viewBox="0 0 1200 800">${MARKER}<path d="M0 0${' L5 5 L600 400'.repeat(6000)}" marker-end="url(#ah)"/>${'<text x="600" y="400">chữ</text>'.repeat(200)}</svg>`;
+  const timings = [];
+  for (const [name, markup] of [['96 KB of boxes, labels and elbow arrows', huge], ['one 12,000-segment path under 200 texts', longPath]]) {
+    let best = Infinity;
+    for (let k = 0; k < 5; k += 1) {
+      const t0 = performance.now();
+      checkDiagram(markup);
+      best = Math.min(best, performance.now() - t0);
+    }
+    timings.push({ name, kb: Math.round(markup.length / 1024), ms: Math.round(best) });
+  }
+  console.log(`      timings (quickest of 5): ${timings.map((t) => `${t.name} (${t.kb} KB): ${t.ms} ms`).join('; ')}`);
+  check('the largest widget, at its densest, is checked in under 250 ms', timings.every((t) => t.ms < 250), JSON.stringify(timings));
+}
+
 section('show_widget says what is wrong, and keeps a clean diagram as a file');
 {
   const { PGlite } = await import('@electric-sql/pglite');
@@ -91,9 +361,46 @@ section('show_widget says what is wrong, and keeps a clean diagram as a file');
   const chatId = crypto.randomUUID();
   await store.createChat(user.id, { id: chatId, title: 'Diagram' });
   const { CLOUD_IMPLEMENTATIONS } = await import('../server/tools/cloud.js');
-  const bad = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Sơ đồ', svg: '<svg viewBox="0 0 200 100"><rect x="10" y="10" width="60" height="30" fill="#fff"/><text x="12" y="30" font-size="14" fill="#222">Một nhãn rất dài không vừa hộp</text></svg>' }, { userId: user.id, chatId });
-  check('a diagram with problems is drawn, and the model is told to draw it again', /will see these problems/.test(bad.content) && /show_widget/.test(bad.content) && bad.widget?.markup, bad.content.slice(0, 160));
-  check('  and it is not kept as a file yet', (await store.listGeneratedFiles(user.id, chatId)).length === 0);
+  // With no conversation (an automation, a bot's run) there is nobody to keep a count for, so a
+  // drawing with problems is drawn at once, as before, and the model is asked for a better one.
+  const bad = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Sơ đồ', svg: '<svg viewBox="0 0 200 100"><rect x="10" y="10" width="60" height="30" fill="#fff"/><text x="12" y="30" font-size="14" fill="#222">Một nhãn rất dài không vừa hộp</text></svg>' }, { userId: user.id });
+  check('with no conversation, a diagram with problems is drawn at once, and the model is told to draw it again', /will see these problems/.test(bad.content) && /show_widget/.test(bad.content) && bad.widget?.markup, bad.content.slice(0, 160));
+  check('  and it is not kept as a file', (await store.listGeneratedFiles(user.id, chatId)).length === 0);
+  const flawedAway = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Đường đi', svg: OWNER_FLAWED }, {});
+  check('  the owner\'s flawed pipeline too, with no chat: shown at once, its arrows named', flawedAway.widget?.markup === OWNER_FLAWED.trim() && /points at nothing/.test(flawedAway.content));
+
+  section('a flawed drawing is redrawn once, before anyone sees it (1.34.0)');
+  {
+    // A conversation of its own, so the files kept here are counted apart from the ones below.
+    const chat2 = crypto.randomUUID();
+    await store.createChat(user.id, { id: chat2, title: 'Redraw' });
+    const counter = (title) => `widget:redraw:${chat2}:${crypto.createHash('sha1').update(title.toLowerCase().replace(/\s+/g, ' ').trim()).digest('hex')}`;
+    const show = (input) => CLOUD_IMPLEMENTATIONS.show_widget(input, { userId: user.id, chatId: chat2 });
+    const first = await show({ title: 'Đường đi của  một câu hỏi', svg: OWNER_FLAWED });
+    check('a flawed first svg in a chat comes back with no widget', first.widget === undefined && !('widget' in first), Object.keys(first).join(','));
+    check('  and nothing kept', (await store.listGeneratedFiles(user.id, chat2)).length === 0);
+    check('  the model is told what is wrong, that the user has not seen it, and to draw it again with the same title', /has not seen it/.test(first.content) && /points at nothing/.test(first.content) && /runs through the box "Tầng 1 — Ứng dụng"/.test(first.content) && /same title/.test(first.content), first.content);
+    check('  and pointed to `diagram` for boxes and arrows', /`diagram`/.test(first.content) && /instead of `svg`/.test(first.content), first.content);
+    check('  counted under the conversation and the title, lower-cased with its spaces folded', (await store.readCounter(counter('Đường đi của một câu hỏi'))) === 1);
+    const laidOut = await show({ title: 'Đường đi của một câu hỏi', diagram: { nodes: [{ id: 'a', title: 'Người dùng' }, { id: 'b', title: 'Câu trả lời' }], edges: [{ from: 'a', to: 'b' }] } });
+    check('a `diagram` is never held back, even under a title being redrawn, and counts nothing', laidOut.widget?.kind === 'svg' && (await store.readCounter(counter('Đường đi của một câu hỏi'))) === 1, laidOut.content);
+    const second = await show({ title: 'ĐƯỜNG ĐI của một  câu hỏi', svg: OWNER_FLAWED.replace('M480 130L530 130', 'M480 130L558 130') });
+    const keptNow = await store.listGeneratedFiles(user.id, chat2);
+    check('the second try with the same title is shown', second.widget?.kind === 'svg' && second.widget.markup.includes('M480 130L558 130'), Object.keys(second).join(','));
+    check('  and kept, whatever the check still finds', keptNow.length === 2 && keptNow.some((f) => f.name === 'ĐƯỜNG ĐI của một câu hỏi.svg') && /kept it as a file/.test(second.content), JSON.stringify(keptNow.map((f) => f.name)));
+    check('  its content lists what is still wrong, and asks for no third try', /still finds/.test(second.content) && /points at nothing/.test(second.content) && !/530, 130/.test(second.content) && /Do not draw it again/.test(second.content), second.content);
+    const cleanFirst = await show({ title: 'Sạch', svg: CLEAN_DRAWN });
+    check('a clean first svg in a chat is shown and kept at once, and counts nothing', cleanFirst.widget?.kind === 'svg' && /kept it as a file/.test(cleanFirst.content) && (await store.readCounter(counter('Sạch'))) === 0);
+    // What the person sees for the held-back try: the step reads as a check of the drawing.
+    const fsMod = await import('node:fs');
+    const page = fsMod.readFileSync(new URL('../public/js/render.js', import.meta.url), 'utf8');
+    const { vi: viWords } = await import('../public/js/locales/vi.js');
+    const { en: enWords } = await import('../public/js/locales/en.js');
+    check(
+      'the person sees the held-back try as "Đang kiểm tra hình vẽ…", never the flawed picture',
+      /else if \(call\.name === 'show_widget' && !result\.widget\) verb = t\('step\.show_widget\.checking'\);/.test(page) && viWords['step.show_widget.checking'] === 'Đang kiểm tra hình vẽ…' && enWords['step.show_widget.checking'] === 'Checking the drawing…',
+    );
+  }
   const good = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Luồng: đặt / giao', svg: '<svg viewBox="0 0 200 100"><rect x="10" y="10" width="180" height="40" fill="#e8f0fe"/><text x="100" y="35" text-anchor="middle" font-size="14" fill="#1d2733">Đặt hàng</text></svg>' }, { userId: user.id, chatId });
   const files = await store.listGeneratedFiles(user.id, chatId);
   check('a clean one is kept as a file of the conversation, for its panel', files.length === 1 && files[0].name === 'Luồng đặt giao.svg' && /kept it as a file/.test(good.content), JSON.stringify(files.map((f) => f.name)));

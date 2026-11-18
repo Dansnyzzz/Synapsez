@@ -1319,23 +1319,80 @@ async function showWidgetTool({ title, svg, html, diagram }, { userId = null, ch
 
   /*
    * What the reader would see wrong (owner, 2026-11-11: a faint title, a legend off its box,
-   * labels on each other, a Chinese word in Vietnamese) — told to the model to draw again;
-   * and the canvas it was drawn for, which the page gives it (server/widgetCheck.js).
+   * labels on each other, a Chinese word in Vietnamese; 2026-11-17: arrows to nothing, and
+   * through text) — and the canvas it was drawn for, which the page gives it (server/widgetCheck.js).
    */
-  const check = svg ? checkDiagram(markup) : { issues: [], canvas: null };
-  // One with problems waits for its redraw before it is kept.
-  const kept = svg && !check.issues.length && userId ? await keepDrawing(userId, chatId, caption, markup) : null;
-  const content = check.issues.length
-    ? [
-        `Drew "${caption}" in the conversation, but the user will see these problems:`,
-        ...check.issues.map((s) => `- ${s}`),
-        'Draw it again with show_widget, fixed: each label short enough for its box (break a long one into <tspan x=… dy="1.2em"> lines), nothing outside the drawing, labels beside arrows rather than over boxes, text that stands out from what is behind it, and every word in the user\'s language.',
-      ].join('\n')
-    : `Drew "${caption}" in the conversation${kept ? ', and kept it as a file of the conversation' : ''}. The user can see it, so describe what it shows rather than listing the numbers again.`;
+  const check = svg ? checkedDrawing(markup) : { issues: [], canvas: null };
+  const widget = { title: caption, markup, kind: svg ? 'svg' : 'html', ...(check.canvas ? { canvas: check.canvas } : {}) };
+  const listed = check.issues.map((s) => `- ${s}`);
+  if (!check.issues.length) {
+    const kept = svg && userId ? await keepDrawing(userId, chatId, caption, markup) : null;
+    return { content: `Drew "${caption}" in the conversation${kept ? ', and kept it as a file of the conversation' : ''}. The user can see it, so describe what it shows rather than listing the numbers again.`, widget };
+  }
+  /*
+   * One audit, one final (owner, 2026-11-17: "tự gửi xem lại audit check 1 lần cho ra bản hoàn
+   * thiện"). A flawed drawing's first try in a conversation is not shown and not kept: the model
+   * is told what is wrong and draws it again, and the person sees only that the drawing is being
+   * checked. The second try under the same title is shown and kept whatever the check says, so
+   * nobody waits on a third. With no conversation to count in — an automation, a bot's run — or
+   * no count to keep, it is shown at once, as before.
+   */
+  const tries = chatId ? await redrawTry(chatId, caption) : 0;
+  if (tries === 1) {
+    return {
+      content: [
+        `Did not show "${caption}" yet: a check of the drawing found these problems, and the user has not seen it:`,
+        ...listed,
+        `Draw it again now with show_widget and the same title, "${caption}", fixed: ${REDRAW_FIXES} If it is boxes joined by arrows, send \`diagram\` instead of \`svg\`: Ephapse lays it out, so every arrow starts and ends on its box. The next try is shown whatever a check finds.`,
+      ].join('\n'),
+    };
+  }
+  if (tries > 1) {
+    const kept = userId ? await keepDrawing(userId, chatId, caption, markup) : null;
+    return {
+      content: [
+        `Drew "${caption}" in the conversation${kept ? ', and kept it as a file of the conversation' : ''}. It is the redraw, and a check still finds these problems, which the user can see:`,
+        ...listed,
+        'Do not draw it again: describe what it shows, and say in a sentence what is still not right in it.',
+      ].join('\n'),
+      widget,
+    };
+  }
   return {
-    content,
-    widget: { title: caption, markup, kind: svg ? 'svg' : 'html', ...(check.canvas ? { canvas: check.canvas } : {}) },
+    content: [`Drew "${caption}" in the conversation, but the user will see these problems:`, ...listed, `Draw it again with show_widget, fixed: ${REDRAW_FIXES}`].join('\n'),
+    widget,
   };
+}
+
+// What a redrawn drawing gets right, told with its problems.
+const REDRAW_FIXES =
+  'each label short enough for its box (break a long one into <tspan x=… dy="1.2em"> lines), nothing outside the drawing, every arrow ending on the edge of the box it points to, no arrow through a box or a text, labels beside arrows rather than on them or over boxes, boxes apart, text that stands out from what is behind it, and every word in the user\'s language.';
+
+// The drawing check, which never throws on any markup by design; should it ever, the drawing is
+// shown unchecked, as before the check existed, rather than lost — and the fault is logged.
+function checkedDrawing(markup) {
+  try {
+    return checkDiagram(markup);
+  } catch (err) {
+    log.error('show_widget: the drawing check failed', err, { bytes: markup.length });
+    return { issues: [], canvas: null };
+  }
+}
+
+/*
+ * The how-many-th flawed try this is, for this conversation and title: the title lower-cased with
+ * its spaces folded, so "Sơ đồ  A" and "sơ đồ a" are one drawing. Kept for 30 minutes in the
+ * store's counters, as every count that must hold across instances is. 0 when it cannot be kept.
+ */
+async function redrawTry(chatId, caption) {
+  const title = caption.toLowerCase().replace(/\s+/g, ' ').trim();
+  const key = `widget:redraw:${chatId}:${crypto.createHash('sha1').update(title).digest('hex')}`;
+  try {
+    return await getStore().addToCounter(key, 1, Date.now() + 30 * 60 * 1000);
+  } catch (err) {
+    log.warn('show_widget: the redraw count could not be kept, so the drawing is shown at once', { failure: String(err?.message || err).slice(0, 200) });
+    return 0;
+  }
 }
 
 // A clean drawing is kept as a file of the conversation too, in its panel, to open, copy or
@@ -1354,6 +1411,12 @@ const CHECK_KINDS = [
   { said: /on top of each other/, kind: 'text over text' },
   { said: /too small to read/, kind: 'tiny text' },
   { said: /Chinese characters/, kind: 'other script' },
+  { said: /points at nothing|comes from nothing/, kind: 'arrow to nothing' },
+  { said: /^an arrow ends /, kind: 'arrow end inside' },
+  { said: /runs through the box/, kind: 'arrow through a box' },
+  { said: /^the arrow from .* runs through "/, kind: 'arrow through text' },
+  { said: /sits on its own arrow/, kind: 'label on its line' },
+  { said: /^the boxes .* overlap by/, kind: 'boxes overlap' },
 ];
 const checkKinds = (issues) => [...new Set(issues.map((s) => CHECK_KINDS.find((k) => k.said.test(s))?.kind || 'other'))].join(', ');
 

@@ -3812,6 +3812,9 @@ export function assistantMessage() {
         complete(result) {
           block.classList.toggle('tool--error', !!result.isError);
           if (result.isError) verb = failedVerb(call.name);
+          // A drawing held back for its redraw comes with no picture (server/tools/cloud.js, the
+          // only show_widget that does): the person is told it is being checked, not that it was drawn.
+          else if (call.name === 'show_widget' && !result.widget) verb = t('step.show_widget.checking');
           // A call on a file made before this page was opened: its result knows the name.
           if (call.input?.file_id && !call.input?.question && result.file?.name) detail = clip(result.file.name);
           paintHead(

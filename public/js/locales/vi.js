@@ -595,6 +595,8 @@ export const vi = {
   'step.file_versions': 'Xem lịch sử tệp',
   'step.generate_image': 'Vẽ ảnh',
   'step.show_widget': 'Vẽ vào hội thoại',
+  // Hình vẽ có lỗi ở lần đầu, được giữ lại trong lúc vẽ lại.
+  'step.show_widget.checking': 'Đang kiểm tra hình vẽ…',
   'step.chart': 'Vẽ biểu đồ',
   'step.calculate': 'Tính toán',
   'step.world_facts': 'Tra cứu thực tế',
