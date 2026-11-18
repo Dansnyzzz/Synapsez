@@ -18,7 +18,7 @@
           "Tệp xuất có tên mới (ephapse-export-… và ephapse-bots-…); tệp xuất cũ vẫn nhập được.",
           "Ứng dụng xác thực đã cài sẵn giữ nhãn cũ; nhãn đó không ảnh hưởng gì.",
           "Video hướng dẫn lấy key không còn dòng chú thích bên dưới.",
-          "Máy tính đám mây bắt đầu lại từ đầu sau khi đổi tên; tệp để trên máy cũ không còn mở được.",
+          "Máy tính đám mây của mỗi người được chuyển sang một máy mới ở lần dùng tiếp theo, mang theo toàn bộ tệp trong thư mục của bạn.",
           "Thiết bị đã nhớ và phiên liên kết chia sẻ được đặt lại một lần."
         ],
         "en": [
@@ -27,7 +27,7 @@
           "Exports have new file names (ephapse-export-… and ephapse-bots-…); old export files still import.",
           "Authenticator apps already set up keep the old label; the label changes nothing.",
           "The guide's provider videos no longer carry a caption.",
-          "Cloud computers start fresh after the rename; files kept on the old machines can no longer be opened.",
+          "Each cloud computer moves to a new machine on its next use, with every file in your home folder carried across.",
           "Remembered devices and shared-link sessions reset once."
         ]
       }

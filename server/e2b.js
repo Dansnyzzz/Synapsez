@@ -128,8 +128,12 @@ export const TEMPLATE_NAME = 'ephapse-computer';
  * frame together fit in; there is swap on the disk behind it (`CLOSE_MACHINE`).
  */
 export const TEMPLATE_SIZE = { cpu: TEMPLATE_SIZE_CPU, memMb: TEMPLATE_SIZE_MEM };
-/** Raise it when the template changes: machines made from an older build move to the new one, keeping their files. */
-export const BASE_VERSION = 2;
+/**
+ * Raise it when the template changes: machines made from an older build move to the new one, keeping their files.
+ * 3: the product's rename (1.33.0) renamed the folders, key header and environment inside the machine, so a machine made
+ * from the old template would no longer answer the server; each account is moved across, home folder and all.
+ */
+export const BASE_VERSION = 3;
 /** After E2B says the template is not there, how long before asking again: `base` works meanwhile. */
 const TEMPLATE_RECHECK_MS = 10 * 60_000;
 /** Moving to a newer machine: how long each half may take, the most it carries, how long before another try. */

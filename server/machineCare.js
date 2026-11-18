@@ -324,7 +324,7 @@ export function tidyScript(tier, { tmp = '/tmp' } = {}) {
     `find . -xdev \\( -path ./.local -o ${KEPT_CACHES} \\) -prune -o -type d \\( -name __pycache__ -o -name .ipynb_checkpoints -o -name .pytest_cache \\) -user "$me" -prune -exec rm -rf -- {} + 2>/dev/null`,
     // Only real core dumps, which are ELF files, and never among what was sent or brought here (security review, 2026-11-09).
     `find . -maxdepth 3 -xdev \\( -path ./.local -o -path ./uploads -o -path ./incoming -o -path ./downloads -o ${KEPT_CACHES} \\) -prune -o -type f \\( -name core -o -name 'core.[0-9]*' \\) -user "$me" -exec sh -c 'for f do [ "$(head -c 4 -- "$f" 2>/dev/null)" = "$(printf '"'"'\\177ELF'"'"')" ] && rm -f -- "$f"; done' sh {} + 2>/dev/null`,
-    `find ${scraps} -xdev -mindepth 1 -maxdepth 1 -user "$me" -mmin +20 ! -name 'eph*' ! -name '.*' -exec rm -rf -- {} + 2>/dev/null`,
+    `find ${scraps} -xdev -mindepth 1 -maxdepth 1 -user "$me" -mmin +20 ! -name 'eph-*' ! -name '.*' -exec rm -rf -- {} + 2>/dev/null`,
     // What was sent straight here and left a month. Its row says the file is gone, in those words.
     'find uploads -xdev -type f -user "$me" -mtime +30 -delete 2>/dev/null; find uploads -xdev -mindepth 1 -type d -empty -user "$me" -delete 2>/dev/null',
   ];

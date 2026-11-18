@@ -121,7 +121,7 @@ section('what goes without anybody asking');
   check('caches that come back by themselves', /\.cache\/pip/.test(s) && /_cacache/.test(s) && /__pycache__/.test(s));
   check('  not what is installed', /\( -path \.\/\.local -o [^\n]*\) -prune -o -type d/.test(s));
   check('  scraps in /tmp, only the account\'s, only old ones', /find '\/tmp' [^\n]*-user [^\n]*-mmin \+20/.test(s));
-  check('  and never the app\'s own', /! -name 'eph\*'/.test(s));
+  check('  and never the app\'s own (named eph-…, so a file of the person\'s that merely starts with "eph" is tidied as usual)', /! -name 'eph-\*'/.test(s));
   check('  nothing in the working folder but those', !/rm -rf \*|rm -rf \.$/m.test(s));
   check('and it says how full the disk is, before and after', /df -Pk/.test(s) && /echo "eph-disk \$before \$\(disk\)"/.test(s));
 }
