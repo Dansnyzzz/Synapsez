@@ -141,6 +141,13 @@
     - one ready-to-paste English justification per sensitive scope, saying what Ephapse does with it, that it is used only when the person asks, and the Limited Use statement;
     - a demo-video shot list: the consent screen showing the app name and the scopes, then each sensitive scope in use in the app, then the Drive Picker.
   - Remove every instruction that names a restricted scope. Update the "What the assistant can then do" and "In the + menu" sections.
+- Modify: the public contact address (owner, 2026-11-18: "thay mail cá nhân … full"). The owner's personal Gmail address, the only `mailto:` on these lines, becomes `support@ephapse.net`, both the `mailto:` and the visible text. Today there are exactly 7, all on main:
+  - `public/privacy.html` lines 37 and 177;
+  - `public/terms.html` lines 34 and 101;
+  - `public/usage-policy.html` lines 53 and 80;
+  - `docs/legal/danh-gia-chuyen-du-lieu.md` line 72.
+  - Add a scan in `test/features.test.mjs` beside the old-name scan that fails if that personal address's local part appears in any tracked file. Build the needle from two string pieces so the test file itself does not contain it.
+  - A changed contact address is not a material change: no re-consent, and no version bump unless the repo's existing rule forces one (report it).
 - Modify: `package.json` (1.33.1), `CHANGELOG.md`, `public/changelog.json` (vi + en).
   - Say plainly that Gmail can now only send, and that Drive opens files you pick.
   - People connected before the change keep working until their connection ends. Reconnecting gives the narrower access.
