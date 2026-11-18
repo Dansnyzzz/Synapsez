@@ -181,7 +181,7 @@ function bigDiagram(seed, { n = 40, m = 80, groups = 4 } = {}) {
 const pipeline = {
   groups: [
     { id: 'client', title: 'Phía người dùng' },
-    { id: 'server', title: 'Máy chủ Synapsez' },
+    { id: 'server', title: 'Máy chủ Ephapse' },
     { id: 'data', title: 'Dữ liệu' },
   ],
   nodes: [

@@ -1,4 +1,4 @@
-# Diagrams that come out right (1.33.0) — design
+# Diagrams that come out right (1.34.0) — design
 
 Asked by the owner on 2026-11-17, with a screenshot of a pipeline diagram whose arrows pointed at nothing and cut through text:
 "đảm bảo AI vẽ xong cũng tự gửi xem lại audit check 1 lần cho ra bản hoàn thiện perfect final, đẹp, bố cục rõ ràng 100%
@@ -20,7 +20,7 @@ All three layers were approved, in the order: 1.32.0, then diagrams, then R2. Th
 
 ## Design
 
-### Layer 1 — a structured diagram: Synapsez lays it out
+### Layer 1 — a structured diagram: Ephapse lays it out
 
 `show_widget` gains a third input, `diagram`, for flows, architectures, pipelines, processes and org charts. The model
 says what is in the drawing, and the server draws it. Arrows start and end on box edges by construction, and they never
@@ -279,6 +279,6 @@ tiết chuyên sâu nhất, cụ thể hóa". This section makes that concrete.
 
 ## Release
 
-1.33.0. The changelog (vi and en) says: boxes-and-arrows drawings are now laid out by Synapsez, so their arrows always
+1.34.0. The changelog (vi and en) says: boxes-and-arrows drawings are now laid out by Ephapse, so their arrows always
 connect; a hand-drawn diagram is checked and, if it has mistakes, quietly redrawn once before it is shown; and models
 get a drawing and image guide.
