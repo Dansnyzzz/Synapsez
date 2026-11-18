@@ -167,3 +167,73 @@
 - [ ] **Step 3:** Update the copy, privacy page, docs and release notes. Run the i18n and features tests and the rename scan.
 - [ ] **Step 4:** Do the real-Chrome CSP check and fold in any measured origin.
 - [ ] **Step 5:** Run the targeted UI test, `npm run lint` and `npm run typecheck`, then commit, staging by path: `feat(google): Drive opens through the Google Picker; guide and 1.33.1 notes`.
+
+### Task 3: A public home page Google can read, and no sexual imagery from the picture tool
+
+Google's branding review came back on 2026-11-18 with this, quoted from the owner's screenshot:
+
+> "Your application is not compliant with the Google APIs Terms of Service. We were unable to confirm your app's compliance. Please update your home page to clearly outline your application's purpose and ensure it does not use Google APIs for AI NCII (AI-generated Non-Consensual Intimate Imagery), then retry."
+
+Why Google asks:
+- `generate_image` calls Google's Gemini API (`server/tools/cloud.js` ~2956-3018) to make pictures.
+- `/` shows only a sign-in card. Both `#gate` and `#app` are `hidden` until JS runs, and the description sits behind the "What is Ephapse?" toggle (`public/index.html` ~180-195).
+
+So a reader without JS, or a quick human look, finds no purpose and no statement.
+
+**Files:**
+- Create: `public/about.html`, a static public home page, no JS, styled like `public/privacy.html` (same CSS tokens, light/dark, 760px column, 16px gutter, readable at 360px wide).
+  - **Language:** English first (it is the page Google's reviewers read), then Vietnamese, with a "Tiếng Việt" link at the top and `lang` attributes on each half.
+  - **`<head>`:** `<title>Ephapse — AI assistant workspace</title>`, a meta description, `<link rel="canonical" href="https://www.ephapse.net/about.html">`, `og:title`, `og:description` and `og:url`. No JSON-LD and no script.
+  - **Sections, each in both languages:**
+    1. **What Ephapse is.** An AI assistant workspace at www.ephapse.net. You chat with the AI model you choose. It works with your files, searches the web, runs code on a private cloud computer, makes documents, slides, spreadsheets, diagrams and pictures, and, only if you connect them, works with your Google account and other services. A plain "Open Ephapse" link goes to `/`.
+    2. **How Ephapse uses Google user data.** One line per product, matching the 1.33.1 scopes exactly:
+       - Gmail: sends an email you ask it to send; it never reads, searches or changes your mailbox.
+       - Drive: only files you pick in Ephapse's Google Drive picker, or files Ephapse creates for you.
+       - Calendar, Docs, Sheets, Forms, Tasks and Contacts: what each tool does, from `server/tools/definitions.js`.
+       - A Limited Use statement in the same words as `public/privacy.html`'s Google section: used only to provide the features you ask for, not used to train AI models, not sold, not used for ads, people do not read it except as that section allows.
+       - A link to the privacy policy's Google section.
+    3. **Pictures and safety.**
+       - Ephapse can make a picture with Google's Gemini API when a user asks for one.
+       - It never makes sexual, nude or intimate images of anyone. It never makes AI-generated non-consensual intimate imagery (AI NCII) or "deepfake" sexual content of real people.
+       - Such requests are refused before anything is sent to Google.
+       - Ephapse does not use Google APIs or Google user data to create, edit or share such imagery.
+       - The Usage Policy forbids it, and accounts that try may be suspended.
+       - Links to `/usage-policy.html` and to the report address.
+    4. **Contact.** `support@ephapse.net`, plus links to Privacy, Terms and Usage Policy.
+- Modify: `public/index.html` gate foot (~180-195).
+  - The "What is Ephapse?" control becomes a plain link to `/about.html`, with the same label and place and its `data-i18n` key kept.
+  - The hidden `#gate-about` paragraph and its toggle code go. Its content now lives on the page.
+  - Remove the dead JS, CSS and i18n keys for the toggle, and update any UI test that pressed it.
+- Modify: `public/usage-policy.html`, the vi list (~line 35) and the en list (~line 65).
+  - Add one bullet after the child-abuse bullet:
+    - vi: "Tạo, sửa hay chia sẻ hình ảnh, video hay âm thanh tình dục, khoả thân hoặc riêng tư của một người thật khi họ không đồng ý — kể cả nội dung do AI tạo ("deepfake", NCII). Công cụ tạo ảnh của Ephapse từ chối mọi ảnh tình dục hay khoả thân."
+    - en: "Make, edit or share sexual, nude or intimate images, video or audio of a real person without their consent — including AI-generated ("deepfake") content (NCII). Ephapse's picture tool refuses every sexual or nude image."
+  - Add a dated note in both languages, beside the existing rename note: "Clarified 18 November 2026: the ban on non-consensual intimate imagery is spelled out; nothing that was allowed before is now forbidden." Use the vi equivalent for the Vietnamese half.
+  - The policy version and re-consent stay as they are. This is a clarification, because illegal content and harassment were already banned. If the repo's legal-version tests force a bump, report it and stop for a ruling rather than bumping.
+- Modify: `server/tools/cloud.js` `generateImageTool`. Before any Google call, refuse prompts asking for sexual or nude content.
+  - Use a small word-boundary list in English and Vietnamese, in its own module `server/imageSafety.js`, exporting `sexualImageRequest(prompt) → boolean`. For example:
+    - en: nude, naked, nudity, nsfw, porn, pornographic, sex, sexual, sexy, erotic, explicit, topless, undress, undressed, lingerie, deepfake;
+    - vi: khoả thân, khỏa thân, lõa thể, loã thể, lõa lồ, khiêu dâm, gợi dục, tình dục, cởi đồ, cởi quần áo, 18+.
+  - Match accent-insensitively for Vietnamese (NFD with combining marks stripped), and lower-case.
+  - Use word boundaries, so "Essex", "Sussex" and "sextant" pass.
+  - The refusal is a clear tool result that tells the model to tell the user plainly that Ephapse does not make sexual or nude images, under the Usage Policy. Give it a vi.js entry.
+  - Also set the Gemini request's safety settings to the strictest supported level for sexual content (`HARM_CATEGORY_SEXUALLY_EXPLICIT`: `BLOCK_LOW_AND_ABOVE`). Check the current Gemini image API docs (Context7 or ai.google.dev) for the exact field and whether the image model accepts it, and say what you found. If the endpoint rejects the field, leave it out and report.
+  - The tool description in `server/tools/definitions.js` gets one sentence: it never makes sexual, nude or intimate images of anyone, so the model should refuse such asks without calling it.
+- Modify: `docs/google.md` (Task 2 has written the owner's guide). Add a short "Branding review: home page and AI NCII" section:
+  - set Branding → Application home page to `https://www.ephapse.net/about.html`;
+  - then, under "Branding verification issues", choose "I have fixed the issues", with a paste-ready English note naming the page, the image refusal and the usage-policy line.
+- Modify: `CHANGELOG.md` and `public/changelog.json` (vi + en) 1.33.1 entry: add the home page and the picture rule.
+- Test:
+  - `test/image-safety.test.mjs` (new):
+    - refusals in English and Vietnamese, with and without accents;
+    - "Essex", "Sussex" and "sextant" pass;
+    - `generateImageTool` refuses before any network call (stub fetch, count 0).
+  - `test/features.test.mjs`:
+    - `about.html` exists, has no `<script`, names Gmail send-only and Drive picked-files, contains "NCII", links privacy/terms/usage-policy, and has `support@ephapse.net`;
+    - the usage policy has the NCII bullet in both languages.
+  - Add the new test file to the npm test chain the way the others are listed.
+
+- [ ] Step 1: Failing tests (image safety, features checks).
+- [ ] Step 2: Build `imageSafety.js`, the tool guard and the safety setting; pass.
+- [ ] Step 3: Write `about.html`, the gate link, the usage-policy bullet, the docs and the notes. Run the features, i18n and server-i18n tests, the rename scan and lint/typecheck.
+- [ ] Step 4: Commit by path: `feat(home): a public page that says what Ephapse is, and no sexual imagery from the picture tool`.
