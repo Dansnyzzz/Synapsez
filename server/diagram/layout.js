@@ -33,7 +33,7 @@
  * (owner, 2026-11-17: "flexible adaptive"): see chooseDirection.
  */
 
-import { TEXT, FIT, lineHeight, textWidth, wrapText, measureNode, measureLabel } from './measure.js';
+import { TEXT, FIT, lineHeight, textWidth, measureNode, measureLabel } from './measure.js';
 
 export const LAYOUT = Object.freeze({
   rankGap: Object.freeze({ right: 72, down: 56 }),
@@ -170,10 +170,40 @@ export function layoutDiagram(diagram) {
 }
 
 /**
+ * One direction's layout. In "down" a group's title takes a stretch of its band between the
+ * lines into its first rank; where a pass finds none wide enough, the next keeps room for it
+ * (fix round 2: a title is never wrapped). The room goes at the band's start, the title at the
+ * top left and the first rank moved along, or at its end, the first rank staying put: both are
+ * laid out, and the one with fewer bends is kept — the start on a tie, where titles are read.
+ *
  * @param {Parameters<typeof layoutDiagram>[0]} diagram
  * @param {'right' | 'down'} direction
  */
 function layoutOne(diagram, direction) {
+  const first = layoutPass(diagram, direction, new Map());
+  if (!first.more.size) return first.layout;
+  const settle = (side) => {
+    const rooms = new Map();
+    for (const [id, ask] of first.more) rooms.set(id, { size: side === 'start' ? ask.full : ask.end, side });
+    let out = layoutPass(diagram, direction, rooms);
+    if (out.more.size) {
+      for (const [id, ask] of out.more) rooms.set(id, { size: ask.full, side });
+      out = layoutPass(diagram, direction, rooms);
+    }
+    return out.layout;
+  };
+  const bends = (layout) => layout.edges.reduce((sum, e) => sum + e.points.length - 2, 0);
+  const atStart = settle('start');
+  const atEnd = settle('end');
+  return bends(atStart) <= bends(atEnd) ? atStart : atEnd;
+}
+
+/**
+ * @param {Parameters<typeof layoutDiagram>[0]} diagram
+ * @param {'right' | 'down'} direction
+ * @param {Map<string, { size: number, side: 'start' | 'end' }>} rooms  room kept for a group's title, by group id
+ */
+function layoutPass(diagram, direction, rooms) {
   // Ranks run along x for "right", along y for "down"; "main" is that axis and "cross" the other.
   const right = direction === 'right';
   const M = LAYOUT.groupMargin;
@@ -191,7 +221,7 @@ function layoutOne(diagram, direction) {
     const from = byId.get(e.from);
     const to = byId.get(e.to);
     const label = e.label || null;
-    return { index, from, to, label, style: e.style || 'solid', loop: from === to, reversed: false, hops: [], loopPorts: [0, 0], loopTurn: null, measured: label ? measureLabel(label) : null, labelGap: 0, labelCross: 0, labelAlong: 0, reserved: null, route: [], labelBox: null };
+    return { index, from, to, label, style: e.style || 'solid', loop: from === to, reversed: false, hops: [], loopPorts: [0, 0], loopTurn: null, measured: label ? measureLabel(label) : null, labelGap: 0, labelCross: 0, labelAlong: 0, reserved: null, labelFree: false, route: [], labelBox: null };
   });
   const labelAcross = (e) => (right ? e.measured.h : e.measured.w);
   const labelAlong = (e) => (right ? e.measured.w : e.measured.h);
@@ -298,7 +328,7 @@ function layoutOne(diagram, direction) {
     }
   }
 
-  const groups = (diagram.groups || []).map((g, index) => ({ index, id: g.id, title: g.title || '', min: Infinity, max: -Infinity, items: [], stacks: new Map(), slack: new Map(), shift: new Map(), header: 0, band: 0, titleAt: 0, inner: 0, size: 0, titleLines: [], titleW: 0, v: null, box: null, titleBox: null }));
+  const groups = (diagram.groups || []).map((g, index) => ({ index, id: g.id, title: g.title || '', min: Infinity, max: -Infinity, items: [], stacks: new Map(), slack: new Map(), shift: new Map(), header: 0, band: 0, room: 0, roomFirst: false, titleAt: 0, inner: 0, size: 0, titleLines: [], titleW: 0, v: null, box: null, titleBox: null }));
   const groupById = new Map(groups.map((g) => [g.id, g]));
   for (const n of nodes) {
     const g = groupById.get(n.group);
@@ -491,26 +521,34 @@ function layoutOne(diagram, direction) {
       g.inner = Math.max(g.inner, stack.reduce((s, it, i) => s + it.size + (i ? gapBetween(stack[i - 1], it) : 0), 0));
     }
   }
+  const usedBy = (stack) => stack.reduce((s, it, i) => s + it.size + (i ? gapBetween(stack[i - 1], it) : 0), 0);
   for (const g of groups) {
     if (!g.title) continue;
-    // A group's title sits in a band across its top, above its members, either way. In "right"
-    // that band is part of the stack across (wrapped to the first column, where no lane runs);
-    // in "down" it is room kept above the first rank, wrapped to the members' width (review,
-    // 2026-11-18: beside the members it left a column of nothing, groups 22–28 % full).
+    // A group's title is one line, always (fix round 2: "Tầng 2 — Nén ngữ / cảnh" read as two
+    // labels): the group grows to hold it instead. It sits in a band across the group's top,
+    // above its members (review, 2026-11-18: beside them it left a column of nothing).
+    g.titleLines = [g.title];
+    g.titleW = Math.ceil(textWidth(g.title, TEXT.groupTitleSize, true));
     if (right) {
-      g.titleLines = wrapText(g.title, mainSize[g.min], TEXT.groupTitleSize, true);
-      g.titleW = mainSize[g.min];
-      g.header = titleBand(g.titleLines.length);
+      // In "right" the band is part of the stack across, over the first column, where no lane
+      // runs: that column widens to hold the title.
+      mainSize[g.min] = Math.max(mainSize[g.min], g.titleW);
+      g.header = titleBand(1);
     } else {
-      g.titleLines = wrapText(g.title, Math.min(TEXT.groupTitleMaxWidth, g.inner), TEXT.groupTitleSize, true);
-      g.titleW = Math.ceil(Math.max(...g.titleLines.map((l) => textWidth(l, TEXT.groupTitleSize, true))));
-      g.band = titleBand(g.titleLines.length);
+      // In "down" it is room kept above the first rank, which the lines into that rank cross:
+      // the title takes a stretch of the band between them (see the ports), and where a first
+      // pass found none, this one keeps room for it at the band's far end.
+      g.band = titleBand(1);
+      g.room = rooms.get(g.id)?.size || 0;
+      g.roomFirst = rooms.get(g.id)?.side === 'start';
+      g.inner = Math.max(g.inner, g.titleW, usedBy(g.stacks.get(g.min)) + g.room);
     }
   }
 
   // ── 6. positions across the ranks.
   const placeStack = (g, r) => {
-    let at = g.header + M + g.shift.get(r);
+    // Room kept at the band's start moves the first rank along by that much.
+    let at = g.header + M + g.shift.get(r) + (r === g.min && g.roomFirst ? g.room : 0);
     const stack = g.stacks.get(r);
     stack.forEach((it, i) => {
       if (i) at += gapBetween(stack[i - 1], it);
@@ -521,9 +559,10 @@ function layoutOne(diagram, direction) {
   for (const g of groups) {
     g.size = g.header + 2 * M + g.inner;
     for (let r = g.min; r <= g.max; r += 1) {
-      const used = g.stacks.get(r).reduce((s, it, i, all) => s + it.size + (i ? gapBetween(all[i - 1], it) : 0), 0);
-      g.slack.set(r, g.inner - used);
-      g.shift.set(r, (g.inner - used) / 2);
+      const used = usedBy(g.stacks.get(r));
+      // Room kept for the title stays clear at the far end of the first rank.
+      g.slack.set(r, Math.max(0, g.inner - used - (r === g.min ? g.room : 0)));
+      g.shift.set(r, Math.min(g.slack.get(r), (g.inner - used) / 2));
       placeStack(g, r);
     }
   }
@@ -638,27 +677,6 @@ function layoutOne(diagram, direction) {
     if (best) for (const d of chain) moveTo(d, best.x);
   }
 
-  // In "down", a group's title is wrapped narrow enough that the lines into its first rank can
-  // all arrive beside it, where its boxes' tops leave room (review C9: rewrapped only after
-  // the ports were placed, one title took three lines and a fifth of its group).
-  if (!right) {
-    for (const g of groups) {
-      if (!g.titleLines.length) continue;
-      const from = g.v.pos + M;
-      let room = Math.min(TEXT.groupTitleMaxWidth, g.inner);
-      for (const it of g.stacks.get(g.min)) {
-        if (it.type !== 'node' || !it.ins.length) continue;
-        const need = 2 * it.ins.reduce((s, h) => s + portHalf(h.edge, false), 0) + insetOf(it.node);
-        if (it.start < from + room + 8) room = Math.min(room, it.start + crossOf(it.node) - need - 8 - from);
-      }
-      if (room >= 48 && room < g.titleW) {
-        g.titleLines = wrapText(g.title, room, TEXT.groupTitleSize, true);
-        g.titleW = Math.ceil(Math.max(...g.titleLines.map((l) => textWidth(l, TEXT.groupTitleSize, true))));
-        g.band = titleBand(g.titleLines.length);
-      }
-    }
-  }
-
   // ── 7. ports, on the side facing the next rank (out) and the previous one (in).
   // Each port wants to sit opposite the other end of its line, so a line runs straight where
   // the two boxes overlap and never takes a step for nothing (review B3: steps of 4–11 units,
@@ -688,27 +706,24 @@ function layoutOne(diagram, direction) {
     for (const h of outs) h.s = mid(h);
     // A loop takes the two ports at the far end of the side, so it crosses no other way out.
     const out = [
-      ...outs.map((h) => ({ hop: h, end: 's', half: portHalf(h.edge, true), get: () => h.s, set: (v) => (h.s = v), want: () => h.t })),
+      ...outs.map((h) => ({ pin: /** @type {number | null} */ (null), corner: /** @type {number | null} */ (null), hop: h, end: 's', half: portHalf(h.edge, true), get: () => h.s, set: (v) => (h.s = v), want: () => h.t })),
       ...n.loops.flatMap((e) => [
-        { hop: null, end: 'l', half: loopHalf(e, true), get: () => e.loopPorts[0], set: (v) => (e.loopPorts[0] = v), want: () => Infinity },
-        { hop: null, end: 'l', half: loopHalf(e, false), get: () => e.loopPorts[1], set: (v) => (e.loopPorts[1] = v), want: () => Infinity },
+        { pin: /** @type {number | null} */ (null), corner: /** @type {number | null} */ (null), hop: null, end: 'l', half: loopHalf(e, true), get: () => e.loopPorts[0], set: (v) => (e.loopPorts[0] = v), want: () => Infinity },
+        { pin: /** @type {number | null} */ (null), corner: /** @type {number | null} */ (null), hop: null, end: 'l', half: loopHalf(e, false), get: () => e.loopPorts[1], set: (v) => (e.loopPorts[1] = v), want: () => Infinity },
       ]),
     ];
     addSide(n, out, n.item.start);
     const ins = [...n.item.ins].sort((p, q) => centreOf(p.a) - centreOf(q.a) || p.edge.index - q.edge.index);
     for (const h of ins) h.t = mid(h);
-    const into = ins.map((h) => ({ hop: h, end: 't', half: portHalf(h.edge, false), get: () => h.t, set: (v) => (h.t = v), want: () => h.s }));
-    // In "down" the lines into a group's first rank cross its title band: they keep clear of
-    // the title when the rest of the side holds them (review C9).
-    let lo = n.item.start;
-    const g = n.group ? groupById.get(n.group) : null;
-    if (!right && g && g.titleLines.length && n.rank === g.min && into.length) {
-      const clear = g.v.pos + M + g.titleW + 8;
-      const need = 2 * into.reduce((s, en) => s + en.half, 0) + insetOf(n);
-      if (clear > lo && n.item.start + crossOf(n) - clear >= need) lo = clear;
-    }
-    addSide(n, into, lo);
+    const into = ins.map((h) => ({ pin: /** @type {number | null} */ (null), corner: /** @type {number | null} */ (null), hop: h, end: 't', half: portHalf(h.edge, false), get: () => h.t, set: (v) => (h.t = v), want: () => h.s }));
+    // In "down" the lines into a group's first rank cross its title band: they go where their
+    // other end is, and the title takes a stretch of the band between them (fix round 2: kept
+    // clear of the title, they stepped aside from lines that could have run straight).
+    addSide(n, into, n.item.start);
   }
+  // How near a corner a port may sit: its half, unless a pin for a straight line gave up the
+  // room its label keeps at the corner — between neighbours, the label keeps its full room.
+  const cornerOf = (en) => (typeof en.corner === 'number' ? en.corner : en.half);
   const place = (side) => {
     const { n, list } = side;
     const k = list.length;
@@ -716,32 +731,136 @@ function layoutOne(diagram, direction) {
     const inset = insetOf(n);
     const off = [0];
     for (let i = 1; i < k; i += 1) off.push(off[i - 1] + list[i - 1].half + list[i].half);
-    const L = Math.max(n.item.start + Math.max(inset, list[0].half), side.lo + list[0].half);
-    const U = Math.max(L, side.hi - Math.max(inset, list[k - 1].half) - off[k - 1]);
+    const L = Math.max(n.item.start + Math.max(inset, cornerOf(list[0])), side.lo + cornerOf(list[0]));
+    const U = Math.max(L, side.hi - Math.max(inset, cornerOf(list[k - 1])) - off[k - 1]);
+    // A port pinned for a straight line weighs as much as all the rest together, many times.
     const blocks = [];
     list.forEach((en, i) => {
-      const want = en.want();
-      blocks.push({ sum: (Number.isFinite(want) ? want : side.hi) - off[i], n: 1 });
-      while (blocks.length > 1 && blocks.at(-2).sum / blocks.at(-2).n > blocks.at(-1).sum / blocks.at(-1).n) {
+      const pinned = typeof en.pin === 'number';
+      const want = pinned ? en.pin : en.want();
+      const w = pinned ? 1e6 : 1;
+      blocks.push({ sum: w * ((Number.isFinite(want) ? want : side.hi) - off[i]), w, n: 1 });
+      while (blocks.length > 1 && blocks.at(-2).sum / blocks.at(-2).w > blocks.at(-1).sum / blocks.at(-1).w) {
         const b = blocks.pop();
         blocks.at(-1).sum += b.sum;
+        blocks.at(-1).w += b.w;
         blocks.at(-1).n += b.n;
       }
     });
     let i = 0;
     for (const b of blocks) {
-      const y = clamp(b.sum / b.n, L, U);
+      const y = clamp(b.sum / b.w, L, U);
       for (let j = 0; j < b.n; j += 1, i += 1) list[i].set(y + off[i]);
     }
   };
   for (let round = 0; round < 4; round += 1) for (const side of sides) place(side);
+  // An edge between two boxes that overlap across runs straight (fix round 2: lines stepped
+  // aside by 30–90 units between boxes sharing most of their width). Both its ends are pinned at
+  // one place both sides can hold, and the other ports on each side move round them; a pin
+  // that cannot hold, or would unpin an earlier one, is let go.
+  const endsOf = (h) => [portOf.get(`s${h.edge.index}:${h.a.rank}`), portOf.get(`t${h.edge.index}:${h.a.rank}`)];
+  const reach = (en) => {
+    const { n } = en.side;
+    return [Math.max(n.item.start + Math.max(insetOf(n), cornerOf(en)), en.side.lo + cornerOf(en)), en.side.hi - Math.max(insetOf(n), cornerOf(en))];
+  };
+  // A long edge counts too, where its stand-ins share one column: its two ends pin to it.
+  const pinnedEdges = [];
+  const straight = (e) => e.hops.every((h) => Math.abs(h.s - h.t) < 1e-6);
+  for (const e of edges) {
+    if (e.loop) continue;
+    const first = e.hops[0];
+    const last = e.hops.at(-1);
+    const [s] = endsOf(first);
+    const [, t] = endsOf(last);
+    // A line into a titled group's first rank in "down" that crosses where its title goes is
+    // tried again past the title, even if it already runs straight.
+    const into = last.b.node;
+    const g = !right && into.group ? groupById.get(into.group) : null;
+    const titleEnd = g && g.titleLines.length && into.rank === g.min ? g.v.pos + M + g.titleW + 8 : null;
+    const wasStraight = straight(e);
+    const origin = first.s;
+    if (!s || !t || (wasStraight && (titleEnd === null || last.t >= titleEnd))) continue;
+    // Its stand-ins, if it has any, move to the line where their ranks leave room.
+    const stand = e.hops.slice(1).map((h) => h.a);
+    const was = stand.map((d) => d.start);
+    const standTo = (x) => {
+      stand.forEach((d) => moveTo(d, x));
+      for (const h of e.hops) {
+        if (h.a.type === 'dummy') h.s = h.a.start;
+        if (h.b.type === 'dummy') h.t = h.b.start;
+      }
+    };
+    const standFits = (x) => stand.every((d) => {
+      const [lo, hi] = room(d);
+      return x >= lo - 1e-9 && x <= hi + 1e-9;
+    });
+    // A labelled end may give up the room kept for its label at the port: the label finds
+    // another place along its line ("move the label rather than bend the edge").
+    const corners = [s.corner, t.corner];
+    let held = false;
+    for (const spare of [false, true]) {
+      if (spare) {
+        if (cornerOf(s) <= LAYOUT.portSpacing / 2 && cornerOf(t) <= LAYOUT.portSpacing / 2) break;
+        s.corner = LAYOUT.portSpacing / 2;
+        t.corner = LAYOUT.portSpacing / 2;
+      }
+      const [a0, a1] = reach(s);
+      const [b0, b1] = reach(t);
+      const lo = Math.max(a0, b0);
+      const hi = Math.min(a1, b1);
+      if (lo > hi) continue;
+      // Past the title comes first: the line is as straight anywhere it can run, and the
+      // title then needs no room kept for it. A line already straight tries nothing else.
+      const pastTitle = titleEnd !== null ? [Math.max(last.t, titleEnd)].filter((x) => x <= hi) : [];
+      const others = wasStraight ? [] : [...(stand.length ? [stand[0].start] : []), first.s, last.t, (first.s + last.t) / 2];
+      const options = [...pastTitle, ...others].map((v) => clamp(v, lo, hi));
+      for (const x of [...new Set(options)]) {
+        if (stand.length && !standFits(x)) continue;
+        if (stand.length) standTo(x);
+        s.pin = x;
+        t.pin = x;
+        place(s.side);
+        place(t.side);
+        if (straight(e) && pinnedEdges.every(straight)) {
+          held = true;
+          break;
+        }
+      }
+      if (held) break;
+    }
+    if (held) {
+      pinnedEdges.push(e);
+      if (e.label && cornerOf(s) < s.half) e.labelFree = true;
+    } else {
+      [s.corner, t.corner] = corners;
+      s.pin = null;
+      t.pin = null;
+      if (stand.length) stand.forEach((d, i) => moveTo(d, was[i]));
+      for (const h of e.hops) {
+        if (h.a.type === 'dummy') h.s = h.a.start;
+        if (h.b.type === 'dummy') h.t = h.b.start;
+      }
+      place(s.side);
+      place(t.side);
+      // One that ran straight before keeps doing so where it was.
+      if (wasStraight) {
+        s.pin = origin;
+        t.pin = origin;
+        place(s.side);
+        place(t.side);
+        if (straight(e)) pinnedEdges.push(e);
+      }
+    }
+  }
+  // The rest settle again round the pinned ones.
+  for (let round = 0; round < 2; round += 1) for (const side of sides) place(side);
   // How far a port may move: not past its neighbours' room, nor off its side.
   const windowOf = (en) => {
     const { side, i } = en;
     const { n, list } = side;
     const inset = insetOf(n);
-    const lo = i > 0 ? list[i - 1].get() + list[i - 1].half + en.half : Math.max(n.item.start + Math.max(inset, en.half), side.lo + en.half);
-    const hi = i < list.length - 1 ? list[i + 1].get() - list[i + 1].half - en.half : side.hi - Math.max(inset, en.half);
+    const lo = i > 0 ? list[i - 1].get() + list[i - 1].half + en.half : Math.max(n.item.start + Math.max(inset, cornerOf(en)), side.lo + cornerOf(en));
+    const hi = i < list.length - 1 ? list[i + 1].get() - list[i + 1].half - en.half : side.hi - Math.max(inset, cornerOf(en));
     return [lo, hi];
   };
   const inside = (v, span) => v >= span[0] - 1e-9 && v <= span[1] + 1e-9;
@@ -809,8 +928,9 @@ function layoutOne(diagram, direction) {
     });
   }
   // In "down", where each group's title goes in its band, now the lines into its first rank
-  // are known: the leftmost stretch between them that holds it, or else the widest, wrapped
-  // to fit (its band grows a line or two) — never across a line (review C9).
+  // are known: the leftmost stretch between them that holds it on one line, never across a
+  // line. Where none does, the next pass keeps room for it at the band's far end.
+  const more = new Map();
   for (const g of groups) {
     g.titleAt = g.v.pos + M;
     if (right || !g.titleLines.length) continue;
@@ -829,14 +949,13 @@ function layoutOne(diagram, direction) {
       g.titleAt = fits[0];
       continue;
     }
-    const widest = stretches.reduce((best, s) => (!best || s[1] - s[0] > best[1] - best[0] ? s : best), null);
-    if (!widest || widest[1] - widest[0] < 48) continue;
-    const lines = wrapText(g.title, widest[1] - widest[0], TEXT.groupTitleSize, true);
-    if (lines.length > 4) continue;
-    g.titleLines = lines;
-    g.titleW = Math.ceil(Math.max(...lines.map((l) => textWidth(l, TEXT.groupTitleSize, true))));
-    g.band = titleBand(lines.length);
-    g.titleAt = widest[0];
+    // First ask only for what the band lacks beyond its last line, over the members' far part;
+    // if that was not enough, the whole title's width beside the members.
+    const lastLine = Math.max(lo, ...xs.map((x) => x + 8));
+    const membersEnd = Math.max(...g.stacks.get(g.min).map((it) => it.start + it.size));
+    const full = g.titleW + 16;
+    const end = g.room ? full : Math.max(16, full - Math.max(0, membersEnd - lastLine));
+    if (full > g.room) more.set(g.id, { end, full });
   }
 
   // ── gaps between ranks: room for labels, then one lane per turn.
@@ -987,15 +1106,20 @@ function layoutOne(diagram, direction) {
   for (const g of groups) {
     // Round its members, not their whole ranks: a short box in a tall rank leaves no gap.
     const members = nodes.filter((n) => n.group === g.id);
-    const main0 = Math.min(...members.map((n) => n.mainStart)) - M - g.band;
+    // In "right" the title starts where the first column's members do, kept within that column
+    // (where no lane runs, and which was widened to hold it), and the box takes it in too.
+    const firstLeft = Math.min(...members.filter((n) => n.rank === g.min).map((n) => n.mainStart));
+    const titleMain = right && g.titleLines.length ? clamp(firstLeft, mainStart[g.min], mainStart[g.min] + mainSize[g.min] - g.titleW) : null;
+    const main0 = Math.min(...members.map((n) => n.mainStart), titleMain ?? Infinity) - M - g.band;
     // A group holding a loop on its last rank reaches past that loop's lane, so the loop and
     // its label stay inside it (review B6).
     const ownsLoop = nodes.some((n) => n.group === g.id && n.rank === g.max && n.loops.length);
-    const main1 = ownsLoop && g.max < gapCount && plans[g.max].reach ? gapStart(g.max) + plans[g.max].reach : Math.max(...members.map((n) => n.mainStart + mainOf(n))) + M;
+    const membersEnd = Math.max(...members.map((n) => n.mainStart + mainOf(n)), titleMain === null ? -Infinity : titleMain + g.titleW);
+    const main1 = ownsLoop && g.max < gapCount && plans[g.max].reach ? Math.max(gapStart(g.max) + plans[g.max].reach, membersEnd + M) : membersEnd + M;
     const [x, y] = xy([main0, g.v.pos]);
     g.box = right ? { x, y, w: main1 - main0, h: g.size } : { x, y, w: g.size, h: main1 - main0 };
     if (g.titleLines.length) {
-      const [tx, ty] = right ? [mainStart[g.min], g.v.pos + LAYOUT.groupTitleInset] : [g.titleAt, main0 + LAYOUT.groupTitleInset];
+      const [tx, ty] = right ? [titleMain, g.v.pos + LAYOUT.groupTitleInset] : [g.titleAt, main0 + LAYOUT.groupTitleInset];
       g.titleBox = { x: tx, y: ty, w: g.titleW, h: g.titleLines.length * titleLine };
     }
   }
@@ -1080,6 +1204,23 @@ function layoutOne(diagram, direction) {
     // Its own slot sits on the first part of the route, which leaves the box through that gap.
     const slotScore = crossings(e.reserved, e, 0);
     if (!best || slotScore < best.score) best = { box: e.reserved, score: slotScore };
+    // Never across a group's border: a slot that is, moves across its own line — which still
+    // runs through it — to the nearer side where it clears that border (fix round 2: a line
+    // drawn straight near a group's edge took its label with it).
+    const straddles = (box) => groupBoxes.some((g) => overlaps(box, g, 4) && !within(box, g, 4));
+    if (straddles(best.box)) {
+      const key = right ? 'y' : 'x';
+      const most = (right ? h : w) / 2 - 4;
+      search: for (let d = 2; d <= most; d += 2) {
+        for (const sign of [1, -1]) {
+          const box = { ...best.box, [key]: best.box[key] + sign * d };
+          if (!straddles(box) && !nodeBoxes.some((b) => overlaps(box, b, LAYOUT.labelClearance)) && !placed.some((b) => overlaps(box, b, 2))) {
+            best = { box, score: best.score };
+            break search;
+          }
+        }
+      }
+    }
     e.labelBox = best.box;
     placed.push(best.box);
     pending.splice(pending.indexOf(e), 1);
@@ -1102,7 +1243,7 @@ function layoutOne(diagram, direction) {
   const dy = LAYOUT.margin - minY;
   const move = (b) => (b ? { x: b.x + dx, y: b.y + dy, w: b.w, h: b.h } : null);
 
-  return {
+  const layout = {
     direction,
     width: maxX - minX + 2 * LAYOUT.margin,
     height: maxY - minY + 2 * LAYOUT.margin,
@@ -1119,4 +1260,5 @@ function layoutOne(diagram, direction) {
       reversed: e.reversed,
     })),
   };
+  return { layout, more };
 }
