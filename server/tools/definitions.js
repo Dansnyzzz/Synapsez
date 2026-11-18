@@ -2499,7 +2499,7 @@ export const TOOLS = [
     needs: 'google_drive',
     // drive.file (owner, 2026-11-18): only what the person picked in the Google Picker, or what Ephapse made.
     description:
-      "The user's Google Drive, but only the files they picked in Ephapse's Drive picker and the files Ephapse created or uploaded; search finds only those, never the rest of their Drive. " +
+      "The user's Google Drive: the files they picked in Ephapse's Drive picker and the files Ephapse created or uploaded, the only ones search finds for a Google connection made or renewed since 1.33.1. " +
       'For any other file, ask the user to pick it with Add from Google Drive in the + menu. ' +
       'Read a file as text (Docs, Sheets as CSV, Slides, PDF, text), create a Doc/Sheet/folder/file, ' +
       'upload a file from this conversation, share, move, rename, trash. create as doc takes HTML for formatting; as sheet takes CSV.',
@@ -2782,7 +2782,7 @@ export const TOOLS = [
       'Use it when they ask for an image, a mock-up, an illustration, a social post graphic. ' +
       'Describe the subject, the style and the composition — a fuller description gets a better picture. ' +
       'It cannot edit an existing image, and it cannot render reliable text inside the picture. ' +
-      'It never makes sexual, nude or intimate images of anyone: refuse such a request yourself, without calling it.',
+      'It must not make sexual, nude or intimate images of anyone; refuse such requests without calling it.',
     parameters: {
       type: 'object',
       properties: {

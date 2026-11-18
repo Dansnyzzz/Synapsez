@@ -2813,7 +2813,7 @@ export const vi = {
   'conn.gdrive.tagline': 'Mở tệp bạn chọn và lưu những gì trợ lý làm ra',
   'conn.gdrive.about': 'Kết nối Google Drive để trợ lý làm việc với các tệp bạn chọn trong Ephapse (Thêm từ Google Drive, trong menu +) và các tệp Ephapse tạo ra: đọc Tài liệu, Trang tính dưới dạng bảng, Trang trình bày và PDF dưới dạng chữ, tạo Tài liệu, Trang tính, thư mục hay tệp, tải lên thứ nó đã làm, và di chuyển, đổi tên, chia sẻ hay xoá những tệp đó khi bạn yêu cầu. Phần còn lại của Drive nằm ngoài tầm với của trợ lý. Đã kết nối từ trước bản cập nhật này (1.33.1)? Hãy ngắt kết nối mọi sản phẩm Google đang dùng rồi kết nối lại để thu hẹp quyền như trên.',
   'conn.gmail.tagline': 'Gửi thư từ Gmail của bạn khi bạn nhờ',
-  'conn.gmail.about': 'Kết nối Gmail để trợ lý gửi thư từ Gmail của bạn khi bạn nhờ; trước khi gửi, trợ lý hỏi bạn. Trợ lý không đọc, tìm, soạn nháp hay thay đổi thư của bạn — muốn được giúp với một thư, hãy dán thư đó vào cuộc trò chuyện.',
+  'conn.gmail.about': 'Kết nối Gmail để trợ lý gửi thư từ Gmail của bạn khi bạn nhờ; mặc định, trước khi gửi trợ lý hỏi bạn. Trợ lý không đọc, tìm, soạn nháp hay thay đổi thư của bạn — muốn được giúp với một thư, hãy dán thư đó vào cuộc trò chuyện.',
   'conn.gcalendar.tagline': 'Quản lý lịch và sắp xếp cuộc họp dễ dàng',
   'conn.gcalendar.about': 'Kết nối Google Lịch để trợ lý liệt kê sự kiện, xem lúc nào bạn rảnh, và tạo, dời hay huỷ sự kiện khi bạn yêu cầu — luôn theo múi giờ của bạn.',
   'conn.gdocs.tagline': 'Sửa, nhận xét và tóm tắt tài liệu',

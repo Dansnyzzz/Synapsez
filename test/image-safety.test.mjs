@@ -57,8 +57,8 @@ section('a request for a sexual or nude picture is recognised, in English and Vi
   const wider = [
     'an unclothed woman', 'nakedness', 'a nudist beach', 'nudism', 'a sexualized cartoon', 'sexualised', 'a pornstar', 'pornhub style',
     'an XXX poster', 'an x-rated scene', 'she undresses slowly', 'a woman wearing nothing', 'wearing nothing but a smile',
-    'a man with no clothes', 'people without clothes', 'a model without clothing',
-    'cô gái không mặc quần áo', 'người không mặc gì', 'ảnh nóng của cô ấy', 'khong mac quan ao', 'nguoi khong mac gi',
+    'a man with no clothes', 'people without clothes', 'a model without clothing', 'a woman with no clothing', 'wearing no clothing',
+    'cô gái không mặc quần áo', 'người không mặc gì', 'ảnh nóng của cô ấy', 'ảnh nóng', 'khong mac quan ao', 'nguoi khong mac gi',
   ];
   const missedWider = wider.filter((p) => !sexualImageRequest(p));
   check('refused: the wider list, plain synonyms and word forms', missedWider.length === 0, missedWider.join(' | '));
@@ -73,6 +73,8 @@ section('a request for a sexual or nude picture is recognised, in English and Vi
     // The wider list's neighbours.
     'a lighthouse at sunset', 'a woman wearing a red coat', 'clothes on a rack', 'nothing on the table', 'a man wearing a hat',
     'ảnh nông thôn Việt Nam', 'tin nóng trong ngày', 'không mặc áo mưa', 'không mặc cả',
+    // "ảnh nóng" counts only with its accents: typed without them it is also "anh nông dân" (final review).
+    've anh nong dan tren dong lua', 'anh nong',
   ];
   const caught = fine.filter((p) => sexualImageRequest(p));
   check('passed: place names, look-alike words, and Vietnamese written with its accents', caught.length === 0, caught.join(' | '));
@@ -141,7 +143,7 @@ section('every picture request carries the filter, and the model is told up fron
   await requestImages(client, { model: 'gemini-3.1-flash-image', prompt: 'a lighthouse', count: 3 });
   check('each of several requests asks for sexually_explicit at block_low_and_above', asked.length === 3 && asked.every((r) => JSON.stringify(r.safety_settings) === JSON.stringify([{ type: 'sexually_explicit', threshold: 'block_low_and_above' }])), JSON.stringify(asked[0]?.safety_settings));
   const description = TOOLS_BY_NAME.generate_image?.description || '';
-  check("the tool's description says it never makes sexual, nude or intimate images, so the model refuses without calling it", /never makes sexual, nude or intimate images of anyone/.test(description), description.slice(-200));
+  check("the tool's description says it must not make sexual, nude or intimate images, so the model refuses without calling it", /It must not make sexual, nude or intimate images of anyone; refuse such requests without calling it./.test(description), description.slice(-200));
   // Only words go to Google: no photo can be taken in, changed or "undressed" (fix round 1).
   check('  and only the description goes to Google as input, as text', asked.every((r) => r.input === 'a lighthouse' && !('image' in r) && !('images' in r)), JSON.stringify(asked[0]?.input));
 }

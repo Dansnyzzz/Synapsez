@@ -1083,6 +1083,9 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Đăng nhập Google quá lâu. Hãy bắt đầu lại từ Cài đặt.",
   "Google refused the sign-in ({0}).":
     "Google từ chối đăng nhập ({0}).",
+  // What server/google.js puts in the brackets above, and in the Drive picker's refusal, when
+  // Google's answer gives no reason: translated as the value inside the sentence.
+  'no token': 'không có token',
   "Google did not give a refresh token, so scheduled runs could not reach it. Disconnect and connect again.":
     "Google không cấp refresh token, nên các lần chạy theo lịch sẽ không truy cập được. Hãy ngắt kết nối rồi kết nối lại.",
   "Google is not connected. The user can connect it in Settings → Connectors.":

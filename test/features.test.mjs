@@ -3186,7 +3186,7 @@ section('a public home page that says what Ephapse is, and no sexual imagery (1.
   check('  and a link to the privacy policy\'s Google section, which is there', about.includes('href="/privacy.html#google-user-data"') && about.includes('href="/privacy.html#google"') && read('public/privacy.html').includes('id="google-user-data"') && read('public/privacy.html').includes('id="google"'));
   // Fix round 1 (review, 2026-11-18): a rule and a described check, never a guarantee the word list cannot keep.
   const CHECK_EN = "Ephapse's server checks every picture request for sexual or nude wording, in English and Vietnamese, and refuses a match before any picture is asked of Google. The assistant is also instructed to refuse such requests itself, and every picture request Ephapse does send asks Gemini for its strictest filter for sexually explicit content.";
-  const CHECK_VI = 'Máy chủ của Ephapse kiểm tra mọi yêu cầu tạo ảnh để tìm từ ngữ tình dục hay khoả thân, bằng tiếng Anh và tiếng Việt, và từ chối trước khi yêu cầu Google tạo bất kỳ ảnh nào. Trợ lý cũng được dặn tự từ chối những yêu cầu như vậy, và mọi yêu cầu tạo ảnh Ephapse gửi đi đều đặt bộ lọc nội dung tình dục chặt nhất của Gemini.';
+  const CHECK_VI = 'Máy chủ của Ephapse kiểm tra mọi yêu cầu tạo ảnh để tìm từ ngữ tình dục hay khoả thân, bằng tiếng Anh và tiếng Việt, và từ chối yêu cầu khớp trước khi yêu cầu Google tạo bất kỳ ảnh nào. Trợ lý cũng được dặn tự từ chối những yêu cầu như vậy, và mọi yêu cầu tạo ảnh Ephapse gửi đi đều đặt bộ lọc nội dung tình dục chặt nhất của Gemini.';
   check('  pictures: made with the Gemini API, sexual, nude or intimate images not allowed, no AI NCII, in both languages', /Google's Gemini API/.test(enHalf) && /Ephapse does not allow sexual, nude or intimate images of anyone/.test(enHalf) && /\(AI NCII\)/.test(enHalf) && /does not use Google APIs or Google user data to create, edit or share such imagery/.test(enHalf) && /Ephapse không cho phép ảnh tình dục, khoả thân hay riêng tư của bất kỳ ai/.test(viHalf) && /\(AI NCII\)/.test(viHalf));
   check('  the check described as a check, in the ruled words, in both languages', enHalf.includes(CHECK_EN) && viHalf.includes(CHECK_VI));
   check('  and the picture tool takes only words: no photo in, so none changed or "undressed", in both languages', /takes only a text description: it cannot take in an existing photo, so it cannot change or "undress" one/.test(enHalf) && /chỉ nhận một mô tả bằng chữ: nó không thể nhận một bức ảnh có sẵn, nên không thể sửa hay "cởi đồ" một bức ảnh/.test(viHalf));
@@ -3236,6 +3236,53 @@ section('a public home page that says what Ephapse is, and no sexual imagery (1.
   const imageTool = TOOLS_BY_NAME.generate_image;
   const takes = Object.keys(imageTool?.parameters?.properties || {});
   check("generate_image's schema takes words only (prompt, name, aspect_ratio, count), nothing that could carry a picture", takes.join() === 'prompt,name,aspect_ratio,count' && Object.values(imageTool.parameters.properties).every((p) => p.type === 'string' || p.type === 'integer'), takes.join());
+}
+
+section("1.33.1's last fixes: the owner's checklist, the support mailbox, and what the final review found");
+{
+  const root = new URL('../', import.meta.url);
+  const read = (p) => fs.readFileSync(new URL(p, root), 'utf8');
+  const one = (s) => s.replace(/\s+/g, ' ');
+  const changelog = read('CHANGELOG.md');
+  const section133 = changelog.slice(changelog.indexOf('(1.33.1)'), changelog.indexOf('## 2026-11-17'));
+  // 1: the notes said only the contact address changed, while the usage policy also gained the NCII line.
+  check('CHANGELOG.md no longer says only the contact address changed: the usage policy\'s NCII clarification is named', !/only their contact address changed, said in a dated line, as the rename's line was/.test(section133) && section133.includes('only their contact address changed, in a dated line; the usage policy also gains a dated clarification of the NCII ban (below).'));
+  const owner = (section133.match(/\*\*Owner steps\.\*\*[^\n]*/) || [''])[0];
+  check('  its Owner steps name the support mailbox, the branding home page, the live-picture check and the first Picker test', /support@ephapse\.net/.test(owner) && /receive mail/.test(owner) && /about\.html/.test(owner) && /picture/.test(owner) && /first .*Picker test|Picker test/.test(owner), owner.slice(0, 200));
+
+  // 3: one ordered checklist near the top of the guide, each step linking to a heading that exists.
+  const guide = read('docs/google.md');
+  const at = guide.indexOf('## 1.33.1 owner checklist');
+  check("the guide opens with the 1.33.1 owner checklist, before section 1", at > 0 && at < guide.indexOf('## 1. Create the OAuth client'), String(at));
+  const list = guide.slice(at, guide.indexOf('## 1. Create the OAuth client'));
+  const steps = list.split(/\r?\n/).filter((l) => /^\d+\. /.test(l));
+  check('  eleven numbered steps', steps.length === 11, String(steps.length));
+  const order = ['support mailbox', 'Google Picker API', 'project number', 'GOOGLE_PICKER_API_KEY', 'redirect URI', 'Data Access', 'first live Picker test', 'ordinary picture', 'Application home page', 'Publish app', 'Verification Center'];
+  const where = order.map((word, i) => (steps[i] || '').includes(word));
+  check('  in the order the owner does them', where.every(Boolean), order.filter((_, i) => !where[i]).join(', '));
+  const slug = (h) => h.trim().toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, '').replace(/\s/g, '-');
+  const anchors = new Set(guide.split(/\r?\n/).filter((l) => /^#{2,3} /.test(l)).map((l) => slug(l.replace(/^#+ /, ''))));
+  const links = steps.map((s) => [...s.matchAll(/\]\(#([^)]+)\)/g)].map((m) => m[1]));
+  check('  each linking to its section, and every link lands on a heading', links.every((l) => l.length > 0) && links.flat().every((a) => anchors.has(a)), links.flat().filter((a) => !anchors.has(a)).join(', ') || links.map((l) => l.length).join(','));
+  check('  the redirect URI is the callback, and no JavaScript origin is needed', /https:\/\/www\.ephapse\.net\/api\/connectors\/google\/callback/.test(steps[4] || '') && /JavaScript origin/.test(steps[4] || ''));
+  // 2: the address on every public page must reach someone, before Google is told anything.
+  const deployed = one(guide.slice(guide.indexOf('Once 1.33.1 is deployed'), guide.indexOf('> Our application home page')));
+  check('  and the branding steps make support@ephapse.net receive mail, and test it, before "I have fixed the issues"', /support@ephapse\.net/.test(deployed) && /Cloudflare Email Routing|ImprovMX/.test(deployed) && /test mail/.test(deployed) && deployed.indexOf('support@ephapse.net') < deployed.indexOf('I have fixed the issues'));
+  // 11: what to do if Google ignores the narrowing, as a line for the developer.
+  const picker = one(guide.slice(guide.indexOf('## 7. The Drive Picker'), guide.indexOf('## 8. The verification submission')));
+  check('the Picker section says what the fallback would be if Google ignores the narrowing, for the developer to do', /not narrowed to drive\.file/.test(picker) && /Google Identity Services/.test(picker) && /JavaScript origin/.test(picker) && /[Tt]ell the developer/.test(picker));
+
+  // 6: approval is a default, as privacy.html says.
+  const en = read('public/js/locales/en.js');
+  const vi = read('public/js/locales/vi.js');
+  check("Gmail's connector text says sending asks first by default, in both languages", /'conn\.gmail\.about': '[^\n]*by default, sending asks you first/.test(en) && /'conn\.gmail\.about': '[^\n]*mặc định, trước khi gửi trợ lý hỏi bạn/.test(vi));
+  // 7: the Vietnamese says what the English does: it refuses a match.
+  const log = JSON.parse(read('public/changelog.json')).entries.find((e) => e.version === '1.33.1');
+  check('  the Vietnamese picture sentence refuses "a match", on the page and in the notes', /và từ chối yêu cầu khớp trước khi/.test(read('public/about.html')) && /và từ chối yêu cầu khớp trước khi/.test(log.new.vi.join(' ')) && !/và từ chối trước khi/.test(read('public/about.html') + log.new.vi.join(' ')));
+  // 9: a connection from before 1.33.1 can still reach the whole Drive, so the tool says when "only" holds.
+  const drive = TOOLS_BY_NAME.google_drive.description;
+  const first = drive.slice(0, drive.indexOf('. ') + 1);
+  check('the Drive tool says its search reaches only picked files for a connection made or renewed since 1.33.1, in its first sentence', /for a Google connection made or renewed since 1\.33\.1/.test(first) && !/never the rest of their Drive/.test(drive), first);
 }
 
 console.log(failures === 0 ? '\n\x1b[32mAll feature checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);

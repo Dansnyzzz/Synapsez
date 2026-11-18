@@ -8,7 +8,7 @@
           "Gmail giờ chỉ gửi thư: trợ lý gửi thư từ Gmail của bạn khi bạn nhờ, và không còn đọc, tìm, soạn nháp hay thay đổi thư của bạn.",
           "Thêm từ Google Drive giờ mở bộ chọn tệp của chính Google: chọn một hay nhiều tệp và chúng nằm ngay cạnh ô nhập tin nhắn. Drive giờ chỉ mở được tệp bạn chọn và tệp Ephapse tạo ra.",
           "Trang công khai www.ephapse.net/about.html cho biết Ephapse là gì và dùng dữ liệu Google thế nào, đọc được mà không cần đăng nhập. \"Ephapse là gì?\" ở màn hình đăng nhập mở trang này.",
-          "Ephapse không cho phép ảnh tình dục hay khoả thân: máy chủ kiểm tra mọi yêu cầu tạo ảnh để tìm từ ngữ tình dục hay khoả thân, bằng tiếng Anh và tiếng Việt, và từ chối trước khi yêu cầu Google tạo bất kỳ ảnh nào; mọi yêu cầu tạo ảnh cũng đặt bộ lọc nội dung tình dục chặt nhất của Gemini. Việc kiểm tra cố ý chặt, nên vài cách viết vô hại như \"giày màu nude\" cũng bị từ chối; hãy viết khác đi (\"giày màu be\"). Chính sách sử dụng nay nêu rõ lệnh cấm hình ảnh riêng tư không có sự đồng ý, kể cả do AI tạo."
+          "Ephapse không cho phép ảnh tình dục hay khoả thân: máy chủ kiểm tra mọi yêu cầu tạo ảnh để tìm từ ngữ tình dục hay khoả thân, bằng tiếng Anh và tiếng Việt, và từ chối yêu cầu khớp trước khi yêu cầu Google tạo bất kỳ ảnh nào; mọi yêu cầu tạo ảnh cũng đặt bộ lọc nội dung tình dục chặt nhất của Gemini. Việc kiểm tra cố ý chặt, nên vài cách viết vô hại như \"giày màu nude\" cũng bị từ chối; hãy viết khác đi (\"giày màu be\"). Chính sách sử dụng nay nêu rõ lệnh cấm hình ảnh riêng tư không có sự đồng ý, kể cả do AI tạo."
         ],
         "en": [
           "Gmail now only sends: the assistant sends an email from your Gmail when you ask, and can no longer read, search, draft or change your mail.",

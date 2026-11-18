@@ -37,8 +37,12 @@ const EXPLICIT_WHAT = new Set(['content', 'image', 'images', 'photo', 'photos', 
 const PHRASES_WRITTEN = [
   'khoả thân', 'khỏa thân', 'lõa thể', 'loã thể', 'lõa lồ', 'loã lồ', 'trần truồng', 'khiêu dâm',
   'gợi dục', 'tình dục', 'cởi đồ', 'cởi quần áo', 'không mặc quần áo', 'không mặc gì', 'ảnh nóng',
-  'wearing nothing', 'no clothes', 'without clothes', 'without clothing', 'x rated',
+  'wearing nothing', 'no clothes', 'without clothes', 'without clothing', 'no clothing', 'wearing no clothing', 'x rated',
 ];
+
+// Phrases that count only written with their accents: typed without them they are everyday words
+// too ("anh nong" is also "anh nông dân", a farmer). Final review, 1.33.1.
+const ACCENTS_REQUIRED = new Set(['ảnh nóng']);
 
 // What Gemini's Interactions API takes on `interactions.create` (`safety_settings`, each a `type`
 // and a `threshold`): https://ai.google.dev/gemini-api/docs/safety-settings, read 2026-11-18, and
@@ -60,8 +64,9 @@ const bare = (text) => text.normalize('NFD').replace(/\p{M}/gu, '').replace(/đ/
 // Grouped by their accent-free form, so one pass over the words checks every phrase.
 const PHRASES = PHRASES_WRITTEN.reduce((by, phrase) => {
   const key = bare(phrase);
-  const entry = by.get(key) || { length: key.split(' ').length, written: new Set() };
+  const entry = by.get(key) || { length: key.split(' ').length, written: new Set(), bareCounts: true };
   entry.written.add(phrase.normalize('NFC'));
+  if (ACCENTS_REQUIRED.has(phrase)) entry.bareCounts = false;
   by.set(key, entry);
   return by;
 }, new Map());
@@ -89,7 +94,7 @@ export function sexualImageRequest(prompt) {
       const phrase = PHRASES.get(key);
       if (!phrase) continue;
       const written = words.slice(i, i + n).join(' ');
-      if (written === key || phrase.written.has(written)) return true;
+      if ((phrase.bareCounts && written === key) || phrase.written.has(written)) return true;
     }
   }
   return false;

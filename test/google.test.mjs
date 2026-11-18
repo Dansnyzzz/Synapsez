@@ -402,5 +402,25 @@ section('the Drive picker is handed a token that reaches only what is picked (ow
   }
 }
 
+section("Google giving no reason reads in the reader's language too (final review, 1.33.1)");
+{
+  // When Google's answer names no reason, the server fills in "no token": that filled-in value was
+  // English inside the Vietnamese sentence.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{}', { status: 400, headers: { 'content-type': 'application/json' } });
+  let said = '';
+  try {
+    await google.finishAuth({ userId: 'u-noreason', code: 'c', origin: 'http://localhost:5173' });
+  } catch (err) {
+    said = err.message;
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  check('a sign-in Google answers with nothing says "no token"', said === 'Google refused the sign-in (no token).', said);
+  check('  and in Vietnamese all of it is Vietnamese', translateMessage(said, 'vi') === 'Google từ chối đăng nhập (không có token).', translateMessage(said, 'vi'));
+  const picker = translateMessage('Google would not give the Drive picker a token (no token). Reconnect Google in Settings → Connectors.', 'vi');
+  check("  and so is the Drive picker's", /\(không có token\)/.test(picker) && !/no token/.test(picker), picker);
+}
+
 console.log(failures === 0 ? '\n\x1b[32mAll Google checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

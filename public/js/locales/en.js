@@ -2827,7 +2827,7 @@ export const en = {
   'conn.gdrive.tagline': 'Open the files you pick, and save what the assistant makes',
   'conn.gdrive.about': 'Connect Google Drive so the assistant can work with the files you pick in Ephapse (Add from Google Drive, in the + menu) and the files Ephapse creates: read Docs, Sheets as tables, Slides and PDFs as text, create a Doc, Sheet, folder or file, upload what it made, and move, rename, share or trash those files when you ask. The rest of your Drive stays out of its reach. Connected before this release (1.33.1)? Disconnect every Google product you use, then connect again, to narrow it to this.',
   'conn.gmail.tagline': 'Send email from your Gmail when you ask',
-  'conn.gmail.about': 'Connect Gmail so the assistant can send an email from your Gmail when you ask it to; sending asks you first. It cannot read, search, draft or change your mail — to get help with a message, paste it into the chat.',
+  'conn.gmail.about': 'Connect Gmail so the assistant can send an email from your Gmail when you ask it to; by default, sending asks you first. It cannot read, search, draft or change your mail — to get help with a message, paste it into the chat.',
   'conn.gcalendar.tagline': 'Manage your schedule and coordinate meetings effortlessly',
   'conn.gcalendar.about': 'Connect Google Calendar so the assistant can list your events, check when you are free, and create, move or cancel events when you ask — always in your own time zone.',
   'conn.gdocs.tagline': 'Edit, comment on, and summarise your documents',

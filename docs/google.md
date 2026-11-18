@@ -10,6 +10,23 @@ and Drive reaches only the files a person picks in Google's own Picker or that E
 (`drive.file`). Restricted scopes are the ones whose review needs a paid yearly security
 assessment; sensitive and non-sensitive scopes are reviewed for free.
 
+## 1.33.1 owner checklist
+
+Every step is free. Do them in this order after 1.33.1 is deployed; each links to where it is
+explained.
+
+1. Set up the support mailbox: make `support@ephapse.net` receive mail (Cloudflare Email Routing if the domain's DNS is on Cloudflare, or ImprovMX, forwarding to your own mailbox), then send it a test mail ([§4, branding review](#branding-review-home-page-and-ai-ncii)).
+2. Enable the Google Picker API, and create its API key with Website restrictions `https://www.ephapse.net/*` and `https://docs.google.com/*` and API restriction "Google Picker API" ([§7](#7-the-drive-picker-once-5-minutes)).
+3. Note the project number: IAM & Admin → Settings, the digits rather than the project ID ([§7](#7-the-drive-picker-once-5-minutes)).
+4. Set `GOOGLE_PICKER_API_KEY` and `GOOGLE_PROJECT_NUMBER` in Vercel, and redeploy ([§2](#2-give-them-to-the-deployment)).
+5. Check that the OAuth client's redirect URI is `https://www.ephapse.net/api/connectors/google/callback`. No JavaScript origin is needed, because the Picker's token comes from the server; adding one does no harm ([§1](#1-create-the-oauth-client-once-10-minutes)).
+6. Data Access: replace the scopes with the listed set, and remove any older Gmail or Drive scope ([§6](#6-the-scopes-and-google-auth-platform--data-access)).
+7. The first live Picker test: + → Connectors → Add from Google Drive, pick a file, and see it land beside the message box; §7 says what each failure looks like ([§7](#7-the-drive-picker-once-5-minutes)).
+8. The live-picture test: one ordinary picture with the real key, for example "a lighthouse at sunset"; stop if the error names `safety_settings` ([§4, branding review, step 4](#branding-review-home-page-and-ai-ncii)).
+9. Branding: set Application home page to `https://www.ephapse.net/about.html`, then choose "I have fixed the issues" with the note ([§4](#branding-review-home-page-and-ai-ncii)).
+10. Audience → Publish app ([§3](#3-testing-publishing-and-verification)).
+11. Verification Center: submit, with the demo video and the justifications ([§8](#8-the-verification-submission-free)).
+
 ## 1. Create the OAuth client (once, ~10 minutes)
 
 1. Open <https://console.cloud.google.com/> and create a project (any name, e.g. "Ephapse").
@@ -126,16 +143,21 @@ outline your application's purpose and ensure it does not use Google APIs for AI
 
 Once 1.33.1 is deployed:
 
-1. Open `https://www.ephapse.net/about.html` in a private window, to see that it is live.
-2. In **Google Auth Platform → Branding → App domain**, set **Application home page** to
+1. Make `support@ephapse.net` receive mail. It is now the only contact address on the public
+   pages: the privacy policy, the terms, the usage policy, and twice on the home page. It costs
+   nothing: Cloudflare Email Routing (if the domain's DNS is on Cloudflare) or ImprovMX, either
+   forwarding to your own mailbox. Then send it a test mail from another address and see it
+   arrive, before submitting anything to Google.
+2. Open `https://www.ephapse.net/about.html` in a private window, to see that it is live.
+3. In **Google Auth Platform → Branding → App domain**, set **Application home page** to
    `https://www.ephapse.net/about.html` and save. `ephapse.net` stays an authorised domain, and
    the page sits under the Search Console property from item 1 above.
-3. In Ephapse, on an account with a Google Gemini key (Settings → Providers), start a new
+4. In Ephapse, on an account with a Google Gemini key (Settings → Providers), start a new
    conversation and make one ordinary picture with the real key, for example "a lighthouse at
    sunset". The safety setting has not yet been sent to Google from a real key. If it fails with
    an error that names `safety_settings`, stop and tell the developer before submitting the note:
    the note says that setting is sent.
-4. On the Branding page, under **Branding verification issues**, choose
+5. On the Branding page, under **Branding verification issues**, choose
    **I have fixed the issues**, paste the note below, and submit.
 
 > Our application home page is now https://www.ephapse.net/about.html. It is a public, static
@@ -277,6 +299,12 @@ been confirmed live. No wider token ever leaves the server.
   Referer). Do not change that header on your own: report it, because it protects every page.
 - "Google Drive's file picker did not load…" The browser could not fetch
   `https://apis.google.com/js/api.js` within 20 seconds: a network problem, or a blocker.
+
+If the first live test shows that Google ignored the narrowing (the log line
+`google picker token refused: not narrowed to drive.file`), the fallback is a browser-side Google
+Identity Services token client asking for `drive.file` alone, which then needs
+`https://www.ephapse.net` as an Authorised JavaScript origin on the OAuth client. Tell the
+developer; do not change anything yourself.
 
 ## 8. The verification submission (free)
 
