@@ -270,7 +270,14 @@ export async function executeTool(args) {
   const def = TOOLS_BY_NAME[args?.name];
   let notes = [];
   if (def?.parameters) {
-    let checked = readArguments(args.name, def.parameters, args.input);
+    // Inside a try, so no shape of input can throw out of here (review, fix round 5): the model
+    // reads a refusal it can act on, and the loop goes on.
+    let checked;
+    try {
+      checked = readArguments(args.name, def.parameters, args.input);
+    } catch {
+      checked = { ok: false, error: 'they could not be read. Send each argument as plain JSON of the type the tool lists.' };
+    }
     /*
      * A question form is judged by the same reader that drew it.
      *

@@ -22,7 +22,13 @@
  * refusing cost four steps in a row (owner, 2026-10-07).
  */
 
-const loose = (value) => String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+// An untrusted value read as text: a string as it is, a number or boolean as its digits or word,
+// anything else as nothing. Never `String(v)`: a JSON object with its own `toString` key
+// (`{"toString":1}`) throws when coerced, and that took the reader and the risk grader down with
+// it (review, fix round 5).
+export const asText = (/** @type {unknown} */ value) => (typeof value === 'string' ? value : typeof value === 'number' || typeof value === 'boolean' ? String(value) : '');
+
+const loose = (value) => asText(value).trim().toLowerCase().replace(/[\s-]+/g, '_');
 
 /** `cloud_browser` actions under the names models give them. */
 const BROWSER_ACTIONS = {
@@ -94,9 +100,9 @@ function browserStep(step) {
   const action = typeof out.action === 'string' ? out.action : '';
   if (TAKES_REF.has(action) && (out.ref === undefined || out.ref === null || out.ref === '')) {
     // `index` is a tab number for switch_tab — here it can only be an element.
-    const field = [...REF_FIELDS, 'index'].find((k) => /^\d+$/.test(String(out[k] ?? '').replace(/^#|\[|\]/g, '')));
+    const field = [...REF_FIELDS, 'index'].find((k) => /^\d+$/.test(asText(out[k]).replace(/^#|\[|\]/g, '')));
     if (field) {
-      out.ref = Number(String(out[field]).replace(/^#|\[|\]/g, ''));
+      out.ref = Number(asText(out[field]).replace(/^#|\[|\]/g, ''));
       delete out[field];
     }
   }
@@ -136,7 +142,7 @@ function sandboxInput(input) {
   const out = { ...input };
   if (out.command === undefined || out.command === null || out.command === '') {
     if (Array.isArray(out.commands)) {
-      const lines = out.commands.map((c) => (typeof c === 'string' ? c : c?.command ?? c?.cmd ?? '')).filter((c) => String(c).trim());
+      const lines = out.commands.map((c) => (typeof c === 'string' ? c : asText(c?.command ?? c?.cmd))).filter((c) => c.trim());
       if (lines.length) out.command = lines.join('\n');
       delete out.commands;
     } else if (typeof out.commands === 'string') {
@@ -163,7 +169,7 @@ function sandboxInput(input) {
   }
   // A file given without its path (owner, 2026-11-11: "files[0].path is required"): the
   // name the command runs it by — `python abs2.py` → abs2.py — or a plain one by its kind.
-  if (Array.isArray(out.files)) out.files = out.files.map((file, i) => namedFile(file, i, String(out.command || '')));
+  if (Array.isArray(out.files)) out.files = out.files.map((file, i) => namedFile(file, i, asText(out.command)));
   return out;
 }
 
@@ -186,7 +192,7 @@ function namedFile(file, i, command) {
     out.path = scripts[i];
     return out;
   }
-  const content = String(out.content ?? '');
+  const content = asText(out.content);
   const ext = PYTHONISH.test(content) ? 'py' : /^#!.*\b(ba)?sh\b/.test(content) ? 'sh' : 'txt';
   out.path = `file${i + 1}.${ext}`;
   return out;
@@ -237,7 +243,7 @@ function placeInput(input) {
     }
   };
   // A search phrased as "restaurants near me" is a search near somewhere.
-  const words = String(out.query ?? out.what ?? out.category ?? out.type ?? out.kind ?? '');
+  const words = asText(out.query ?? out.what ?? out.category ?? out.type ?? out.kind);
   // "search" is `find`, always: whether the words name one place ("Bệnh viện
   // Chợ Rẫy") or a kind of place ("quán ăn ngon Quận 1") is decided where the
   // kinds are known (`isKindOfPlace` in library.js), not guessed here.
@@ -312,7 +318,7 @@ function calculateInput(input) {
   const out = { ...input };
   const given = out[named];
   for (const k of CALC_FIELDS) delete out[k];
-  out.expression = Array.isArray(given) ? `[${given.map((item) => String(item)).join(', ')}]` : given;
+  out.expression = Array.isArray(given) ? `[${given.map((item) => asText(item)).join(', ')}]` : given;
   return out;
 }
 
@@ -333,7 +339,7 @@ function calculateInput(input) {
 export function salvageArguments(name, raw) {
   if (name !== 'calculate') return null;
   // Far past any sum, and short enough that this pattern cannot be made to take long.
-  const text = String(raw ?? '');
+  const text = asText(raw);
   if (text.length > 8000) return null;
   const m = /^\s*\{\s*"(?:expression|expressions|expr|formula)"\s*:\s*([^"\s][\s\S]*?)\s*\}\s*$/.exec(text);
   return m ? { expression: m[1] } : null;

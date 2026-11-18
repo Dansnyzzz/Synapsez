@@ -3066,7 +3066,25 @@ const SYSTEM_DIR = '(?:windows|program files(?: \\(x86\\))?|programdata|system32
 const PROTECTED_PATH = new RegExp(`^(?:[a-z]:[\\\\/])?${SYSTEM_DIR}`, 'i');
 const MENTIONS_PROTECTED = new RegExp(`(?:[a-z]:)?[\\\\/]${SYSTEM_DIR}\\b`, 'i');
 
-const isAbsolute = (p) => /^(?:[a-z]:[\\/]|[\\/]|~)/i.test(String(p || ''));
+// An argument read as text for grading, never by `String(v)`: a JSON object with its own
+// `toString` key throws when coerced, and took assessRisk, needsApproval and riskReason down
+// for 24 tools (review, fix round 5). A list or an object is read as all the text inside it, so
+// a command sent in the wrong shape is graded on what it says, never as nothing.
+const gradeText = (/** @type {unknown} */ v) => {
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (Array.isArray(v)) return v.map(gradeText).join(' ');
+  if (v && typeof v === 'object') {
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return '';
+    }
+  }
+  return '';
+};
+
+const isAbsolute = (p) => /^(?:[a-z]:[\\/]|[\\/]|~)/i.test(gradeText(p));
 
 /**
  * Extensions the operating system will *execute* rather than open.
@@ -3087,11 +3105,11 @@ const EXECUTABLE = /\.(exe|bat|cmd|com|scr|pif|msi|msp|ps1|psm1|vbs|vbe|js|jse|w
  */
 function pathArgument(name, input) {
   if (name === 'open_url') {
-    const target = String(input?.target || '');
+    const target = gradeText(input?.target);
     // A web address is not a path, and the browser is not the shell.
     return /^https?:\/\//i.test(target) ? '' : target;
   }
-  return input?.path ?? input?.file ?? '';
+  return gradeText(input?.path ?? input?.file);
 }
 
 /**
@@ -3178,9 +3196,9 @@ export function externalSource(name, input = {}) {
   if (name === 'github') return 'GitHub';
   if (name === 'notion_search') return 'Notion';
   if (name === 'run_command' || name === 'run_background_logs' || name === 'sandbox_run') {
-    return `the output of ${String(input?.command || 'a command').slice(0, 80)}`;
+    return `the output of ${(gradeText(input?.command) || 'a command').slice(0, 80)}`;
   }
-  return path ? String(path).slice(0, 200) : `the output of ${name}`;
+  return path ? gradeText(path).slice(0, 200) : `the output of ${name}`;
 }
 
 /** The Google actions that only read. Every other action writes and is shown first. */
@@ -3197,25 +3215,25 @@ export const GOOGLE_READS = {
 
 /** What a Google write is about to do, in the words the approval prompt shows. */
 function googleRiskReason(name, input = {}) {
-  const action = String(input?.action || '');
+  const action = gradeText(input?.action);
   if (name === 'gmail' && action === 'send') {
-    return `Sends an email from your Gmail to ${input?.to || 'someone'}. It cannot be unsent.`;
+    return `Sends an email from your Gmail to ${gradeText(input?.to) || 'someone'}. It cannot be unsent.`;
   }
   if (name === 'gmail' && action === 'draft') return 'Saves a draft in your Gmail. Nothing is sent.';
   if (name === 'gmail' && action === 'trash') return 'Moves an email to your Gmail trash.';
   if (name === 'google_calendar' && (action === 'create' || action === 'update') && input?.attendees) {
-    return `Changes your Google Calendar and sends an invitation to ${input.attendees}.`;
+    return `Changes your Google Calendar and sends an invitation to ${gradeText(input.attendees)}.`;
   }
   if (name === 'google_calendar' && action === 'delete') return 'Deletes an event from your Google Calendar.';
   if (name === 'google_drive' && action === 'share') {
-    return `Shares a Drive file with ${input?.email || 'anyone who has the link'}.`;
+    return `Shares a Drive file with ${gradeText(input?.email) || 'anyone who has the link'}.`;
   }
   if (name === 'google_drive' && action === 'trash') return 'Moves a file to your Google Drive trash.';
   if (name === 'google_tasks' && action === 'delete') return 'Deletes a task from Google Tasks.';
   // A cell that makes Google fetch an address when the sheet opens can carry the sheet with it
   // (2026-11-11, the "CellShock" class): said, with where it goes, rather than "changes something".
   if (name === 'google_sheets' && Array.isArray(input?.values)) {
-    const reaching = input.values.flat().map(String).filter((cell) => NETWORK_FORMULA.test(cell));
+    const reaching = input.values.flat().map(gradeText).filter((cell) => NETWORK_FORMULA.test(cell));
     if (reaching.length) {
       const hosts = [...new Set(reaching.flatMap((cell) => [...cell.matchAll(/https?:\/\/([^/"'\s)]+)/gi)].map((m) => m[1])))].slice(0, 3);
       return `Writes a formula that makes Google fetch ${hosts.length ? hosts.join(', ') : 'an address'} whenever the sheet is opened — it can send the sheet's contents there.`;
@@ -3254,7 +3272,7 @@ export function carriesData(name, input) {
   }
   let url;
   try {
-    url = new URL(String(input?.[key] || ''));
+    url = new URL(gradeText(input?.[key]));
   } catch {
     return false;
   }
@@ -3321,11 +3339,11 @@ export function assessRisk(name, rawInput = {}) {
 
   // Reading an API is what web_fetch already does; writing to one changes
   // something somewhere else, which somebody should see before it happens.
-  if (name === 'http_request') return /^(GET|HEAD)$/i.test(String(input?.method || 'GET')) ? 'ordinary' : 'sensitive';
+  if (name === 'http_request') return /^(GET|HEAD)$/i.test((gradeText(input?.method) || 'GET')) ? 'ordinary' : 'sensitive';
 
   // Google: reading the account is ordinary; sending, sharing, deleting and
   // writing into it are not, whatever the product.
-  if (GOOGLE_READS[name]) return GOOGLE_READS[name].includes(String(input?.action || '')) ? 'ordinary' : 'sensitive';
+  if (GOOGLE_READS[name]) return GOOGLE_READS[name].includes(gradeText(input?.action)) ? 'ordinary' : 'sensitive';
 
   // The shell is judged by what it is about to run, not by the fact that it is
   // the shell. `npm test` and `git status` are the texture of ordinary work and
@@ -3340,7 +3358,7 @@ export function assessRisk(name, rawInput = {}) {
   // `run_background` with `rm -rf` would have been "ordinary" purely because the
   // check named one tool rather than the capability.
   if (name === 'run_command' || name === 'run_background') {
-    const command = String(input?.command || '');
+    const command = gradeText(input?.command);
     if (looksDestructive(command) || MENTIONS_PROTECTED.test(command)) return 'sensitive';
     return 'ordinary';
   }
@@ -3351,12 +3369,12 @@ export function assessRisk(name, rawInput = {}) {
   // Windows', so the protected-path list does not apply here — but the signed-in
   // browser and the login scripts on it do (`sandboxTouchesPrivate`).
   if (name === 'sandbox_run') {
-    return looksDestructive(String(input?.command || '')) ||
-      looksDestructive(String(input?.terminal?.text || '')) ||
+    return looksDestructive(gradeText(input?.command)) ||
+      looksDestructive(gradeText(input?.terminal?.text)) ||
       pythonLooksRisky(input?.python) ||
       // Python typed at a REPL, or handed to `python3 -c`, sends what it sends all the same.
       pythonLooksRisky(input?.terminal?.text) ||
-      (/\bpython[\d.]*\b/.test(String(input?.command || '')) && pythonLooksRisky(input?.command)) ||
+      (/\bpython[\d.]*\b/.test(gradeText(input?.command)) && pythonLooksRisky(input?.command)) ||
       sandboxTouchesPrivate(input) ||
       filesLookRisky(input) ||
       !!input?.expose_port ||
@@ -3368,13 +3386,13 @@ export function assessRisk(name, rawInput = {}) {
   // Writing outside the folder the user pointed at is a different act from
   // writing inside it, whatever the tool.
   const path = pathArgument(name, input);
-  if (path && (isAbsolute(path) || PROTECTED_PATH.test(path) || String(path).includes('..'))) {
+  if (path && (isAbsolute(path) || PROTECTED_PATH.test(path) || gradeText(path).includes('..'))) {
     return 'sensitive';
   }
   // Asking the OS to open a program is asking it to run the program.
   if (name === 'open_url' && path && EXECUTABLE.test(path)) return 'sensitive';
 
-  if (name === 'desktop_key' && DANGEROUS_KEYS.test(String(input?.keys || ''))) return 'sensitive';
+  if (name === 'desktop_key' && DANGEROUS_KEYS.test(gradeText(input?.keys))) return 'sensitive';
 
   // Launching a program is ordinary; launching a shell to get around the shell
   // rule is not.
@@ -3400,7 +3418,7 @@ export function assessRisk(name, rawInput = {}) {
      * Matched on the basename, so `/usr/bin/python3` and `C:\Python\python.exe`
      * are the same answer as `python`.
      */
-    const app = String(input?.app || '').toLowerCase();
+    const app = gradeText(input?.app).toLowerCase();
     const base = app.split(/[\\/]/).pop().replace(/\.(exe|com|bat|cmd)$/, '');
     if (/^(cmd|powershell|pwsh|wt|bash|sh|zsh|fish|dash|ksh|regedit|wsl|terminal|iterm)$/.test(base)) return 'sensitive';
     if (/^(python\d*|python3|node|deno|bun|perl|ruby|php|osascript|mshta|wscript|cscript|rundll32|regsvr32)$/.test(base)) return 'sensitive';
@@ -3454,7 +3472,7 @@ export function riskReason(name, rawInput = {}) {
   }
 
   if (name === 'run_command' || name === 'run_background') {
-    const command = String(input?.command || '');
+    const command = gradeText(input?.command);
     if (looksDestructive(command)) return 'This command looks destructive or irreversible.';
     if (MENTIONS_PROTECTED.test(command)) return 'This command touches Windows system files.';
     return null;
@@ -3462,27 +3480,27 @@ export function riskReason(name, rawInput = {}) {
   if (name === 'http_request') {
     let host = 'an API';
     try {
-      host = new URL(String(input?.url || '')).host || host;
+      host = new URL(gradeText(input?.url)).host || host;
     } catch {
       /* named generically when the address does not parse */
     }
-    return `Sends a ${String(input?.method || 'GET').toUpperCase()} request to ${host}, which may change something there.`;
+    return `Sends a ${(gradeText(input?.method) || 'GET').toUpperCase()} request to ${host}, which may change something there.`;
   }
   if (name === 'download_file') {
-    return `Downloads ${input?.url || 'a file'} onto your computer.`;
+    return `Downloads ${gradeText(input?.url) || 'a file'} onto your computer.`;
   }
   if (GOOGLE_READS[name]) return googleRiskReason(name, input);
   // The audience is not the person being asked, and none of it can be recalled.
   if (name === 'send_email') {
-    return `Sends an email to ${input?.to || 'your own account address'}. It cannot be unsent.`;
+    return `Sends an email to ${gradeText(input?.to) || 'your own account address'}. It cannot be unsent.`;
   }
-  if (name === 'slack_post') return `Posts to ${input?.channel || 'a Slack channel'}, where other people will read it.`;
+  if (name === 'slack_post') return `Posts to ${gradeText(input?.channel) || 'a Slack channel'}, where other people will read it.`;
   if (name === 'publish_file') return 'Makes this file public: anyone with the link can open it without signing in.';
-  if (name === 'sandbox_run' && (looksDestructive(String(input?.command || '')) || looksDestructive(String(input?.terminal?.text || '')))) {
+  if (name === 'sandbox_run' && (looksDestructive(gradeText(input?.command)) || looksDestructive(gradeText(input?.terminal?.text)))) {
     return 'This command on the cloud computer looks like it sends data out or destroys something.';
   }
   if (name === 'sandbox_run' && input?.expose_port) {
-    return `Gives port ${input.expose_port} of the cloud computer a public address: anyone who has it can reach what is listening there.`;
+    return `Gives port ${gradeText(input.expose_port)} of the cloud computer a public address: anyone who has it can reach what is listening there.`;
   }
   if (name === 'sandbox_run' && input?.checkpoint?.action === 'restore') {
     return 'Puts the cloud computer back to a saved checkpoint: everything since then on it is gone.';
@@ -3499,32 +3517,32 @@ export function riskReason(name, rawInput = {}) {
   if (name === 'sandbox_run' && filesLookRisky(input)) {
     return 'Writes a file on the cloud computer that, run, would send data out, destroy something, use root, or reach the browser\'s sign-ins.';
   }
-  if (name === 'telegram_send') return `Sends a Telegram message to ${input?.chat_id || 'a chat'}.`;
+  if (name === 'telegram_send') return `Sends a Telegram message to ${gradeText(input?.chat_id) || 'a chat'}.`;
   if (name === 'meta_page_post') return 'Publishes a post on your Facebook Page, publicly and immediately.';
   if (name === 'github_write') {
-    return `${String(input?.method || 'POST').toUpperCase()} to GitHub ${input?.path || ''} — other people will see this.`;
+    return `${(gradeText(input?.method) || 'POST').toUpperCase()} to GitHub ${gradeText(input?.path) || ''} — other people will see this.`;
   }
   if (name === 'delete_file') {
     return input?.recursive
-      ? `Deletes ${input?.path || 'that folder'} and everything under it. There is no undo.`
-      : `Deletes ${input?.path || 'that file'}. There is no undo.`;
+      ? `Deletes ${gradeText(input?.path) || 'that folder'} and everything under it. There is no undo.`
+      : `Deletes ${gradeText(input?.path) || 'that file'}. There is no undo.`;
   }
   if (name === 'desktop_close') return 'Closes a window. Anything unsaved in it is lost.';
   if (name === 'process_kill') {
-    const target = input?.pid ? `process ${input.pid}` : input?.name ? `every "${input.name}"` : 'a program';
+    const target = input?.pid ? `process ${gradeText(input.pid)}` : input?.name ? `every "${gradeText(input.name)}"` : 'a program';
     return `Stops ${target}${input?.force ? ' outright' : ''}. Anything unsaved in it is lost.`;
   }
   if (name === 'clipboard_write') return 'Replaces what is currently on your clipboard.';
   if (name === 'forget_docs') {
     return input?.source
-      ? `Forgets the search index for "${input.source}". The files stay; re-indexing them costs tokens.`
+      ? `Forgets the search index for "${gradeText(input.source)}". The files stay; re-indexing them costs tokens.`
       : 'Forgets every indexed document. The files stay, but the whole index has to be rebuilt.';
   }
   if (name === 'index_folder') {
-    return `Reads every document under ${input?.path || 'that folder'} and sends the text to be embedded.`;
+    return `Reads every document under ${gradeText(input?.path) || 'that folder'} and sends the text to be embedded.`;
   }
   if (name === 'set_workspace') {
-    return `Moves the workspace to ${input?.path || 'another folder'}. The file tools will work there from now on.`;
+    return `Moves the workspace to ${gradeText(input?.path) || 'another folder'}. The file tools will work there from now on.`;
   }
 
   const path = pathArgument(name, input);
@@ -3532,9 +3550,9 @@ export function riskReason(name, rawInput = {}) {
     return 'This runs a program on your computer, not just opens a document.';
   }
   if (path && PROTECTED_PATH.test(path)) return 'This path belongs to Windows, not to your work.';
-  if (path && (isAbsolute(path) || String(path).includes('..'))) return 'This path is outside your workspace.';
+  if (path && (isAbsolute(path) || gradeText(path).includes('..'))) return 'This path is outside your workspace.';
 
-  if (name === 'desktop_key' && DANGEROUS_KEYS.test(String(input?.keys || ''))) {
+  if (name === 'desktop_key' && DANGEROUS_KEYS.test(gradeText(input?.keys))) {
     return 'This key combination can close or delete things.';
   }
   if (name === 'desktop_launch' || name === 'launch_app') return 'Starts a program that can do anything you can.';
@@ -3549,7 +3567,7 @@ export function riskReason(name, rawInput = {}) {
  * written can only ask more often, never less.
  */
 export function shellFolded(command) {
-  return String(command || '')
+  return gradeText(command)
     .replace(/\\(?=[A-Za-z])/g, '')
     .replace(/(["'])\1/g, '')
     .replace(/(?<=[\w./-])["']|["'](?=[\w./-])/g, '');
@@ -3557,7 +3575,7 @@ export function shellFolded(command) {
 
 /** Whether a shell command matched one of the destructive patterns. */
 export function looksDestructive(command) {
-  const written = String(command || '');
+  const written = gradeText(command);
   const folded = shellFolded(written);
   return DANGEROUS_COMMAND.some((re) => re.test(written) || re.test(folded));
 }
@@ -3606,7 +3624,7 @@ const PYTHON_SENDS =
   /\b\w+\.(?:post|patch)\s*\(|\b(?:requests|httpx|aiohttp|session|client|http)\.(?:put|delete)\s*\(|\burlopen\s*\([^)]*\bdata\s*=|\bRequest\s*\([^)]*\bdata\s*=|\bhttp\.client\b|\bsocket\.socket\s*\(|\b(?:smtplib|ftplib|paramiko|telnetlib)\b/i;
 
 export function pythonLooksRisky(code) {
-  const text = String(code || '');
+  const text = gradeText(code);
   return !!text && (PYTHON_SENDS.test(text) || looksDestructive(text));
 }
 
@@ -3618,7 +3636,7 @@ export function pythonLooksRisky(code) {
 export function filesLookRisky(input = {}) {
   const files = Array.isArray(input?.files) ? input.files : [];
   return files.some((f) => {
-    const text = String(f?.content ?? '');
+    const text = gradeText(f?.content);
     return !!text && (looksDestructive(text) || PYTHON_SENDS.test(text) || SANDBOX_PRIVATE.test(text));
   });
 }
@@ -3626,11 +3644,11 @@ export function filesLookRisky(input = {}) {
 export function sandboxTouchesPrivate(input = {}) {
   if (input?.as_root === true) return true;
   const named = [
-    String(input?.command || ''),
-    String(input?.python || ''),
-    String(input?.download || ''),
-    String(input?.terminal?.text || ''),
-    ...(Array.isArray(input?.files) ? input.files.map((f) => String(f?.path || '')) : []),
+    gradeText(input?.command),
+    gradeText(input?.python),
+    gradeText(input?.download),
+    gradeText(input?.terminal?.text),
+    ...(Array.isArray(input?.files) ? input.files.map((f) => gradeText(f?.path)) : []),
   ];
   return named.some((text) => SANDBOX_PRIVATE.test(text));
 }

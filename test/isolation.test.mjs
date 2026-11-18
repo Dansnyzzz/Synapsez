@@ -1755,8 +1755,9 @@ section('the untrusted-content boundary');
   }
 
   // Every catalogue tool, every field at every depth, sent wrong-typed and
-  // wrong-enum values: the reader answers, it never throws.
-  const WRONG = [123, 1.5, true, 'definitely-not-allowed', '', null, [], [1, 'x', null], {}, { item: [1] }, { a: { b: 1 } }, '[1,2]', 'true'];
+  // wrong-enum values: the reader answers, it never throws. Fix round 5: and values that shadow
+  // `toString` / `valueOf`, which threw wherever a reader or the grader wrote `String(v)`.
+  const WRONG = [123, 1.5, true, 'definitely-not-allowed', '', null, [], [1, 'x', null], {}, { item: [1] }, { a: { b: 1 } }, '[1,2]', 'true', JSON.parse('{"toString":1}'), JSON.parse('{"valueOf":1,"toString":1}'), [JSON.parse('{"toString":1}')], { text: JSON.parse('{"toString":1}') }];
   const filler = (s, depth = 0) => {
     if (!s || depth > 6) return 'x';
     if (Array.isArray(s.enum)) return s.enum[0];
@@ -1798,13 +1799,30 @@ section('the untrusted-content boundary');
           const r = readArguments(tool.name, tool.parameters, input);
           if (typeof r?.ok !== 'boolean') throws.push(`${tool.name}.${path.join('.')} = ${JSON.stringify(v)}: no result`);
           assessRisk(tool.name, input);
+          riskReason(tool.name, input);
         } catch (e) {
           if (throws.length < 8) throws.push(`${tool.name}.${path.join('.')} = ${JSON.stringify(v)}: ${e.message}`);
         }
       }
     }
   }
-  check(`every tool, every field at every depth, wrong-typed and wrong-enum: the reader never throws (${tried} calls)`, tried > 1000 && throws.length === 0, throws.join(' | '));
+  check(`every tool, every field at every depth, wrong-typed and wrong-enum: the reader and the risk grader never throw (${tried} calls)`, tried > 1000 && throws.length === 0, throws.join(' | '));
+  // Fix round 5: whatever the reader does, executeTool answers {content, isError} and never
+  // throws: the read sits inside a try. Arguments that throw on every access stand in for a
+  // shape no reader foresaw.
+  {
+    const { executeTool: runIt } = await import('../server/tools/execute.js');
+    const hostile = new Proxy({}, { ownKeys() { throw new Error('unreadable'); }, getOwnPropertyDescriptor() { throw new Error('unreadable'); } });
+    let ran;
+    try {
+      ran = await runIt({ user: { id: 'nobody' }, name: 'place_lookup', input: hostile, chatId: null });
+    } catch (e) {
+      ran = { thrown: e.message };
+    }
+    check('executeTool refuses arguments it cannot read, rather than throwing', ran?.isError === true && /could not be read/.test(ran.content || ''), JSON.stringify(ran));
+    const shadow = await runIt({ user: { id: 'nobody' }, name: 'place_lookup', input: JSON.parse('{"what":{"toString":1}}'), chatId: null }).catch((e) => ({ thrown: e.message }));
+    check('  and a value shadowing toString is answered, not thrown (place_lookup.what)', typeof shadow?.content === 'string' && !shadow.thrown, JSON.stringify(shadow).slice(0, 200));
+  }
   const near = validateArguments(mail, { subject: 'S', body: 'B', kind: 'Thank you' });
   check('a near miss is read as what it meant', near.ok && near.input.kind === 'thank_you', JSON.stringify(near.input));
   const exact = validateArguments(mail, { subject: 'S', body: 'B', kind: 'report' });
