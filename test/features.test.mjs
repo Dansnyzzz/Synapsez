@@ -3070,8 +3070,8 @@ section('the product is Ephapse: the old name is nowhere but where it must stay 
   check('  every exception is still used (a stale one would hide a new miss)', ALLOWED.every((a) => files.some((f) => a.file.test(f) && !BINARY.test(f) && read(f).split(/\r?\n/).some((l) => a.line.test(l)))));
 
   const { LEGAL } = await import('../server/legal.js');
-  // The rename moved no id. The notice moved on in 1.33.1, for the narrower Google access (its own section below).
-  check('the legal version ids the rename left alone are unchanged: nobody was asked to agree again for it', LEGAL.notice === 'privacy-2026-11-18' && LEGAL.terms === 'terms-2026-11-03' && LEGAL.usage === 'usage-2026-10-26', JSON.stringify(LEGAL));
+  // The rename moved no id. The notice has moved on since, for its own reasons (pinned in the 1.33.1 section below).
+  check('the legal version ids the rename left alone are unchanged: nobody was asked to agree again for it', LEGAL.terms === 'terms-2026-11-03' && LEGAL.usage === 'usage-2026-10-26', JSON.stringify(LEGAL));
   for (const page of ['privacy', 'terms', 'usage-policy']) {
     const html = read(`public/${page}.html`);
     check(`  ${page}.html says the name changed, in both languages, with the date`, html.includes(`${OLD[0].toUpperCase()}${OLD.slice(1)} nay đổi tên thành Ephapse (www.ephapse.net)`) && html.includes(`${OLD[0].toUpperCase()}${OLD.slice(1)} is now Ephapse (www.ephapse.net)`) && html.includes('Đổi tên: 17/11/2026') && html.includes('Renamed: 17 November 2026'));
@@ -3126,15 +3126,17 @@ section('Google on free review and the public contact address (1.33.1)');
     check(`  ${page}.html keeps its version and says the address changed, with the date`, html.includes('Địa chỉ liên hệ mới: 18/11/2026') && html.includes('New contact address: 18 November 2026'));
   }
   const notice = read('public/privacy.html');
+  const { LEGAL } = await import('../server/legal.js');
+  check('the privacy notice is privacy-2026-11-18: what Ephapse reaches changed, so it is asked once (its own section 9)', LEGAL.notice === 'privacy-2026-11-18' && notice.includes('Phiên bản privacy-2026-11-18') && notice.includes('Version privacy-2026-11-18'), LEGAL.notice);
   check('the privacy notice says what changed since privacy-2026-11-12, in both languages', notice.includes('So với bản privacy-2026-11-12:') && notice.includes('Since privacy-2026-11-12:'));
   check('  and that the Picker hands the browser a short-lived Drive token, where it said none ever reached it', /mã ngắn hạn/.test(notice) && /short-lived token/.test(notice) && !/never sent to the browser/.test(notice));
-  check('  and how a connection made before narrows: disconnect, then connect again', /made before 18 November 2026/.test(notice) && /tạo trước ngày 18\/11\/2026/.test(notice));
+  check('  and how a connection made before narrows: disconnect, then connect again', /made before the 1\.33\.1 update/.test(notice) && /tạo trước bản cập nhật 1\.33\.1/.test(notice));
 
   const log = JSON.parse(read('public/changelog.json')).entries.find((e) => e.version === '1.33.1');
   const en = [...(log?.new?.en || []), ...(log?.improved?.en || [])].join(' ');
   const vi = [...(log?.new?.vi || []), ...(log?.improved?.vi || [])].join(' ');
   check('1.33.1 is released in both languages: Gmail only sends, Drive opens the files you pick', !!log && /only send/i.test(en) && /Google Picker|pick/i.test(en) && /chỉ (còn )?gửi/i.test(vi) && /chọn/.test(vi), en.slice(0, 200));
-  check('  and says a connection from before narrows only by disconnecting and connecting again', /disconnect/i.test(en) && /ngắt kết nối/i.test(vi));
+  check('  and says a connection from before narrows only by disconnecting and connecting again, which Drive users must do', /must disconnect/i.test(en) && /phải ngắt kết nối/i.test(vi));
   check('  CHANGELOG.md carries it, and the owner\'s guide has the Picker setup', read('CHANGELOG.md').includes('(1.33.1)') && /GOOGLE_PICKER_API_KEY/.test(read('docs/google.md')) && /GOOGLE_PROJECT_NUMBER/.test(read('docs/google.md')));
   const guide = read('docs/google.md');
   check('  and the guide asks for no restricted scope', !/auth\/(gmail\.(modify|readonly|compose|metadata)|drive\.readonly|drive\.metadata)\b|auth\/drive(?![.\w])|mail\.google\.com/.test(guide));

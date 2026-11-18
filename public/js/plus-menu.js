@@ -39,7 +39,7 @@ import { openDrivePicker } from './google-picker.js';
  *   pickSkill: (name: string) => void,
  *   picked: () => string[],
  *   attach: (attachment: any) => void,
- *   room?: () => number,
+ *   room?: () => { left: number, limit: number },
  *   prefs: () => Record<string, any>,
  *   savePrefs: (patch: Record<string, any>) => Promise<any>,
  *   openSettings: (tab: string, focusId?: string) => void,
@@ -341,13 +341,15 @@ function pluginItems(deps) {
  * Google Drive: Google's own Picker, opened straight from the row (owner,
  * 2026-11-18) — with `drive.file`, a file picked there is one Ephapse may open.
  * Each one lands in the tray as an upload does, marked as from Drive by the
- * server; at most as many as the message still has room for.
+ * server; at most as many as the message still has room for, and with the
+ * tray already full it is not opened at all — said in the upload's own words.
  */
 function pickFromDrive(deps) {
   const room = deps.room?.();
+  if (room && room.left <= 0) return toast(t('attachment.tooMany', { count: room.limit }), 'error');
   openDrivePicker({
     language: currentLanguage(),
-    maxItems: room > 0 ? room : undefined,
+    maxItems: room?.left,
     onAttaching: () => toast(t('plus.driveAdding')),
     onPicked: (attachments) => attachments.forEach((attachment) => deps.attach(attachment)),
     onError: (message) => toast(message, 'error'),

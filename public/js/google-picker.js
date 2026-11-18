@@ -20,6 +20,8 @@ import { t } from './i18n.js';
 
 // Google's loader. The page policy lets this one third-party script in, and frames from docs.google.com.
 const LOADER = 'https://apis.google.com/js/api.js';
+// How long Google's loader, and then its picker library, may take before the person is told.
+const LOAD_TIMEOUT_MS = 20_000;
 
 /** @type {Promise<void> | null} */
 let loading = null;
@@ -32,13 +34,23 @@ function loadPicker() {
   if (w.google?.picker) return Promise.resolve();
   loading ||= new Promise((resolve, reject) => {
     const failed = () => reject(new Error(t('plus.driveLoadFailed')));
-    const library = () => w.gapi.load('picker', { callback: resolve, onerror: failed, timeout: 20000, ontimeout: failed });
+    const library = () => w.gapi.load('picker', { callback: resolve, onerror: failed, timeout: LOAD_TIMEOUT_MS, ontimeout: failed });
     if (w.gapi?.load) return library();
     const script = document.createElement('script');
+    // A loader that never answers — a stalled network, a blocker that holds it — is a failure too.
+    const stalled = setTimeout(() => {
+      script.onload = script.onerror = null;
+      script.remove();
+      failed();
+    }, LOAD_TIMEOUT_MS);
     script.src = LOADER;
     script.async = true;
-    script.onload = library;
+    script.onload = () => {
+      clearTimeout(stalled);
+      library();
+    };
     script.onerror = () => {
+      clearTimeout(stalled);
       script.remove();
       failed();
     };
@@ -52,8 +64,9 @@ function loadPicker() {
 
 /**
  * Open the Picker; each file picked is attached, and the attachments handed to
- * `onPicked` — `onAttaching` first, since a big file takes a moment. Cancelling does nothing. Anything that goes wrong is a sentence
- * for `onError`, in the reader's language.
+ * `onPicked` — `onAttaching` first, since a big file takes a moment.
+ * Cancelling does nothing. Anything that goes wrong, the Picker failing in
+ * its own frame included, is a sentence for `onError`, in the reader's language.
  *
  * @param {{
  *   language: string,
@@ -92,7 +105,9 @@ export async function openDrivePicker({ language, maxItems, onAttaching, onPicke
     const shown = builder
       .setCallback((data) => {
         const action = data?.[picker.Response.ACTION];
-        if (action !== picker.Action.PICKED && action !== picker.Action.CANCEL) return;
+        // Google's own failure (a refused key, a site the key does not allow) closes it as a cancel does.
+        const failed = action === (picker.Action.ERROR || 'error');
+        if (action !== picker.Action.PICKED && action !== picker.Action.CANCEL && !failed) return;
         // Its frame goes with it, rather than one hidden frame of Google's left behind per opening.
         try {
           shown.dispose();
@@ -100,10 +115,17 @@ export async function openDrivePicker({ language, maxItems, onAttaching, onPicke
           // Already gone: nothing to tidy.
         }
         returnTo?.focus?.({ preventScroll: true });
+        if (failed) {
+          // For the owner, in DevTools: what Google said, never the token (docs/google.md, section 7).
+          const said = Object.fromEntries(Object.entries(data || {}).filter(([name]) => !/token|key/i.test(name)));
+          console.warn('Google Drive picker failed', said);
+          onError(t('plus.drivePickerFailed'));
+          return;
+        }
         const docs = action === picker.Action.PICKED ? data[picker.Response.DOCUMENTS] || [] : [];
         if (!docs.length) return;
         onAttaching?.();
-        attachPicked(docs, picker, { onPicked, onError });
+        attachPicked(docs, picker, { onPicked, onError }).catch((err) => onError(err?.message || String(err)));
       })
       .build();
     shown.setVisible(true);

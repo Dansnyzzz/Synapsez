@@ -15,11 +15,11 @@
       },
       "improved": {
         "vi": [
-          "Nếu bạn đã kết nối Google trước bản cập nhật này, kết nối vẫn chạy cho tới khi hết hạn. Để chuyển sang quyền hẹp hơn, hãy ngắt kết nối mọi sản phẩm Google đang dùng ở Cài đặt → Kết nối rồi kết nối lại; trước khi làm vậy, Thêm từ Google Drive có thể yêu cầu bạn kết nối lại Google.",
+          "Nếu bạn đã kết nối Google trước bản cập nhật này, kết nối vẫn chạy cho tới khi hết hạn. Nếu bạn đã kết nối Google Drive trước bản cập nhật này, bạn phải ngắt kết nối mọi sản phẩm Google ở Cài đặt → Kết nối rồi kết nối lại thì Thêm từ Google Drive mới dùng được. Làm như vậy cũng chuyển mọi kết nối cũ sang quyền hẹp hơn.",
           "Chính sách quyền riêng tư đã ghi rõ những điều trên, và bạn sẽ được hỏi đồng ý một lần. Địa chỉ liên hệ trên các trang pháp lý nay là support@ephapse.net."
         ],
         "en": [
-          "If you connected Google before this update, it keeps working until the connection ends. To get the narrower access, disconnect every Google product you use in Settings → Connectors, then connect again; until you do, Add from Google Drive may ask you to reconnect Google.",
+          "If you connected Google before this update, it keeps working until the connection ends. If you connected Google Drive before this update, you must disconnect every Google product in Settings → Connectors and connect again before Add from Google Drive works. Doing the same gives any older connection the narrower access.",
           "The privacy policy says all this, and you are asked once to agree to it. The contact address on the legal pages is now support@ephapse.net."
         ]
       }

@@ -80,9 +80,17 @@ section('security headers');
   const anon = jar();
   const res = await anon.call('GET', '/api/session');
   check('a Content-Security-Policy is sent', !!res.headers.get('content-security-policy'));
+  // Since 1.33.1 one origin besides this one: Google's loader for the Drive Picker. Nothing inline, no eval.
+  const { CONTENT_SECURITY_POLICY } = await import('../server/securityHeaders.js');
+  const scriptSrc = (csp) => (/(?:^|;)\s*script-src ([^;]*)/.exec(csp)?.[1] || '').trim().split(/\s+/);
+  const served = scriptSrc(res.headers.get('content-security-policy') || '');
   check(
-    'and it forbids scripts from anywhere else',
-    /script-src 'self'/.test(res.headers.get('content-security-policy') || ''),
+    "and it forbids scripts from anywhere else but Google's Picker loader, inline or eval",
+    served.join(' ') === scriptSrc(CONTENT_SECURITY_POLICY).join(' ') &&
+      served[0] === "'self'" &&
+      !served.some((s) => /unsafe-(inline|eval|hashes)|^\*$|^https?:$|^data:$|^blob:$/.test(s)) &&
+      served.slice(1).every((s) => s === 'https://apis.google.com'),
+    served.join(' '),
   );
   check('the page cannot be framed', res.headers.get('x-frame-options') === 'DENY');
   check('content types are not sniffed', res.headers.get('x-content-type-options') === 'nosniff');

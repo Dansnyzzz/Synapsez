@@ -16,7 +16,9 @@
 
 **A new public contact address.** The legal pages and the data-transfer assessment write to support@ephapse.net instead of a personal address. A scan test fails if that personal address comes back into any tracked file.
 
-**Content-Security-Policy.** As Task 1 set it: `https://apis.google.com` in script-src and `https://docs.google.com` in frame-src, identical in `server/securityHeaders.js` and `vercel.json`. Opening the Picker in Playwright's full Chromium against Google's real loader, at desktop and phone size, recorded no violation, so nothing else was added.
+**Content-Security-Policy.** `https://apis.google.com` in script-src and `https://docs.google.com` in frame-src, identical in `server/securityHeaders.js` and `vercel.json`. Opening the Picker in Playwright's full Chromium against Google's real loader, at desktop and phone size, recorded no violation, so nothing else was added.
+
+**When Google's Picker itself fails** (a refused key, a site the key does not allow), it closes, the person is told it could not open, and DevTools has a `Google Drive picker failed` warning with what Google said. A loader that never answers is given up after 20 seconds. With the tray already full, the Picker is not opened and the upload's own limit is said.
 
 **Not verified live:** whether Google narrows the scope on a refresh (the owner's first Picker test shows it; a "Reconnect Google" or "did not confirm" refusal means it did not), the Picker with a real key, and attaching a picked file through the stored grant.
 

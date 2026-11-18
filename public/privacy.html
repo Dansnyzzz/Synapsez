@@ -92,7 +92,7 @@
     <li><strong>Google Tasks</strong> (<code>tasks</code>): xem, thêm, đánh dấu xong và xoá việc.</li>
     <li><strong>Danh bạ Google</strong> (<code>contacts.readonly</code>): tìm và xem danh bạ — chỉ đọc.</li>
   </ul>
-  <p>Kết nối Google tạo trước ngày 18/11/2026 có thể vẫn mang quyền rộng hơn đã cấp lúc đó (đọc thư; toàn bộ Drive) cho tới khi bạn ngắt kết nối mọi sản phẩm Google đang dùng ở Cài đặt → Kết nối — khi sản phẩm cuối cùng được ngắt, Ephapse thu hồi quyền đó ở phía Google — rồi kết nối lại. Trong lúc đó Gmail vẫn chỉ được dùng để gửi thư, nhưng trợ lý vẫn có thể thấy các tệp khác trong Drive.</p>
+  <p>Kết nối Google tạo trước bản cập nhật 1.33.1 có thể vẫn mang quyền rộng hơn đã cấp lúc đó (đọc thư; toàn bộ Drive) cho tới khi bạn ngắt kết nối mọi sản phẩm Google đang dùng ở Cài đặt → Kết nối — khi sản phẩm cuối cùng được ngắt, Ephapse thu hồi quyền đó ở phía Google — rồi kết nối lại. Trong lúc đó Gmail vẫn chỉ được dùng để gửi thư, nhưng trợ lý vẫn có thể thấy các tệp khác trong Drive.</p>
   <h3>Dùng để làm gì</h3>
   <p>
     Chỉ để làm việc bạn yêu cầu trong cuộc trò chuyện — gửi một thư, tóm tắt một tài liệu, thêm một sự kiện. Mặc định, mọi thay đổi
@@ -114,7 +114,7 @@
   <p>Không ai ở Ephapse đọc dữ liệu Google của bạn, trừ khi bạn cho phép rõ ràng (ví dụ bạn gửi một cuộc trò chuyện để được hỗ trợ), khi cần để điều tra lạm dụng hoặc sự cố bảo mật, hoặc khi luật bắt buộc.</p>
   <h3>Lưu trữ và bảo vệ</h3>
   <p>
-    Mã truy cập Google được mã hoá (AES-GCM) khi lưu và không được gửi tới trình duyệt — trừ một mã ngắn hạn (khoảng một giờ) chỉ dùng được cho tệp bạn chọn (<code>drive.file</code>), tạo mới mỗi lần bạn mở "Thêm từ Google Drive" để bộ chọn tệp của Google hoạt động, và không được lưu. Những gì trợ lý đọc nằm trong cuộc trò
+    Mã truy cập Google được mã hoá (AES-GCM) khi lưu và không được gửi tới trình duyệt — trừ một mã ngắn hạn (khoảng một giờ) chỉ dùng được cho tệp bạn chọn trong Ephapse hoặc tệp Ephapse đã tạo (<code>drive.file</code>), tạo mới mỗi lần bạn mở "Thêm từ Google Drive" để bộ chọn tệp của Google hoạt động, và không được lưu. Những gì trợ lý đọc nằm trong cuộc trò
     chuyện như mọi nội dung khác, được truyền qua HTTPS, giữ theo thời hạn ở mục 7 và bị xoá khi bạn xoá cuộc trò chuyện hoặc tài khoản.
     Tệp thêm từ Drive được lưu như tệp bạn tải lên.
   </p>
@@ -210,7 +210,7 @@
       <li><strong>Google Tasks</strong> (<code>tasks</code>): see, add, complete and delete tasks.</li>
       <li><strong>Google Contacts</strong> (<code>contacts.readonly</code>): search and view contacts — read only.</li>
     </ul>
-    <p>A Google connection made before 18 November 2026 may still hold the wider access granted then (reading mail; the whole Drive) until you disconnect every Google product you use in Settings → Connectors — when the last one goes, Ephapse revokes the grant on Google's side — and connect again. Until then Gmail is still used only to send, but the assistant may still see other files in your Drive.</p>
+    <p>A Google connection made before the 1.33.1 update may still hold the wider access granted then (reading mail; the whole Drive) until you disconnect every Google product you use in Settings → Connectors — when the last one goes, Ephapse revokes the grant on Google's side — and connect again. Until then Gmail is still used only to send, but the assistant may still see other files in your Drive.</p>
     <h3>How it is used</h3>
     <p>Only to do what you ask in a conversation — send an email, summarise a document, add an event. By default every change to your Google account (sending, creating, editing, sharing, deleting) is shown to you for approval before it is made; you can change that yourself in Settings. Ephapse does not use Google user data for advertising, does not sell it, does not use it to build a profile of you, and does not use it to develop, improve or train AI or machine-learning models — its own or anyone else's.</p>
     <h3>Sharing with AI model providers</h3>
@@ -218,7 +218,7 @@
     <h3>Who can see it</h3>
     <p>No one at Ephapse reads your Google user data, except with your explicit permission (for example, when you send a conversation for support), when needed to investigate abuse or a security incident, or when the law requires it.</p>
     <h3>Storage and protection</h3>
-    <p>Google access tokens are encrypted at rest (AES-GCM) and not sent to the browser — except a short-lived token (about an hour) that reaches only the files you pick (<code>drive.file</code>), made afresh each time you open "Add from Google Drive" so that Google's file picker can work, and never stored. What the assistant reads stays in the conversation like any other content, travels over HTTPS, is kept for the period in 7, and is deleted when you delete the conversation or the account. A file added from Drive is stored like a file you upload.</p>
+    <p>Google access tokens are encrypted at rest (AES-GCM) and not sent to the browser — except a short-lived token (about an hour) that reaches only the files you pick in Ephapse or that Ephapse created (<code>drive.file</code>), made afresh each time you open "Add from Google Drive" so that Google's file picker can work, and never stored. What the assistant reads stays in the conversation like any other content, travels over HTTPS, is kept for the period in 7, and is deleted when you delete the conversation or the account. A file added from Drive is stored like a file you upload.</p>
     <h3>Stopping and deleting</h3>
     <p>Pause Google from the "+" menu beside the message box; disconnect each product in Settings → Connectors — the assistant stops using it at once, and when the last one is disconnected Ephapse also revokes the grant on Google's side; or revoke access at any time at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. Delete a conversation or the account to delete what was read; deleting the account also deletes the tokens.</p>
     <h3>Limited Use</h3>

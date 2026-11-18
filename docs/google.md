@@ -193,11 +193,29 @@ loader on 2026-11-18, nothing was blocked by it, on a desktop and on a phone-siz
 message box. The server mints the Picker's token by refreshing the stored grant with
 `scope=https://www.googleapis.com/auth/drive.file`, and hands it over only if Google says it
 holds `drive.file` and nothing wider. Whether Google honours that narrowing on a refresh has not
-been confirmed live. If the Picker step says "Reconnect Google" or "Google did not confirm that
-the Drive picker's token is limited to the files you pick", Google did not narrow it. No wider
-token leaves the server, and its log has a line starting `google picker token refused`.
-A Google account connected for Drive before 1.33.1 is expected to see that refusal until it
-reconnects (section 9).
+been confirmed live. No wider token ever leaves the server.
+
+**If it does not work, what the person sees says where to look:**
+
+- "Google would not give the Drive picker a token (…). Reconnect Google in Settings →
+  Connectors." Google refused the refresh itself; its reason is in the brackets (for example
+  `invalid_scope`). The server logs nothing of its own for this one. A Google account connected
+  for Drive before 1.33.1 is expected to see it until it reconnects (section 9).
+- "Google did not confirm that the Drive picker's token is limited to the files you pick…"
+  Google answered, but not with `drive.file` alone: it did not narrow the scope. The server log
+  has a line starting `google picker token refused: not narrowed to drive.file`, with the
+  scope names Google returned (never the token).
+- "Google Drive's file picker could not open. Try again later…" The Picker opened and then
+  failed inside Google's own frame. The browser's DevTools console has a
+  `Google Drive picker failed` warning with what Google said. The usual cause is the API key:
+  check its restrictions (step 2 above).
+- Google's own "403. That's an error." page, or "The API developer key is invalid", inside the
+  Picker's frame, with a key you know is right: first check that the key's **Website
+  restrictions** include `https://docs.google.com/*`. If it still fails, this site's
+  `Referrer-Policy: no-referrer` is the next suspect (the Picker frame is opened without a
+  Referer). Do not change that header on your own: report it, because it protects every page.
+- "Google Drive's file picker did not load…" The browser could not fetch
+  `https://apis.google.com/js/api.js` within 20 seconds: a network problem, or a blocker.
 
 ## 8. The verification submission (free)
 

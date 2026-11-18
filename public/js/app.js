@@ -7830,8 +7830,11 @@ const plusDeps = {
   },
   picked: () => state.pickedSkills,
   attach: (attachment) => stageAttachment(attachment),
-  // How many more the message takes, so Google's Picker offers no more than that.
-  room: () => (state.boot?.attachments?.maxPerMessage || 6) - staged.length,
+  // How many more the message takes, so Google's Picker offers no more than that — and none when it is full.
+  room: () => {
+    const limit = state.boot?.attachments?.maxPerMessage || 6;
+    return { left: limit - staged.length, limit };
+  },
   prefs: () => state.boot?.prefs || {},
   savePrefs: (patch) => savePrefsInOrder(patch),
   openSettings: (tab, focusId) => {

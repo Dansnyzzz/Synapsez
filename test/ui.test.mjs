@@ -10759,13 +10759,19 @@ section('the + opens a menu of files, skills, connectors and plugins');
       PickerBuilder, DocsView,
       ViewId: { DOCS: 'all' }, DocsViewMode: { LIST: 'list', GRID: 'grid' },
       Feature: { MULTISELECT_ENABLED: 'multiselectEnabled' },
-      Action: { PICKED: 'picked', CANCEL: 'cancel', LOADED: 'loaded' },
+      Action: { PICKED: 'picked', CANCEL: 'cancel', LOADED: 'loaded', ERROR: 'error' },
       Response: { ACTION: 'action', DOCUMENTS: 'docs' },
       Document: { ID: 'id', NAME: 'name' },
     } };
   })();`;
   let loaderLoads = 0;
+  let loaderAborts = 0;
+  let loaderBroken = false;
   await page.route('https://apis.google.com/js/api.js', (route) => {
+    if (loaderBroken) {
+      loaderAborts += 1;
+      return route.abort('failed');
+    }
     loaderLoads += 1;
     return route.fulfill({ status: 200, contentType: 'text/javascript', body: FAKE_PICKER });
   });
@@ -10774,8 +10780,11 @@ section('the + opens a menu of files, skills, connectors and plugins');
   await page.route('**/api/connectors/google/picker', (route) => route.fulfill(pickerAnswer));
   const attachAsked = [];
   await page.route('**/api/connectors/google/drive/*/attach', (route) => {
-    attachAsked.push(decodeURIComponent(/\/drive\/([^/]+)\/attach/.exec(route.request().url())?.[1] || ''));
-    return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ attachment: { id: 'att-drive-ui', name: 'Plan.pdf', mime: 'application/pdf', size: 2048 } }) });
+    const id = decodeURIComponent(/\/drive\/([^/]+)\/attach/.exec(route.request().url())?.[1] || '');
+    attachAsked.push(id);
+    if (id === 'f-bad') return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'That file is too large to attach.' }) });
+    const name = id === 'f-1' ? 'Plan.pdf' : `${id}.pdf`;
+    return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ attachment: { id: `att-drive-ui-${id}`, name, mime: 'application/pdf', size: 2048 } }) });
   });
   const prefsPuts = [];
   const onRequest = (request) => {
@@ -10881,6 +10890,16 @@ section('the + opens a menu of files, skills, connectors and plugins');
   await page.waitForTimeout(800);
 
   const driveLabel = connectors.rows.find((r) => /Google Drive/.test(r.label)).label;
+  // One at a time: each removal redraws the tray, so a list taken before the first is stale after it.
+  const clearTray = () =>
+    page.evaluate(async () => {
+      for (let i = 0; i < 20; i++) {
+        const drop = /** @type {HTMLElement | null} */ (document.querySelector('#attachments .stage__remove'));
+        if (!drop) return;
+        drop.click();
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+    });
   const tiles = () => page.evaluate(() => [...document.querySelectorAll('#attachments .stage')].map((s) => s.getAttribute('title')));
   const alerts = () => page.evaluate(() => [...document.querySelectorAll('#toasts-alert .toast')].map((n) => n.textContent.trim()));
   const pickerState = () => page.evaluate(() => ({ builds: /** @type {any} */ (window).__picker?.builds || [], loaded: /** @type {any} */ (window).__picker?.loaded || null }));
@@ -10894,12 +10913,25 @@ section('the + opens a menu of files, skills, connectors and plugins');
   check('Google Drive on a deployment without the Picker says it is not set up, in the app\'s words', unset.menuGone && unset.alerts.some((a) => /not set up|chưa được thiết lập/i.test(a) && !/GOOGLE_PICKER_API_KEY/.test(a)), JSON.stringify(unset));
   check('  and nothing is loaded from Google', unset.loads === 0 && unset.picker.builds.length === 0, JSON.stringify(unset));
 
-  // Picked: Google's Picker is built as the brief says, and the file lands in the tray.
+  const openDrive = async () => {
+    await page.click('#attach');
+    await page.waitForTimeout(500);
+    await hoverRow(0, root.rows[2].label);
+    await rowOf(1, driveLabel).click();
+  };
+
+  // Google's loader not reaching the page (offline, a blocker): said, and nothing is built.
   pickerAnswer = json(PICKER);
-  await page.click('#attach');
-  await page.waitForTimeout(500);
-  await hoverRow(0, root.rows[2].label);
-  await rowOf(1, driveLabel).click();
+  loaderBroken = true;
+  await openDrive();
+  await page.waitForTimeout(800);
+  loaderBroken = false;
+  const blocked = { aborts: loaderAborts, loads: loaderLoads, alerts: await alerts(), picker: await pickerState() };
+  check('Google Drive when Google\'s loader cannot be fetched says so', blocked.aborts === 1 && blocked.alerts.some((a) => /did not load|Không tải được/.test(a)), JSON.stringify(blocked));
+  check('  and builds nothing', blocked.loads === 0 && blocked.picker.builds.length === 0, JSON.stringify(blocked));
+
+  // Picked: Google's Picker is built as the brief says, and the file lands in the tray.
+  await openDrive();
   await page.waitForFunction(() => document.querySelectorAll('#attachments .stage').length > 0, null, { timeout: 4000 }).catch(() => {});
   const built = await pickerState();
   const calls = built.builds[0] || [];
@@ -10907,7 +10939,7 @@ section('the + opens a menu of files, skills, connectors and plugins');
   const view = call('addView') || [];
   const lang = await page.evaluate(() => document.documentElement.lang);
   const origin = await page.evaluate(() => location.origin);
-  check('picking from Drive loads Google\'s loader once and the picker library', loaderLoads === 1 && built.loaded === 'picker', JSON.stringify({ loaderLoads, loaded: built.loaded }));
+  check('picking from Drive, the next try, loads Google\'s loader once and the picker library', loaderLoads === 1 && built.loaded === 'picker', JSON.stringify({ loaderLoads, loaded: built.loaded }));
   check('  builds the Picker with the token, key and app id the server gave', call('setOAuthToken')?.[1] === PICKER.token && call('setDeveloperKey')?.[1] === PICKER.apiKey && call('setAppId')?.[1] === PICKER.appId, JSON.stringify(calls));
   check('  in the app\'s language and from this page\'s origin', call('setLocale')?.[1] === lang && /^(vi|en)$/.test(lang) && call('setOrigin')?.[1] === origin, JSON.stringify({ lang, origin, locale: call('setLocale'), from: call('setOrigin') }));
   check('  showing Drive files as a list, folders not selectable, several at once', JSON.stringify(view.slice(1)) === JSON.stringify([['DocsView', 'all'], ['setMode', 'list'], ['setSelectFolderEnabled', false]]) && call('enableFeature')?.[1] === 'multiselectEnabled', JSON.stringify(view));
@@ -10919,9 +10951,7 @@ section('the + opens a menu of files, skills, connectors and plugins');
   const notes = await page.evaluate(() => [...document.querySelectorAll('#toasts .toast')].map((n) => n.textContent.trim()));
   check('  saying, politely, that it is being added', notes.some((n) => /^(Adding from Google Drive…|Đang thêm từ Google Drive…)$/.test(n)), JSON.stringify(notes));
   check('  with the keyboard back on the +', await page.evaluate(() => document.activeElement?.id === 'attach'));
-  await page.evaluate(() => {
-    for (const drop of document.querySelectorAll('#attachments .stage__remove')) /** @type {HTMLElement} */ (drop).click();
-  });
+  await clearTray();
 
   // Cancelled, from the keyboard: nothing attached, nothing said, and the loader not fetched again.
   await page.evaluate(() => { /** @type {any} */ (window).__picker.answer = { action: 'cancel' }; });
@@ -10943,6 +10973,57 @@ section('the + opens a menu of files, skills, connectors and plugins');
   check('cancelling the Picker attaches nothing', cancelled.builds === 2 && cancelled.asked === 1 && cancelled.tiles.length === 0, JSON.stringify(cancelled));
   check('  says nothing, and does not fetch Google\'s loader again', cancelled.alerts.every((a) => alertsBefore.includes(a)) && cancelled.loads === 1, JSON.stringify(cancelled));
   check('  and gives the keyboard back to the +', cancelled.focus === 'attach', JSON.stringify(cancelled));
+
+  // Google's Picker failing in its own frame (a refused key): closed, said, and a warning for the owner.
+  const warnings = [];
+  const onConsole = (m) => m.type() === 'warning' && warnings.push(m.text());
+  page.on('console', onConsole);
+  await page.evaluate(() => { /** @type {any} */ (window).__picker.answer = { action: 'error', errorCode: 'DEVELOPER_KEY_INVALID' }; });
+  await openDrive();
+  await page.waitForTimeout(800);
+  page.off('console', onConsole);
+  const errored = await pickerState();
+  const errorCalls = errored.builds.at(-1) || [];
+  const failedNote = { alerts: await alerts(), asked: attachAsked.length, tiles: await tiles(), focus: await page.evaluate(() => document.activeElement?.id), warnings };
+  check('Google\'s Picker failing in its own frame tells the person it could not open', failedNote.alerts.some((a) => /could not open|Không mở được/.test(a)), JSON.stringify(failedNote));
+  check('  closes it, gives the keyboard back to the +, and attaches nothing', errored.builds.length === 3 && errorCalls.filter((c) => c[0] === 'dispose').length === 1 && failedNote.focus === 'attach' && failedNote.asked === 1 && failedNote.tiles.length === 0, JSON.stringify({ errorCalls, ...failedNote }));
+  check('  and leaves the owner a warning with what Google said, never the token', warnings.some((w) => /Google Drive picker failed/.test(w)) && !warnings.some((w) => w.includes(PICKER.token)), JSON.stringify(warnings));
+
+  // Two picked, one the server cannot attach: that one says why, the other still arrives.
+  await page.evaluate(() => { /** @type {any} */ (window).__picker.answer = { action: 'picked', docs: [{ id: 'f-1', name: 'Plan.pdf' }, { id: 'f-bad', name: 'Huge.mov' }] }; });
+  await openDrive();
+  await page.waitForFunction(() => document.querySelectorAll('#attachments .stage').length > 0, null, { timeout: 4000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  const partly = { asked: attachAsked.slice(-2), tiles: await tiles(), alerts: await alerts() };
+  check('one of two picked files failing says why, and the other is still attached', JSON.stringify(partly.asked) === '["f-1","f-bad"]' && JSON.stringify(partly.tiles) === '["Plan.pdf"]' && partly.alerts.includes('That file is too large to attach.'), JSON.stringify(partly));
+  await clearTray();
+
+  // A full tray: the Picker offered exactly the room left, and with none left it is not opened.
+  const limit = call('setMaxItems')?.[1] || 0;
+  await page.evaluate((n) => {
+    /** @type {any} */ (window).__picker.answer = { action: 'picked', docs: Array.from({ length: n }, (_, i) => ({ id: `f-fill-${i}`, name: `f-fill-${i}.pdf` })) };
+  }, limit);
+  await openDrive();
+  await page.waitForFunction((n) => document.querySelectorAll('#attachments .stage').length >= n, limit, { timeout: 6000 }).catch(() => {});
+  const buildsWhenFull = (await pickerState()).builds.length;
+  const filled = (await tiles()).length;
+  await openDrive();
+  await page.waitForTimeout(700);
+  const full = { limit, filled, builds: (await pickerState()).builds.length, buildsWhenFull, alerts: await alerts() };
+  check('with the tray full, Google Drive is not opened and says the limit, as an upload would', limit > 0 && full.filled === limit && full.builds === full.buildsWhenFull && full.alerts.some((a) => /at a time is the limit|Mỗi lần chỉ gửi được/.test(a)), JSON.stringify(full));
+  await clearTray();
+
+  // A second press while the first is still opening is ignored: one Picker, not two.
+  await page.evaluate(() => { /** @type {any} */ (window).__picker.answer = { action: 'cancel' }; });
+  const before = (await pickerState()).builds.length;
+  await page.evaluate(async () => {
+    const { openDrivePicker } = await import('/js/google-picker.js');
+    const quiet = { language: 'en', onPicked: () => {}, onError: () => {} };
+    await Promise.all([openDrivePicker(quiet), openDrivePicker(quiet)]);
+  });
+  await page.waitForTimeout(400);
+  check('two presses at once open one Picker', (await pickerState()).builds.length === before + 1, String((await pickerState()).builds.length - before));
+  check('  and the tray is left empty for what comes next', (await tiles()).length === 0, JSON.stringify(await tiles()));
 
   await page.click('#attach');
   await page.waitForTimeout(500);
