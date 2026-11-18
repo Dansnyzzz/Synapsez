@@ -35,6 +35,15 @@
       hundred bytes and it is on the same connection as the page.
     -->
     <script src="/js/lang-boot.js"></script>
+    <!--
+      A page that cannot start says so (1.33.2), instead of staying black: this
+      browser may be holding an older app.js than this page, which is what a
+      cache in front of the site did after the 1.33.1 deploy. Blocking and before
+      the module, so it is listening when app.js runs; a classic script because
+      the module graph is the thing that may be broken. It reads the language
+      lang-boot.js has just set. See the file itself.
+    -->
+    <script src="/js/boot-watch.js"></script>
 
     <!--
       Tell the browser about the module graph before it discovers it.

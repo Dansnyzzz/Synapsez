@@ -163,6 +163,250 @@ const SCROLLERS = (selector = 'body') => {
 await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(600);
 
+/*
+ * 1.33.2: after the 1.33.1 deploy the owner saw a black screen. Cloudflare had the
+ * browser keep /js/* and /css/* for four hours while index.html was always fresh, so
+ * the new page ran the old app.js, which threw and left both screens hidden.
+ * public/js/boot-watch.js says so instead, and its button fetches the new files.
+ * Each page here is a context of its own; `data-wait` shortens the time limit.
+ */
+section('a page that cannot start says so, and fetches the new files (1.33.2)');
+{
+  const http = await import('node:http');
+  const ORIGIN = `http://127.0.0.1:${PORT}`;
+  // The incident's shape: an app.js that throws as it loads, after its imports have loaded.
+  const OLD_APP = "throw new Error('an older app.js, looking for a button this page no longer has');\n";
+  const WORDS = {
+    vi: { title: 'Ephapse vừa được cập nhật', text: 'Trình duyệt của bạn còn giữ một phần bản cũ, nên trang chưa mở được.', button: 'Tải bản mới', hint: 'Hoặc nhấn Ctrl+Shift+R (Mac: ⌘+Shift+R).', again: 'Vẫn chưa được — hãy nhấn Ctrl+Shift+R (Mac: ⌘+Shift+R).' },
+    en: { title: 'Ephapse was just updated', text: 'Your browser still holds part of the old version, so the page could not start.', button: 'Load the new version', hint: 'Or press Ctrl+Shift+R (Mac: ⌘+Shift+R).', again: 'Still not working — press Ctrl+Shift+R (Mac: ⌘+Shift+R).' },
+  };
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const oldApp = async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, body: OLD_APP + (await response.text()) });
+  };
+  const standIn = (body) => (route) => route.fulfill({ status: 200, contentType: 'text/javascript', body });
+  const open = async ({ limit, locale = 'en-US', app, session, css } = {}) => {
+    const context = await browser.newContext({ locale, viewport: { width: 1280, height: 860 } });
+    if (limit) {
+      await context.route((url) => url.pathname === '/', async (route) => {
+        const response = await route.fetch();
+        const html = (await response.text()).replace('<script src="/js/boot-watch.js"></script>', `<script src="/js/boot-watch.js" data-wait="${limit}"></script>`);
+        await route.fulfill({ response, body: html });
+      });
+    }
+    if (app) await context.route('**/js/app.js', app);
+    if (session) await context.route('**/api/session', session);
+    if (css) await context.route('**/css/app.css', css);
+    const p = await context.newPage();
+    const warned = [];
+    p.on('console', (m) => { if (m.type() === 'warning') warned.push(m.text()); });
+    await p.goto(`${ORIGIN}/`, { waitUntil: 'domcontentloaded' });
+    return { context, p, warned };
+  };
+  const appears = (p, ms = 6000) => p.waitForSelector('#boot-watch', { timeout: ms }).then(() => true, () => false);
+  const notice = (p) => p.evaluate(() => {
+    const box = document.getElementById('boot-watch');
+    const say = (id) => document.getElementById(id)?.textContent.trim() || '';
+    const refs = (attr) => (box?.getAttribute(attr) || '').split(/\s+/).filter(Boolean).map(say).join(' ');
+    const middle = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+    return {
+      there: !!box,
+      gate: !!document.getElementById('gate') && !document.getElementById('gate').hidden,
+      app: !!document.getElementById('app') && !document.getElementById('app').hidden,
+      role: box?.getAttribute('role'),
+      modal: box?.getAttribute('aria-modal'),
+      lang: box?.getAttribute('lang'),
+      named: refs('aria-labelledby'),
+      described: refs('aria-describedby'),
+      title: say('boot-watch-title'),
+      text: say('boot-watch-text'),
+      hint: say('boot-watch-hint'),
+      button: say('boot-watch-reload'),
+      focused: document.activeElement?.id === 'boot-watch-reload',
+      covers: !!box && !!middle && box.contains(middle),
+      opaque: !!box && /^rgb\(/.test(getComputedStyle(box).backgroundColor),
+    };
+  });
+
+  {
+    const { context, p } = await open({ limit: 800 });
+    await p.waitForTimeout(1500);
+    const seen = await notice(p);
+    check('a page that starts shows no notice: the sign-in screen, nothing over it', !seen.there && seen.gate, JSON.stringify(seen));
+    await context.close();
+  }
+  {
+    // Any app.js that works is a start, newer ones included: started is read from the page alone.
+    const { context, p } = await open({ limit: 500, app: standIn("setTimeout(() => { document.getElementById('app').hidden = false; }, 250);") });
+    await p.waitForTimeout(1300);
+    const seen = await notice(p);
+    check('  so is one that shows the app, as a signed-in start does', !seen.there && seen.app, JSON.stringify(seen));
+    await context.close();
+  }
+  {
+    // app.js's boot().catch puts its own failure in place of the page; it names what went wrong.
+    const { context, p } = await open({ limit: 500, app: standIn("setTimeout(() => { const pre = document.createElement('pre'); pre.textContent = 'Failed to fetch'; document.body.replaceChildren(pre); }, 150);") });
+    await p.waitForTimeout(1300);
+    const seen = await notice(p);
+    check("  and so is the app's own failure page: the watchdog does not talk over it", !seen.there && (await p.textContent('body')) === 'Failed to fetch', JSON.stringify(seen));
+    await context.close();
+  }
+  {
+    const { context, p } = await open({ limit: 500, session: async (route) => { await wait(1500); await route.continue(); } });
+    const early = await appears(p, 4000);
+    await p.waitForSelector('#gate:not([hidden])', { timeout: 8000 }).catch(() => null);
+    await p.waitForTimeout(100);
+    const seen = await notice(p);
+    check('a start later than the limit: the notice shows, then takes itself away when the sign-in screen comes', early && !seen.there && seen.gate, JSON.stringify({ early, ...seen }));
+    await context.close();
+  }
+  {
+    // DOMContentLoaded waits for the module graph, so a slow app.js only delays the clock.
+    const { context, p } = await open({ limit: 800, app: async (route) => { await wait(1200); await route.continue(); } });
+    await p.waitForTimeout(1500);
+    const seen = await notice(p);
+    check('  an app.js slow to arrive is not late: the time limit counts from DOMContentLoaded', !seen.there && seen.gate, JSON.stringify(seen));
+    await context.close();
+  }
+  {
+    // The limit set as long as it goes: only the error path can bring the notice this soon.
+    const { context, p, warned } = await open({ limit: 60000, locale: 'vi-VN', app: oldApp });
+    const from = Date.now();
+    const came = await appears(p);
+    const took = Date.now() - from;
+    const seen = await notice(p);
+    const vi = WORDS.vi;
+    check('an app.js that throws as it loads: the notice comes within seconds, not at the time limit', came && took < 5000, `${took} ms`);
+    check("  in the page's language, Vietnamese here, in the ruled words", seen.lang === 'vi' && seen.title === vi.title && seen.text === vi.text && seen.button === vi.button && seen.hint === vi.hint, JSON.stringify(seen));
+    check('  an alertdialog, named by its title and described by its words, with focus on its button', seen.role === 'alertdialog' && seen.modal === 'true' && seen.named === vi.title && seen.described === `${vi.text} ${vi.hint}` && seen.focused, JSON.stringify(seen));
+    check('  never a black screen: it covers the page, opaque, while both screens stay hidden', seen.covers && seen.opaque && !seen.gate && !seen.app, JSON.stringify(seen));
+    check('  the console says why, once, with no address in it', warned.length === 1 && /older app\.js/.test(warned[0]) && !/https?:/.test(warned[0]), JSON.stringify(warned));
+
+    const asked = [];
+    p.on('request', (r) => { if (r.resourceType() === 'fetch') asked.push(new URL(r.url()).pathname); });
+    const back = p.waitForEvent('load', { timeout: 15000 }).then(() => true, () => false);
+    await p.keyboard.press('Enter');
+    const reloaded = await back;
+    const how = await p.evaluate(() => /** @type {PerformanceNavigationTiming | undefined} */ (performance.getEntriesByType('navigation')[0])?.type);
+    const wanted = ['/js/lang-boot.js', '/js/boot-watch.js', '/js/app.js', '/js/i18n.js', '/js/api.js', '/js/account-menu.js', '/js/plus-menu.js', '/css/app.css'];
+    check('  Enter on it asks again for the scripts and stylesheets, the whole module graph too, then reloads', reloaded && how === 'reload' && wanted.every((f) => asked.includes(f)), `${how} ${wanted.filter((f) => !asked.includes(f)).join(',')} of ${asked.length}`);
+
+    const again = (await appears(p)) && (await notice(p));
+    check('a second failure within a minute says "Still not working", and still offers the button', !!again && again.hint === vi.again && again.button === vi.button && again.focused, JSON.stringify(again));
+
+    // Readable in both themes and on a phone. The notice repaints when the scheme changes.
+    const measure = () => p.evaluate(() => {
+      if (!document.getElementById('boot-watch')) return null;
+      const channel = (v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+      const lum = (c) => { const [r, g, b] = (c.match(/[\d.]+/g) || []).slice(0, 3).map((n) => channel(Number(n) / 255)); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+      const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100; };
+      const style = (id) => getComputedStyle(/** @type {HTMLElement} */ (document.getElementById(id)));
+      const card = getComputedStyle(/** @type {HTMLElement} */ (document.getElementById('boot-watch-title').parentElement)).backgroundColor;
+      const button = document.getElementById('boot-watch-reload').getBoundingClientRect();
+      return {
+        card,
+        title: ratio(style('boot-watch-title').color, card),
+        text: ratio(style('boot-watch-text').color, card),
+        hint: ratio(style('boot-watch-hint').color, card),
+        button: ratio(style('boot-watch-reload').color, style('boot-watch-reload').backgroundColor),
+        tall: Math.round(button.height),
+        sideways: document.documentElement.scrollWidth - innerWidth,
+      };
+    });
+    await p.setViewportSize({ width: 360, height: 740 });
+    await p.emulateMedia({ colorScheme: 'light' });
+    await p.waitForTimeout(150);
+    const light = await measure();
+    await p.emulateMedia({ colorScheme: 'dark' });
+    await p.waitForTimeout(150);
+    const dark = await measure();
+    const readable = (m) => !!m && m.title >= 4.5 && m.text >= 4.5 && m.hint >= 4.5 && m.button >= 4.5;
+    check('  contrast of 4.5:1 or more for every line and the button, in light and in dark', readable(light) && readable(dark) && light.card !== dark.card, JSON.stringify({ light, dark }));
+    check('  and at 360px it fits, its button 44px tall or more', !!light && !!dark && light.tall >= 44 && light.sideways <= 0 && dark.sideways <= 0, JSON.stringify({ light, dark }));
+    await context.close();
+  }
+  {
+    // app.css may be the stale file too. Ordinary rules that would hide or wreck a div, a
+    // heading or a button all lose to the notice's own element styles.
+    const sheet = '* { color: #f00; background: #ff0; font-size: 40px; margin: 30px; visibility: hidden; opacity: 0.2; } div, h1, p, button { display: none; } #boot-watch, [role="alertdialog"] { position: static; }';
+    const { context, p } = await open({ limit: 60000, app: oldApp, css: (route) => route.fulfill({ status: 200, contentType: 'text/css', body: sheet }) });
+    const came = await appears(p);
+    const looks = came && (await p.evaluate(() => {
+      const style = (id) => getComputedStyle(/** @type {HTMLElement} */ (document.getElementById(id)));
+      return {
+        position: style('boot-watch').position,
+        opacity: style('boot-watch').opacity,
+        visibility: style('boot-watch-title').visibility,
+        size: style('boot-watch-title').fontSize,
+        colour: style('boot-watch-title').color,
+        button: style('boot-watch-reload').display,
+        tall: Math.round(document.getElementById('boot-watch-reload').getBoundingClientRect().height),
+      };
+    }));
+    check('  and a stale app.css cannot reach it: rules that would hide or recolour it do not apply', !!looks && looks.position === 'fixed' && looks.opacity === '1' && looks.visibility === 'visible' && looks.size === '20px' && looks.colour !== 'rgb(255, 0, 0)' && looks.button === 'block' && looks.tall >= 44, JSON.stringify(looks));
+    await context.close();
+  }
+  {
+    // The incident itself, with no routes, so the browser's own cache is on trial: a front
+    // that tells the browser to keep /js/* and /css/* for four hours, as Cloudflare's
+    // Browser Cache TTL did, and serves the old app.js until the deploy lands.
+    let stale = true;
+    const front = http.createServer((req, res) => {
+      const headers = { ...req.headers };
+      delete headers['accept-encoding'];
+      const upstream = http.request({ host: '127.0.0.1', port: PORT, path: req.url, method: req.method, headers }, (answer) => {
+        const out = { ...answer.headers };
+        if (/^\/(js|css)\//.test(req.url || '')) out['cache-control'] = 'public, max-age=14400, must-revalidate';
+        if (!(stale && req.url === '/js/app.js' && answer.statusCode === 200)) {
+          res.writeHead(answer.statusCode || 502, out);
+          answer.pipe(res);
+          return;
+        }
+        const parts = [];
+        answer.on('data', (part) => parts.push(part));
+        answer.on('end', () => {
+          const body = Buffer.concat([Buffer.from(OLD_APP), ...parts]);
+          delete out.etag;
+          out['content-length'] = String(body.length);
+          res.writeHead(200, out);
+          res.end(body);
+        });
+      });
+      req.pipe(upstream);
+    });
+    await new Promise((resolve) => front.listen(0, '127.0.0.1', () => resolve(undefined)));
+    const FRONT = `http://127.0.0.1:${/** @type {import('node:net').AddressInfo} */ (front.address()).port}`;
+    const context = await browser.newContext({ locale: 'en-US' });
+    const p = await context.newPage();
+    await p.goto(`${FRONT}/`, { waitUntil: 'domcontentloaded' });
+    const first = await appears(p);
+    stale = false; // the deploy is live: the server has the new app.js, this browser still the old one
+    await p.reload({ waitUntil: 'domcontentloaded' });
+    const stuck = await appears(p);
+    const before = await notice(p);
+    check('the incident replayed: the old app.js kept for four hours, a plain reload still cannot start, and it says so', first && stuck && !before.gate && before.title === WORDS.en.title && before.button === WORDS.en.button, JSON.stringify(before));
+
+    const asked = [];
+    p.on('request', async (r) => {
+      if (r.resourceType() === 'fetch') asked.push({ path: new URL(r.url()).pathname, cache: (await r.allHeaders())['cache-control'] || '' });
+    });
+    const back = p.waitForEvent('load', { timeout: 15000 }).then(() => true, () => false);
+    await p.click('#boot-watch-reload', { timeout: 3000 }).catch(() => null);
+    const reloaded = await back;
+    await p.waitForSelector('#gate:not([hidden])', { timeout: 8000 }).catch(() => null);
+    await p.waitForTimeout(200);
+    const after = await notice(p);
+    const fresh = asked.filter((a) => /no-cache/.test(a.cache)).map((a) => a.path);
+    const graph = ['/js/app.js', '/js/i18n.js', '/js/api.js', '/js/account-menu.js', '/css/app.css'];
+    check('  the button asks for each file again with cache-control: no-cache, the module graph included', graph.every((f) => fresh.includes(f)), `${graph.filter((f) => !fresh.includes(f)).join(',')} — ${JSON.stringify(asked.slice(0, 6))}`);
+    check('  then reloads, and the page starts: the sign-in screen, no notice', reloaded && after.gate && !after.there, JSON.stringify(after));
+    check('  and the note that it was pressed is gone once the page has started', (await p.evaluate(() => sessionStorage.getItem('ephapse:boot-reload'))) === null);
+    await context.close();
+    front.close();
+  }
+}
+
 section('signing in');
 // Signing up asks for a username too (owner, 2026-10-20).
 check('signing up asks for a username', await page.isVisible('#gate-username'));

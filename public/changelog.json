@@ -1,6 +1,18 @@
 {
   "entries": [
     {
+      "version": "1.33.2",
+      "date": "2026-11-18",
+      "fixed": {
+        "vi": [
+          "Sau một bản cập nhật, trình duyệt còn giữ một phần bản cũ không còn để lại màn hình đen: trang báo \"Ephapse vừa được cập nhật\" kèm nút \"Tải bản mới\", nút này tải lại mọi tệp của trang từ máy chủ rồi mở lại trang. Trang không bao giờ tự tải lại. Nếu bấm rồi mà vẫn chưa mở được, trang nhắc nhấn Ctrl+Shift+R (Mac: ⌘+Shift+R)."
+        ],
+        "en": [
+          "After an update, a browser still holding part of the old version no longer leaves a black screen: the page says \"Ephapse was just updated\" and offers \"Load the new version\", which fetches every file of the page again from the server and reloads. It never reloads by itself. If the page still cannot start after that, it says to press Ctrl+Shift+R (Mac: ⌘+Shift+R)."
+        ]
+      }
+    },
+    {
       "version": "1.33.1",
       "date": "2026-11-18",
       "new": {
