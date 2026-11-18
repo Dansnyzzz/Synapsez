@@ -518,7 +518,30 @@ section('a big diagram: every rule holds, quickly');
     }
     return { best, value };
   };
-  let worst = 0;
+  // A busy machine slows every run, so the budget is scaled by how slow a fixed reference loop
+  // runs in the same moment (task 3, fix round 5): allocation, math and a sort, as the layout does.
+  // REFERENCE_MS is its quickest of 5 on the owner's machine with no test or busy process beside
+  // it (2026-11-18: 27–35 ms, the desktop's own apps open). A faster machine never gets a smaller
+  // budget; a loaded one at most 3×.
+  const REFERENCE_MS = 30;
+  const reference = () => {
+    const pts = [];
+    for (let i = 0; i < 80000; i += 1) pts.push({ x: Math.sin(i) * 100, y: Math.cos(i * 0.7) * 100, id: `p${i % 97}` });
+    pts.sort((a, b) => a.x - b.x || a.y - b.y);
+    let acc = 0;
+    for (let i = 1; i < pts.length; i += 1) acc += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    return acc;
+  };
+  const timed = (work) => {
+    const ref = quickest(reference).best;
+    const scale = Math.min(3, Math.max(1, ref / REFERENCE_MS));
+    const { best, value } = quickest(work);
+    return { best, value, ref, scale, within: best < 200 * scale };
+  };
+  const shown = (t) => `${t.best.toFixed(1)} ms against ${(200 * t.scale).toFixed(0)} (reference ${t.ref.toFixed(1)} ms, scale ${t.scale.toFixed(2)})`;
+  // The slowest is found first, then timed again with the reference right before it, so the
+  // reference runs once here and not before each of the 48 (that added 25 s to the suite).
+  let slowest = null;
   let labels = 0;
   const broken = [];
   const covering = [];
@@ -526,7 +549,7 @@ section('a big diagram: every rule holds, quickly');
     const d = valid(bigDiagram(seed));
     for (const direction of ['right', 'down']) {
       const { best, value: layout } = quickest(() => layoutDiagram({ ...d, direction }));
-      worst = Math.max(worst, best);
+      if (!slowest || best > slowest.best) slowest = { best, input: { ...d, direction } };
       const wrong = problems(layout);
       if (wrong.length) broken.push(`seed ${seed} ${direction}: ${wrong.slice(0, 2).join(' | ')}`);
       labels += layout.edges.filter((e) => e.labelBox).length;
@@ -536,10 +559,11 @@ section('a big diagram: every rule holds, quickly');
   check('48 random 40-node, 80-edge drawings (cycles, loops, groups, labels, pills) break no rule', broken.length === 0, broken.slice(0, 3).join(' || '));
   // Without room kept at a labelled port, 136 of these labels covered a neighbour's line.
   check(`  and none of their ${labels} labels covers another arrow's line`, covering.length === 0, `${covering.length}: ${covering.slice(0, 3).join(' | ')}`);
-  check('the slowest of them (each the quickest of 5 runs) lays out in under 200 ms', worst < 200, `${worst.toFixed(1)} ms`);
+  const worst = timed(() => layoutDiagram(slowest.input));
+  check('the slowest of them (each the quickest of 5 runs) lays out in under 200 ms (scaled by how busy the machine is)', worst.within, shown(worst));
   const cold = bigDiagram(99);
-  const once = quickest(() => layoutDiagram(valid(cold))).best;
-  check('40 nodes and 80 edges, validated and laid out, in under 200 ms (quickest of 5)', once < 200, `${once.toFixed(1)} ms`);
+  const once = timed(() => layoutDiagram(valid(cold)));
+  check('40 nodes and 80 edges, validated and laid out, in under 200 ms (quickest of 5, scaled by how busy the machine is)', once.within, shown(once));
   // The label search's worst case: 41 labelled edges, each through ~37 ranks of dummies, so
   // every label has long runs to slide along (took up to 350 ms before the search looked only
   // at lines near each run). Task 2's "auto" lays a drawing out twice.
@@ -549,8 +573,9 @@ section('a big diagram: every rule holds, quickly');
     edges: [...chain.slice(1).map((id, i) => ({ from: chain[i], to: id })), ...Array.from({ length: 41 }, (_, k) => ({ from: `c${k % 3}`, to: `c${39 - (k % 5)}`, label: `đường dài số ${k}` }))],
   });
   // Both ways, as "auto" will: together within the one budget.
-  const { best: took, value: both } = quickest(() => ['right', 'down'].map((direction) => layoutDiagram({ ...longEdges, direction })));
-  check('a 40-box chain with 41 labelled long edges, laid out both ways, in under 200 ms together (quickest of 5)', took < 200, `${took.toFixed(1)} ms`);
+  const took = timed(() => ['right', 'down'].map((direction) => layoutDiagram({ ...longEdges, direction })));
+  check('a 40-box chain with 41 labelled long edges, laid out both ways, in under 200 ms together (quickest of 5, scaled by how busy the machine is)', took.within, shown(took));
+  const both = took.value;
   for (const [i, direction] of ['right', 'down'].entries()) {
     const layout = both[i];
     check(`${direction}: every label of it off every line, no rule broken`, labelsOverLines(layout).length === 0 && problems(layout).length === 0, `${labelsOverLines(layout).length} on lines`);
