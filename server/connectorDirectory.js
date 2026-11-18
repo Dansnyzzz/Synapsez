@@ -30,8 +30,9 @@ import { translateMessage } from './i18n/index.js';
  */
 const SERVICE_ABOUT = {
   google: {
-    blurb: 'Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks and Contacts: search and send mail, find and read files, see and add events.',
-    tags: ['email', 'mail', 'gmail', 'inbox', 'drive', 'files', 'calendar', 'meeting', 'schedule', 'event', 'docs', 'document', 'sheets', 'spreadsheet', 'forms', 'survey', 'tasks', 'todo', 'contacts', 'google'],
+    // Gmail sends only and Drive opens only picked files since 1.33.1, so "inbox" no longer finds it.
+    blurb: 'Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks and Contacts: send mail, open the Drive files you pick, see and add events.',
+    tags: ['email', 'mail', 'gmail', 'drive', 'files', 'calendar', 'meeting', 'schedule', 'event', 'docs', 'document', 'sheets', 'spreadsheet', 'forms', 'survey', 'tasks', 'todo', 'contacts', 'google'],
   },
   github: {
     blurb: 'Repositories, issues, pull requests and code search on GitHub — read them, and open an issue or a pull request.',

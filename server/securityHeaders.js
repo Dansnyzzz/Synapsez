@@ -10,10 +10,12 @@
  * lists ever differ, because a policy that is strict on a laptop and absent in
  * production is the kind of gap nobody sees until it is used.
  *
- * The app has no build step and no third-party scripts, so a strict policy
- * costs nothing here and closes the usual holes: an injected `<script>` has
- * nowhere to load from, the page cannot be framed, and a URL is never leaked to
- * another origin through the referrer.
+ * The app has no build step and one third-party script — Google's loader for
+ * the Drive Picker, the only way Google lets a person choose files for the
+ * free `drive.file` scope (owner, 2026-11-18) — so a strict policy costs little
+ * here and closes the usual holes: an injected `<script>` has nowhere else to
+ * load from, the page cannot be framed, and a URL is never leaked to another
+ * origin through the referrer.
  *
  * `'unsafe-inline'` covers the inline `style=` attributes the UI sets for
  * layout measurements; script-src has no such escape hatch, which is the half
@@ -21,14 +23,16 @@
  */
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  "script-src 'self'",
+  // Google's loader for the Drive Picker (gapi), and nothing else from elsewhere.
+  "script-src 'self' https://apis.google.com",
   "style-src 'self' 'unsafe-inline'",
   // The cloud browser's live screen streams from the account's own machine, at
   // an address E2B gives it under e2b.app, or Vercel under vercel.run.
   "img-src 'self' data: blob: https://*.e2b.app https://*.vercel.run https://qr.sepay.vn",
   "font-src 'self'",
-  // A YouTube link in a reply plays in place, from the no-cookie domain only.
-  "frame-src 'self' https://www.youtube-nocookie.com",
+  // A YouTube link in a reply plays in place, from the no-cookie domain only;
+  // the Drive Picker opens in a frame of Google's.
+  "frame-src 'self' https://www.youtube-nocookie.com https://docs.google.com",
   // The cloud browser's live screen and a person's gestures, over one socket
   // straight to the account's machine — never through this app's server.
   // And a big file's way straight to the account's machine, on a link signed for one path (routes/files.js).

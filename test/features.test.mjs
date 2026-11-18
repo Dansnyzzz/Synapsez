@@ -429,7 +429,8 @@ section('page views and speed: on Vercel only, the path only, never against the 
   check('the scripts they add come from this origin, which `script-src \'self\'` allows', analyticsSrc.includes('return "/_vercel/insights/script.js"') && speedSrc.includes('return "/_vercel/speed-insights/script.js"'));
   const csp = JSON.parse(fs.readFileSync(new URL('../vercel.json', import.meta.url), 'utf8')).headers[0].headers.find((h) => h.key === 'Content-Security-Policy').value;
   // The one addition is the cloud browser's socket to the account's own machine, on E2B or Vercel — nothing for these.
-  check('  and the policy was not widened for them', /script-src 'self';/.test(csp) && /connect-src 'self'(?: https:\/\/\*\.e2b\.app)?(?: wss:\/\/\*\.e2b\.app)?(?: wss:\/\/\*\.vercel\.run)?;/.test(csp));
+  // script-src's one other origin is Google's loader for the Drive Picker (2026-11-18), not theirs.
+  check('  and the policy was not widened for them', /script-src 'self' https:\/\/apis\.google\.com;/.test(csp) && /connect-src 'self'(?: https:\/\/\*\.e2b\.app)?(?: wss:\/\/\*\.e2b\.app)?(?: wss:\/\/\*\.vercel\.run)?;/.test(csp));
   const appSrc = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   check('the app starts it from the session, and says so only where it measures', /startInsights\(session\.insights\)/.test(appSrc) && /insightsNote\.hidden = !session\.insights/.test(appSrc) && /id="insights-note" data-i18n="memory\.insights" hidden/.test(html));
@@ -2152,7 +2153,7 @@ section('connectors: each Google product its own, the catalogue page, logos, and
   const { encryptSecret } = await import('../server/crypto.js');
   const google = await import('../server/google.js');
   const user = await store.createUser({ id: 'u-gprod', email: 'gprod@example.com', passwordHash: 'x', name: 'G', role: 'user' });
-  const scope = 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify openid email';
+  const scope = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.send openid email';
   await store.saveConnector(user.id, 'google', encryptSecret(JSON.stringify({ access: 'a', refresh: 'r', exp: Date.now() + 3600e3, scope }), ['connector', user.id, 'google']), 'g@example.com');
   check('every granted product is in use to begin with', (await google.googleGrants(user.id)).join() === 'gmail,drive');
   check('disconnecting Drive leaves Gmail', (await google.dropGoogleProduct(user.id, 'drive')).join() === 'gmail' && (await google.googleGrants(user.id)).join() === 'gmail');

@@ -3,6 +3,7 @@ import { getStore } from './store/index.js';
 import { encryptSecret, decryptSecret } from './crypto.js';
 import { connectorContext } from './secretContexts.js';
 import { signingRoot } from './secrets.js';
+import { log } from './util/trace.js';
 
 /**
  * Google — Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks, Contacts.
@@ -24,11 +25,18 @@ import { signingRoot } from './secrets.js';
  * was asked for, so it is never handed a Gmail tool that can only fail.
  */
 
-/** The products a person can allow, each with the scopes it needs. */
+/**
+ * The products a person can allow, each with the scopes it needs.
+ *
+ * Only scopes Google's free review passes (owner, 2026-11-18): a restricted one
+ * — reading mail, or the whole of Drive — needs a paid assessment every year.
+ * So Gmail can only send, and Drive reaches only the files picked in the Google
+ * Picker or made by this app.
+ */
 export const GOOGLE_PRODUCTS = {
-  gmail: { label: 'Gmail', scopes: ['https://www.googleapis.com/auth/gmail.modify'] },
+  gmail: { label: 'Gmail', scopes: ['https://www.googleapis.com/auth/gmail.send'] },
   calendar: { label: 'Google Calendar', scopes: ['https://www.googleapis.com/auth/calendar'] },
-  drive: { label: 'Google Drive', scopes: ['https://www.googleapis.com/auth/drive'] },
+  drive: { label: 'Google Drive', scopes: ['https://www.googleapis.com/auth/drive.file'] },
   docs: { label: 'Google Docs', scopes: ['https://www.googleapis.com/auth/documents'] },
   sheets: { label: 'Google Sheets', scopes: ['https://www.googleapis.com/auth/spreadsheets'] },
   forms: {
@@ -119,11 +127,24 @@ export function authUrl({ userId, products, origin }) {
   return { url: url.toString(), nonce };
 }
 
+// The wider scopes asked for before 1.33.1, each of which can do all its narrow
+// successor can: a connection made then keeps working until it ends, and the
+// next sign-in asks only for the narrow one.
+const COVERED_BY = {
+  'https://www.googleapis.com/auth/gmail.send': [
+    'https://www.googleapis.com/auth/gmail.modify',
+    'https://www.googleapis.com/auth/gmail.compose',
+    'https://mail.google.com/',
+  ],
+  'https://www.googleapis.com/auth/drive.file': ['https://www.googleapis.com/auth/drive'],
+};
+
 /** Which products a granted-scope string covers — all of a product's scopes, or it is not granted. */
 export function grantedProducts(scope) {
   const have = new Set(String(scope || '').split(/\s+/).filter(Boolean));
+  const holds = (s) => have.has(s) || (COVERED_BY[s] || []).some((wider) => have.has(wider));
   return Object.entries(GOOGLE_PRODUCTS)
-    .filter(([, spec]) => spec.scopes.every((s) => have.has(s)))
+    .filter(([, spec]) => spec.scopes.every(holds))
     .map(([id]) => id);
 }
 
@@ -245,6 +266,46 @@ async function accessToken(userId) {
   if (body.scope) next.scope = body.scope;
   await save(userId, next, row.account);
   return next.access;
+}
+
+// What the Picker's token may hold: drive.file, and the identity scopes Google
+// names on every token of a sign-in that asked for them.
+const PICKER_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const PICKER_MAY_ALSO_HOLD = new Set([
+  'openid',
+  'email',
+  'profile',
+  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/userinfo.profile',
+]);
+
+/**
+ * A token for the Google Picker, which runs in the browser and so is handed no
+ * more than it needs.
+ *
+ * The stored access token can reach Calendar, Docs and the rest, so it never
+ * leaves the server. This one is minted from the refresh token with the request
+ * narrowed to `drive.file`, and given out only when Google's answer says that is
+ * all it reaches. An answer that names nothing has proved nothing and is refused
+ * too. It is never stored: the stored token stays the one the tools use.
+ *
+ * @returns {Promise<{ token: string, expiresAt: number }>}
+ */
+export async function pickerToken(userId) {
+  const found = await readRow(userId);
+  if (!found) throw new Error('Google is not connected. The user can connect it in Settings → Connectors.');
+  const { ok, body } = await tokenRequest({ refresh_token: found.data.refresh, grant_type: 'refresh_token', scope: PICKER_SCOPE });
+  if (!ok || !body.access_token) {
+    const why = [body.error, body.error_description].filter(Boolean).join(': ') || 'no token';
+    throw new Error(`Google would not give the Drive picker a token (${why}). Reconnect Google in Settings → Connectors.`);
+  }
+  const reaches = String(body.scope || '').split(/\s+/).filter(Boolean);
+  if (!reaches.includes(PICKER_SCOPE) || reaches.some((s) => s !== PICKER_SCOPE && !PICKER_MAY_ALSO_HOLD.has(s))) {
+    // Scope names only, never the token: what the owner needs to see if Google stops narrowing.
+    log.warn('google picker token refused: not narrowed to drive.file', { scope: reaches.join(' ') || '(none named)' });
+    throw new Error("Google did not confirm that the Drive picker's token is limited to the files you pick, so it was kept off this page. Attach the file from your computer for now.");
+  }
+  return { token: body.access_token, expiresAt: Date.now() + Number(body.expires_in || 3600) * 1000 };
 }
 
 /**
