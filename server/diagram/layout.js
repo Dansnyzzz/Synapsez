@@ -145,14 +145,15 @@ function orderTurns(list) {
 }
 
 /**
- * Of a drawing laid out both ways, the one to keep: the one whose text is largest in a 760 px
- * reply column (review, 2026-11-18, replacing "closer to 16:10 if it fits 1,200 at 0.8": a
- * 1,422 px drawing won that way and showed its titles at 7.5 px). Within 5 % of each other,
- * the box closer to 16:10 wins, on a log scale so twice too wide and twice too tall are equally
- * far off. A tie keeps "right", the way a flow is read.
+ * Of a drawing laid out both ways, the one to keep: the one whose text is largest as the page
+ * shows it — scaled to the 760 px reply column, or to the 576 px height cap, whichever bites
+ * (review, 2026-11-18, replacing "closer to 16:10 if it fits 1,200 at 0.8": a 1,422 px drawing
+ * won that way and showed its titles at 7.5 px; fix round 2 added the height). Within 5 % of
+ * each other, the box closer to 16:10 wins, on a log scale so twice too wide and twice too
+ * tall are equally far off. A tie keeps "right", the way a flow is read.
  */
 export function chooseDirection(right, down) {
-  const textScale = (l) => Math.min(1, FIT.column / l.width);
+  const textScale = (l) => Math.min(1, FIT.column / l.width, FIT.height / l.height);
   const off = (l) => Math.abs(Math.log(l.width / l.height / FIT.aspect));
   const [a, b] = [textScale(right), textScale(down)];
   if (Math.abs(a - b) > FIT.near * Math.max(a, b)) return b > a ? down : right;

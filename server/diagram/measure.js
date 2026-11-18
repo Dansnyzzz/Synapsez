@@ -33,10 +33,12 @@ export const TEXT = Object.freeze({
 export const lineHeight = (size) => size * TEXT.lineHeight;
 
 // Where a drawing is read (review, 2026-11-18: the owner's standard is text a person can read
-// in the conversation). A reply's column is about 760 px wide, so "auto" keeps the direction
-// whose text is largest there; within 5 % of each other, the shape closer to 16:10 wins. A
-// drawing wider than 1,200 is drawn 1,200 wide, scaled through its viewBox.
-export const FIT = Object.freeze({ column: 760, near: 0.05, aspect: 16 / 10, maxWidth: 1200 });
+// in the conversation). A reply's column is about 760 px wide, and the page scales a drawing
+// down to fit 72 % of the window's height rather than scroll it (public/js/render.js
+// fitDrawing: max(240, innerHeight × 0.72), 800 when the window is unknown — so 576). "auto"
+// keeps the direction whose text is largest within both; within 5 % of each other, the shape
+// closer to 16:10 wins. A drawing wider than 1,200 is drawn 1,200 wide, through its viewBox.
+export const FIT = Object.freeze({ column: 760, height: 0.72 * 800, near: 0.05, aspect: 16 / 10, maxWidth: 1200 });
 
 /** How wide a line of text is drawn at `size` px. */
 export function textWidth(text, size, bold = false) {

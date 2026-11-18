@@ -6,6 +6,7 @@
  *
  *   node test/diagram.test.mjs
  */
+import fs from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -18,7 +19,7 @@ const check = (label, pass, detail = '') => {
 
 const { validateDiagram, ICON_NAMES } = await import('../server/diagram/validate.js');
 const { layoutDiagram, chooseDirection } = await import('../server/diagram/layout.js');
-const { textWidth, wrapText, TEXT, measureNode, lineHeight } = await import('../server/diagram/measure.js');
+const { textWidth, wrapText, TEXT, FIT, measureNode, lineHeight } = await import('../server/diagram/measure.js');
 const { renderDiagram, palette, STAND_OUT } = await import('../server/diagram/render.js');
 const { ICONS } = await import('../server/diagram/icons.js');
 const { checkDiagram, contrast, colour } = await import('../server/widgetCheck.js');
@@ -726,21 +727,23 @@ section('"auto" lays a drawing out both ways and keeps the better shape');
   const wide = layoutDiagram(valid(fan));
   check('a wide, shallow one (one box fanning out to six) goes right', wide.direction === 'right', `${wide.direction} ${Math.round(wide.width)}×${Math.round(wide.height)}`);
   check('  and is exactly the layout that direction gives', isDeepStrictEqual(wide, layoutDiagram({ ...valid(fan), direction: 'right' })) && isDeepStrictEqual(long, layoutDiagram({ ...valid(chain(8)), direction: 'down' })));
-  // Review C8: the text a person reads in a 760 px reply column decides, not the box's shape.
-  const atColumn = (l) => TEXT.titleSize * Math.min(1, 760 / l.width);
+  // Review C8 and fix round 2: the text a person reads decides, as the page shows the drawing —
+  // in a 760 px reply column, scaled down to fit 576 px of height (72 % of an 800 px window,
+  // public/js/render.js fitDrawing), whichever bites.
+  check('the page scales a tall drawing to its height cap rather than scroll it, and auto uses that cap', /maxHeight = `\$\{Math\.round\(Math\.max\(240, \(globalThis\.innerHeight \|\| view\?\.innerHeight \|\| 800\) \* 0\.72\)\)\}px`/.test(fs.readFileSync(new URL('../public/js/render.js', import.meta.url), 'utf8')) && FIT.height === 576 && FIT.column === 760);
+  const shown = (l) => TEXT.titleSize * Math.min(1, 760 / l.width, 576 / l.height);
   for (const [name, input] of [['pipeline', pipeline], ['owner\'s 4-layer pipeline', ownerPipeline], ['icons', iconsFixture]]) {
     const both = ['right', 'down'].map((direction) => layoutDiagram({ ...valid(input), direction }));
     const auto = layoutDiagram(valid(input));
-    check(`${name}: auto keeps the way its titles are largest at 760 px (or within 5 %)`, atColumn(auto) >= Math.max(...both.map(atColumn)) * 0.95 - 1e-9, `${auto.direction}: titles ${atColumn(auto).toFixed(1)} px; right ${atColumn(both[0]).toFixed(1)}, down ${atColumn(both[1]).toFixed(1)}`);
+    check(`${name}: auto keeps the way its titles are largest as the page shows them (or within 5 %)`, shown(auto) >= Math.max(...both.map(shown)) * 0.95 - 1e-9, `${auto.direction}: titles ${shown(auto).toFixed(1)} px; right ${shown(both[0]).toFixed(1)}, down ${shown(both[1]).toFixed(1)}`);
   }
-  const iconsAuto = layoutDiagram(valid(iconsFixture));
-  check('the icons drawing, auto, shows its titles at 11 px or more in a 760 px column', atColumn(iconsAuto) >= 11, `${iconsAuto.direction}, ${Math.round(iconsAuto.width)} wide: ${atColumn(iconsAuto).toFixed(1)} px`);
   // The rule itself, on boxes only.
   const box = (width, height, tag) => ({ width, height, tag });
-  check('larger text at 760 wins: 897 wide beats 1,422 wide', chooseDirection(box(1422, 511, 'r'), box(897, 991, 'd')).tag === 'd');
-  check('  however well the wider one is shaped, when its text is over 5 % smaller', chooseDirection(box(900, 560, 'r'), box(760, 2000, 'd')).tag === 'd');
-  check('  both within the column: the shape closer to 16:10 decides', chooseDirection(box(700, 300, 'r'), box(400, 600, 'd')).tag === 'r' && chooseDirection(box(700, 120, 'r'), box(400, 260, 'd')).tag === 'd');
-  check('  within 5 % of each other, the shape decides too', chooseDirection(box(800, 400, 'r'), box(780, 700, 'd')).tag === 'r');
+  check('larger text wins: 897 wide beats 1,422 wide', chooseDirection(box(1422, 511, 'r'), box(897, 991, 'd')).tag === 'd');
+  check('  however well the other is shaped, when its text is over 5 % smaller', chooseDirection(box(900, 560, 'r'), box(760, 500, 'd')).tag === 'd');
+  check('  the height cap counts: a drawing 1,400 tall loses to one 1,000 wide', chooseDirection(box(1000, 300, 'r'), box(600, 1400, 'd')).tag === 'r');
+  check('  both within the column and the cap: the shape closer to 16:10 decides', chooseDirection(box(700, 300, 'r'), box(400, 560, 'd')).tag === 'r' && chooseDirection(box(700, 120, 'r'), box(400, 260, 'd')).tag === 'd');
+  check('  within 5 % of each other, the shape decides too', chooseDirection(box(800, 500, 'r'), box(780, 560, 'd')).tag === 'r');
   check('  and a tie keeps right', chooseDirection(box(800, 500, 'r'), box(800, 500, 'd')).tag === 'r');
   check('"right" and "down" still force their way', layoutDiagram(valid({ ...chain(8), direction: 'right' })).direction === 'right' && layoutDiagram(valid({ ...fan, direction: 'down' })).direction === 'down');
 }
