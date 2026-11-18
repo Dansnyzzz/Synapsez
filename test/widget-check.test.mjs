@@ -78,8 +78,11 @@ section('a clean diagram has nothing to fix');
   // A drawing that scopes its rules under its own id (as Ephapse's diagrams do) is read the same.
   const scoped = checkDiagram('<svg id="d7" viewBox="0 0 300 100"><style>#d7 .t{font-size:14px;fill:#f2f2f2}</style><rect x="0" y="0" width="300" height="100" fill="#ffffff"/><text class="t" x="20" y="50">Pale on white</text></svg>');
   check('rules scoped under the drawing\'s own id are read: a pale class on white is found', scoped.issues.some((s) => /Pale on white.*hard to read/.test(s)), scoped.issues.join(' | '));
-  const moved = checkDiagram('<svg viewBox="0 0 100 100"><g transform="translate(500,0)"><text x="0" y="20" font-size="14" fill="#222">Far away but moved</text></g></svg>');
-  check('a text inside a transformed group is not judged by where it seems to be', !moved.issues.some((s) => /runs off/.test(s)), moved.issues.join(' | '));
+  const moved = checkDiagram('<svg viewBox="0 0 100 100"><g transform="rotate(30) translate(500,0)"><text x="0" y="20" font-size="14" fill="#222">Far away but moved</text></g></svg>');
+  check('a text inside a rotated group is not judged by where it seems to be', !moved.issues.some((s) => /runs off/.test(s)), moved.issues.join(' | '));
+  // Fix round 1: a plain translate is followed, so the text is judged where it lands.
+  const shifted = checkDiagram('<svg viewBox="0 0 100 100"><g transform="translate(500,0)"><text x="0" y="20" font-size="14" fill="#222">Far away but moved</text></g></svg>');
+  check('  one moved only by a translate is judged where the translate puts it', shifted.issues.some((s) => /Far away but moved.*runs off/.test(s)), shifted.issues.join(' | '));
   check('contrast is WCAG\'s', Math.round(contrast(colour('#000'), colour('#fff'))) === 21 && contrast(colour('#777'), colour('#7a8a88')) < 3);
 }
 
@@ -200,18 +203,64 @@ section('lines and arrows: what is drawn right is left alone');
   const apart = `<svg viewBox="0 0 300 200">${box}<line x1="90" y1="100" x2="140" y2="100" stroke="#333"/><polygon points="170,100 160,95 160,105" fill="#333"/></svg>`;
   check('  a triangle 20 px away does not, and a plain line is not an arrow', checkLines(apart).length === 0, checkLines(apart).join(' | '));
   const centred = `<svg viewBox="0 0 400 200">${MARKER}${box}<rect x="250" y="60" width="120" height="80" fill="#fff" stroke="#333"/><text x="310" y="85" text-anchor="middle" font-size="13" fill="#111">Đích</text>${arrow('M90 100L310 100')}</svg>`;
-  check('an arrow ending at a box\'s middle is told to end on its edge, where its head shows', checkLines(centred).some((s) => /^an arrow ends at \(310, 100\), inside "Đích" rather than on its edge/.test(s)), checkLines(centred).join(' | '));
+  check('an arrow ending at a box\'s middle is told to end on its edge, where its head shows', checkLines(centred).some((s) => /^an arrow ends at \(310, 100\), inside the box "Đích" rather than on its edge/.test(s)), checkLines(centred).join(' | '));
 
   // A pill's ends are round, and an arrow may end on the curve (the server's pills do): found by
   // the 80 random layouts, where a loop ended on a tall pill's rounded end at (224, 527).
   const pill = (rx) => `<svg viewBox="0 0 400 600">${MARKER}<rect x="77" y="273" width="171" height="280" rx="${rx}" fill="#fff" stroke="#333"/><text x="162" y="420" text-anchor="middle" font-size="14" fill="#111">Người dùng</text>${arrow('M248 499L409 499L409 527L224 527')}</svg>`;
   check('an arrow ending on a pill\'s rounded end is on its edge', checkLines(pill(85.5)).length === 0, checkLines(pill(85.5)).join(' | '));
-  check('  the same point in a box with square corners is inside it', checkLines(pill(0)).some((s) => /^an arrow ends at \(224, 527\), inside "Người dùng"/.test(s)), checkLines(pill(0)).join(' | '));
+  check('  the same point in a box with square corners is inside it', checkLines(pill(0)).some((s) => /^an arrow ends at \(224, 527\), inside the box "Người dùng"/.test(s)), checkLines(pill(0)).join(' | '));
 
   const overlap = (b) => `<svg viewBox="0 0 400 200"><rect x="20" y="20" width="160" height="80" fill="#eef2ff" stroke="#6366f1"/><text x="100" y="65" text-anchor="middle" font-size="14" fill="#1e1b4b">Máy chủ</text>${b}</svg>`;
   const over = overlap('<rect x="150" y="60" width="160" height="80" fill="#ecfdf5" stroke="#10b981"/><text x="235" y="110" text-anchor="middle" font-size="14" fill="#064e3b">Cơ sở dữ liệu</text>');
-  check('two boxes overlapping are found, each named', checkLines(over).some((s) => /^the boxes "Máy chủ" and "Cơ sở dữ liệu" overlap by about 30×40/.test(s)), checkLines(over).join(' | '));
+  check('two boxes overlapping are found, each named', checkLines(over).some((s) => /^the box "Máy chủ" and the box "Cơ sở dữ liệu" overlap by about 30×40/.test(s)), checkLines(over).join(' | '));
   check('  not one sharing 4 px of an edge, nor one wholly inside the other', checkLines(overlap('<rect x="176" y="20" width="100" height="80" fill="#fff" stroke="#333"/>')).length === 0 && checkLines(overlap('<rect x="40" y="30" width="60" height="20" fill="#fff" stroke="#333"/>')).length === 0);
+}
+
+section('lines and arrows: where a translate puts things, and where nothing can be known (fix round 1)');
+{
+  const box = '<rect x="10" y="80" width="80" height="40" fill="#fff" stroke="#333"/><text x="50" y="105" text-anchor="middle" font-size="13" fill="#111">Nguồn</text>';
+  const dangling = (extra) => `<svg viewBox="0 0 300 200">${MARKER}${box}<line x1="90" y1="100" x2="150" y2="100" stroke="#333" marker-end="url(#ah)"/>${extra}</svg>`;
+  check('a dangling arrow, as a control', checkLines(dangling('')).some((s) => /points at nothing/.test(s)));
+  // A plain translate moves what it holds, and is followed: the commonest wrapper a model writes.
+  const inner = OWNER_FLAWED.replace(/^<svg[^>]*>/, '').replace(/<\/svg>\s*$/, '');
+  const wrapped = (open, close) => `<svg viewBox="0 0 900 460" xmlns="http://www.w3.org/2000/svg">${open}${inner}${close}</svg>`;
+  const bare = checkLines(OWNER_FLAWED);
+  check('the owner\'s flawed drawing in translate(0,0) finds what it finds bare', JSON.stringify(checkLines(wrapped('<g transform="translate(0,0)">', '</g>'))) === JSON.stringify(bare) && bare.length === 4, checkLines(wrapped('<g transform="translate(0,0)">', '</g>')).join(' | '));
+  check('  and inside two translates that cancel', JSON.stringify(checkLines(wrapped('<g transform="translate(10,10)"><g transform="translate(-10 -10)">', '</g></g>'))) === JSON.stringify(bare));
+  const moved = checkLines(wrapped('<g style="transform: translate(20px, 20px)">', '</g>'));
+  check('  moved 20 px each way by a translate in its style, each finding is where it is drawn', moved.length === 4 && moved.some((s) => s.startsWith('an arrow at (550, 150)')) && checkDiagram(wrapped('<g transform="translate(20 20)">', '</g>')).issues.length === checkDiagram(OWNER_FLAWED).issues.length, moved.join(' | '));
+  // Each box drawn at its own origin and moved into place; the arrows in plain numbers.
+  const perNode = `<svg viewBox="0 0 760 200">${MARKER}<rect width="760" height="200" fill="#fff"/>${[['Người dùng', 40], ['Máy chủ', 300], ['CSDL', 560]].map(([t, x]) => `<g transform="translate(${x},60)"><rect width="160" height="56" rx="8" fill="#eef2ff" stroke="#4f46e5"/><text x="80" y="33" text-anchor="middle" font-size="14" fill="#1e1b4b">${t}</text></g>`).join('')}${arrow('M200 88L298 88')}${arrow('M460 88L558 88')}</svg>`;
+  check('boxes each moved into place by their own translate, arrows in plain numbers: nothing found', checkLines(perNode).length === 0 && checkDiagram(perNode).issues.length === 0, [...checkLines(perNode), ...checkDiagram(perNode).issues].join(' | '));
+  // Rotated, scaled or reused: where it lands is not known, so no arrow is blamed for missing it.
+  const diamond = `<svg viewBox="0 0 400 400">${MARKER}<rect width="400" height="400" fill="#fff"/>
+    <rect x="140" y="20" width="120" height="44" rx="6" fill="#fff" stroke="#333"/><text x="200" y="47" text-anchor="middle" font-size="14" fill="#111">Bước 1</text>
+    <rect x="160" y="130" width="80" height="80" fill="#fef3c7" stroke="#d97706" transform="rotate(45 200 170)"/><text x="200" y="175" text-anchor="middle" font-size="13" fill="#111">OK?</text>
+    ${arrow('M200 64L200 113')}${arrow('M200 227L200 300')}<rect x="140" y="300" width="120" height="44" rx="6" fill="#fff" stroke="#333"/><text x="200" y="327" text-anchor="middle" font-size="14" fill="#111">Bước 2</text></svg>`;
+  check('a decision drawn as a rotated rect: no arrow said to point at nothing', !checkLines(diamond).some((s) => /nothing|ends /.test(s)), checkLines(diamond).join(' | '));
+  const used = `<svg viewBox="0 0 500 200">${MARKER}<defs><rect id="n" width="120" height="50" rx="6" fill="#fff" stroke="#333"/></defs><rect width="500" height="200" fill="#fff"/>
+    <use href="#n" x="20" y="70"/><text x="80" y="100" text-anchor="middle" font-size="14" fill="#111">A</text><use href="#n" x="300" y="70"/><text x="360" y="100" text-anchor="middle" font-size="14" fill="#111">B</text>${arrow('M140 95L298 95')}</svg>`;
+  check('  nor boxes drawn by <use>', !checkLines(used).some((s) => /nothing|ends /.test(s)), checkLines(used).join(' | '));
+  check('  nor beside an <image> or a <foreignObject>', checkLines(dangling(`<image href="data:," x="140" y="80" width="40" height="40"/>`)).length === 0 && checkLines(dangling('<foreignObject x="140" y="80" width="40" height="40"><div>x</div></foreignObject>')).length === 0);
+  // But what stands where it is known is still crossed-checked.
+  check('  an arrow through a known box is still found beside a rotated one', checkLines(diamond.replace(arrow('M200 227L200 300'), arrow('M200 227L200 360'))).some((s) => /runs through the box "Bước 2"/.test(s)));
+
+  // Arrows meant to end in open space: an axis, a timeline's spine. A free end is told only when
+  // the arrow's other end is on a shape or at a text.
+  const matrix = `<svg viewBox="0 0 500 500">${MARKER}<rect width="500" height="500" fill="#fff"/>
+    <line x1="60" y1="440" x2="460" y2="440" stroke="#333" stroke-width="2" marker-end="url(#ah)"/><line x1="60" y1="440" x2="60" y2="40" stroke="#333" stroke-width="2" marker-end="url(#ah)"/>
+    <text x="260" y="475" text-anchor="middle" font-size="13" fill="#111">Công sức</text>
+    ${[['Làm ngay', 80, 60], ['Lên kế hoạch', 270, 60], ['Giao việc', 80, 250], ['Bỏ qua', 270, 250]].map(([t, x, y]) => `<rect x="${x}" y="${y}" width="170" height="170" fill="#f8fafc" stroke="#64748b"/><text x="${x + 85}" y="${y + 90}" text-anchor="middle" font-size="14" fill="#111">${t}</text>`).join('')}</svg>`;
+  check('a 2×2 matrix with its axis arrows finds nothing', checkLines(matrix).length === 0 && checkDiagram(matrix).issues.length === 0, [...checkLines(matrix), ...checkDiagram(matrix).issues].join(' | '));
+  const timeline = `<svg viewBox="0 0 700 200">${MARKER}<rect width="700" height="200" fill="#fff"/><line x1="40" y1="100" x2="660" y2="100" stroke="#334155" stroke-width="3" marker-end="url(#ah)"/>${[100, 250, 400, 550].map((x, i) => `<circle cx="${x}" cy="100" r="8" fill="#0284c7"/><text x="${x}" y="${i % 2 ? 140 : 75}" text-anchor="middle" font-size="13" fill="#111">${2020 + i}</text>`).join('')}</svg>`;
+  check('a timeline\'s spine through its dots, ending in an arrow, finds nothing', checkLines(timeline).length === 0, checkLines(timeline).join(' | '));
+  check('  but a box on the spine is still run through', checkLines(timeline.replace('<circle cx="250" cy="100" r="8" fill="#0284c7"/>', '<circle cx="250" cy="100" r="20" fill="#0284c7"/>')).some((s) => /runs through the circle at \(250, 100\)/.test(s)));
+
+  // A shape with no text is named by what it is, and where the model put it.
+  const untitled = `<svg viewBox="0 0 500 200">${MARKER}${box}<circle cx="250" cy="100" r="30" fill="#fff" stroke="#333"/><polygon points="400,60 440,100 400,140 360,100" fill="#fff" stroke="#333"/>${arrow('M90 100L400 100')}</svg>`;
+  const named = checkLines(untitled);
+  check('an unnamed circle and diamond are called so, at their middles', named.some((s) => /runs through the circle at \(250, 100\)/.test(s)) && named.some((s) => /inside the diamond at \(400, 100\)/.test(s)), named.join(' | '));
 }
 
 section('lines and arrows: a server-drawn diagram finds nothing, and no markup breaks the reader');
@@ -254,10 +303,13 @@ section('lines and arrows: a server-drawn diagram finds nothing, and no markup b
   // 20 px, and each is found pointing at nothing — the labelled ones too, whose head then stops
   // just past their own label. (Cut back less, an arrow may stop on a group's border, which is
   // a place an arrow may point.)
+  // Without icons: an icon is a scaled group, and where a scaled group lands is not known, so with
+  // one in the drawing no end is judged (fix round 1's ruling).
   const missed = [];
   let cutCount = 0;
+  const plainBase = { ...base, nodes: base.nodes.map((n) => Object.fromEntries(Object.entries(n).filter(([k]) => k !== 'icon'))) };
   for (const direction of ['down', 'right']) {
-    const laid = layoutDiagram(validateDiagram({ ...base, direction }).diagram);
+    const laid = layoutDiagram(validateDiagram({ ...plainBase, direction }).diagram);
     const solids = [...laid.nodes, ...laid.groups, ...laid.edges.filter((e) => e.labelBox).map((e) => e.labelBox)];
     const clearance = ([x, y]) => Math.min(...solids.map((r) => {
       const inside = x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
@@ -336,18 +388,21 @@ section('lines and arrows: a server-drawn diagram finds nothing, and no markup b
   }
   const huge = `<svg viewBox="0 0 1200 800">${MARKER}${dense.join('')}</svg>`;
   const longPath = `<svg viewBox="0 0 1200 800">${MARKER}<path d="M0 0${' L5 5 L600 400'.repeat(6000)}" marker-end="url(#ah)"/>${'<text x="600" y="400">chữ</text>'.repeat(200)}</svg>`;
+  // The review's input (fix round 1): 20 paths running back and forth over 770 texts, 1,940
+  // stretches in all, under a backing and 770 more rects — 93 KB, and 5.3 s before the fix.
+  const crowd = `<svg viewBox="0 0 1200 300">${MARKER}<rect width="1200" height="300" fill="#fff"/><line x1="0" y1="0" x2="0" y2="300" stroke="#333"/><line x1="1200" y1="0" x2="1200" y2="300" stroke="#333"/>${`<path d="M0 100${' L1200 100 L0 100'.repeat(48)} L1200 100" fill="none" stroke="#333" marker-end="url(#ah)"/>`.repeat(20)}${Array.from({ length: 770 }, (_, i) => `<text x="${10 + ((i * 2) % 1180)}" y="104" font-size="11">ab</text>`).join('')}${Array.from({ length: 770 }, (_, i) => `<rect x="${i}" y="0" width="1" height="1" fill="#fff"/>`).join('')}<rect x="0" y="80" width="1200" height="40" fill="#fff"/></svg>`;
   const timings = [];
-  for (const [name, markup] of [['96 KB of boxes, labels and elbow arrows', huge], ['one 12,000-segment path under 200 texts', longPath]]) {
+  for (const [name, markup, most] of [['96 KB of boxes, labels and elbow arrows', huge, 250], ['one 12,000-segment path under 200 texts', longPath, 250], ['the review\'s crossings under backings', crowd, 200]]) {
     let best = Infinity;
     for (let k = 0; k < 5; k += 1) {
       const t0 = performance.now();
       checkDiagram(markup);
       best = Math.min(best, performance.now() - t0);
     }
-    timings.push({ name, kb: Math.round(markup.length / 1024), ms: Math.round(best) });
+    timings.push({ name, kb: Math.round(markup.length / 1024), ms: Math.round(best), most });
   }
   console.log(`      timings (quickest of 5): ${timings.map((t) => `${t.name} (${t.kb} KB): ${t.ms} ms`).join('; ')}`);
-  check('the largest widget, at its densest, is checked in under 250 ms', timings.every((t) => t.ms < 250), JSON.stringify(timings));
+  check('the largest widget, at its densest, is checked in under 250 ms; the review\'s 93 KB of crossings in under 200', timings.every((t) => t.ms < t.most) && timings[2].kb >= 90, JSON.stringify(timings));
 }
 
 section('show_widget says what is wrong, and keeps a clean diagram as a file');
@@ -374,31 +429,68 @@ section('show_widget says what is wrong, and keeps a clean diagram as a file');
     // A conversation of its own, so the files kept here are counted apart from the ones below.
     const chat2 = crypto.randomUUID();
     await store.createChat(user.id, { id: chat2, title: 'Redraw' });
-    const counter = (title) => `widget:redraw:${chat2}:${crypto.createHash('sha1').update(title.toLowerCase().replace(/\s+/g, ' ').trim()).digest('hex')}`;
-    const show = (input) => CLOUD_IMPLEMENTATIONS.show_widget(input, { userId: user.id, chatId: chat2 });
-    const first = await show({ title: 'Đường đi của  một câu hỏi', svg: OWNER_FLAWED });
-    check('a flawed first svg in a chat comes back with no widget', first.widget === undefined && !('widget' in first), Object.keys(first).join(','));
-    check('  and nothing kept', (await store.listGeneratedFiles(user.id, chat2)).length === 0);
-    check('  the model is told what is wrong, that the user has not seen it, and to draw it again with the same title', /has not seen it/.test(first.content) && /points at nothing/.test(first.content) && /runs through the box "Tầng 1 — Ứng dụng"/.test(first.content) && /same title/.test(first.content), first.content);
+    // Fix round 1: kept by conversation and turn, not by title (a renamed redraw was held back
+    // again; a later turn's new drawing under an old title never was).
+    const counter = (turn) => `widget:redraw:${chat2}${turn ? `:${turn}` : ''}`;
+    const show = (input, turnId) => CLOUD_IMPLEMENTATIONS.show_widget(input, { userId: user.id, chatId: chat2, turnId });
+    const kept = async () => (await store.listGeneratedFiles(user.id, chat2)).length;
+    const [turn1, turn2, turn3] = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+    const first = await show({ title: 'Đường đi của một câu hỏi', svg: OWNER_FLAWED }, turn1);
+    check('a flawed first svg in a turn comes back with no widget', first.widget === undefined && !('widget' in first), Object.keys(first).join(','));
+    check('  and nothing kept', (await kept()) === 0);
+    check('  the model is told what is wrong, that the user has not seen it, and to draw it again', /has not seen it/.test(first.content) && /points at nothing/.test(first.content) && /runs through the box "Tầng 1 — Ứng dụng"/.test(first.content) && /Draw it again now with show_widget, fixed/.test(first.content) && /next try is shown whatever/.test(first.content), first.content);
     check('  and pointed to `diagram` for boxes and arrows', /`diagram`/.test(first.content) && /instead of `svg`/.test(first.content), first.content);
-    check('  counted under the conversation and the title, lower-cased with its spaces folded', (await store.readCounter(counter('Đường đi của một câu hỏi'))) === 1);
-    const laidOut = await show({ title: 'Đường đi của một câu hỏi', diagram: { nodes: [{ id: 'a', title: 'Người dùng' }, { id: 'b', title: 'Câu trả lời' }], edges: [{ from: 'a', to: 'b' }] } });
-    check('a `diagram` is never held back, even under a title being redrawn, and counts nothing', laidOut.widget?.kind === 'svg' && (await store.readCounter(counter('Đường đi của một câu hỏi'))) === 1, laidOut.content);
-    const second = await show({ title: 'ĐƯỜNG ĐI của một  câu hỏi', svg: OWNER_FLAWED.replace('M480 130L530 130', 'M480 130L558 130') });
-    const keptNow = await store.listGeneratedFiles(user.id, chat2);
-    check('the second try with the same title is shown', second.widget?.kind === 'svg' && second.widget.markup.includes('M480 130L558 130'), Object.keys(second).join(','));
-    check('  and kept, whatever the check still finds', keptNow.length === 2 && keptNow.some((f) => f.name === 'ĐƯỜNG ĐI của một câu hỏi.svg') && /kept it as a file/.test(second.content), JSON.stringify(keptNow.map((f) => f.name)));
+    check('  counted under the conversation and the turn', (await store.readCounter(counter(turn1))) === 1);
+    const laidOut = await show({ title: 'Đường đi của một câu hỏi', diagram: { nodes: [{ id: 'a', title: 'Người dùng' }, { id: 'b', title: 'Câu trả lời' }], edges: [{ from: 'a', to: 'b' }] } }, turn1);
+    check('a `diagram` is never held back, and counts nothing', laidOut.widget?.kind === 'svg' && (await store.readCounter(counter(turn1))) === 1, laidOut.content);
+    const before = await kept();
+    const second = await show({ title: 'Một tên khác hẳn', svg: OWNER_FLAWED.replace('M480 130L530 130', 'M480 130L558 130') }, turn1);
+    check('the redraw is shown, though it was given another title', second.widget?.kind === 'svg' && second.widget.markup.includes('M480 130L558 130'), Object.keys(second).join(','));
+    check('  and kept, whatever the check still finds', (await kept()) === before + 1 && /kept it as a file/.test(second.content));
     check('  its content lists what is still wrong, and asks for no third try', /still finds/.test(second.content) && /points at nothing/.test(second.content) && !/530, 130/.test(second.content) && /Do not draw it again/.test(second.content), second.content);
-    const cleanFirst = await show({ title: 'Sạch', svg: CLEAN_DRAWN });
-    check('a clean first svg in a chat is shown and kept at once, and counts nothing', cleanFirst.widget?.kind === 'svg' && /kept it as a file/.test(cleanFirst.content) && (await store.readCounter(counter('Sạch'))) === 0);
-    // What the person sees for the held-back try: the step reads as a check of the drawing.
+    const third = await show({ title: 'Một hình khác nữa', svg: OWNER_FLAWED }, turn1);
+    check('  only one try a turn is ever held back: a third flawed drawing in it is shown', third.widget?.kind === 'svg' && /still finds/.test(third.content));
+    const nextTurn = await show({ title: 'Đường đi của một câu hỏi', svg: OWNER_FLAWED }, turn2);
+    check('a later turn\'s flawed drawing gets its own check, under any title', nextTurn.widget === undefined && (await store.readCounter(counter(turn2))) === 1);
+    const cleanFirst = await show({ title: 'Sạch', svg: CLEAN_DRAWN }, turn3);
+    check('a clean first svg is shown and kept at once, and counts nothing', cleanFirst.widget?.kind === 'svg' && /kept it as a file/.test(cleanFirst.content) && (await store.readCounter(counter(turn3))) === 0);
+    const noTurn = await show({ title: 'Không lượt', svg: OWNER_FLAWED });
+    check('  with no turn to name, the conversation alone is counted', noTurn.widget === undefined && (await store.readCounter(counter(null))) === 1);
+    // With the count unkept — the store failing — the drawing is shown at once, as before the
+    // redraw existed, rather than the call failing; nothing flawed is kept.
+    const realAdd = store.addToCounter;
+    store.addToCounter = async () => {
+      throw new Error('the counters are down');
+    };
+    try {
+      const keptBefore = await kept();
+      const failing = await show({ title: 'Kho đếm lỗi', svg: OWNER_FLAWED }, crypto.randomUUID());
+      check('with the store failing, a flawed drawing is shown at once, the model told to draw it again, and nothing kept', failing.widget?.markup === OWNER_FLAWED.trim() && /will see these problems/.test(failing.content) && (await kept()) === keptBefore, failing.content.slice(0, 120));
+    } finally {
+      store.addToCounter = realAdd;
+    }
+
+    // What the person sees (fix round 1): "Đang kiểm tra hình vẽ…" while it runs; done, "Đã kiểm
+    // tra hình vẽ", or "… — vẽ lại" for the try held back. A saved turn is drawn through the
+    // same start and complete, so a reload says the same.
+    const { drawingStep, describeStep } = await import('../public/js/render.js');
     const fsMod = await import('node:fs');
     const page = fsMod.readFileSync(new URL('../public/js/render.js', import.meta.url), 'utf8');
     const { vi: viWords } = await import('../public/js/locales/vi.js');
     const { en: enWords } = await import('../public/js/locales/en.js');
+    const svgIn = { title: 'x', svg: OWNER_FLAWED };
     check(
-      'the person sees the held-back try as "Đang kiểm tra hình vẽ…", never the flawed picture',
-      /else if \(call\.name === 'show_widget' && !result\.widget\) verb = t\('step\.show_widget\.checking'\);/.test(page) && viWords['step.show_widget.checking'] === 'Đang kiểm tra hình vẽ…' && enWords['step.show_widget.checking'] === 'Checking the drawing…',
+      'a hand-drawn picture\'s step: checking while it runs, checked once shown, checked and redrawing when held back',
+      drawingStep(svgIn) === 'step.show_widget.checking' && drawingStep(svgIn, second) === 'step.show_widget.checked' && drawingStep(svgIn, first) === 'step.show_widget.redrawing' && drawingStep(svgIn, { content: 'x', isError: true }) === null,
+    );
+    check('  a `diagram` or `html` step keeps its own words', drawingStep({ title: 'x', diagram: {} }, laidOut) === null && drawingStep({ title: 'x', html: '<p>a</p>' }, { widget: {} }) === null && describeStep('show_widget', { title: 'x', html: '<p/>' }).verb === enWords['step.show_widget']);
+    check('  the running step says so', describeStep('show_widget', svgIn).verb === enWords['step.show_widget.checking']);
+    check('  the finished step, live or reloaded, is chosen by it in the one place both pass through', /else if \(call\.name === 'show_widget' && drawingStep\(call\.input, result\)\) verb = t\(drawingStep\(call\.input, result\)\);/.test(page) && /if \(result\) handle\.complete\(result\);/.test(page));
+    check(
+      '  in both languages, the finished ones in the past',
+      viWords['step.show_widget.checking'] === 'Đang kiểm tra hình vẽ…' && enWords['step.show_widget.checking'] === 'Checking the drawing…' &&
+        viWords['step.show_widget.checked'] === 'Đã kiểm tra hình vẽ' && enWords['step.show_widget.checked'] === 'Checked the drawing' &&
+        viWords['step.show_widget.redrawing'] === 'Đã kiểm tra hình vẽ — vẽ lại' && enWords['step.show_widget.redrawing'] === 'Checked the drawing — redrawing',
     );
   }
   const good = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Luồng: đặt / giao', svg: '<svg viewBox="0 0 200 100"><rect x="10" y="10" width="180" height="40" fill="#e8f0fe"/><text x="100" y="35" text-anchor="middle" font-size="14" fill="#1d2733">Đặt hàng</text></svg>' }, { userId: user.id, chatId });

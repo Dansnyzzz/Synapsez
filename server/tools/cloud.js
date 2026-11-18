@@ -1268,7 +1268,7 @@ async function memoryRead({ key }, { userId, chatId }) {
  */
 const MAX_WIDGET_BYTES = 96 * 1024;
 
-async function showWidgetTool({ title, svg, html, diagram }, { userId = null, chatId = null } = {}) {
+async function showWidgetTool({ title, svg, html, diagram }, { userId = null, chatId = null, turnId = null } = {}) {
   const caption = String(title || '').trim();
   if (!caption) throw new Error('Give the picture a short title, so it is labelled.');
 
@@ -1331,19 +1331,19 @@ async function showWidgetTool({ title, svg, html, diagram }, { userId = null, ch
   }
   /*
    * One audit, one final (owner, 2026-11-17: "tự gửi xem lại audit check 1 lần cho ra bản hoàn
-   * thiện"). A flawed drawing's first try in a conversation is not shown and not kept: the model
-   * is told what is wrong and draws it again, and the person sees only that the drawing is being
-   * checked. The second try under the same title is shown and kept whatever the check says, so
-   * nobody waits on a third. With no conversation to count in — an automation, a bot's run — or
-   * no count to keep, it is shown at once, as before.
+   * thiện"). A turn's first flawed drawing is not shown and not kept: the model is told what is
+   * wrong and draws it again, and the person sees only that the drawing is being checked. Every
+   * later try in that turn is shown and kept whatever the check says, whatever it is titled, so
+   * nobody waits on a third; a later turn's drawing gets a check of its own. With no conversation
+   * to count in — an automation, a bot's run — or no count to keep, it is shown at once, as before.
    */
-  const tries = chatId ? await redrawTry(chatId, caption) : 0;
+  const tries = chatId ? await redrawTry(chatId, turnId) : 0;
   if (tries === 1) {
     return {
       content: [
         `Did not show "${caption}" yet: a check of the drawing found these problems, and the user has not seen it:`,
         ...listed,
-        `Draw it again now with show_widget and the same title, "${caption}", fixed: ${REDRAW_FIXES} If it is boxes joined by arrows, send \`diagram\` instead of \`svg\`: Ephapse lays it out, so every arrow starts and ends on its box. The next try is shown whatever a check finds.`,
+        `Draw it again now with show_widget, fixed: ${REDRAW_FIXES} If it is boxes joined by arrows, send \`diagram\` instead of \`svg\`: Ephapse lays it out, so every arrow starts and ends on its box. The next try is shown whatever a check finds.`,
       ].join('\n'),
     };
   }
@@ -1380,13 +1380,14 @@ function checkedDrawing(markup) {
 }
 
 /*
- * The how-many-th flawed try this is, for this conversation and title: the title lower-cased with
- * its spaces folded, so "Sơ đồ  A" and "sơ đồ a" are one drawing. Kept for 30 minutes in the
- * store's counters, as every count that must hold across instances is. 0 when it cannot be kept.
+ * The how-many-th flawed try this is in this turn (fix round 1: keyed by title, a renamed redraw
+ * was held back a second time, and a later turn's new drawing under an old title never was). The
+ * turn is the agent's own id for it (server/agent.js runAgent); without one, the conversation
+ * alone. Kept for 30 minutes in the store's counters, as every count that must hold across
+ * instances is. 0 when it cannot be kept.
  */
-async function redrawTry(chatId, caption) {
-  const title = caption.toLowerCase().replace(/\s+/g, ' ').trim();
-  const key = `widget:redraw:${chatId}:${crypto.createHash('sha1').update(title).digest('hex')}`;
+async function redrawTry(chatId, turnId) {
+  const key = `widget:redraw:${chatId}${turnId ? `:${turnId}` : ''}`;
   try {
     return await getStore().addToCounter(key, 1, Date.now() + 30 * 60 * 1000);
   } catch (err) {
@@ -1413,10 +1414,10 @@ const CHECK_KINDS = [
   { said: /Chinese characters/, kind: 'other script' },
   { said: /points at nothing|comes from nothing/, kind: 'arrow to nothing' },
   { said: /^an arrow ends /, kind: 'arrow end inside' },
-  { said: /runs through the box/, kind: 'arrow through a box' },
+  { said: /runs through the (box|circle|ellipse|diamond|triangle|shape) /, kind: 'arrow through a box' },
   { said: /^the arrow from .* runs through "/, kind: 'arrow through text' },
   { said: /sits on its own arrow/, kind: 'label on its line' },
-  { said: /^the boxes .* overlap by/, kind: 'boxes overlap' },
+  { said: / overlap by about \d+×\d+: /, kind: 'boxes overlap' },
 ];
 const checkKinds = (issues) => [...new Set(issues.map((s) => CHECK_KINDS.find((k) => k.said.test(s))?.kind || 'other'))].join(', ');
 

@@ -794,6 +794,19 @@ export function failedVerb(name) {
   return t(key ? `${key}.failed` : 'step.failedGeneric');
 }
 
+// A hand-drawn picture's step says what is done to it (1.34.0, fix round 1): it is checked
+// before it is shown, and a first try with mistakes is held back while it is drawn again. While
+// it runs, "Checking the drawing…"; done, "Checked the drawing", or "… — redrawing" when it came
+// back with no picture, which only a held-back try does (server/tools/cloud.js). Null for a
+// `diagram`, `html` or a failure, which keep their own words. The same on a reload: a saved
+// turn's steps are drawn through the same start and complete.
+export function drawingStep(input, result) {
+  if (typeof input?.svg !== 'string' || !input.svg.trim()) return null;
+  if (!result) return 'step.show_widget.checking';
+  if (result.isError) return null;
+  return result.widget ? 'step.show_widget.checked' : 'step.show_widget.redrawing';
+}
+
 export function describeStep(name, input = {}) {
   /*
    * A cloud-browser row says what it did — "Click #2", "Scroll down" — rather
@@ -810,7 +823,7 @@ export function describeStep(name, input = {}) {
       return { verb: t('step.cloud_browser'), detail: '' };
     }
   }
-  const key = STEP_VERBS[name];
+  const key = (name === 'show_widget' && drawingStep(input)) || STEP_VERBS[name];
   if (!key) return { verb: name, detail: summariseToolInput(name, input) };
 
   const detail = STEP_DETAILS[name];
@@ -3812,9 +3825,8 @@ export function assistantMessage() {
         complete(result) {
           block.classList.toggle('tool--error', !!result.isError);
           if (result.isError) verb = failedVerb(call.name);
-          // A drawing held back for its redraw comes with no picture (server/tools/cloud.js, the
-          // only show_widget that does): the person is told it is being checked, not that it was drawn.
-          else if (call.name === 'show_widget' && !result.widget) verb = t('step.show_widget.checking');
+          // A hand-drawn picture: checked, or checked and held back for its redraw (drawingStep).
+          else if (call.name === 'show_widget' && drawingStep(call.input, result)) verb = t(drawingStep(call.input, result));
           // A call on a file made before this page was opened: its result knows the name.
           if (call.input?.file_id && !call.input?.question && result.file?.name) detail = clip(result.file.name);
           paintHead(

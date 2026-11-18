@@ -1176,8 +1176,11 @@ export const en = {
   'step.file_versions': 'Looked at file history',
   'step.generate_image': 'Drew a picture',
   'step.show_widget': 'Drew something into the conversation',
-  // A drawing whose first try had mistakes, held back while it is drawn again.
+  // A hand-drawn picture is checked before it is shown; a first try with mistakes is held back
+  // while it is drawn again.
   'step.show_widget.checking': 'Checking the drawing…',
+  'step.show_widget.checked': 'Checked the drawing',
+  'step.show_widget.redrawing': 'Checked the drawing — redrawing',
   'step.chart': 'Drew a chart',
   'step.calculate': 'Calculated',
   'step.world_facts': 'Looked up',
