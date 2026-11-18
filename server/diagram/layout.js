@@ -45,8 +45,19 @@ export const LAYOUT = Object.freeze({
   groupMargin: 16,
   groupTitleInset: 10,
   edgeGap: 12,
+  // Two long edges' stand-ins side by side keep this apart, so their lines never run alongside
+  // closer than 16 and their arrowheads, if they end on one box, can stay in line (fix round 4).
+  standGap: 20,
   portSpacing: 8,
+  // Where a side is long enough, ports stand this far apart, and a two-way pair's ends further.
+  portApart: 20,
+  // …and never under this, the box growing for its ports where it must: two lines leaving one
+  // side 8 apart ran alongside for 152 units and read as one doubled line (fix round 4).
+  portLeast: 16,
+  pairApart: 24,
   laneSpacing: 8,
+  // Lanes that run alongside each other in a gap keep this far apart.
+  laneApart: 16,
   laneClearance: 24,
   labelClearance: 8,
   // How far another edge's line keeps from a label (review B7).
@@ -147,7 +158,9 @@ function orderTurns(list) {
 
 /**
  * How the page shows a laid-out diagram (public/js/drawing-fit.js, the page's own rule): its
- * scale, its titles in px, and its height in px — in a 760 px column of an 800 px window.
+ * scale, its titles in px, and its height in px — in the page's 710 px column of an 800 px window.
+ * A drawing too wide to read there scrolls sideways on the page (fix round 4); this scores it as
+ * it would show fitted, so "auto" still prefers the way that reads without scrolling sideways.
  */
 export function shownSize(layout) {
   const across = Math.min(FIT.widen, FIT.column / layout.width);
@@ -243,9 +256,14 @@ function layoutPass(diagram, direction, rooms) {
   // Half the room a port needs along its side: 4 px, or half its label and 6 more when the
   // label sits on the line leaving that port — so a neighbour's line keeps 10 from the label
   // (review B7: 4 + 6).
-  const portHalf = (e, out) => (out && e.label ? labelAcross(e) / 2 + LAYOUT.labelLineClear - LAYOUT.portSpacing / 2 : LAYOUT.portSpacing / 2);
+  const portHalf = (e, out) => (out && e.label ? labelAcross(e) / 2 + LAYOUT.labelLineClear - LAYOUT.portSpacing / 2 : LAYOUT.portLeast / 2);
   // A loop's two legs stand at least 12 apart, so its turn reads as a loop, not a wobble.
   const loopHalf = (e, out) => Math.max(portHalf(e, out), 6);
+  // An arrowhead keeps half of 20 to itself on every side (fix round 4): two heads into one box
+  // are never under 20 apart, the box growing for them where it must. Which end is the head: an
+  // edge turned round for the layout is drawn back, so its head is where it leaves; a loop's
+  // head is its second leg.
+  const headHalf = (e, out, half) => ((e.loop ? !out : e.reversed ? out : !out) ? Math.max(half, LAYOUT.portApart / 2) : half);
   // Ports keep off a side's corners. On a pill they stay where its round end is within about a
   // pixel of the straight edge (6 px into the curve), so an arrow ends on what is drawn.
   const insetOf = (n) => (n.kind === 'pill' ? Math.max(8, n.radius - 6) : 8);
@@ -304,14 +322,17 @@ function layoutPass(diagram, direction, rooms) {
   // stays its own size, centred, and is given as `textBox`.
   const halvesOf = nodes.map(() => ({ in: [], out: [] }));
   for (const e of edges) {
-    if (e.loop) halvesOf[e.from.index].out.push(loopHalf(e, true), loopHalf(e, false));
+    if (e.loop) halvesOf[e.from.index].out.push(headHalf(e, true, loopHalf(e, true)), headHalf(e, false, loopHalf(e, false)));
     else {
-      halvesOf[tail(e).index].out.push(portHalf(e, true));
-      halvesOf[head(e).index].in.push(portHalf(e, false));
+      halvesOf[tail(e).index].out.push(headHalf(e, true, portHalf(e, true)));
+      halvesOf[head(e).index].in.push(headHalf(e, false, portHalf(e, false)));
     }
   }
   for (const n of nodes) {
-    const need = Math.max(sideNeed(halvesOf[n.index].in, insetOf(n)), sideNeed(halvesOf[n.index].out, insetOf(n)));
+    // Room for its ports 20 apart (fix round 4), so a line can still be straightened by moving
+    // a port without its neighbours packing to the minimum.
+    const roomy = (halves) => halves.map((h) => Math.max(h + 2, LAYOUT.portApart / 2));
+    const need = Math.max(sideNeed(roomy(halvesOf[n.index].in), insetOf(n)), sideNeed(roomy(halvesOf[n.index].out), insetOf(n)));
     if (right) n.h = Math.max(n.h, need);
     else n.w = Math.max(n.w, need);
   }
@@ -527,7 +548,7 @@ function layoutPass(diagram, direction, rooms) {
   const titleBand = (lines) => lines * titleLine + 2 * LAYOUT.groupTitleInset - M;
   // Inside a group, a stand-in's line passes 12 from a box, as two lines pass each other: the
   // group stays as narrow as its widest rank (review C9).
-  const gapBetween = (a, b) => (a.type === 'node' && b.type === 'node' ? LAYOUT.nodeGap : LAYOUT.edgeGap);
+  const gapBetween = (a, b) => (a.type === 'node' && b.type === 'node' ? LAYOUT.nodeGap : a.type === 'dummy' && b.type === 'dummy' ? LAYOUT.standGap : LAYOUT.edgeGap);
   for (const g of groups) {
     for (let r = g.min; r <= g.max; r += 1) {
       const stack = layers[r].filter((it) => it.group === g.id && it.type !== 'hold');
@@ -599,7 +620,7 @@ function layoutPass(diagram, direction, rooms) {
       if (prev && prev.v === v) continue;
       const kind = g ? 'block' : it.type;
       if (prev) {
-        const gap = prev.kind === 'block' && kind === 'block' ? LAYOUT.groupGap : prev.kind === 'node' || kind === 'node' ? LAYOUT.nodeGap : LAYOUT.edgeGap;
+        const gap = prev.kind === 'block' && kind === 'block' ? LAYOUT.groupGap : prev.kind === 'node' || kind === 'node' ? LAYOUT.nodeGap : prev.kind === 'dummy' && kind === 'dummy' ? LAYOUT.standGap : LAYOUT.edgeGap;
         prev.v.succs.push({ v, gap });
         v.preds.push({ v: prev.v, gap });
       }
@@ -658,7 +679,7 @@ function layoutPass(diagram, direction, rooms) {
     let lo = g ? g.v.pos + g.header + M : -Infinity;
     let hi = g ? g.v.pos + g.size - M : Infinity;
     const extent = (x) => (x.group && x.group !== d.group ? [groupById.get(x.group).v.pos, groupById.get(x.group).v.pos + groupById.get(x.group).size] : [x.start, x.start + x.size]);
-    const gapTo = (x) => (d.group ? gapBetween(x, d) : x.type === 'node' && !x.group ? LAYOUT.nodeGap : LAYOUT.edgeGap);
+    const gapTo = (x) => (d.group ? gapBetween(x, d) : x.type === 'node' && !x.group ? LAYOUT.nodeGap : x.type === 'dummy' ? LAYOUT.standGap : LAYOUT.edgeGap);
     for (let j = i - 1; j >= 0; j -= 1) {
       if (layer[j].type === 'hold') continue;
       lo = Math.max(lo, extent(layer[j])[1] + gapTo(layer[j]));
@@ -676,13 +697,17 @@ function layoutPass(diagram, direction, rooms) {
     else d.v.pos = x;
     d.start = x;
   };
-  for (const e of edges) {
+  // Twice, since one edge lined up can leave room for its neighbour's (fix round 4).
+  for (let pass = 0; pass < 2; pass += 1) for (const e of edges) {
     const chain = e.hops.slice(1).map((h) => h.a);
     if (!chain.length) continue;
     const t = e.hops[0].a;
     const h = e.hops.at(-1).b;
     const rooms = chain.map(room);
-    const options = [...chain.map((d) => d.start), centreOf(t), centreOf(h)];
+    // Where every stand-in's room overlaps, the nearest place in it to each wish counts too.
+    const [both0, both1] = [Math.max(...rooms.map((r) => r[0])), Math.min(...rooms.map((r) => r[1]))];
+    const wishes = [...chain.map((d) => d.start), centreOf(t), centreOf(h)];
+    const options = both0 <= both1 ? [...wishes, ...wishes.map((x) => clamp(x, both0, both1))] : wishes;
     let best = null;
     for (const x of options) {
       if (!rooms.every(([lo, hi]) => x >= lo - 1e-9 && x <= hi + 1e-9)) continue;
@@ -700,10 +725,13 @@ function layoutPass(diagram, direction, rooms) {
   // corners; the side was grown to sideNeed, so they always fit. Placing them as near as that
   // allows to where they want to be is an isotonic fit (pool adjacent violators), clamped.
   const JOG = 12;
+  // …and a step is widened to 20 wherever a port can move that far (fix round 4: 12 still read
+  // as a wobble), else kept at 12 or more.
+  const STEP = 20;
   const sides = [];
   const portOf = new Map();
   const addSide = (n, list, lo) => {
-    const side = { n, list, lo, hi: n.item.start + crossOf(n) };
+    const side = { n, list, lo, hi: n.item.start + crossOf(n), gaps: /** @type {number[]} */ ([]), least: /** @type {number[]} */ ([]) };
     list.forEach((en, i) => {
       en.side = side;
       en.i = i;
@@ -721,16 +749,16 @@ function layoutPass(diagram, direction, rooms) {
     for (const h of outs) h.s = mid(h);
     // A loop takes the two ports at the far end of the side, so it crosses no other way out.
     const out = [
-      ...outs.map((h) => ({ pin: /** @type {number | null} */ (null), corner: /** @type {number | null} */ (null), hop: h, end: 's', half: portHalf(h.edge, true), get: () => h.s, set: (v) => (h.s = v), want: () => h.t })),
+      ...outs.map((h) => ({ pin: /** @type {number | null} */ (null), corner: /** @type {number | null} */ (null), hop: h, end: 's', half: headHalf(h.edge, true, portHalf(h.edge, true)), get: () => h.s, set: (v) => (h.s = v), want: () => h.t })),
       ...n.loops.flatMap((e) => [
-        { pin: /** @type {number | null} */ (null), corner: /** @type {number | null} */ (null), hop: null, end: 'l', half: loopHalf(e, true), get: () => e.loopPorts[0], set: (v) => (e.loopPorts[0] = v), want: () => Infinity },
-        { pin: /** @type {number | null} */ (null), corner: /** @type {number | null} */ (null), hop: null, end: 'l', half: loopHalf(e, false), get: () => e.loopPorts[1], set: (v) => (e.loopPorts[1] = v), want: () => Infinity },
+        { pin: /** @type {number | null} */ (null), corner: /** @type {number | null} */ (null), hop: null, end: 'l', half: headHalf(e, true, loopHalf(e, true)), get: () => e.loopPorts[0], set: (v) => (e.loopPorts[0] = v), want: () => Infinity },
+        { pin: /** @type {number | null} */ (null), corner: /** @type {number | null} */ (null), hop: null, end: 'l', half: headHalf(e, false, loopHalf(e, false)), get: () => e.loopPorts[1], set: (v) => (e.loopPorts[1] = v), want: () => Infinity },
       ]),
     ];
     addSide(n, out, n.item.start);
     const ins = [...n.item.ins].sort((p, q) => centreOf(p.a) - centreOf(q.a) || p.edge.index - q.edge.index);
     for (const h of ins) h.t = mid(h);
-    const into = ins.map((h) => ({ pin: /** @type {number | null} */ (null), corner: /** @type {number | null} */ (null), hop: h, end: 't', half: portHalf(h.edge, false), get: () => h.t, set: (v) => (h.t = v), want: () => h.s }));
+    const into = ins.map((h) => ({ pin: /** @type {number | null} */ (null), corner: /** @type {number | null} */ (null), hop: h, end: 't', half: headHalf(h.edge, false, portHalf(h.edge, false)), get: () => h.t, set: (v) => (h.t = v), want: () => h.s }));
     // In "down" the lines into a group's first rank cross its title band: they go where their
     // other end is, and the title takes a stretch of the band between them (fix round 2: kept
     // clear of the title, they stepped aside from lines that could have run straight).
@@ -739,32 +767,71 @@ function layoutPass(diagram, direction, rooms) {
   // How near a corner a port may sit: its half, unless a pin for a straight line gave up the
   // room its label keeps at the corner — between neighbours, the label keeps its full room.
   const cornerOf = (en) => (typeof en.corner === 'number' ? en.corner : en.half);
-  const place = (side) => {
+  // Ports on a side stand 20 apart wherever the side is long enough, and the two ways of a
+  // two-way pair 24 (fix round 4: packed at the 8 minimum, 7-unit arrowheads into one box
+  // crowded — 2,745 under 12 apart over 80 dense layouts — and a cycle read as two nested hooks).
+  // On a side too short for that, its usable length is shared out evenly, never under each pair's
+  // own minimum, which the side was grown to hold (sideNeed). A straight line still wins: a port
+  // pinned for one, or moved to straighten a step, may come as near its neighbours as that
+  // minimum (`side.least`) — 16, or 20 between two arrowheads.
+  const twoWay = (a, b) => !!(a.hop && b.hop && a.hop.edge.from === b.hop.edge.to && a.hop.edge.to === b.hop.edge.from);
+  const gapsOf = (side) => {
     const { n, list } = side;
     const k = list.length;
-    if (!k) return;
+    const least = [];
+    const want = [];
+    for (let i = 1; i < k; i += 1) {
+      const m = list[i - 1].half + list[i].half;
+      least.push(m);
+      want.push(Math.max(m, twoWay(list[i - 1], list[i]) ? LAYOUT.pairApart : LAYOUT.portApart));
+    }
+    side.least = least;
+    if (!least.length) return least;
     const inset = insetOf(n);
+    const span = side.hi - Math.max(inset, cornerOf(list[k - 1])) - Math.max(n.item.start + Math.max(inset, cornerOf(list[0])), side.lo + cornerOf(list[0]));
+    const [lo, hi] = [least, want].map((a) => a.reduce((t, v) => t + v, 0));
+    const f = hi <= span ? 1 : hi > lo ? clamp((span - lo) / (hi - lo), 0, 1) : 0;
+    return least.map((m, i) => m + f * (want[i] - m));
+  };
+  const place = (side) => {
+    const { list } = side;
+    if (!list.length) return;
+    fit(side, gapsOf(side));
+    // A pin the preferred spacing could not hold is held at the least.
+    if (list.some((en) => typeof en.pin === 'number' && Math.abs(en.get() - en.pin) > 1e-6)) fit(side, side.least);
+  };
+  const fit = (side, gaps) => {
+    const { n, list } = side;
+    const k = list.length;
+    const inset = insetOf(n);
+    side.gaps = gaps;
     const off = [0];
-    for (let i = 1; i < k; i += 1) off.push(off[i - 1] + list[i - 1].half + list[i].half);
+    for (let i = 1; i < k; i += 1) off.push(off[i - 1] + gaps[i - 1]);
     const L = Math.max(n.item.start + Math.max(inset, cornerOf(list[0])), side.lo + cornerOf(list[0]));
     const U = Math.max(L, side.hi - Math.max(inset, cornerOf(list[k - 1])) - off[k - 1]);
-    // A port pinned for a straight line weighs as much as all the rest together, many times.
+    // A port pinned for a straight line outweighs every unpinned one: a run of ports pooled with
+    // it sits where the pin says, exactly (fix round 4: weighted a million, a pin landed a
+    // hair off and two arrowheads stood 19.99 apart). Two pins in one run meet halfway.
     const blocks = [];
+    const at = (b) => (b.pn ? b.psum / b.pn : b.sum / b.w);
     list.forEach((en, i) => {
       const pinned = typeof en.pin === 'number';
       const want = pinned ? en.pin : en.want();
-      const w = pinned ? 1e6 : 1;
-      blocks.push({ sum: w * ((Number.isFinite(want) ? want : side.hi) - off[i]), w, n: 1 });
-      while (blocks.length > 1 && blocks.at(-2).sum / blocks.at(-2).w > blocks.at(-1).sum / blocks.at(-1).w) {
+      const y = (Number.isFinite(want) ? want : side.hi) - off[i];
+      blocks.push({ sum: y, w: 1, n: 1, psum: pinned ? y : 0, pn: pinned ? 1 : 0 });
+      while (blocks.length > 1 && at(blocks.at(-2)) > at(blocks.at(-1))) {
         const b = blocks.pop();
-        blocks.at(-1).sum += b.sum;
-        blocks.at(-1).w += b.w;
-        blocks.at(-1).n += b.n;
+        const into = blocks.at(-1);
+        into.sum += b.sum;
+        into.w += b.w;
+        into.n += b.n;
+        into.psum += b.psum;
+        into.pn += b.pn;
       }
     });
     let i = 0;
     for (const b of blocks) {
-      const y = clamp(b.sum / b.w, L, U);
+      const y = clamp(at(b), L, U);
       for (let j = 0; j < b.n; j += 1, i += 1) list[i].set(y + off[i]);
     }
   };
@@ -874,21 +941,110 @@ function layoutPass(diagram, direction, rooms) {
     const { side, i } = en;
     const { n, list } = side;
     const inset = insetOf(n);
-    const lo = i > 0 ? list[i - 1].get() + list[i - 1].half + en.half : Math.max(n.item.start + Math.max(inset, cornerOf(en)), side.lo + cornerOf(en));
-    const hi = i < list.length - 1 ? list[i + 1].get() - list[i + 1].half - en.half : side.hi - Math.max(inset, cornerOf(en));
+    const lo = i > 0 ? list[i - 1].get() + side.least[i - 1] : Math.max(n.item.start + Math.max(inset, cornerOf(en)), side.lo + cornerOf(en));
+    const hi = i < list.length - 1 ? list[i + 1].get() - side.least[i] : side.hi - Math.max(inset, cornerOf(en));
     return [lo, hi];
   };
   const inside = (v, span) => v >= span[0] - 1e-9 && v <= span[1] + 1e-9;
   // A step under 12 is made straight wherever either end can move to meet the other.
   // Where neither end can meet the other, the step is widened to a clear 12 instead: a turn
   // that reads as a turn, not a wobble.
+  // A long edge's stand-ins move as one, so neither of its ends takes a step under 12: to meet
+  // a port, or a clear step from it, where their ranks leave room (fix round 4: ports 20 apart
+  // left a stand-in 0.6 off the port it fed, with no port free to move). Of the places that do,
+  // the one with fewest bends, then the least moved.
+  const moveChain = (h) => {
+    const [first, last] = [h.edge.hops[0], h.edge.hops.at(-1)];
+    return chainTo(h.edge, [last.t, first.s, last.t - JOG, last.t + JOG, first.s - JOG, first.s + JOG], true);
+  };
+  // `candidates` in order of preference; `fewest` ranks them by bends first.
+  const chainTo = (e, candidates, fewest) => {
+    const stand = e.hops.slice(1).map((k) => k.a);
+    if (!stand.length) return false;
+    const [first, last] = [e.hops[0], e.hops.at(-1)];
+    const sPort = portOf.get(`s${e.index}:${first.a.rank}`);
+    const tPort = portOf.get(`t${e.index}:${last.a.rank}`);
+    const rooms = stand.map(room);
+    const stepAt = (port, at, x) => (port && inside(x, windowOf(port)) ? 0 : Math.abs(at - x));
+    let best = null;
+    for (const [i, x] of candidates.entries()) {
+      if (!rooms.every(([lo, hi]) => x >= lo - 1e-9 && x <= hi + 1e-9)) continue;
+      const steps = [stepAt(sPort, first.s, x), stepAt(tPort, last.t, x)];
+      if (steps.some((d) => d > 1e-9 && d < JOG - 1e-9)) continue;
+      const score = fewest ? steps.filter((d) => d > 1e-9).length * 1e6 + stand.reduce((t, d) => t + Math.abs(d.start - x), 0) : i;
+      if (!best || score < best.score - 1e-9) best = { x, score, steps };
+    }
+    if (!best) return false;
+    stand.forEach((d) => moveTo(d, best.x));
+    for (const k of e.hops) {
+      if (k.a.type === 'dummy') k.s = k.a.start;
+      if (k.b.type === 'dummy') k.t = k.b.start;
+    }
+    if (best.steps[0] === 0 && sPort) sPort.set(best.x);
+    if (best.steps[1] === 0 && tPort) tPort.set(best.x);
+    return true;
+  };
+  // A port pinned where its step goes straight, its side placed again round it: kept only if
+  // that side then has fewer steps under 12 (or, `even`, no more) and every earlier pin holds.
+  const steps = (side) => side.list.filter((en) => en.hop && Math.abs(en.hop.s - en.hop.t) > 1e-9 && Math.abs(en.hop.s - en.hop.t) < JOG - 1e-9).length;
+  const tryPin = (en, x, even = false) => {
+    const { side } = en;
+    const was = side.list.map((o) => [o.get(), o.pin]);
+    const count = steps(side);
+    en.pin = x;
+    place(side);
+    const held = side.list.every((o, i) => (o === en ? Math.abs(o.get() - x) < 1e-6 : typeof was[i][1] !== 'number' || Math.abs(o.get() - was[i][1]) < 1e-6));
+    if (held && (even ? steps(side) <= count : steps(side) < count)) return true;
+    side.list.forEach((o, i) => {
+      o.set(was[i][0]);
+      o.pin = was[i][1];
+    });
+    return false;
+  };
+  // The stand-ins in line from hop `h`'s far (way 1) or near (way -1) end, moved together to the
+  // first of `candidates` their ranks allow, where the steps at both ends of the run stay 0 or 12+.
+  const runTo = (h, way, candidates) => {
+    const e = h.edge;
+    const k = e.hops.indexOf(h);
+    const run = [];
+    for (let j = way > 0 ? k : k - 1; j >= 0 && j < e.hops.length - 1; j += way) {
+      const d = e.hops[j].b;
+      if (run.length && Math.abs(d.start - run[0].start) > 1e-6) break;
+      run.push(d);
+    }
+    if (!run.length) return false;
+    const idx = (d) => e.hops.findIndex((x) => x.b === d);
+    const [lo, hi] = [Math.min(...run.map(idx)), Math.max(...run.map(idx))];
+    const before = e.hops[lo];
+    const after = e.hops[hi + 1];
+    const sPort = lo === 0 ? portOf.get(`s${e.index}:${before.a.rank}`) : null;
+    const tPort = hi + 1 === e.hops.length - 1 ? portOf.get(`t${e.index}:${after.a.rank}`) : null;
+    const stepAt = (port, at, x) => (port && inside(x, windowOf(port)) ? 0 : Math.abs(at - x));
+    const rooms = run.map(room);
+    for (const x of candidates) {
+      if (!rooms.every(([a, b]) => x >= a - 1e-9 && x <= b + 1e-9)) continue;
+      const steps = [stepAt(sPort, before.s, x), stepAt(tPort, after.t, x)];
+      if (steps.some((d) => d > 1e-9 && d < JOG - 1e-9)) continue;
+      run.forEach((d) => moveTo(d, x));
+      for (const q of e.hops) {
+        if (q.a.type === 'dummy') q.s = q.a.start;
+        if (q.b.type === 'dummy') q.t = q.b.start;
+      }
+      if (sPort && steps[0] === 0) sPort.set(x);
+      if (tPort && steps[1] === 0) tPort.set(x);
+      return true;
+    }
+    return false;
+  };
   const straighten = (h) => {
     const d = Math.abs(h.s - h.t);
-    if (d === 0 || d >= JOG) return;
+    if (d === 0 || d >= STEP) return;
     const s = portOf.get(`s${h.edge.index}:${h.a.rank}`);
     const t = portOf.get(`t${h.edge.index}:${h.a.rank}`);
     if (t && inside(h.s, windowOf(t))) h.t = h.s;
     else if (s && inside(h.t, windowOf(s))) h.s = h.t;
+    else if (d < JOG && t && tryPin(t, h.s)) return;
+    else if (d < JOG && s && tryPin(s, h.t)) return;
     else {
       const [a0, a1] = s ? windowOf(s) : [h.s, h.s];
       const [b0, b1] = t ? windowOf(t) : [h.t, h.t];
@@ -898,16 +1054,25 @@ function layoutPass(diagram, direction, rooms) {
         h.s = h.t = clamp((h.s + h.t) / 2, lo, hi);
         return;
       }
-      const away = (v, from) => [from + JOG, from - JOG].filter((x) => Math.abs(x - v) < JOG + 1e-9).sort((p, q) => Math.abs(p - v) - Math.abs(q - v));
-      const tTo = t ? away(h.t, h.s).find((x) => inside(x, windowOf(t))) : undefined;
-      if (tTo !== undefined) h.t = tTo;
-      else if (s) {
-        const sTo = away(h.s, h.t).find((x) => inside(x, windowOf(s)));
-        if (sTo !== undefined) h.s = sTo;
+      if (d < JOG && (!s || !t) && moveChain(h)) return;
+      // A clear 20 where a port can move that far (fix round 4), else, for a step under 12, 12.
+      const away = (v, from, by) => [from + by, from - by].filter((x) => Math.abs(x - v) < by + 1e-9).sort((p, q) => Math.abs(p - v) - Math.abs(q - v));
+      for (const by of d < JOG ? [STEP, JOG] : [STEP]) {
+        const tTo = t ? away(h.t, h.s, by).find((x) => inside(x, windowOf(t))) : undefined;
+        if (tTo !== undefined) {
+          h.t = tTo;
+          return;
+        }
+        const sTo = s ? away(h.s, h.t, by).find((x) => inside(x, windowOf(s))) : undefined;
+        if (sTo !== undefined) {
+          h.s = sTo;
+          return;
+        }
       }
     }
   };
-  for (const e of edges) for (const h of e.hops) straighten(h);
+  // Twice: a port a later step moved can leave room for an earlier one.
+  for (let pass = 0; pass < 2; pass += 1) for (const e of edges) for (const h of e.hops) straighten(h);
   // Two different lines never meet end to end (review B4: one edge's stub into a box in line
   // with another's stub out of the box above, 8 units apart, read as a single line). Where a
   // line's way out of one rank and another's way into the next sit under 8 apart, one of them
@@ -919,9 +1084,13 @@ function layoutPass(diagram, direction, rooms) {
     const other = en.end === 's' ? h.t : h.s;
     const options = [];
     for (let d = LAYOUT.portSpacing; d <= 64; d += 4) options.push(away + d, away - d);
-    const fits = options.filter((v) => inside(v, [lo, hi]) && (en.end === 's' ? ok(h, v, other) : ok(h, other, v)));
-    if (!fits.length) return false;
-    en.set(fits.reduce((best, v) => (Math.abs(v - now) < Math.abs(best - now) ? v : best)));
+    const clean = options.filter((v) => (en.end === 's' ? ok(h, v, other) : ok(h, other, v)));
+    const fits = clean.filter((v) => inside(v, [lo, hi]));
+    // Hemmed in by its neighbours: its side is placed again round it, if that adds no step.
+    if (!fits.length) return clean.sort((p, q) => Math.abs(p - now) - Math.abs(q - now)).slice(0, 6).some((v) => tryPin(en, v, true));
+    // The nearest that leaves its own step straight or a clear 20, else the nearest at all.
+    const clear = (v) => (Math.abs(v - other) < 1e-9 || Math.abs(v - other) >= STEP - 1e-9 ? 0 : 1);
+    en.set(fits.reduce((best, v) => (clear(v) - clear(best) || Math.abs(v - now) - Math.abs(best - now)) < 0 ? v : best));
     return true;
   };
   for (let g = 0; g < maxRank; g += 1) {
@@ -932,7 +1101,12 @@ function layoutPass(diagram, direction, rooms) {
         const bPort = portOf.get(`t${B.edge.index}:${B.a.rank}`);
         const aPort = portOf.get(`s${A.edge.index}:${A.a.rank}`);
         if (B.s !== B.t && bPort && nudge(bPort, A.s, B)) continue;
-        if (A.s !== A.t && aPort) nudge(aPort, B.t, A);
+        if (A.s !== A.t && aPort && nudge(aPort, B.t, A)) continue;
+        // Neither end a port that can move: the stand-ins in line there move instead, as one run
+        // (fix round 4: a long edge's channel met another's port 2 apart).
+        const clear = (from, at) => [...Array(15).keys()].flatMap((k) => [at + LAYOUT.portSpacing + 4 * k, at - LAYOUT.portSpacing - 4 * k]).sort((p, q) => Math.abs(p - from) - Math.abs(q - from));
+        if (B.b.type === 'dummy' && runTo(B, 1, clear(B.t, A.s))) continue;
+        if (A.a.type === 'dummy') runTo(A, -1, clear(A.s, B.t));
       }
     }
   }
@@ -1060,11 +1234,21 @@ function layoutPass(diagram, direction, rooms) {
         const [a, b] = spanOf(e);
         return Math.max(t.s, t.t) < a - LAYOUT.labelLineClear || Math.min(t.s, t.t) > b + LAYOUT.labelLineClear;
       });
+    // Two lanes whose runs across share more than 12 keep 16 apart, so they never read as one
+    // doubled line; the two ways of a two-way pair 24, so a cycle reads as two arrows, not two
+    // nested hooks (fix round 4: 8 apart for 97 units). Lanes that pass end to end keep 8.
+    const shared = (a, b) => Math.min(Math.max(a.s, a.t), Math.max(b.s, b.t)) - Math.max(Math.min(a.s, a.t), Math.min(b.s, b.t));
+    const pair = (a, b) => a.edge.from === b.edge.to && a.edge.to === b.edge.from;
     let prev = -Infinity;
-    for (const t of rest) {
-      t.rel = Math.max(lastLoop === null && clearOfLabels(t) ? C : restFirst, prev + step);
+    rest.forEach((t, i) => {
+      let rel = Math.max(lastLoop === null && clearOfLabels(t) ? C : restFirst, prev + step);
+      for (const u of rest.slice(0, i)) {
+        if (pair(u, t)) rel = Math.max(rel, u.rel + LAYOUT.pairApart);
+        else if (shared(u, t) > 12) rel = Math.max(rel, u.rel + LAYOUT.laneApart);
+      }
+      t.rel = rel;
       prev = t.rel;
-    }
+    });
     const laneNeed = (t) => t.rel + clearAt(Math.min(t.s, t.t), Math.max(t.s, t.t), C);
     const needs = [g < maxRank ? LAYOUT.rankGap[direction] : 0, ...ordered.map(laneNeed)];
     for (const e of labels) needs.push(lead + e.labelAlong + labelAlong(e) / 2 + clearAt(...spanOf(e), 12));

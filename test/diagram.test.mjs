@@ -703,16 +703,27 @@ function couldBeStraight(layout) {
           // The label's room is kept where the line leaves in the layout's own direction: the
           // drawn end of an edge turned round to break a cycle.
           const labelled = x.labelBox && k === (x.reversed ? x.points.length - 1 : 0);
-          const half = labelled ? (right ? x.labelBox.h : x.labelBox.w) / 2 + 6 : x.from === x.to ? 6 : 4;
-          ends.push({ across, half, own: x === e });
+          // Fix round 4: any other end keeps 8 (16 between two), and an arrowhead 10.
+          const plain = labelled ? (right ? x.labelBox.h : x.labelBox.w) / 2 + 6 : 8;
+          const half = k === x.points.length - 1 ? Math.max(plain, 10) : plain;
+          ends.push({ across, half, own: x === e, edge: x });
         });
       }
       ends.sort((p, q) => p.across - q.across);
       const i = ends.findIndex((p) => p.own);
       if (i < 0) continue;
-      const before = ends.slice(0, i).reduce((s, p, j) => s + p.half + (j + 1 < i ? ends[j + 1].half : ends[i].half), 0);
-      const after = ends.slice(i + 1).reduce((s, p, j) => s + p.half + (j === 0 ? ends[i].half : ends[i + j].half), 0);
+      // Neighbours stand 20 apart (a two-way pair 24) where the side is long enough; on a side
+      // too short, its length is shared out evenly, never under their two halves (fix round 4).
       const corner = inset(box);
+      const least = ends.slice(1).map((p, j) => ends[j].half + p.half);
+      const pair = (p, q) => p.edge.from === q.edge.to && p.edge.to === q.edge.from;
+      const want = least.map((m, j) => Math.max(m, pair(ends[j], ends[j + 1]) ? 24 : 20));
+      const span = hi(box) - Math.max(corner, ends.at(-1).half) - (lo(box) + Math.max(corner, ends[0].half));
+      const [sumLeast, sumWant] = [least, want].map((list) => list.reduce((t, v) => t + v, 0));
+      const f = sumWant <= span ? 1 : sumWant > sumLeast ? Math.min(1, Math.max(0, (span - sumLeast) / (sumWant - sumLeast))) : 0;
+      const gaps = least.map((m, j) => m + f * (want[j] - m));
+      const before = gaps.slice(0, i).reduce((t, v) => t + v, 0);
+      const after = gaps.slice(i).reduce((t, v) => t + v, 0);
       a = Math.max(a, lo(box) + (i ? Math.max(corner, ends[0].half) : corner) + before);
       b = Math.min(b, hi(box) - (i < ends.length - 1 ? Math.max(corner, ends.at(-1).half) : corner) - after);
     }
@@ -728,12 +739,83 @@ function couldBeStraight(layout) {
   }
   return out;
 }
+// Fix round 4: arrowheads into one box closer than `apart` (tips arriving the same way), and
+// two edges running side by side closer than `near` for more than 12 units (review: packed at 8,
+// pipeline cache→done and db→done ran 8 apart for 32 units; the owner's rerank↔vec cycle was
+// two nested hooks 8 apart).
+function crowding(layout, { apart = 20, near = 16 } = {}) {
+  const heads = [];
+  const alongside = [];
+  const tips = new Map();
+  for (const e of layout.edges) {
+    const [p, q] = [e.points.at(-1), e.points.at(-2)];
+    const way = `${Math.sign(p[0] - q[0])},${Math.sign(p[1] - q[1])}`;
+    if (!tips.has(e.to)) tips.set(e.to, []);
+    tips.get(e.to).push({ p, way, e });
+  }
+  for (const [box, list] of tips) {
+    for (let i = 0; i < list.length; i += 1) {
+      for (let j = i + 1; j < list.length; j += 1) {
+        const [a, b] = [list[i], list[j]];
+        const d = Math.hypot(a.p[0] - b.p[0], a.p[1] - b.p[1]);
+        if (a.way === b.way && d < apart - 1e-6) heads.push(`into ${box}: ${a.e.from}→${a.e.to} & ${b.e.from}→${b.e.to} ${d.toFixed(1)} apart`);
+      }
+    }
+  }
+  const segs = layout.edges.map((e) => e.points.slice(1).map((p, k) => [e.points[k], p]));
+  const flat = ([a, b]) => Math.abs(a[1] - b[1]) < 0.01;
+  for (let i = 0; i < segs.length; i += 1) {
+    for (let j = i + 1; j < segs.length; j += 1) {
+      for (const s of segs[i]) {
+        for (const t of segs[j]) {
+          if (flat(s) !== flat(t)) continue;
+          const [ax, along] = flat(s) ? [1, 0] : [0, 1];
+          const d = Math.abs(s[0][ax] - t[0][ax]);
+          const shared = Math.min(Math.max(s[0][along], s[1][along]), Math.max(t[0][along], t[1][along])) - Math.max(Math.min(s[0][along], s[1][along]), Math.min(t[0][along], t[1][along]));
+          if (d < near - 1e-6 && shared > 12) alongside.push(`${layout.edges[i].from}→${layout.edges[i].to} & ${layout.edges[j].from}→${layout.edges[j].to}: ${d.toFixed(1)} apart for ${shared.toFixed(0)}`);
+        }
+      }
+    }
+  }
+  return { heads, alongside };
+}
+// The reviewer's 80 dense layouts (fix round 4): 40 boxes, 80 edges, 8 groups, half the edges
+// labelled, short and long group titles, both directions.
+function denseDiagram(seed, longTitles) {
+  let s = seed >>> 0;
+  const rand = () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 2 ** 32;
+  };
+  const groups = Array.from({ length: 8 }, (_, i) => ({ id: `g${i}`, title: longTitles ? `Nhóm ${i + 1} — ${'xử lý ngữ cảnh dài '.repeat(4)}`.slice(0, 60) : `Nhóm ${i + 1}` }));
+  const nodes = Array.from({ length: 40 }, (_, i) => ({ id: `n${i}`, title: `Bước xử lý ${i}`, lines: rand() < 0.5 ? ['một dòng mô tả ngắn'] : [], ...(i < 32 ? { group: `g${Math.floor(i / 4)}` } : {}) }));
+  const edges = [];
+  for (let k = 0; k < 80; k += 1) {
+    const a = Math.floor(rand() * 40);
+    let b = Math.floor(rand() * 40);
+    if (b <= a) b = Math.min(39, a + 1 + Math.floor(rand() * 6));
+    edges.push({ from: `n${a}`, to: `n${b}`, ...(rand() < 0.5 ? { label: `nhãn ${k}` } : {}) });
+  }
+  return { groups, nodes, edges };
+}
+// Interior steps under `under` units (fix round 4, item 5: 12 read as a wobble; 20 where it fits).
+const steps = (layout, under) =>
+  layout.edges.flatMap((e) =>
+    e.points
+      .slice(1)
+      .map((p, k) => [e.points[k], p])
+      .flatMap(([a, b], k, all) => (k > 0 && k < all.length - 1 && Math.abs(b[0] - a[0]) + Math.abs(b[1] - a[1]) < under - 1e-6 ? [`${e.from}→${e.to}: ${(Math.abs(b[0] - a[0]) + Math.abs(b[1] - a[1])).toFixed(1)} at ${Math.round(a[0])},${Math.round(a[1])}`] : [])),
+  );
 const QUALITY_KINDS = ['jogs', 'meets', 'crossings', 'foreign', 'borders', 'loops', 'bends', 'nearLabels', 'groupGaps', 'titles', 'straight', 'wraps'];
 // Counts over the 600 random small layouts after fix round 2, as ceilings, so its gains stay
 // (fix round 2, item 3; before round 1 they were jogs 1,322, meets 174, crossings 1,446,
 // foreign 522, borders 247, loops 346, bends 582, near labels 1,205, group gaps 224; before
 // round 2, could-be-straight 155).
-const SWEEP_CEILING = { jogs: 154, meets: 62, crossings: 1224, foreign: 270, borders: 0, loops: 0, bends: 172, nearLabels: 38, groupGaps: 0, titles: 0, straight: 77, wraps: 0 };
+// Fix round 4 locked the counts after it (they were jogs 154, meets 62, crossings 1,224, bends
+// 172, near labels 38, straight 77 after round 2). Crossings rose by 8: ports 20 apart do not
+// always reach the place across a crossing would be avoided from. "straight" now judges each end
+// by the spacing the layout keeps (20 apart where the side allows, 16 at least).
+const SWEEP_CEILING = { jogs: 37, meets: 20, crossings: 1232, foreign: 270, borders: 0, loops: 0, bends: 139, nearLabels: 1, groupGaps: 0, titles: 0, straight: 70, wraps: 0 };
 // How much of a group is empty: its area less its members'.
 const emptyShare = (layout, g) => 1 - layout.nodes.filter((n) => n.group === g.id).reduce((s, n) => s + n.w * n.h, 0) / (g.w * g.h);
 
@@ -801,13 +883,13 @@ section('"auto" lays a drawing out both ways and keeps the one the page shows be
   const wide = layoutDiagram(valid(fan));
   check('one box fanning out to six goes down: readable either way, and shorter on the page', wide.direction === 'down', `${wide.direction} ${Math.round(wide.width)}×${Math.round(wide.height)}`);
   check('  and each is exactly the layout that direction gives', isDeepStrictEqual(short, layoutDiagram({ ...valid(chain(3)), direction: 'right' })) && isDeepStrictEqual(long, layoutDiagram({ ...valid(chain(8)), direction: 'down' })) && isDeepStrictEqual(wide, layoutDiagram({ ...valid(fan), direction: 'down' })));
-  // Fix round 3: judged by the page's own rule (public/js/drawing-fit.js) — a 760 px column of
+  // Fix round 3: judged by the page's own rule (public/js/drawing-fit.js) — its column (710 px, fix round 4) of
   // an 800 px window, a narrow drawing grown up to twice, the 72 % height cap, which a server-
   // laid-out diagram's titles never shrink under 11 px for. Worked out here from that module.
   const render = fs.readFileSync(new URL('../public/js/render.js', import.meta.url), 'utf8');
   check('the page sizes drawings by the shared rule, and passes a diagram\'s readable scale from its widget', /import \{[^}]*\bdrawingHeightCap\b[^}]*\} from '\.\/drawing-fit\.js'/.test(render) && /fitDrawing\(drawing, widget\.readableScale\)/.test(render) && /drawingHeightCap\(\{/.test(render) && !/innerHeight \|\| view\?\.innerHeight \|\| 800\) \* 0\.72/.test(render) && FIT.column === DRAWING_FIT.column && FIT.window === DRAWING_FIT.window && FIT.readablePx === 11);
   const onPage = (l) => {
-    const across = Math.min(2, 760 / l.width);
+    const across = Math.min(2, DRAWING_FIT.column / l.width);
     const cap = drawingHeightCap({ windowHeight: 800, viewWidth: l.width, viewHeight: l.height, shownWidth: l.width * across, readableScale: 11 / TEXT.titleSize });
     const scale = Math.min(across, cap / l.height);
     return { title: TEXT.titleSize * scale, height: l.height * scale };
@@ -816,7 +898,7 @@ section('"auto" lays a drawing out both ways and keeps the one the page shows be
   for (const [name, input] of [['owner', ownerPipeline], ['icons', iconsFixture], ['pipeline', pipeline]]) {
     const auto = layoutDiagram(valid(input));
     const p = onPage(auto);
-    check(`${name}: auto's titles show at 11 px or more in a 760 px column of an 800 px window (was ${shownBefore[name]})`, p.title >= 11 - 1e-9, `${auto.direction}: ${p.title.toFixed(1)} px, ${Math.round(p.height)} px tall`);
+    check(`${name}: auto's titles show at 11 px or more in the ${DRAWING_FIT.column} px column of an 800 px window (was ${shownBefore[name]})`, p.title >= 11 - 1e-9, `${auto.direction}: ${p.title.toFixed(1)} px, ${Math.round(p.height)} px tall`);
     const other = layoutDiagram({ ...valid(input), direction: auto.direction === 'right' ? 'down' : 'right' });
     const q = onPage(other);
     check(`${name}:   and of the ways that read, the shorter on the page (within 5 %)`, q.title < 11 - 1e-9 || p.height <= q.height * 1.05 + 1e-9, `${auto.direction} ${Math.round(p.height)} px against ${other.direction} ${Math.round(q.height)} px (${q.title.toFixed(1)} px titles)`);
@@ -825,7 +907,7 @@ section('"auto" lays a drawing out both ways and keeps the one the page shows be
   // The rule itself, on boxes only.
   const box = (width, height, tag) => ({ width, height, tag });
   check('readable beats unreadable: 897 wide beats 1,422 wide', chooseDirection(box(1422, 511, 'r'), box(897, 991, 'd')).tag === 'd');
-  check('  however tall: 600 × 1,400 (readable, taller) beats 1,000 × 300 (titles 10.6 px)', chooseDirection(box(1000, 300, 'r'), box(600, 1400, 'd')).tag === 'd');
+  check('  however tall: 600 × 1,400 (readable, taller) beats 1,000 × 300 (titles 9.9 px)', chooseDirection(box(1000, 300, 'r'), box(600, 1400, 'd')).tag === 'd');
   check('  both readable: the shorter on the page wins', chooseDirection(box(900, 560, 'r'), box(760, 500, 'd')).tag === 'r' && chooseDirection(box(700, 120, 'r'), box(400, 260, 'd')).tag === 'r');
   check('  neither readable: the larger titles win', chooseDirection(box(1600, 400, 'r'), box(1400, 900, 'd')).tag === 'd');
   check('  within 5 % on the page, the shape closer to 16:10 decides', chooseDirection(box(760, 470, 'r'), box(760, 476, 'd')).tag === 'd');
@@ -1005,9 +1087,12 @@ section('both themes keep text at 4.5:1');
       }
       const n = contrast(colour(P.noteEdge), colour(a.fill));
       if (n < STAND_OUT.edge) faint.push(`${theme} note edge on group ${i + 1}: ${n.toFixed(2)}:1`);
+      // Fix round 4: a group stands off the canvas too (dark tints were 1.11:1 and barely showed).
+      const g = contrast(colour(a.fill), colour(P.canvas));
+      if (g < 1.2) faint.push(`${theme} group ${i + 1} on the canvas: ${g.toFixed(2)}:1`);
     }
   }
-  check('a card stands out from every group tint, both themes: fill at least 1.25:1, edge at least 2:1', STAND_OUT.fill >= 1.25 && STAND_OUT.edge >= 2 && faint.length === 0, faint.slice(0, 4).join(' | '));
+  check('a card stands out from every group tint, both themes: fill at least 1.25:1, edge at least 2:1; every group at least 1.2:1 off the canvas', STAND_OUT.fill >= 1.25 && STAND_OUT.edge >= 2 && faint.length === 0, faint.slice(0, 4).join(' | '));
   const [r, g, b] = colour(palette('dark').accents[3].fill);
   check('the dark amber group reads amber, not olive: red clearly over green, green over blue', r - g >= 4 && g > b, palette('dark').accents[3].fill);
   check('the dark canvas is the page\'s own dark paper', palette('dark').canvas === '#0F1720');
@@ -1030,6 +1115,14 @@ section('the reviewer\'s three drawings read cleanly, every way (fix round 1)');
       // Widened for its title, a group still holds it, 10 in from its edges at the least.
       const outside = layout.groups.filter((g) => g.titleBox && !(g.titleBox.x >= g.x + 10 - 1e-6 && g.titleBox.y >= g.y + 10 - 1e-6 && g.titleBox.x + g.titleBox.w <= g.x + g.w - 10 + 1e-6 && g.titleBox.y + g.titleBox.h <= g.y + g.h - 10 + 1e-6)).map((g) => g.id);
       check(`${name} ${direction}: every group title sits inside its group`, outside.length === 0, outside.join(', '));
+      // Fix round 4: arrowheads into one box stand 20 apart; no two edges run alongside closer
+      // than 16 for more than 12 (pipeline cache→done / db→done were 8 apart for 32; the owner's
+      // rerank↔vec cycle two nested hooks 8 apart); and no step is under 20 (icons chat→db, owner
+      // user→raptor, user→memgpt and router→llm were 12).
+      const crowd = crowding(layout);
+      check(`${name} ${direction}: arrowheads into one box at least 20 apart`, crowd.heads.length === 0, crowd.heads.slice(0, 3).join(' | '));
+      check(`${name} ${direction}: no two edges alongside closer than 16 for more than 12`, crowd.alongside.length === 0, crowd.alongside.slice(0, 3).join(' | '));
+      check(`${name} ${direction}: no step under 20`, steps(layout, 20).length === 0, steps(layout, 20).slice(0, 3).join(' | '));
       check(`${name} ${direction}: still every Task 1 rule`, problems(layout).length === 0 && labelsOverLines(layout).length === 0 && sideBySide(layout).length === 0, [...problems(layout), ...labelsOverLines(layout), ...sideBySide(layout)].slice(0, 2).join(' | '));
     }
   }
@@ -1052,7 +1145,34 @@ section('the reviewer\'s three drawings read cleanly, every way (fix round 1)');
   console.log(`    owner right, not what auto draws: ${empty(layoutDiagram(valid({ ...ownerPipeline, direction: 'right' })))}`);
 }
 
-section('random drawings: the same findings, counted, no worse than after fix round 2');
+section("the reviewer's 80 dense drawings: arrowheads apart (fix round 4)");
+{
+  // 40 boxes, 80 edges, 8 groups, both directions: arrowheads into one box under 12 apart were
+  // 1,093 at 63a6e59 and 2,745 at f73680a, with ports packed 8 apart against a 7-unit head. The
+  // ruling's ceiling is 1,093; a head now keeps 10 to itself either side, so it is 0.
+  let close = 0;
+  let near = 0;
+  let along = 0;
+  let short = 0;
+  for (const longTitles of [false, true]) {
+    for (let seed = 1; seed <= 20; seed += 1) {
+      const d = valid(denseDiagram(seed, longTitles));
+      for (const direction of ['right', 'down']) {
+        const layout = layoutDiagram({ ...d, direction });
+        close += crowding(layout, { apart: 12 }).heads.length;
+        const c = crowding(layout);
+        near += c.heads.length;
+        along += c.alongside.length;
+        short += steps(layout, 20).length;
+      }
+    }
+  }
+  console.log(`    80 dense layouts: heads under 12 apart ${close} (was 2,745), under 20 ${near} (was 4,385), edges alongside ${along} (was 11,274), steps under 20 ${short} (was 1,199)`);
+  check(`80 dense layouts: arrowheads into one box under 12 apart at most 1,093 (ruling), and 0 now: ${close}`, close === 0);
+  check(`  under 20 apart: 0 (${near})`, near === 0);
+}
+
+section('random drawings: the same findings, counted, no worse than after fix round 4');
 {
   const counts = Object.fromEntries(QUALITY_KINDS.map((k) => [k, 0]));
   for (let seed = 1; seed <= 300; seed += 1) {
@@ -1065,7 +1185,7 @@ section('random drawings: the same findings, counted, no worse than after fix ro
     }
   }
   console.log(`    600 small layouts: ${QUALITY_KINDS.map((k) => `${k} ${counts[k]}`).join(', ')}`);
-  for (const kind of QUALITY_KINDS) check(`600 small layouts: ${kind} no more than after fix round 2 (${SWEEP_CEILING[kind]})`, counts[kind] <= SWEEP_CEILING[kind], `${counts[kind]}`);
+  for (const kind of QUALITY_KINDS) check(`600 small layouts: ${kind} no more than after fix round 4 (${SWEEP_CEILING[kind]})`, counts[kind] <= SWEEP_CEILING[kind], `${counts[kind]}`);
 }
 
 console.log(failures ? `\n\x1b[31m${failures} failed\x1b[0m` : '\n\x1b[32mall passed\x1b[0m');

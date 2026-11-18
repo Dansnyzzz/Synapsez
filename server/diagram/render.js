@@ -87,28 +87,33 @@ const BASE = {
     ink: '#E5E7EB',
     muted: '#A3ADBB',
     line: '#8391A5',
-    card: '#2C3A4E',
-    cardEdge: '#536379',
-    pill: '#2C3A4E',
-    pillEdge: '#536379',
+    card: '#2F3E53',
+    cardEdge: '#5B6B82',
+    pill: '#2F3E53',
+    pillEdge: '#5B6B82',
     note: '#131C27',
-    noteEdge: '#536379',
+    noteEdge: '#5B6B82',
     icon: '#A3ADBB',
     // A shadow is a darkening, and on a dark canvas 6 % of one is nothing: there it is stronger.
     shadow: ['#000000', 0.35],
     // Mixed into a neutral dark rather than the navy canvas: navy's blue cancels amber's red
-    // and turned that group olive (review, 2026-11-18).
-    tintShare: 0.1,
+    // and turned that group olive (review, 2026-11-18). Each accent as far as it takes for the
+    // group to stand 1.22:1 off the canvas (fix round 4: at a flat 10 % it was 1.11:1 and the
+    // groups barely showed); the card was lightened to stay 1.25:1 off the strongest tint.
+    tintTo: 1.22,
+    tintAgainst: 'canvas',
     tintBase: '#121417',
     groupEdge: 0.45,
   },
 };
 
-// The least share of an accent, in hundredths, that sets a card `ratio`:1 apart from the tint.
+// The least share of an accent, in hundredths, that sets the tint `tintTo`:1 apart from a card
+// (light: white cards on it) or from the canvas (dark: the group off the page).
 function tintFor(accent, base) {
+  const against = colour(base.tintAgainst === 'canvas' ? base.canvas : base.card);
   for (let share = 0.02; share < 0.6; share += 0.01) {
     const fill = mix(accent, base.tintBase, share);
-    if (contrast(colour(base.card), colour(fill)) >= base.tintTo) return fill;
+    if (contrast(against, colour(fill)) >= base.tintTo) return fill;
   }
   return mix(accent, base.tintBase, 0.6);
 }
@@ -122,7 +127,7 @@ export function palette(theme = 'light') {
   const accents = (ACCENTS[theme] || ACCENTS.light).map(([accent, ink]) => ({
     accent,
     ink,
-    fill: base.tintTo ? tintFor(accent, base) : mix(accent, base.tintBase, base.tintShare),
+    fill: tintFor(accent, base),
     edge: mix(accent, base.canvas, base.groupEdge),
   }));
   return { ...base, accents };
