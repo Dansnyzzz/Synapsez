@@ -72,6 +72,9 @@ section('a clean diagram has nothing to fix');
   check('  classes in <style> are read for size and colour', canvas === 'light');
   const dark = checkDiagram('<svg viewBox="0 0 300 100"><rect x="0" y="0" width="300" height="100" fill="#111827"/><text x="20" y="50" font-size="16" fill="#f8fafc">Night mode</text></svg>');
   check('one drawn on its own dark background is a dark canvas, and fine', dark.canvas === 'dark' && dark.issues.length === 0, JSON.stringify(dark));
+  // A drawing that scopes its rules under its own id (as Ephapse's diagrams do) is read the same.
+  const scoped = checkDiagram('<svg id="d7" viewBox="0 0 300 100"><style>#d7 .t{font-size:14px;fill:#f2f2f2}</style><rect x="0" y="0" width="300" height="100" fill="#ffffff"/><text class="t" x="20" y="50">Pale on white</text></svg>');
+  check('rules scoped under the drawing\'s own id are read: a pale class on white is found', scoped.issues.some((s) => /Pale on white.*hard to read/.test(s)), scoped.issues.join(' | '));
   const moved = checkDiagram('<svg viewBox="0 0 100 100"><g transform="translate(500,0)"><text x="0" y="20" font-size="14" fill="#222">Far away but moved</text></g></svg>');
   check('a text inside a transformed group is not judged by where it seems to be', !moved.issues.some((s) => /runs off/.test(s)), moved.issues.join(' | '));
   check('contrast is WCAG\'s', Math.round(contrast(colour('#000'), colour('#fff'))) === 21 && contrast(colour('#777'), colour('#7a8a88')) < 3);

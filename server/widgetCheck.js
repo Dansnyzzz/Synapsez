@@ -36,9 +36,13 @@ function attrs(tag) {
   return out;
 }
 
-/** Simple CSS rules from <style> blocks: `.name{…}` and `text{…}`. */
-function cssRules(svg) {
+/**
+ * Simple CSS rules from <style> blocks: `.name{…}` and `text{…}`, also when scoped under the
+ * drawing's own id (`#d1 .name{…}`), which is how a drawing keeps its rules to itself.
+ */
+function cssRules(svg, rootId = '') {
   const rules = {};
+  const scope = rootId ? new RegExp(`^#${rootId.replace(/[^\w-]/g, '')}\\s+`) : null;
   for (const block of svg.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)) {
     for (const rule of block[1].matchAll(/([^{}]+)\{([^}]*)\}/g)) {
       const decl = {};
@@ -46,7 +50,10 @@ function cssRules(svg) {
         const [k, ...v] = part.split(':');
         if (k && v.length) decl[k.trim().toLowerCase()] = v.join(':').trim();
       }
-      for (const sel of rule[1].split(',')) rules[sel.trim()] = { ...(rules[sel.trim()] || {}), ...decl };
+      for (const raw of rule[1].split(',')) {
+        const sel = scope ? raw.trim().replace(scope, '') : raw.trim();
+        rules[sel] = { ...(rules[sel] || {}), ...decl };
+      }
     }
   }
   return rules;
@@ -89,8 +96,8 @@ const quote = (s) => `"${s.length > 40 ? `${s.slice(0, 40)}…` : s}"`;
  */
 export function checkDiagram(svg) {
   const markup = String(svg || '');
-  const rules = cssRules(markup);
   const root = attrs((/<svg\b[^>]*>/i.exec(markup) || [''])[0]);
+  const rules = cssRules(markup, root.id || '');
   const vb = String(root.viewbox || '').split(/[\s,]+/).map(Number);
   const view = vb.length === 4 && vb.every(Number.isFinite) ? { x: vb[0], y: vb[1], w: vb[2], h: vb[3] } : num(root.width) && num(root.height) ? { x: 0, y: 0, w: num(root.width), h: num(root.height) } : null;
 

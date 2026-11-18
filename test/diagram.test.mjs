@@ -640,7 +640,17 @@ section('the drawing: well-formed, escaped, one marker, every edge where the lay
 {
   const { layout, svg } = drawOf({ ...pipeline, direction: 'right' }, { title: 'Luồng "A" & <B>' });
   check('well-formed XML', wellFormed(svg) === '', wellFormed(svg));
-  check('one <svg> with its namespace, a viewBox fitted to the layout and system-ui', /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 [\d.]+ [\d.]+"/.test(svg) && svg.includes(`viewBox="0 0 ${Math.round(layout.width * 100) / 100} ${Math.round(layout.height * 100) / 100}"`) && svg.includes('font-family: system-ui, sans-serif') && svg.endsWith('</svg>'));
+  check('one <svg> with its namespace, a viewBox fitted to the layout and system-ui', /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" id="d[0-9a-z]+" viewBox="0 0 [\d.]+ [\d.]+"/.test(svg) && svg.includes(`viewBox="0 0 ${Math.round(layout.width * 100) / 100} ${Math.round(layout.height * 100) / 100}"`) && svg.includes('font-family: system-ui, sans-serif') && svg.endsWith('</svg>'));
+  // Review E13: a kept .svg pasted inline elsewhere styles only itself.
+  const rootId = /^<svg [^>]*id="(d[0-9a-z]+)"/.exec(svg)?.[1];
+  const css = /<style>([\s\S]*?)<\/style>/.exec(svg)?.[1] || '';
+  const selectors = [...css.matchAll(/([^{}]+)\{/g)].map((m) => m[1].trim());
+  check('every style rule is scoped under the drawing\'s own id', !!rootId && selectors.length >= 6 && selectors.every((s) => s.startsWith(`#${rootId} `)), selectors.join(' | '));
+  // Review E14: only the icon set's own keys are icons; "constructor" is on every object.
+  const odd = layoutDiagram(valid({ nodes: [{ id: 'a', title: 'A' }] }));
+  odd.nodes[0].icon = 'constructor';
+  const oddSvg = renderDiagram(odd);
+  check('a node whose icon names an inherited property draws no icon, and no source text', !/native code|function/.test(oddSvg) && !/<g transform=/.test(oddSvg), oddSvg.slice(0, 80));
   check('wider than 1,200, it is shown 1,200 wide and scaled through the viewBox', layout.width > 1200 && svg.includes('width="1200"') && svg.includes(`height="${Math.round((layout.height * 1200) / layout.width)}"`), `${Math.round(layout.width)} wide`);
   check('the caption is its accessible name, escaped', svg.includes('aria-label="Luồng &quot;A&quot; &amp; &lt;B&gt;"'));
   check('exactly one <marker>', (svg.match(/<marker\b/g) || []).length === 1);

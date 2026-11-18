@@ -147,7 +147,7 @@ export function renderDiagram(layout, { theme = 'light', title = '' } = {}) {
   const out = [];
 
   out.push(
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n(W)} ${n(H)}" width="${Math.round(W * scale)}" height="${Math.round(H * scale)}" style="font-family: system-ui, sans-serif" role="img"${title ? ` aria-label="${escape(title)}"` : ''}>`,
+    `<svg xmlns="http://www.w3.org/2000/svg" id="d${id}" viewBox="0 0 ${n(W)} ${n(H)}" width="${Math.round(W * scale)}" height="${Math.round(H * scale)}" style="font-family: system-ui, sans-serif" role="img"${title ? ` aria-label="${escape(title)}"` : ''}>`,
   );
   // What a screen reader says the drawing shows: each arrow in words, as it was given, then
   // any box no arrow touches. Cut at 2,000 characters, so a big drawing's description does not
@@ -167,14 +167,17 @@ export function renderDiagram(layout, { theme = 'light', title = '' } = {}) {
     `<filter id="s${id}" x="-10%" y="-10%" width="120%" height="140%" color-interpolation-filters="sRGB"><feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="${shadowColour}" flood-opacity="${shadowOpacity}"/></filter>`,
     '</defs>',
   );
+  // Every rule under this drawing's own id: a kept .svg pasted inline into another page then
+  // styles only itself, never that page's text (review, 2026-11-18).
+  const own = `#d${id}`;
   out.push(
     '<style>' +
-      'text{text-anchor:middle}' +
-      `.t{font-size:${TEXT.titleSize}px;font-weight:600;fill:${P.ink}}` +
-      `.u{font-size:${TEXT.titleSize}px;font-weight:600;fill:${P.muted}}` +
-      `.l{font-size:${TEXT.lineSize}px;fill:${P.muted}}` +
-      `.c{font-size:${TEXT.labelSize}px;fill:${P.muted}}` +
-      `.h{font-size:${TEXT.groupTitleSize}px;font-weight:600;text-anchor:start}` +
+      `${own} text{text-anchor:middle}` +
+      `${own} .t{font-size:${TEXT.titleSize}px;font-weight:600;fill:${P.ink}}` +
+      `${own} .u{font-size:${TEXT.titleSize}px;font-weight:600;fill:${P.muted}}` +
+      `${own} .l{font-size:${TEXT.lineSize}px;fill:${P.muted}}` +
+      `${own} .c{font-size:${TEXT.labelSize}px;fill:${P.muted}}` +
+      `${own} .h{font-size:${TEXT.groupTitleSize}px;font-weight:600;text-anchor:start}` +
       '</style>',
   );
   out.push(`<rect width="${n(W)}" height="${n(H)}" rx="12" fill="${P.canvas}"/>`);
@@ -210,7 +213,8 @@ export function renderDiagram(layout, { theme = 'light', title = '' } = {}) {
     const t = nd.textBox;
     const cx = t.x + t.w / 2;
     let top = t.y;
-    if (nd.icon && ICONS[nd.icon]) {
+    // Own keys only: "constructor" is on every object, and would be drawn as its source text.
+    if (nd.icon && Object.hasOwn(ICONS, nd.icon)) {
       const k = TEXT.iconSize / ICON_GRID;
       const colour = nd.kind === 'note' ? P.muted : a ? a.ink : P.icon;
       out.push(
