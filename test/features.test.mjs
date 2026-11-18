@@ -429,7 +429,8 @@ section('page views and speed: on Vercel only, the path only, never against the 
   check('the scripts they add come from this origin, which `script-src \'self\'` allows', analyticsSrc.includes('return "/_vercel/insights/script.js"') && speedSrc.includes('return "/_vercel/speed-insights/script.js"'));
   const csp = JSON.parse(fs.readFileSync(new URL('../vercel.json', import.meta.url), 'utf8')).headers[0].headers.find((h) => h.key === 'Content-Security-Policy').value;
   // The one addition is the cloud browser's socket to the account's own machine, on E2B or Vercel — nothing for these.
-  check('  and the policy was not widened for them', /script-src 'self';/.test(csp) && /connect-src 'self'(?: https:\/\/\*\.e2b\.app)?(?: wss:\/\/\*\.e2b\.app)?(?: wss:\/\/\*\.vercel\.run)?;/.test(csp));
+  // script-src's one other origin is Google's loader for the Drive Picker (2026-11-18), not theirs.
+  check('  and the policy was not widened for them', /script-src 'self' https:\/\/apis\.google\.com;/.test(csp) && /connect-src 'self'(?: https:\/\/\*\.e2b\.app)?(?: wss:\/\/\*\.e2b\.app)?(?: wss:\/\/\*\.vercel\.run)?;/.test(csp));
   const appSrc = fs.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
   const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
   check('the app starts it from the session, and says so only where it measures', /startInsights\(session\.insights\)/.test(appSrc) && /insightsNote\.hidden = !session\.insights/.test(appSrc) && /id="insights-note" data-i18n="memory\.insights" hidden/.test(html));
@@ -965,7 +966,9 @@ section('the privacy notice a new account agrees to is the one it can read (LAW-
   check('  in both languages, saying where data goes outside Vietnam and what rights there are', /ra nước ngoài/.test(notice) && /outside Vietnam/.test(notice) && /Quyền của bạn/.test(notice) && /Your rights/.test(notice));
   check('  names who runs it and how to reach them, not a placeholder', !/\[[^\]]*(email|điền|person|Tên)[^\]]*\]/i.test(notice) && /mailto:[^"]+@/.test(notice));
   // Google's OAuth verification reads this page (owner, 2026-10-18).
-  check('  says what is read from Google and why, in both languages', /Dữ liệu từ tài khoản Google/.test(notice) && /Google user data/.test(notice) && /gmail\.modify/.test(notice) && /contacts\.readonly/.test(notice));
+  // Since 1.33.1 Gmail only sends and Drive is drive.file: no restricted scope, so Google's review stays free.
+  check('  says what is read from Google and why, in both languages', /Dữ liệu từ tài khoản Google/.test(notice) && /Google user data/.test(notice) && (notice.match(/<code>gmail\.send<\/code>/g) || []).length >= 2 && (notice.match(/<code>drive\.file<\/code>/g) || []).length >= 2 && /contacts\.readonly/.test(notice));
+  check('  and names no restricted scope as one Ephapse asks for', !/<code>(gmail\.(modify|readonly|compose|metadata)|drive|drive\.readonly|drive\.metadata)<\/code>/.test(notice));
   check('  and carries the Limited Use statement, with the policy it names', /use and transfer to any other app of information received from Google APIs will adhere to the\s*<a href="https:\/\/developers\.google\.com\/terms\/api-services-user-data-policy">Google API Services User Data Policy<\/a>,\s*including the Limited Use requirements/.test(notice));
   check('the sign-in page links it for someone not signed in', /<a class="gate__legal" href="\/privacy\.html"/.test(fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')));
   check('the Search Console verification file is served as Google wrote it', fs.readFileSync(new URL('../public/google19190bbd34c2487c.html', import.meta.url), 'utf8').trim() === 'google-site-verification: google19190bbd34c2487c.html');
@@ -2152,7 +2155,7 @@ section('connectors: each Google product its own, the catalogue page, logos, and
   const { encryptSecret } = await import('../server/crypto.js');
   const google = await import('../server/google.js');
   const user = await store.createUser({ id: 'u-gprod', email: 'gprod@example.com', passwordHash: 'x', name: 'G', role: 'user' });
-  const scope = 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify openid email';
+  const scope = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.send openid email';
   await store.saveConnector(user.id, 'google', encryptSecret(JSON.stringify({ access: 'a', refresh: 'r', exp: Date.now() + 3600e3, scope }), ['connector', user.id, 'google']), 'g@example.com');
   check('every granted product is in use to begin with', (await google.googleGrants(user.id)).join() === 'gmail,drive');
   check('disconnecting Drive leaves Gmail', (await google.dropGoogleProduct(user.id, 'drive')).join() === 'gmail' && (await google.googleGrants(user.id)).join() === 'gmail');
@@ -3067,7 +3070,8 @@ section('the product is Ephapse: the old name is nowhere but where it must stay 
   check('  every exception is still used (a stale one would hide a new miss)', ALLOWED.every((a) => files.some((f) => a.file.test(f) && !BINARY.test(f) && read(f).split(/\r?\n/).some((l) => a.line.test(l)))));
 
   const { LEGAL } = await import('../server/legal.js');
-  check('the legal version ids are unchanged: nobody is asked to agree again', LEGAL.notice === 'privacy-2026-11-12' && LEGAL.terms === 'terms-2026-11-03' && LEGAL.usage === 'usage-2026-10-26', JSON.stringify(LEGAL));
+  // The rename moved no id. The notice has moved on since, for its own reasons (pinned in the 1.33.1 section below).
+  check('the legal version ids the rename left alone are unchanged: nobody was asked to agree again for it', LEGAL.terms === 'terms-2026-11-03' && LEGAL.usage === 'usage-2026-10-26', JSON.stringify(LEGAL));
   for (const page of ['privacy', 'terms', 'usage-policy']) {
     const html = read(`public/${page}.html`);
     check(`  ${page}.html says the name changed, in both languages, with the date`, html.includes(`${OLD[0].toUpperCase()}${OLD.slice(1)} nay đổi tên thành Ephapse (www.ephapse.net)`) && html.includes(`${OLD[0].toUpperCase()}${OLD.slice(1)} is now Ephapse (www.ephapse.net)`) && html.includes('Đổi tên: 17/11/2026') && html.includes('Renamed: 17 November 2026'));
@@ -3089,6 +3093,196 @@ section('the product is Ephapse: the old name is nowhere but where it must stay 
   check('the cloud computer template is ephapse-computer, in the code and in the script that builds it', TEMPLATE_NAME === 'ephapse-computer' && /TEMPLATE_NAME/.test(read('scripts/e2b-template.mjs')));
   const log133 = JSON.parse(read('public/changelog.json')).entries.find((e) => e.version === '1.33.0');
   check('1.33.0 is released in both languages, says the old name once, and CHANGELOG.md carries it', !!log133 && log133.new.vi.length === log133.new.en.length && log133.improved.vi.length === log133.improved.en.length && /www\.ephapse\.net/.test(log133.new.en.join(' ')) && /www\.ephapse\.net/.test(log133.new.vi.join(' ')) && /X-Ephapse-Signature/.test(log133.improved.en.join(' ')) && read('CHANGELOG.md').includes('(1.33.0)'));
+}
+
+section('Google on free review and the public contact address (1.33.1)');
+{
+  const { execSync } = await import('node:child_process');
+  const root = new URL('../', import.meta.url);
+  const read = (p) => fs.readFileSync(new URL(p, root), 'utf8');
+  // The owner's personal address gave way to support@ephapse.net (owner, 2026-11-18). Its local
+  // part is built from two pieces, so this file does not hold what it looks for.
+  const PERSONAL = new RegExp(['hero', 'zombie06'].join(''), 'i');
+  const files = execSync('git ls-files -z', { cwd: root, maxBuffer: 1 << 28 }).toString('utf8').split('\0').filter(Boolean);
+  const BINARY = /\.(png|jpe?g|gif|webp|webm|mp4|ico|pdf|woff2?|ttf|otf|zip|gz|docx|xlsx|pptx)$/i;
+  const hits = [];
+  let scanned = 0;
+  for (const file of files) {
+    if (BINARY.test(file) || !fs.existsSync(new URL(file, root))) continue;
+    const buf = fs.readFileSync(new URL(file, root));
+    if (buf.includes(0)) continue;
+    scanned += 1;
+    if (PERSONAL.test(buf.toString('utf8'))) hits.push(file);
+  }
+  check('the scan read the tracked text files', scanned > 700, String(scanned));
+  check("the owner's personal address is in no tracked file", hits.length === 0, hits.join(', '));
+  for (const page of ['privacy', 'terms', 'usage-policy']) {
+    const html = read(`public/${page}.html`);
+    const mailto = [...html.matchAll(/href="mailto:([^"]+)"/g)].map((m) => m[1]);
+    check(`  ${page}.html writes to support@ephapse.net in both languages, as the link and as the words`, mailto.length === 2 && mailto.every((m) => m === 'support@ephapse.net') && (html.match(/>support@ephapse\.net<\/a>/g) || []).length === 2, JSON.stringify(mailto));
+  }
+  for (const page of ['terms', 'usage-policy']) {
+    const html = read(`public/${page}.html`);
+    check(`  ${page}.html keeps its version and says the address changed, with the date`, html.includes('Địa chỉ liên hệ mới: 18/11/2026') && html.includes('New contact address: 18 November 2026'));
+  }
+  const notice = read('public/privacy.html');
+  const { LEGAL } = await import('../server/legal.js');
+  check('the privacy notice is privacy-2026-11-18: what Ephapse reaches changed, so it is asked once (its own section 9)', LEGAL.notice === 'privacy-2026-11-18' && notice.includes('Phiên bản privacy-2026-11-18') && notice.includes('Version privacy-2026-11-18'), LEGAL.notice);
+  check('the privacy notice says what changed since privacy-2026-11-12, in both languages', notice.includes('So với bản privacy-2026-11-12:') && notice.includes('Since privacy-2026-11-12:'));
+  check('  and that the Picker hands the browser a short-lived Drive token, where it said none ever reached it', /mã ngắn hạn/.test(notice) && /short-lived token/.test(notice) && !/never sent to the browser/.test(notice));
+  check('  and how a connection made before narrows: disconnect, then connect again', /made before the 1\.33\.1 update/.test(notice) && /tạo trước bản cập nhật 1\.33\.1/.test(notice));
+
+  const log = JSON.parse(read('public/changelog.json')).entries.find((e) => e.version === '1.33.1');
+  const en = [...(log?.new?.en || []), ...(log?.improved?.en || [])].join(' ');
+  const vi = [...(log?.new?.vi || []), ...(log?.improved?.vi || [])].join(' ');
+  check('1.33.1 is released in both languages: Gmail only sends, Drive opens the files you pick', !!log && /only send/i.test(en) && /Google Picker|pick/i.test(en) && /chỉ (còn )?gửi/i.test(vi) && /chọn/.test(vi), en.slice(0, 200));
+  check('  and says a connection from before narrows only by disconnecting and connecting again, which Drive users must do', /must disconnect/i.test(en) && /phải ngắt kết nối/i.test(vi));
+  check('  CHANGELOG.md carries it, and the owner\'s guide has the Picker setup', read('CHANGELOG.md').includes('(1.33.1)') && /GOOGLE_PICKER_API_KEY/.test(read('docs/google.md')) && /GOOGLE_PROJECT_NUMBER/.test(read('docs/google.md')));
+  const guide = read('docs/google.md');
+  check('  and the guide asks for no restricted scope', !/auth\/(gmail\.(modify|readonly|compose|metadata)|drive\.readonly|drive\.metadata)\b|auth\/drive(?![.\w])|mail\.google\.com/.test(guide));
+}
+
+section('a public home page that says what Ephapse is, and no sexual imagery (1.33.1, Google branding review)');
+{
+  // Google's branding review (2026-11-18): "update your home page to clearly outline your
+  // application's purpose and ensure it does not use Google APIs for AI NCII". The sign-in card
+  // shows nothing without JS, so the purpose and the statement live on a static page.
+  const root = new URL('../', import.meta.url);
+  const read = (p) => fs.readFileSync(new URL(p, root), 'utf8');
+  const flat = (s) => s.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ');
+  const exists = fs.existsSync(new URL('public/about.html', root));
+  check('public/about.html exists', exists);
+  const about = exists ? read('public/about.html') : '';
+  const words = flat(about);
+  check('  runs no script, inline, loaded or in an attribute, and loads no outside stylesheet or font', exists && !/<script/i.test(about) && !/\son[a-z]+\s*=/i.test(about) && !/javascript:/i.test(about) && !/<link[^>]+rel="stylesheet"/i.test(about) && !/@import|@font-face/i.test(about) && !/https?:\/\/(?!www\.ephapse\.net|developers\.google\.com|myaccount\.google\.com)[^"\s]+/i.test(about.replace(/<a [^>]*>/g, '')));
+  check('  its head: the title, a description, the canonical address and the three og tags', about.includes('<title>Ephapse — AI assistant workspace</title>') && /<meta name="description" content="[^"]{60,}"/.test(about) && about.includes('<link rel="canonical" href="https://www.ephapse.net/about.html" />') && /<meta property="og:title" content="[^"]+"/.test(about) && /<meta property="og:description" content="[^"]+"/.test(about) && about.includes('<meta property="og:url" content="https://www.ephapse.net/about.html" />'));
+  const en = about.indexOf('<div id="en" lang="en">');
+  const vi = about.indexOf('<div id="vi" lang="vi">');
+  check('  English first, then Vietnamese, each half marked with its language, with a "Tiếng Việt" link at the top', /<html lang="en">/.test(about) && en > 0 && vi > en && /<a href="#vi"[^>]*>Tiếng Việt<\/a>/.test(about) && about.indexOf('href="#vi"') < en + 400, `${en} ${vi}`);
+  const enHalf = flat(about.slice(en, vi));
+  const viHalf = flat(about.slice(vi));
+  check('  says what Ephapse is, with a plain link to open it', /AI assistant workspace/.test(enHalf) && /runs code on a private cloud computer/.test(enHalf) && /only if you connect them/.test(enHalf) && /<a href="\/">Open Ephapse<\/a>/.test(about) && /<a href="\/">Mở Ephapse<\/a>/.test(about) && /chỉ khi bạn kết nối/.test(viHalf));
+  check('  Gmail only sends, never reads, searches or changes the mailbox, in both languages', (about.match(/<code>gmail\.send<\/code>/g) || []).length === 2 && /sends an email you ask it to send\. It never reads, searches or changes your mailbox/.test(enHalf) && /không bao giờ đọc, tìm hay thay đổi hộp thư/.test(viHalf));
+  check('  Drive is only the files picked in the Drive picker or that Ephapse creates, in both languages', (about.match(/<code>drive\.file<\/code>/g) || []).length === 2 && /only the files you pick in Ephapse's Google Drive picker, or files Ephapse creates for you/.test(enHalf) && /chỉ những tệp bạn chọn trong bộ chọn tệp Google Drive của Ephapse/.test(viHalf));
+  check('  and each other product, in both languages', ['Google Calendar', 'Google Docs', 'Google Sheets', 'Google Forms', 'Google Tasks', 'Google Contacts'].every((p) => enHalf.includes(p)) && ['Google Lịch', 'Google Tài liệu', 'Google Trang tính', 'Google Biểu mẫu', 'Google Tasks', 'Danh bạ Google'].every((p) => viHalf.includes(p)));
+  check('  and names no restricted scope', !/<code>(gmail\.(modify|readonly|compose|metadata)|drive|drive\.readonly|drive\.metadata)<\/code>/.test(about) && !/mail\.google\.com/.test(about));
+  // "In the same words as the privacy policy's Google section": the sentences are taken from it here.
+  const privacy = flat(read('public/privacy.html'));
+  const sentence = (text, start, end) => {
+    const from = text.indexOf(start);
+    const to = from < 0 ? -1 : text.indexOf(end, from);
+    return from < 0 || to < 0 ? `(missing: ${start})` : text.slice(from, to + end.length);
+  };
+  const same = [
+    sentence(privacy, 'Ephapse does not use Google user data for advertising', "its own or anyone else's."),
+    sentence(privacy, 'No one at Ephapse reads your Google user data', 'or when the law requires it.'),
+    sentence(privacy, "Ephapse's use and transfer to any other app of information received from Google APIs", 'including the Limited Use requirements.'),
+    sentence(privacy, 'Ephapse không dùng dữ liệu Google cho quảng cáo', 'của Ephapse hay của bất kỳ ai.'),
+    sentence(privacy, 'Không ai ở Ephapse đọc dữ liệu Google của bạn', 'hoặc khi luật bắt buộc.'),
+    sentence(privacy, 'Việc Ephapse sử dụng thông tin nhận được từ API của Google', 'bao gồm các yêu cầu về Sử dụng giới hạn.'),
+  ];
+  const differ = same.filter((s) => !words.includes(s));
+  check('  the Limited Use statement, in the privacy policy\'s own words, in both languages', differ.length === 0, differ.map((s) => s.slice(0, 60)).join(' | '));
+  check('  and a link to the privacy policy\'s Google section, which is there', about.includes('href="/privacy.html#google-user-data"') && about.includes('href="/privacy.html#google"') && read('public/privacy.html').includes('id="google-user-data"') && read('public/privacy.html').includes('id="google"'));
+  // Fix round 1 (review, 2026-11-18): a rule and a described check, never a guarantee the word list cannot keep.
+  const CHECK_EN = "Ephapse's server checks every picture request for sexual or nude wording, in English and Vietnamese, and refuses a match before any picture is asked of Google. The assistant is also instructed to refuse such requests itself, and every picture request Ephapse does send asks Gemini for its strictest filter for sexually explicit content.";
+  const CHECK_VI = 'Máy chủ của Ephapse kiểm tra mọi yêu cầu tạo ảnh để tìm từ ngữ tình dục hay khoả thân, bằng tiếng Anh và tiếng Việt, và từ chối yêu cầu khớp trước khi yêu cầu Google tạo bất kỳ ảnh nào. Trợ lý cũng được dặn tự từ chối những yêu cầu như vậy, và mọi yêu cầu tạo ảnh Ephapse gửi đi đều đặt bộ lọc nội dung tình dục chặt nhất của Gemini.';
+  check('  pictures: made with the Gemini API, sexual, nude or intimate images not allowed, no AI NCII, in both languages', /Google's Gemini API/.test(enHalf) && /Ephapse does not allow sexual, nude or intimate images of anyone/.test(enHalf) && /\(AI NCII\)/.test(enHalf) && /does not use Google APIs or Google user data to create, edit or share such imagery/.test(enHalf) && /Ephapse không cho phép ảnh tình dục, khoả thân hay riêng tư của bất kỳ ai/.test(viHalf) && /\(AI NCII\)/.test(viHalf));
+  check('  the check described as a check, in the ruled words, in both languages', enHalf.includes(CHECK_EN) && viHalf.includes(CHECK_VI));
+  check('  and the picture tool takes only words: no photo in, so none changed or "undressed", in both languages', /takes only a text description: it cannot take in an existing photo, so it cannot change or "undress" one/.test(enHalf) && /chỉ nhận một mô tả bằng chữ: nó không thể nhận một bức ảnh có sẵn, nên không thể sửa hay "cởi đồ" một bức ảnh/.test(viHalf));
+  check('  and the Usage Policy forbids it, suspension possible, with where to report', /Usage Policy forbids it/.test(enHalf) && /suspended/.test(enHalf) && /tạm khoá/.test(viHalf));
+  const mailto = [...about.matchAll(/href="mailto:([^"]+)"/g)].map((m) => m[1]);
+  check('  writes to support@ephapse.net, and to nothing else', mailto.length >= 2 && mailto.every((m) => m === 'support@ephapse.net') && (about.match(/>support@ephapse\.net<\/a>/g) || []).length === mailto.length, JSON.stringify(mailto));
+  check('  links the privacy policy, the terms and the usage policy from each half', ['/privacy.html', '/terms.html', '/usage-policy.html'].every((h) => about.slice(en, vi).includes(`href="${h}"`) && about.slice(vi).includes(`href="${h}"`)));
+  check('  every picture on it says what it is', [...about.matchAll(/<img\b[^>]*>/g)].every((m) => /\salt="[^"]+"/.test(m[0])));
+
+  const gate = read('public/index.html');
+  check('the sign-in card\'s "What is Ephapse?" is a plain link to the page, its label key kept', /<a class="gate__what" href="\/about\.html" data-i18n="gate\.what">What is Ephapse\?<\/a>/.test(gate));
+  check('  and the hidden paragraph, its toggle and their styles are gone', !/id="gate-about"/.test(gate) && !/gate-what|gate-about/.test(read('public/js/app.js')) && !/\.gate__about\b/.test(read('public/css/app.css')));
+
+  const usage = read('public/usage-policy.html');
+  const viBullet = '<li>Tạo, sửa hay chia sẻ hình ảnh, video hay âm thanh tình dục, khoả thân hoặc riêng tư của một người thật khi họ không đồng ý — kể cả nội dung do AI tạo ("deepfake", NCII). Công cụ tạo ảnh của Ephapse được thiết kế để từ chối ảnh tình dục hay khoả thân.</li>';
+  const enBullet = '<li>Make, edit or share sexual, nude or intimate images, video or audio of a real person without their consent — including AI-generated ("deepfake") content (NCII). Ephapse\'s picture tool is built to refuse sexual or nude images.</li>';
+  const after = (html, first, next) => {
+    const at = html.indexOf(first);
+    return at >= 0 && html.slice(at + first.length).trimStart().startsWith(next);
+  };
+  check('the usage policy bans NCII in both languages, right after the child-abuse bullet', after(usage, '<li>Tạo, tìm hay chia sẻ nội dung xâm hại tình dục trẻ em — không có ngoại lệ.</li>', viBullet) && after(usage, '<li>Make, find or share child sexual abuse material — no exceptions.</li>', enBullet));
+  const { LEGAL } = await import('../server/legal.js');
+  check('  a clarification, dated in both languages, that keeps the version: nobody is asked again', LEGAL.usage === 'usage-2026-10-26' && usage.includes('Làm rõ ngày 18/11/2026: lệnh cấm hình ảnh riêng tư không có sự đồng ý được nêu rõ; không điều gì trước đây được phép nay bị cấm.') && usage.includes('Clarified 18 November 2026: the ban on non-consensual intimate imagery is spelled out; nothing that was allowed before is now forbidden.'));
+
+  const log = JSON.parse(read('public/changelog.json')).entries.find((e) => e.version === '1.33.1');
+  const logEn = [...(log?.new?.en || []), ...(log?.improved?.en || [])].join(' ');
+  const logVi = [...(log?.new?.vi || []), ...(log?.improved?.vi || [])].join(' ');
+  check('1.33.1 says, in both languages, there is a public page about Ephapse and sexual or nude pictures are checked for and refused', /about\.html/.test(logEn) && /sexual or nude/.test(logEn) && /about\.html/.test(logVi) && /tình dục hay khoả thân/.test(logVi) && log.new.vi.length === log.new.en.length && log.improved.vi.length === log.improved.en.length, logEn.slice(-240));
+  const changelog = read('CHANGELOG.md');
+  const section133 = changelog.slice(changelog.indexOf('(1.33.1)'), changelog.indexOf('## 2026-11-17'));
+  check('  CHANGELOG.md\'s 1.33.1 section carries it', /about\.html/.test(section133) && /NCII/.test(section133));
+  const guide = read('docs/google.md');
+  check("  and the owner's guide says what to set and what to tell Google", /Branding review: home page and AI NCII/.test(guide) && /Application home page.*https:\/\/www\.ephapse\.net\/about\.html|https:\/\/www\.ephapse\.net\/about\.html.*Application home page/s.test(guide) && /I have fixed the issues/.test(guide));
+  // The note to Google carries the ruled sentence in its own voice ("our server", "we do send").
+  const note = guide.slice(guide.indexOf('> Our application home page')).replace(/\n> ?/g, ' ').replace(/\s+/g, ' ');
+  check('  the note to Google describes the check in the ruled words, claims no refusal of "intimate" wording, and says only words go in', note.includes('Our server checks every picture request for sexual or nude wording, in English and Vietnamese, and refuses a match before any picture is asked of Google.') && !/refuse[sd]?[^.]*intimate/.test(note) && /takes only a text description/.test(note), note.slice(0, 120));
+  // The owner makes one real picture before telling Google anything (ruling 2), and knows the check is strict (ruling 5).
+  const steps = guide.slice(guide.indexOf('Once 1.33.1 is deployed'), guide.indexOf('> Our application home page')).replace(/\s+/g, ' ');
+  check('  one ordinary picture with the real key comes before "I have fixed the issues", stopping on an error naming safety_settings', /a lighthouse at sunset/.test(steps) && /safety_settings/.test(steps) && steps.indexOf('a lighthouse at sunset') > 0 && steps.indexOf('a lighthouse at sunset') < steps.indexOf('I have fixed the issues'));
+  check('  and the guide says the picture check is deliberately strict, with a rewording to use', /deliberately strict/.test(guide) && /beige heels/.test(guide));
+  // Ruling 1: the old guarantee is gone from every public and owner-facing place.
+  const OLD = /refused before anything is sent to Google|trước khi gửi bất cứ thứ gì tới Google|never makes sexual, nude or intimate images|refuses every sexual or nude image|từ chối mọi ảnh tình dục/;
+  const where = { 'about.html': about, 'changelog.json 1.33.1': logEn + logVi, 'CHANGELOG.md 1.33.1': section133, 'docs/google.md': guide, 'usage-policy.html': usage };
+  const still = Object.entries(where).filter(([, text]) => OLD.test(text.replace(/\s+/g, ' '))).map(([name]) => name);
+  check('  and the guarantee the word list cannot keep is nowhere: not on the page, the policy, the notes or the guide', still.length === 0, still.join(', '));
+  // Ruling 6: the strongest true safeguard, pinned on the tool itself.
+  const imageTool = TOOLS_BY_NAME.generate_image;
+  const takes = Object.keys(imageTool?.parameters?.properties || {});
+  check("generate_image's schema takes words only (prompt, name, aspect_ratio, count), nothing that could carry a picture", takes.join() === 'prompt,name,aspect_ratio,count' && Object.values(imageTool.parameters.properties).every((p) => p.type === 'string' || p.type === 'integer'), takes.join());
+}
+
+section("1.33.1's last fixes: the owner's checklist, the support mailbox, and what the final review found");
+{
+  const root = new URL('../', import.meta.url);
+  const read = (p) => fs.readFileSync(new URL(p, root), 'utf8');
+  const one = (s) => s.replace(/\s+/g, ' ');
+  const changelog = read('CHANGELOG.md');
+  const section133 = changelog.slice(changelog.indexOf('(1.33.1)'), changelog.indexOf('## 2026-11-17'));
+  // 1: the notes said only the contact address changed, while the usage policy also gained the NCII line.
+  check('CHANGELOG.md no longer says only the contact address changed: the usage policy\'s NCII clarification is named', !/only their contact address changed, said in a dated line, as the rename's line was/.test(section133) && section133.includes('only their contact address changed, in a dated line; the usage policy also gains a dated clarification of the NCII ban (below).'));
+  const owner = (section133.match(/\*\*Owner steps\.\*\*[^\n]*/) || [''])[0];
+  check('  its Owner steps name the support mailbox, the branding home page, the live-picture check and the first Picker test', /support@ephapse\.net/.test(owner) && /receive mail/.test(owner) && /about\.html/.test(owner) && /picture/.test(owner) && /first .*Picker test|Picker test/.test(owner), owner.slice(0, 200));
+
+  // 3: one ordered checklist near the top of the guide, each step linking to a heading that exists.
+  const guide = read('docs/google.md');
+  const at = guide.indexOf('## 1.33.1 owner checklist');
+  check("the guide opens with the 1.33.1 owner checklist, before section 1", at > 0 && at < guide.indexOf('## 1. Create the OAuth client'), String(at));
+  const list = guide.slice(at, guide.indexOf('## 1. Create the OAuth client'));
+  const steps = list.split(/\r?\n/).filter((l) => /^\d+\. /.test(l));
+  check('  eleven numbered steps', steps.length === 11, String(steps.length));
+  const order = ['support mailbox', 'Google Picker API', 'project number', 'GOOGLE_PICKER_API_KEY', 'redirect URI', 'Data Access', 'first live Picker test', 'ordinary picture', 'Application home page', 'Publish app', 'Verification Center'];
+  const where = order.map((word, i) => (steps[i] || '').includes(word));
+  check('  in the order the owner does them', where.every(Boolean), order.filter((_, i) => !where[i]).join(', '));
+  const slug = (h) => h.trim().toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, '').replace(/\s/g, '-');
+  const anchors = new Set(guide.split(/\r?\n/).filter((l) => /^#{2,3} /.test(l)).map((l) => slug(l.replace(/^#+ /, ''))));
+  const links = steps.map((s) => [...s.matchAll(/\]\(#([^)]+)\)/g)].map((m) => m[1]));
+  check('  each linking to its section, and every link lands on a heading', links.every((l) => l.length > 0) && links.flat().every((a) => anchors.has(a)), links.flat().filter((a) => !anchors.has(a)).join(', ') || links.map((l) => l.length).join(','));
+  check('  the redirect URI is the callback, and no JavaScript origin is needed', /https:\/\/www\.ephapse\.net\/api\/connectors\/google\/callback/.test(steps[4] || '') && /JavaScript origin/.test(steps[4] || ''));
+  // 2: the address on every public page must reach someone, before Google is told anything.
+  const deployed = one(guide.slice(guide.indexOf('Once 1.33.1 is deployed'), guide.indexOf('> Our application home page')));
+  check('  and the branding steps make support@ephapse.net receive mail, and test it, before "I have fixed the issues"', /support@ephapse\.net/.test(deployed) && /Cloudflare Email Routing|ImprovMX/.test(deployed) && /test mail/.test(deployed) && deployed.indexOf('support@ephapse.net') < deployed.indexOf('I have fixed the issues'));
+  // 11: what to do if Google ignores the narrowing, as a line for the developer.
+  const picker = one(guide.slice(guide.indexOf('## 7. The Drive Picker'), guide.indexOf('## 8. The verification submission')));
+  check('the Picker section says what the fallback would be if Google ignores the narrowing, for the developer to do', /not narrowed to drive\.file/.test(picker) && /Google Identity Services/.test(picker) && /JavaScript origin/.test(picker) && /[Tt]ell the developer/.test(picker));
+
+  // 6: approval is a default, as privacy.html says.
+  const en = read('public/js/locales/en.js');
+  const vi = read('public/js/locales/vi.js');
+  check("Gmail's connector text says sending asks first by default, in both languages", /'conn\.gmail\.about': '[^\n]*by default, sending asks you first/.test(en) && /'conn\.gmail\.about': '[^\n]*mặc định, trước khi gửi trợ lý hỏi bạn/.test(vi));
+  // 7: the Vietnamese says what the English does: it refuses a match.
+  const log = JSON.parse(read('public/changelog.json')).entries.find((e) => e.version === '1.33.1');
+  check('  the Vietnamese picture sentence refuses "a match", on the page and in the notes', /và từ chối yêu cầu khớp trước khi/.test(read('public/about.html')) && /và từ chối yêu cầu khớp trước khi/.test(log.new.vi.join(' ')) && !/và từ chối trước khi/.test(read('public/about.html') + log.new.vi.join(' ')));
+  // 9: a connection from before 1.33.1 can still reach the whole Drive, so the tool says when "only" holds.
+  const drive = TOOLS_BY_NAME.google_drive.description;
+  const first = drive.slice(0, drive.indexOf('. ') + 1);
+  check('the Drive tool says its search reaches only picked files for a connection made or renewed since 1.33.1, in its first sentence', /for a Google connection made or renewed since 1\.33\.1/.test(first) && !/never the rest of their Drive/.test(drive), first);
 }
 
 console.log(failures === 0 ? '\n\x1b[32mAll feature checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);

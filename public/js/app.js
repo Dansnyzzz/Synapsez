@@ -815,14 +815,6 @@ $('gate-resend').addEventListener('click', async () => {
   }
 });
 
-// What Ephapse is, under the form: one press away rather than a paragraph
-// filling the card (owner, 2026-10-26) — and still on the home page Google reads.
-$('gate-what').addEventListener('click', () => {
-  const about = $('gate-about');
-  about.hidden = !about.hidden;
-  $('gate-what').setAttribute('aria-expanded', String(!about.hidden));
-});
-
 $('gate-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   $('gate-error').hidden = true;
@@ -7830,6 +7822,11 @@ const plusDeps = {
   },
   picked: () => state.pickedSkills,
   attach: (attachment) => stageAttachment(attachment),
+  // How many more the message takes, so Google's Picker offers no more than that — and none when it is full.
+  room: () => {
+    const limit = state.boot?.attachments?.maxPerMessage || 6;
+    return { left: limit - staged.length, limit };
+  },
   prefs: () => state.boot?.prefs || {},
   savePrefs: (patch) => savePrefsInOrder(patch),
   openSettings: (tab, focusId) => {

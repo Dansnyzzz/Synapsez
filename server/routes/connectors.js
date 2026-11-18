@@ -2,11 +2,11 @@ import { connectedServices, disconnect } from '../connectors.js';
 import { intakeToken } from '../keyIntake.js';
 import { limit as rateLimit } from '../ratelimit.js';
 import { languageOf, translateMessage } from '../i18n/index.js';
-import { authUrl, finishAuth, googleConfigured, googleGrants, pickProducts, readState, dropGoogleProduct, GOOGLE_PRODUCTS } from '../google.js';
+import { authUrl, finishAuth, googleConfigured, googleGrants, pickProducts, readState, dropGoogleProduct, pickerToken, GOOGLE_PRODUCTS } from '../google.js';
 import { getStore } from '../store/index.js';
 import { getPrefs } from '../settings.js';
 import { needsApproval } from '../agent.js';
-import { listDriveFiles, driveFileForAttachment } from '../tools/google.js';
+import { driveFileForAttachment } from '../tools/google.js';
 import { saveUpload, LIMITS } from '../attachments.js';
 import { StorageFull } from '../storageQuota.js';
 import { publicUrlFor } from '../util/net.js';
@@ -203,8 +203,8 @@ export function mountConnectorRoutes(api, { wrap }) {
     );
 
     /**
-     * The + menu's "Add from Google Drive" (owner, 2026-10-14): find a file in
-     * the person's Drive, and attach it to the message being written.
+     * The + menu's "Add from Google Drive" (owner, 2026-10-14): a file chosen in
+     * the Google Picker, attached to the message being written.
      *
      * Only with Drive granted — asking without it would be a 403 from Google
      * in words nobody can act on. Attaching goes through `saveUpload`, the same
@@ -219,13 +219,32 @@ export function mountConnectorRoutes(api, { wrap }) {
       return false;
     };
 
+    // The Picker's token (owner, 2026-11-18). drive.file reaches only the files picked in
+    // Google's own chooser, which is what keeps Google's review free — so the search that
+    // listed the whole Drive is gone, and the chooser runs in the page with a token that can
+    // reach nothing else (google.js `pickerToken`). Never cached: it is a credential.
     api.get(
-      '/connectors/google/drive',
+      '/connectors/google/picker',
       rateLimit('drive', (req) => req.user?.id),
       wrap(async (req, res) => {
+        res.setHeader('Cache-Control', 'no-store');
+        // The browser key is public by design (the owner restricts it to this site and the
+        // Picker API); the project number is the Picker's app id.
+        const apiKey = String(process.env.GOOGLE_PICKER_API_KEY || '').trim();
+        const appId = String(process.env.GOOGLE_PROJECT_NUMBER || '').trim();
+        if (!apiKey || !appId) {
+          return res.status(503).json({
+            error: translateMessage(
+              'The Google Drive picker is not set up on this deployment. The owner sets GOOGLE_PICKER_API_KEY and GOOGLE_PROJECT_NUMBER — see docs/google.md.',
+              languageOf(req),
+            ),
+            code: 'picker_not_set_up',
+          });
+        }
         if (!(await withDrive(req, res))) return;
         try {
-          res.json({ files: await listDriveFiles(req.user.id, typeof req.query.q === 'string' ? req.query.q : '') });
+          const { token, expiresAt } = await pickerToken(req.user.id);
+          res.json({ token, apiKey, appId, expiresAt });
         } catch (err) {
           res.status(400).json({ error: translateMessage(clientError(err), languageOf(req)) });
         }

@@ -2489,29 +2489,23 @@ export const TOOLS = [
     scope: 'cloud',
     readOnly: false,
     needs: 'google_gmail',
+    // Send only (owner, 2026-11-18): Google's free review allows gmail.send and nothing that reads.
     description:
-      "The user's own Gmail: search, read, send, reply, draft, label, trash. " +
-      'search takes Gmail query syntax ("from:boss is:unread newer_than:7d"); read takes an id from search. ' +
-      'send and draft take to, subject, body and optionally cc, bcc; reply_to_id replies in that thread. body is Markdown (**bold**, lists, tables), sent formatted as the user\'s own email — no header or signature added; html only when the user gives exact HTML. ' +
-      'modify adds/removes labels (UNREAD, STARRED, IMPORTANT, INBOX to archive, or a label name).',
+      "Send an email from the user's own Gmail; it can only send, and cannot read, search, draft or change mail, which Google's free review does not allow. " +
+      'If the user wants mail read, ask them to paste it into the conversation. ' +
+      'send takes to, subject, body and optionally cc, bcc. body is Markdown (**bold**, lists, tables), sent formatted as the user\'s own email — no header or signature added; html only when the user gives exact HTML.',
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['search', 'read', 'send', 'draft', 'modify', 'trash', 'labels'] },
-        query: { type: 'string' },
-        max: { type: 'number' },
-        id: { type: 'string' },
+        action: { type: 'string', enum: ['send'] },
         to: { type: 'string', description: 'Comma-separated addresses.' },
         cc: { type: 'string' },
         bcc: { type: 'string' },
         subject: { type: 'string' },
         body: { type: 'string' },
         html: { type: 'string' },
-        reply_to_id: { type: 'string' },
-        add_labels: { type: 'string' },
-        remove_labels: { type: 'string' },
       },
-      required: ['action'],
+      required: ['action', 'to', 'subject'],
     },
   },
   {
@@ -2553,8 +2547,11 @@ export const TOOLS = [
     scope: 'cloud',
     readOnly: false,
     needs: 'google_drive',
+    // drive.file (owner, 2026-11-18): only what the person picked in the Google Picker, or what Ephapse made.
     description:
-      "The user's Google Drive: search files, read one as text (Docs, Sheets as CSV, Slides, PDF, text), create a Doc/Sheet/folder/file, " +
+      "The user's Google Drive: the files they picked in Ephapse's Drive picker and the files Ephapse created or uploaded, the only ones search finds for a Google connection made or renewed since 1.33.1. " +
+      'For any other file, ask the user to pick it with Add from Google Drive in the + menu. ' +
+      'Read a file as text (Docs, Sheets as CSV, Slides, PDF, text), create a Doc/Sheet/folder/file, ' +
       'upload a file from this conversation, share, move, rename, trash. create as doc takes HTML for formatting; as sheet takes CSV.',
     parameters: {
       type: 'object',
@@ -2834,7 +2831,8 @@ export const TOOLS = [
       'Make a picture from a description, and put it in the conversation for the user to see and download. ' +
       'Use it when they ask for an image, a mock-up, an illustration, a social post graphic. ' +
       'Describe the subject, the style and the composition — a fuller description gets a better picture. ' +
-      'It cannot edit an existing image, and it cannot render reliable text inside the picture.',
+      'It cannot edit an existing image, and it cannot render reliable text inside the picture. ' +
+      'It must not make sexual, nude or intimate images of anyone; refuse such requests without calling it.',
     parameters: {
       type: 'object',
       properties: {
@@ -3203,7 +3201,8 @@ export function externalSource(name, input = {}) {
 
 /** The Google actions that only read. Every other action writes and is shown first. */
 export const GOOGLE_READS = {
-  gmail: ['search', 'read', 'labels'],
+  // Send only since 1.33.1: nothing in Gmail runs without being shown first.
+  gmail: [],
   google_calendar: ['list', 'calendars', 'free_busy'],
   google_drive: ['search', 'read'],
   google_docs: ['read'],
@@ -3219,8 +3218,6 @@ function googleRiskReason(name, input = {}) {
   if (name === 'gmail' && action === 'send') {
     return `Sends an email from your Gmail to ${gradeText(input?.to) || 'someone'}. It cannot be unsent.`;
   }
-  if (name === 'gmail' && action === 'draft') return 'Saves a draft in your Gmail. Nothing is sent.';
-  if (name === 'gmail' && action === 'trash') return 'Moves an email to your Gmail trash.';
   if (name === 'google_calendar' && (action === 'create' || action === 'update') && input?.attendees) {
     return `Changes your Google Calendar and sends an invitation to ${gradeText(input.attendees)}.`;
   }

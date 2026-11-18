@@ -348,8 +348,9 @@ export const api = {
   connectorDirectory: () => request('GET', '/api/connectors/directory'),
   connect: (service, token) => request('POST', `/api/connectors/${service}`, { token }),
   disconnect: (service) => request('DELETE', `/api/connectors/${service}`),
-  // The + menu's Google Drive picker: find a file, and attach it to the message.
-  driveFiles: (q = '') => request('GET', `/api/connectors/google/drive${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  // The + menu's Google Drive: a drive.file-only token for Google's Picker, minted per
+  // opening and never cached (google-picker.js), then each picked file attached to the message.
+  drivePicker: () => request('GET', '/api/connectors/google/picker'),
   attachDriveFile: (id) => request('POST', `/api/connectors/google/drive/${encodeURIComponent(id)}/attach`),
 
   // MCP servers — tools from outside this app. Adding one tries it first, so the

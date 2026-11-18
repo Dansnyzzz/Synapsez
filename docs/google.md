@@ -4,19 +4,42 @@ Written for: the person who runs this deployment. Once this is done, every accou
 connect its own Google account from **Settings → Connectors → Google** with one button.
 
 Everything here is free. Google charges nothing for these APIs at personal-use volumes; each
-has a daily quota far above what one person uses.
+has a daily quota far above what one person uses. Since 1.33.1 the review is free too: Ephapse
+asks Google for no *restricted* scope (owner, 2026-11-18). Gmail can only send (`gmail.send`),
+and Drive reaches only the files a person picks in Google's own Picker or that Ephapse creates
+(`drive.file`). Restricted scopes are the ones whose review needs a paid yearly security
+assessment; sensitive and non-sensitive scopes are reviewed for free.
+
+## 1.33.1 owner checklist
+
+Every step is free. Do them in this order after 1.33.1 is deployed; each links to where it is
+explained.
+
+1. Set up the support mailbox: make `support@ephapse.net` receive mail (Cloudflare Email Routing if the domain's DNS is on Cloudflare, or ImprovMX, forwarding to your own mailbox), then send it a test mail ([§4, branding review](#branding-review-home-page-and-ai-ncii)).
+2. Enable the Google Picker API, and create its API key with Website restrictions `https://www.ephapse.net/*` and `https://docs.google.com/*` and API restriction "Google Picker API" ([§7](#7-the-drive-picker-once-5-minutes)).
+3. Note the project number: IAM & Admin → Settings, the digits rather than the project ID ([§7](#7-the-drive-picker-once-5-minutes)).
+4. Set `GOOGLE_PICKER_API_KEY` and `GOOGLE_PROJECT_NUMBER` in Vercel, and redeploy ([§2](#2-give-them-to-the-deployment)).
+5. Check that the OAuth client's redirect URI is `https://www.ephapse.net/api/connectors/google/callback`. No JavaScript origin is needed, because the Picker's token comes from the server; adding one does no harm ([§1](#1-create-the-oauth-client-once-10-minutes)).
+6. Data Access: replace the scopes with the listed set, and remove any older Gmail or Drive scope ([§6](#6-the-scopes-and-google-auth-platform--data-access)).
+7. The first live Picker test: + → Connectors → Add from Google Drive, pick a file, and see it land beside the message box; §7 says what each failure looks like ([§7](#7-the-drive-picker-once-5-minutes)).
+8. The live-picture test: one ordinary picture with the real key, for example "a lighthouse at sunset"; stop if the error names `safety_settings` ([§4, branding review, step 4](#branding-review-home-page-and-ai-ncii)).
+9. Branding: set Application home page to `https://www.ephapse.net/about.html`, then choose "I have fixed the issues" with the note ([§4](#branding-review-home-page-and-ai-ncii)).
+10. Audience → Publish app ([§3](#3-testing-publishing-and-verification)).
+11. Verification Center: submit, with the demo video and the justifications ([§8](#8-the-verification-submission-free)).
 
 ## 1. Create the OAuth client (once, ~10 minutes)
 
 1. Open <https://console.cloud.google.com/> and create a project (any name, e.g. "Ephapse").
 2. **APIs & Services → Library** — enable each of these:
    Gmail API, Google Calendar API, Google Drive API, Google Docs API, Google Sheets API,
-   Google Forms API, Google Tasks API, People API.
+   Google Forms API, Google Tasks API, People API, and **Google Picker API** (section 7).
    An API left off only disables that product; the error says which one to enable.
 3. **APIs & Services → OAuth consent screen** (Google Auth Platform):
    - User type **External**. App name, support email, developer email.
-   - **Data access / Scopes**: you can skip adding scopes here — the app asks for them at sign-in.
-   - **Audience**: add your own Google address (and anyone else's) under *Test users*.
+   - **Data Access**: add the scopes in section 6. The app asks for them at sign-in either way,
+     but the verification review (section 8) reads this list.
+   - **Audience**: add your own Google address (and anyone else's) under *Test users* while the
+     app is in Testing.
 4. **APIs & Services → Credentials → Create credentials → OAuth client ID**:
    - Application type **Web application**.
    - **Authorised redirect URI**: `https://YOUR-DOMAIN/api/connectors/google/callback`
@@ -37,6 +60,8 @@ On Vercel: **Project → Settings → Environment Variables**, then redeploy:
 | `GOOGLE_CLIENT_SECRET` | the client secret |
 | `PUBLIC_URL` | `https://YOUR-DOMAIN` (recommended, so the redirect address is exact) |
 | `GOOGLE_REDIRECT_URI` | optional — only if the callback lives somewhere other than the address above |
+| `GOOGLE_PICKER_API_KEY` | the Picker's browser API key (section 7) |
+| `GOOGLE_PROJECT_NUMBER` | the Cloud project's number (section 7) |
 
 ### "Error 400: redirect_uri_mismatch"
 
@@ -56,18 +81,18 @@ users. Add that exact address under **Google Auth Platform → Audience → Test
 back by its own administrator's third-party-app policy — that shows as `admin_policy_enforced`,
 and only that organisation's admin can allow it; a personal Gmail account avoids it.
 
-## 3. The one thing to know about "Testing" mode
+## 3. Testing, publishing and verification
 
 While the consent screen's publishing status is **Testing**, Google expires the connection
 **every 7 days** and only the listed test users can sign in. The assistant then says
 "Google access has expired — reconnect", and pressing the button again fixes it.
 
-To stop that, press **Publish app** on the consent screen. Gmail and Drive are *restricted*
-scopes, so an unverified published app shows people a "Google hasn't verified this app"
-screen (click *Advanced → Go to …*) and is capped at 100 users — fine for yourself, a family
-or a small team. Removing the warning for the public requires Google's verification review,
-which for restricted scopes includes a paid security assessment; that is a business decision,
-not a code change.
+To stop that, go to **Google Auth Platform → Audience** and press **Publish app**. Until
+Google has verified the app, people see a "Google hasn't verified this app" screen (click
+*Advanced → Go to …*) and the app is capped at 100 users. Gmail sending, Calendar, Docs,
+Sheets, Forms, Tasks and Contacts are *sensitive* scopes, so removing that screen takes
+Google's verification review — which for sensitive scopes is free and needs no security
+assessment. Section 8 has what to submit.
 
 ## 4. Branding verification (free, no security assessment)
 
@@ -82,11 +107,77 @@ consent screen. None of them costs anything:
 2. **The privacy policy link** is `https://YOUR-DOMAIN/privacy.html` — not the home page. It
    names who runs the deployment, what is read from each Google product, and carries the Limited
    Use statement Google asks for.
-3. **The home page links the policy and says what the app does** — the sign-in screen does both
-   without an account.
+3. **The home page links the policy and says what the app does.** Since 1.33.1 that page is
+   `https://YOUR-DOMAIN/about.html`, which does both without an account or JavaScript; the
+   sign-in screen at `/` shows nothing until its script runs. Set it as the *Application home
+   page* (below).
 
-Then choose **I have fixed the issues** on the Branding page. This is separate from the
-restricted-scope review in section 3, which is the one that needs a paid assessment.
+Then choose **I have fixed the issues** on the Branding page. This is separate from the scope
+verification in section 8.
+
+### Branding review: home page and AI NCII
+
+Google's branding review came back on 2026-11-18 with: "Please update your home page to clearly
+outline your application's purpose and ensure it does not use Google APIs for AI NCII
+(AI-generated Non-Consensual Intimate Imagery), then retry." What 1.33.1 changed for it:
+
+- `public/about.html` is a static page with no script, English first and then Vietnamese. It says
+  what Ephapse is, what it does with each Google product (with the Limited Use statement in the
+  privacy policy's own words), and that Ephapse does not allow sexual, nude or intimate images,
+  AI NCII included. The sign-in card's "What is Ephapse?" links to it.
+- `generate_image` is the only feature that calls Google's Gemini API to make a picture, and it
+  takes only a text description: it cannot take in an existing photo, so it cannot change or
+  "undress" one. The server checks every picture request for sexual or nude wording, in English
+  and Vietnamese, and refuses a match before any picture is asked of Google
+  (`server/imageSafety.js`). That is a check of the words, not a guarantee, so the pages describe
+  it as one: plain wording outside the list goes on to Google. Every request that does go asks
+  Gemini for `sexually_explicit` at `block_low_and_above`, the strictest threshold Google lists,
+  and when Google blocks one on safety grounds the assistant is given the same Usage Policy
+  refusal. A conversation holding Google user data never reaches a Gemini key at all (section 5).
+- The picture check is deliberately strict and may refuse a few innocent phrasings, such as
+  "nude heels" or "population by age and sex"; they can be reworded ("beige heels"). If someone
+  asks, that is the answer.
+- The Usage Policy's list of what Ephapse must not be used for spells out non-consensual intimate
+  imagery, AI-made included. It is a clarification in a dated line, so the policy keeps its version
+  and nobody is asked to agree again.
+
+Once 1.33.1 is deployed:
+
+1. Make `support@ephapse.net` receive mail. It is now the only contact address on the public
+   pages: the privacy policy, the terms, the usage policy, and twice on the home page. It costs
+   nothing: Cloudflare Email Routing (if the domain's DNS is on Cloudflare) or ImprovMX, either
+   forwarding to your own mailbox. Then send it a test mail from another address and see it
+   arrive, before submitting anything to Google.
+2. Open `https://www.ephapse.net/about.html` in a private window, to see that it is live.
+3. In **Google Auth Platform → Branding → App domain**, set **Application home page** to
+   `https://www.ephapse.net/about.html` and save. `ephapse.net` stays an authorised domain, and
+   the page sits under the Search Console property from item 1 above.
+4. In Ephapse, on an account with a Google Gemini key (Settings → Providers), start a new
+   conversation and make one ordinary picture with the real key, for example "a lighthouse at
+   sunset". The safety setting has not yet been sent to Google from a real key. If it fails with
+   an error that names `safety_settings`, stop and tell the developer before submitting the note:
+   the note says that setting is sent.
+5. On the Branding page, under **Branding verification issues**, choose
+   **I have fixed the issues**, paste the note below, and submit.
+
+> Our application home page is now https://www.ephapse.net/about.html. It is a public, static
+> page, readable without signing in or running JavaScript, that states what Ephapse is: an AI
+> assistant workspace where a user chats with the AI model they choose and works with their files,
+> the web, a private cloud computer and, only if they connect it, their Google account. It lists
+> each Google scope we request and what it is used for (Gmail is send-only; Drive is limited to
+> drive.file, meaning files the user picks in the Google Picker or files Ephapse creates), and it
+> carries our Limited Use commitment.
+>
+> Ephapse does not use Google APIs for AI NCII. Its only image feature calls the Gemini API. It
+> takes only a text description: it cannot take in an existing photo, so it cannot change or
+> "undress" one. Our server checks every picture request for sexual or nude wording, in English
+> and Vietnamese, and refuses a match before any picture is asked of Google. The assistant is also
+> instructed to refuse such requests itself, and every picture request we do send asks Gemini for
+> its strictest filter for sexually explicit content (block_low_and_above). Google user data is
+> never sent through a Gemini API key, so it cannot be used to make an image. The home page states this under "Pictures and safety", and our
+> Usage Policy (https://www.ephapse.net/usage-policy.html) forbids making, editing or sharing
+> sexual, nude or intimate images, video or audio of a real person without their consent,
+> including AI-generated "deepfake" content (NCII). Accounts that try may be suspended.
 
 ## 5. Where Google data may go (Limited Use)
 
@@ -108,8 +199,278 @@ and never so that it trains a general model. `server/googleData.js` keeps that t
   `search_chats`, is read only into conversations that hold Google data too.
 
 On the free tier this means a free model whose only providers keep data cannot answer a
-conversation that read Gmail or Drive: the assistant says so, and another model (or a new
-conversation without Google data) works.
+conversation that read Drive or another Google product: the assistant says so, and another
+model (or a new conversation without Google data) works.
+
+## 6. The scopes, and Google Auth Platform → Data Access
+
+| Scope | Google's class | What Ephapse uses it for |
+|---|---|---|
+| `openid` | non-sensitive | Signing the connection in, so it belongs to one Google account. |
+| `https://www.googleapis.com/auth/userinfo.email` | non-sensitive | The connected address, shown in Settings → Connectors. |
+| `https://www.googleapis.com/auth/userinfo.profile` | non-sensitive | The name shown beside it. |
+| `https://www.googleapis.com/auth/drive.file` | non-sensitive | The files a person picks in the Google Picker ("Add from Google Drive" in the + menu), attached to a message; and the Docs, Sheets, folders and uploads Ephapse creates, which it may then read, move, rename, share or trash when asked. |
+| `https://www.googleapis.com/auth/gmail.send` | sensitive | Sending an email the person asked for. Nothing in the mailbox is read. |
+| `https://www.googleapis.com/auth/calendar` | sensitive | Listing calendars, events and free/busy times; creating, moving and cancelling events when asked. |
+| `https://www.googleapis.com/auth/documents` | sensitive | Reading a Google Doc the person names; writing a new one, adding to one, find and replace. |
+| `https://www.googleapis.com/auth/spreadsheets` | sensitive | Reading a sheet's tabs and ranges; writing, appending, creating and clearing when asked. |
+| `https://www.googleapis.com/auth/forms.body` | sensitive | Creating a form with its questions, adding questions, reading a form. |
+| `https://www.googleapis.com/auth/forms.responses.readonly` | sensitive | Reading the responses a form collected. |
+| `https://www.googleapis.com/auth/tasks` | sensitive | Showing task lists and tasks; adding, completing and deleting a task when asked. |
+| `https://www.googleapis.com/auth/contacts.readonly` | sensitive | Looking up a person's email address or phone number by name. Read only. |
+
+The classes for `gmail.send` and `drive.file` were checked on Google's own pages on
+2026-11-18. The Data Access page sorts each scope into its class as you add it: if any of them
+lands under **Restricted**, stop — Ephapse should ask for none.
+
+**Google Auth Platform → Data Access → Add or remove scopes → Manually add scopes**: paste
+this list, one scope per line, press **Add to table**, then **Update**, then **Save**:
+
+```
+openid
+https://www.googleapis.com/auth/userinfo.email
+https://www.googleapis.com/auth/userinfo.profile
+https://www.googleapis.com/auth/drive.file
+https://www.googleapis.com/auth/gmail.send
+https://www.googleapis.com/auth/calendar
+https://www.googleapis.com/auth/documents
+https://www.googleapis.com/auth/spreadsheets
+https://www.googleapis.com/auth/forms.body
+https://www.googleapis.com/auth/forms.responses.readonly
+https://www.googleapis.com/auth/tasks
+https://www.googleapis.com/auth/contacts.readonly
+```
+
+Remove any other Gmail or Drive scope the list still holds from before 1.33.1.
+
+## 7. The Drive Picker (once, ~5 minutes)
+
+With `drive.file`, Google lets Ephapse open a Drive file only once the person has picked it in
+Google's own chooser, the Google Picker. The Picker runs in the page, so it needs a browser
+API key and the project number.
+
+1. **APIs & Services → Library → Google Picker API → Enable**, in the same project as the
+   OAuth client.
+2. **APIs & Services → Credentials → Create credentials → API key**, then edit the key:
+   - **Application restrictions: Websites**, with exactly these two:
+     `https://www.ephapse.net/*` and `https://docs.google.com/*`. The Picker runs in a frame
+     on docs.google.com, and its own requests come from there. For a local run, add
+     `http://localhost:5173/*` too (your port if `PORT` is set).
+   - **API restrictions: Restrict key → Google Picker API**, and nothing else.
+3. The project number: **IAM & Admin → Settings → Project number**. It is the digits, not the
+   project ID. It is the Picker's app id: a file picked in the Picker is granted to this project,
+   so the server's own connection can then open it.
+4. On Vercel, set `GOOGLE_PICKER_API_KEY` to the key and `GOOGLE_PROJECT_NUMBER` to the number,
+   then redeploy.
+
+The key is public by design: every page that opens the Picker carries it, and the two
+restrictions above are what keep it to this site and this one API. Until both variables are
+set, "Add from Google Drive" tells the person it is not set up here and loads nothing from
+Google. The page's Content-Security-Policy already lets in `https://apis.google.com` (the
+loader script) and `https://docs.google.com` (the Picker's frame), in both
+`server/securityHeaders.js` and `vercel.json`. In a real Chrome run against Google's real
+loader on 2026-11-18, nothing was blocked by it, on a desktop and on a phone-sized screen.
+
+**The first live test confirms the one thing not yet seen working.** Open a conversation, then
+**+ → Connectors → Add from Google Drive**, pick a file, and check that it lands beside the
+message box. The server mints the Picker's token by refreshing the stored grant with
+`scope=https://www.googleapis.com/auth/drive.file`, and hands it over only if Google says it
+holds `drive.file` and nothing wider. Whether Google honours that narrowing on a refresh has not
+been confirmed live. No wider token ever leaves the server.
+
+**If it does not work, what the person sees says where to look:**
+
+- "Google would not give the Drive picker a token (…). Reconnect Google in Settings →
+  Connectors." Google refused the refresh itself; its reason is in the brackets (for example
+  `invalid_scope`). The server logs nothing of its own for this one. A Google account connected
+  for Drive before 1.33.1 is expected to see it until it reconnects (section 9).
+- "Google did not confirm that the Drive picker's token is limited to the files you pick…"
+  Google answered, but not with `drive.file` alone: it did not narrow the scope. The server log
+  has a line starting `google picker token refused: not narrowed to drive.file`, with the
+  scope names Google returned (never the token).
+- "Google Drive's file picker could not open. Try again later…" The Picker opened and then
+  failed inside Google's own frame. The browser's DevTools console has a
+  `Google Drive picker failed` warning with what Google said. The usual cause is the API key:
+  check its restrictions (step 2 above).
+- Google's own "403. That's an error." page, or "The API developer key is invalid", inside the
+  Picker's frame, with a key you know is right: first check that the key's **Website
+  restrictions** include `https://docs.google.com/*`. If it still fails, this site's
+  `Referrer-Policy: no-referrer` is the next suspect (the Picker frame is opened without a
+  Referer). Do not change that header on your own: report it, because it protects every page.
+- "Google Drive's file picker did not load…" The browser could not fetch
+  `https://apis.google.com/js/api.js` within 20 seconds: a network problem, or a blocker.
+
+If the first live test shows that Google ignored the narrowing (the log line
+`google picker token refused: not narrowed to drive.file`), the fallback is a browser-side Google
+Identity Services token client asking for `drive.file` alone, which then needs
+`https://www.ephapse.net` as an Authorised JavaScript origin on the OAuth client. Tell the
+developer; do not change anything yourself.
+
+## 8. The verification submission (free)
+
+Submit from **Google Auth Platform → Verification Center** once sections 4 and 6 are done and the
+app is published. Google asks, for each sensitive scope, how the app uses it, and for a demo
+video. The answers below are ready to paste: each says what Ephapse does with the scope, that it
+is used only when the person asks, and the Limited Use commitment. `drive.file`, `openid` and
+the two `userinfo` scopes are non-sensitive and need none.
+
+The closing sentence of each, also usable on its own wherever the form asks about data use:
+
+> Data received through this scope is used only to do what the user asked, is never used for
+> advertising, never sold, never used to build a profile of the user, and never used to develop,
+> improve or train AI or machine-learning models. A conversation that holds it is sent only to AI
+> providers that do not train on it (the Anthropic or OpenAI APIs, or OpenRouter restricted to
+> zero-data-retention endpoints). Ephapse's use and transfer to any other app of information
+> received from Google APIs will adhere to the Google API Services User Data Policy, including the
+> Limited Use requirements.
+
+**`gmail.send`**
+
+> Ephapse is an AI assistant. It sends an email from the user's Gmail only when the user asks the
+> assistant to send one in a chat (or in a scheduled task the user set up), and by default shows
+> the user the recipients, subject and message for approval before sending. Ephapse never reads,
+> searches, drafts or changes the mailbox; the only Gmail action it has is sending a new message.
+> Data received through this scope is used only to do what the user asked, is never used for
+> advertising, never sold, never used to build a profile of the user, and never used to develop,
+> improve or train AI or machine-learning models. A conversation that holds it is sent only to AI
+> providers that do not train on it (the Anthropic or OpenAI APIs, or OpenRouter restricted to
+> zero-data-retention endpoints). Ephapse's use and transfer to any other app of information
+> received from Google APIs will adhere to the Google API Services User Data Policy, including the
+> Limited Use requirements.
+
+**`calendar`**
+
+> Ephapse is an AI assistant. When the user asks in a chat (or in a scheduled task the user set
+> up), it lists the user's calendars and events, checks free and busy times to find a slot, and
+> creates, moves or cancels an event, with invitations, reminders, a Meet link or a repeat rule if
+> the user asks for them. By default every change is shown to the user for approval first. Events
+> are read only to answer the user's request.
+> Data received through this scope is used only to do what the user asked, is never used for
+> advertising, never sold, never used to build a profile of the user, and never used to develop,
+> improve or train AI or machine-learning models. A conversation that holds it is sent only to AI
+> providers that do not train on it (the Anthropic or OpenAI APIs, or OpenRouter restricted to
+> zero-data-retention endpoints). Ephapse's use and transfer to any other app of information
+> received from Google APIs will adhere to the Google API Services User Data Policy, including the
+> Limited Use requirements.
+
+**`documents`**
+
+> Ephapse is an AI assistant. When the user asks in a chat (or in a scheduled task the user set
+> up), it reads a Google Doc the user names so it can summarise or answer questions about it,
+> writes a new Doc with headings, lists and tables, adds text to the end of a Doc, or finds and
+> replaces text in it. By default every change is shown to the user for approval first.
+> Data received through this scope is used only to do what the user asked, is never used for
+> advertising, never sold, never used to build a profile of the user, and never used to develop,
+> improve or train AI or machine-learning models. A conversation that holds it is sent only to AI
+> providers that do not train on it (the Anthropic or OpenAI APIs, or OpenRouter restricted to
+> zero-data-retention endpoints). Ephapse's use and transfer to any other app of information
+> received from Google APIs will adhere to the Google API Services User Data Policy, including the
+> Limited Use requirements.
+
+**`spreadsheets`**
+
+> Ephapse is an AI assistant. When the user asks in a chat (or in a scheduled task the user set
+> up), it lists a spreadsheet's tabs and reads a range as a table so it can analyse the figures,
+> writes or appends rows (formulas included), creates a spreadsheet, or clears a range. By default
+> every change is shown to the user for approval first.
+> Data received through this scope is used only to do what the user asked, is never used for
+> advertising, never sold, never used to build a profile of the user, and never used to develop,
+> improve or train AI or machine-learning models. A conversation that holds it is sent only to AI
+> providers that do not train on it (the Anthropic or OpenAI APIs, or OpenRouter restricted to
+> zero-data-retention endpoints). Ephapse's use and transfer to any other app of information
+> received from Google APIs will adhere to the Google API Services User Data Policy, including the
+> Limited Use requirements.
+
+**`forms.body`**
+
+> Ephapse is an AI assistant. When the user asks in a chat (or in a scheduled task the user set
+> up), it creates a Google Form with the questions the user wants, adds questions to one of the
+> user's forms, or reads a form so it can describe or check it. By default every change is shown
+> to the user for approval first.
+> Data received through this scope is used only to do what the user asked, is never used for
+> advertising, never sold, never used to build a profile of the user, and never used to develop,
+> improve or train AI or machine-learning models. A conversation that holds it is sent only to AI
+> providers that do not train on it (the Anthropic or OpenAI APIs, or OpenRouter restricted to
+> zero-data-retention endpoints). Ephapse's use and transfer to any other app of information
+> received from Google APIs will adhere to the Google API Services User Data Policy, including the
+> Limited Use requirements.
+
+**`forms.responses.readonly`**
+
+> Ephapse is an AI assistant. When the user asks in a chat (or in a scheduled task the user set
+> up), it reads the responses one of the user's forms has collected so it can count, summarise or
+> chart them for the user. It never changes or deletes a response.
+> Data received through this scope is used only to do what the user asked, is never used for
+> advertising, never sold, never used to build a profile of the user, and never used to develop,
+> improve or train AI or machine-learning models. A conversation that holds it is sent only to AI
+> providers that do not train on it (the Anthropic or OpenAI APIs, or OpenRouter restricted to
+> zero-data-retention endpoints). Ephapse's use and transfer to any other app of information
+> received from Google APIs will adhere to the Google API Services User Data Policy, including the
+> Limited Use requirements.
+
+**`tasks`**
+
+> Ephapse is an AI assistant. When the user asks in a chat (or in a scheduled task the user set
+> up), it shows the user's task lists and what is on them, adds a task with a due date, or marks
+> a task complete or deletes it. By default every change is shown to the user for approval first.
+> Data received through this scope is used only to do what the user asked, is never used for
+> advertising, never sold, never used to build a profile of the user, and never used to develop,
+> improve or train AI or machine-learning models. A conversation that holds it is sent only to AI
+> providers that do not train on it (the Anthropic or OpenAI APIs, or OpenRouter restricted to
+> zero-data-retention endpoints). Ephapse's use and transfer to any other app of information
+> received from Google APIs will adhere to the Google API Services User Data Policy, including the
+> Limited Use requirements.
+
+**`contacts.readonly`**
+
+> Ephapse is an AI assistant. When the user asks in a chat (or in a scheduled task the user set
+> up), it looks up a person in the user's Google Contacts by name to find their email address or
+> phone number, for example to address an email the user asked it to send. It only reads
+> contacts; it never creates, changes or deletes one.
+> Data received through this scope is used only to do what the user asked, is never used for
+> advertising, never sold, never used to build a profile of the user, and never used to develop,
+> improve or train AI or machine-learning models. A conversation that holds it is sent only to AI
+> providers that do not train on it (the Anthropic or OpenAI APIs, or OpenRouter restricted to
+> zero-data-retention endpoints). Ephapse's use and transfer to any other app of information
+> received from Google APIs will adhere to the Google API Services User Data Policy, including the
+> Limited Use requirements.
+
+**The demo video**, in English, uploaded to YouTube as *unlisted*, in this order:
+
+1. **The consent screen.** Signed in to `https://www.ephapse.net`, open **Settings → Connectors**,
+   choose a Google product and press **Connect**. Show Google's consent screen with the app name
+   **Ephapse** and the scopes it lists, and keep the address bar in view so the OAuth client ID in
+   it can be read. Allow.
+2. **Each sensitive scope in use**, one short scene each, in a chat:
+   - `gmail.send` — "Send an email to … saying …": the approval card, Approve, then the message in
+     Gmail's *Sent* folder.
+   - `calendar` — "When am I free tomorrow afternoon? Add a meeting at 3 pm": the answer, the
+     approval, then the event in Google Calendar.
+   - `documents` — "Write a one-page summary of … as a Google Doc", then open the Doc.
+   - `spreadsheets` — "Read the totals in my sheet …", then "add a row …", and show the sheet.
+   - `forms.body` and `forms.responses.readonly` — "Make a feedback form with three questions",
+     open it; then "summarise the responses of my form …".
+   - `tasks` — "Add 'Call the bank' to my tasks for Friday", then show it in Google Tasks.
+   - `contacts.readonly` — "What is Lan's email address?", answered from Google Contacts.
+3. **The Drive Picker.** In the message box, **+ → Connectors → Add from Google Drive**: Google's
+   Picker opens, pick a file, it lands beside the message box; ask a question about it.
+4. Optionally, **Settings → Connectors → Disconnect**, to show that access can be withdrawn.
+
+## 9. Connections made before 1.33.1
+
+Before 1.33.1 Ephapse asked for `gmail.modify` and the whole of Drive. A connection made then
+keeps working: the server counts those older, wider grants as covering `gmail.send` and
+`drive.file` (`server/google.js`), so nobody is disconnected by the release. Two things follow:
+
+- **The older grant stays as wide as it was until the person narrows it.** Ephapse asks Google with
+  `include_granted_scopes=true`, so connecting again on top of an old connection keeps the old
+  scopes. To narrow it: in **Settings → Connectors**, **Disconnect** every Google product in use
+  (when the last one goes, Ephapse revokes the grant at Google), then **Connect** again the ones
+  wanted. Gmail is used only to send either way; the Drive tool, though, can still see the whole
+  Drive through an old grant.
+- **The Drive Picker needs the new grant.** The Picker's token asks Google for exactly
+  `drive.file`, which an old Drive grant never literally held, so Google can refuse it and the
+  person sees "Reconnect Google". Disconnecting every Google product and connecting again fixes it.
 
 ## Google Search
 
@@ -124,9 +485,9 @@ used.
 
 | Product | Tool | Reads (run at once) | Writes (always shown to you first) |
 |---|---|---|---|
-| Gmail | `gmail` | search, read, labels | send, reply, draft, label, trash |
+| Gmail | `gmail` | — (it cannot read mail) | send a new message |
 | Calendar | `google_calendar` | list, calendars, free/busy | create (with Meet, invitations, reminders, recurrence), update, delete |
-| Drive | `google_drive` | search, read (Docs, Sheets, Slides, PDF, text) | create Doc/Sheet/folder/file, upload from chat, share, move, rename, trash |
+| Drive | `google_drive` | search, read (Docs, Sheets, Slides, PDF, text) — only files picked in the Picker or created by Ephapse | create Doc/Sheet/folder/file, upload from chat, and share, move, rename or trash those files |
 | Docs | `google_docs` | read | create (formatted from HTML), append, find & replace |
 | Sheets | `google_sheets` | tabs, read range | write, append, create, clear |
 | Forms | `google_forms` | read form, read responses | create with questions, add questions |
@@ -134,20 +495,24 @@ used.
 | Contacts | `google_contacts` | search, list | — (read-only) |
 
 Only the products a person ticks — and then actually allows on Google's screen — are offered
-to the model. Tokens are encrypted at rest and never sent to the browser. In Settings →
+to the model. Tokens are encrypted at rest and not sent to the browser; the one exception is the
+Picker's short-lived token, which can reach nothing but `drive.file` (section 7). In Settings →
 Connectors each product is its own connector with its own page: **Connect** signs in for that
 product alone (`/api/connectors/google/start?products=drive`), and **Disconnect** turns that
 one off (`DELETE /api/connectors/google/:product`) — its tools stop at once, the others stay.
 Google grants scopes to the one sign-in, so the grant on Google's side is revoked when the
-last product goes. Anything written by someone else (an email body, a document, a form
-answer) is handed to the model marked as untrusted.
+last product goes. Anything written by someone else (a document, a form answer, a file) is
+handed to the model marked as untrusted.
 
 ## In the + menu
 
-With Drive allowed, the + beside the message box offers **Add from Google Drive**: a search
-of the person's Drive (newest first, or by name), and a file picked there is attached to the
-message like an upload — a Google Doc, Sheet or Slides as its .docx, .xlsx or .pptx twin,
-anything else as it is, under the same size and type rules. The server fetches it
-(`GET /api/connectors/google/drive`, `POST /api/connectors/google/drive/:fileId/attach`); the
-browser never sees the token. Google can be **paused** from the same menu without
+With Drive allowed, the + beside the message box offers **Add from Google Drive** under
+Connectors. It opens the Google Picker straight away — Google's own chooser, in a frame of
+docs.google.com — where the person picks one or more files (as many as the message still has
+room for). Each picked file is attached to the message like an upload — a Google Doc, Sheet or
+Slides as its .docx, .xlsx or .pptx twin, anything else as it is, under the same size and type
+rules — and the conversation is marked as holding Google data (section 5). The server fetches
+each file (`POST /api/connectors/google/drive/:fileId/attach`). The browser gets only the
+Picker's token, minted for each opening and never cached (`GET /api/connectors/google/picker`).
+Cancelling the Picker attaches nothing. Google can be **paused** from the same menu without
 disconnecting it: its tools are then not offered and the assistant is not told it has it.

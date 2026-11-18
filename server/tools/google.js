@@ -13,10 +13,10 @@ import { personalMessage } from '../mailTemplate.js';
  * action — see `assessRisk` — so listing next week's meetings runs at once
  * and sending an email or deleting an event is always shown first.
  *
- * Anything that came *from* Google and was written by somebody else — an
- * email body, a document, a form answer — comes back inside the untrusted
- * envelope: an email is the easiest way there is to put instructions in front
- * of a model.
+ * Anything that came *from* Google and was written by somebody else — a
+ * document, a form answer, an invitation — comes back inside the untrusted
+ * envelope: something shared with a person is the easiest way there is to put
+ * instructions in front of a model.
  */
 
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
@@ -35,13 +35,6 @@ const need = (value, what) => {
   if (value === undefined || value === null || value === '') throw new Error(`Give ${what}.`);
   return value;
 };
-// A Gmail id is hex. Anything else in the path — `../settings/…` — would walk
-// to another endpoint of the same API with the same grant.
-const mailId = (value, what) => {
-  const id = String(need(value, what));
-  if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error(`"${id}" is not an email id — use the id from a Gmail search.`);
-  return id;
-};
 const list = (value) => (Array.isArray(value) ? value : String(value || '').split(',')).map((s) => String(s).trim()).filter(Boolean);
 
 /* ── Gmail ─────────────────────────────────────────────────────────── */
@@ -57,7 +50,7 @@ const oneLine = (text) => String(text || '').replace(/[\r\n]+/g, ' ').trim();
  *   `body` is Markdown, sent formatted with a plain-text twin (personalMessage);
  *   an `html` the user supplied is sent as given.
  */
-function mime({ to, cc, bcc, subject, body, html: given, inReplyTo, references }) {
+function mime({ to, cc, bcc, subject, body, html: given }) {
   const formatted = !given && String(body || '').trim() ? personalMessage({ markdown: String(body) }) : null;
   const html = given || formatted?.html;
   const headers = [
@@ -65,8 +58,6 @@ function mime({ to, cc, bcc, subject, body, html: given, inReplyTo, references }
     cc ? `Cc: ${oneLine(list(cc).join(', '))}` : null,
     bcc ? `Bcc: ${oneLine(list(bcc).join(', '))}` : null,
     `Subject: ${encodeHeader(oneLine(subject))}`,
-    inReplyTo ? `In-Reply-To: ${oneLine(inReplyTo)}` : null,
-    references ? `References: ${oneLine(references)}` : null,
     'MIME-Version: 1.0',
   ].filter(Boolean);
   const plain = formatted ? formatted.text : String(body || '');
@@ -92,129 +83,19 @@ function mime({ to, cc, bcc, subject, body, html: given, inReplyTo, references }
   ].join('\r\n');
 }
 
-const header = (msg, name) => msg.payload?.headers?.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value || '';
-
-/** The readable text of a message: the plain part, or the HTML part stripped. */
-function bodyText(part) {
-  const decode = (data) => Buffer.from(String(data || ''), 'base64url').toString('utf8');
-  const walk = (p, type) => {
-    if (!p) return null;
-    if (p.mimeType === type && p.body?.data) return decode(p.body.data);
-    for (const child of p.parts || []) {
-      const found = walk(child, type);
-      if (found) return found;
-    }
-    return null;
-  };
-  const plain = walk(part, 'text/plain');
-  if (plain) return plain;
-  const html = walk(part, 'text/html');
-  if (!html) return '';
-  return html
-    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, '')
-    .replace(/<br\s*\/?>|<\/p>|<\/div>|<\/tr>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-const attachmentsOf = (part, out = []) => {
-  if (part?.filename && part.body?.attachmentId) out.push(`${part.filename} (${part.mimeType})`);
-  for (const child of part?.parts || []) attachmentsOf(child, out);
-  return out;
-};
-
+// Google's free review (owner, 2026-11-18) allows Gmail `gmail.send` alone: reading,
+// searching, drafting and labelling each need a restricted scope and a paid yearly
+// assessment. A reply went with them: it needs the original, and that is a read.
 async function gmailTool(input, { userId }) {
-  const { action } = input;
-  if (action === 'search') {
-    const max = Math.min(Math.max(Number(input.max) || 10, 1), 25);
-    const found = await googleApi(userId, `${GMAIL}/messages`, { query: { q: input.query || '', maxResults: max } });
-    const ids = (found.messages || []).map((m) => m.id);
-    if (!ids.length) return `No emails match ${JSON.stringify(input.query || '(all)')}.`;
-    const rows = await Promise.all(
-      ids.map((id) =>
-        googleApi(userId, `${GMAIL}/messages/${id}`, {
-          query: { format: 'metadata', metadataHeaders: ['From', 'To', 'Subject', 'Date'] },
-        }),
-      ),
-    );
-    const text = rows
-      .map(
-        (m) =>
-          `- id ${m.id} · ${header(m, 'Date')}\n  From: ${header(m, 'From')}\n  Subject: ${header(m, 'Subject')}\n  ${
-            (m.labelIds || []).includes('UNREAD') ? '[unread] ' : ''
-          }${m.snippet || ''}`,
-      )
-      .join('\n');
-    return untrusted('Gmail', `${rows.length} email(s):\n${text}`);
-  }
-  if (action === 'read') {
-    const m = await googleApi(userId, `${GMAIL}/messages/${mailId(input.id, 'the email id from a search')}`, { query: { format: 'full' } });
-    const files = attachmentsOf(m.payload);
-    return untrusted(
-      'Gmail',
-      clip(
-        `From: ${header(m, 'From')}\nTo: ${header(m, 'To')}\nCc: ${header(m, 'Cc')}\nDate: ${header(m, 'Date')}\nSubject: ${header(
-          m,
-          'Subject',
-        )}\nThread: ${m.threadId}\n${files.length ? `Attachments: ${files.join(', ')}\n` : ''}\n${bodyText(m.payload)}`,
-      ),
+  if (input.action !== 'send') {
+    throw new Error(
+      "Ephapse can only send mail: Google's free review allows no reading, searching, drafting or changing of mail. Tell the user plainly that this cannot be done here; they can paste an email into the conversation to have it read.",
     );
   }
-  if (action === 'send' || action === 'draft') {
-    need(input.to, 'who it goes to (to)');
-    let threadId;
-    let inReplyTo;
-    let references;
-    let subject = input.subject;
-    if (input.reply_to_id) {
-      const original = await googleApi(userId, `${GMAIL}/messages/${mailId(input.reply_to_id, 'the id of the email to reply to')}`, {
-        query: { format: 'metadata', metadataHeaders: ['Message-ID', 'References', 'Subject'] },
-      });
-      threadId = original.threadId;
-      inReplyTo = header(original, 'Message-ID');
-      references = [header(original, 'References'), inReplyTo].filter(Boolean).join(' ');
-      subject ||= /^re:/i.test(header(original, 'Subject')) ? header(original, 'Subject') : `Re: ${header(original, 'Subject')}`;
-    }
-    need(subject, 'a subject');
-    const raw = b64url(mime({ ...input, subject, inReplyTo, references }));
-    const message = { raw, ...(threadId ? { threadId } : {}) };
-    if (action === 'draft') {
-      const draft = await googleApi(userId, `${GMAIL}/drafts`, { method: 'POST', json: { message } });
-      return `Draft saved in Gmail (draft id ${draft.id}) — to ${list(input.to).join(', ')}, "${subject}". It has not been sent.`;
-    }
-    const sent = await googleApi(userId, `${GMAIL}/messages/send`, { method: 'POST', json: message });
-    return `Sent from Gmail to ${list(input.to).join(', ')} — "${subject}" (message id ${sent.id}).`;
-  }
-  if (action === 'modify') {
-    const labels = await googleApi(userId, `${GMAIL}/labels`);
-    const byName = (name) => {
-      const upper = String(name).toUpperCase();
-      return labels.labels?.find((l) => l.id === upper || l.name.toLowerCase() === String(name).toLowerCase())?.id || name;
-    };
-    const add = list(input.add_labels).map(byName);
-    const remove = list(input.remove_labels).map(byName);
-    await googleApi(userId, `${GMAIL}/messages/${mailId(input.id, 'the email id')}/modify`, {
-      method: 'POST',
-      json: { addLabelIds: add, removeLabelIds: remove },
-    });
-    return `Updated email ${input.id}: added ${add.join(', ') || 'nothing'}, removed ${remove.join(', ') || 'nothing'}.`;
-  }
-  if (action === 'trash') {
-    await googleApi(userId, `${GMAIL}/messages/${mailId(input.id, 'the email id')}/trash`, { method: 'POST' });
-    return `Moved email ${input.id} to the Trash (recoverable for 30 days).`;
-  }
-  if (action === 'labels') {
-    const labels = await googleApi(userId, `${GMAIL}/labels`);
-    return (labels.labels || []).map((l) => `- ${l.name} (${l.id})`).join('\n') || 'No labels.';
-  }
-  throw new Error('action is search, read, send, draft, modify, trash or labels.');
+  need(input.to, 'who it goes to (to)');
+  need(input.subject, 'a subject');
+  const sent = await googleApi(userId, `${GMAIL}/messages/send`, { method: 'POST', json: { raw: b64url(mime(input)) } });
+  return `Sent from Gmail to ${list(input.to).join(', ')} — "${input.subject}" (message id ${sent.id}).`;
 }
 
 /* ── Calendar ──────────────────────────────────────────────────────── */
@@ -734,38 +615,6 @@ const ATTACH_AS = {
 };
 
 /**
- * Drive files for the + menu's picker (owner, 2026-10-14): the newest, or the
- * ones whose name holds what was typed. Folders and shortcuts are left out —
- * the picker attaches a file — and only what a row shows is asked for.
- *
- * @returns {Promise<{ id: string, name: string, mime: string, modified: string|null }[]>}
- */
-export async function listDriveFiles(userId, query = '') {
-  const typed = String(query || '').trim().slice(0, 100);
-  const parts = ['trashed = false', `mimeType != ${dq(GOOGLE_TYPES.folder)}`, `mimeType != ${dq('application/vnd.google-apps.shortcut')}`];
-  if (typed) parts.push(`name contains ${dq(typed)}`);
-  const found = await googleApi(userId, `${DRIVE}/files`, {
-    query: {
-      q: parts.join(' and '),
-      pageSize: 25,
-      orderBy: typed ? undefined : 'modifiedTime desc',
-      fields: 'files(id,name,mimeType,modifiedTime,ownedByMe,owners(displayName))',
-      supportsAllDrives: 'true',
-      includeItemsFromAllDrives: 'true',
-    },
-  });
-  // Someone else's file says so: one shared with the person, renamed to look
-  // like theirs, is otherwise indistinguishable from it (security review, 2026-10-14).
-  return (found.files || []).map((f) => ({
-    id: f.id,
-    name: f.name,
-    mime: f.mimeType,
-    modified: f.modifiedTime || null,
-    sharedBy: f.ownedByMe === false ? f.owners?.[0]?.displayName || '?' : null,
-  }));
-}
-
-/**
  * A download's bytes, never more than `maxBytes`: read as it arrives and
  * given up the moment it passes, rather than buffered whole on the word of
  * metadata that a new revision can change between the two calls.
@@ -839,4 +688,4 @@ export const GOOGLE_IMPLEMENTATIONS = {
   google_contacts: contactsTool,
 };
 
-export const __testing = { mime, bodyText, docText, when, formItem, encodeHeader, oneLine };
+export const __testing = { mime, docText, when, formItem, encodeHeader, oneLine };

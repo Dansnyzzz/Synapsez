@@ -1,6 +1,34 @@
 {
   "entries": [
     {
+      "version": "1.33.1",
+      "date": "2026-11-18",
+      "new": {
+        "vi": [
+          "Gmail giờ chỉ gửi thư: trợ lý gửi thư từ Gmail của bạn khi bạn nhờ, và không còn đọc, tìm, soạn nháp hay thay đổi thư của bạn.",
+          "Thêm từ Google Drive giờ mở bộ chọn tệp của chính Google: chọn một hay nhiều tệp và chúng nằm ngay cạnh ô nhập tin nhắn. Drive giờ chỉ mở được tệp bạn chọn và tệp Ephapse tạo ra.",
+          "Trang công khai www.ephapse.net/about.html cho biết Ephapse là gì và dùng dữ liệu Google thế nào, đọc được mà không cần đăng nhập. \"Ephapse là gì?\" ở màn hình đăng nhập mở trang này.",
+          "Ephapse không cho phép ảnh tình dục hay khoả thân: máy chủ kiểm tra mọi yêu cầu tạo ảnh để tìm từ ngữ tình dục hay khoả thân, bằng tiếng Anh và tiếng Việt, và từ chối yêu cầu khớp trước khi yêu cầu Google tạo bất kỳ ảnh nào; mọi yêu cầu tạo ảnh cũng đặt bộ lọc nội dung tình dục chặt nhất của Gemini. Việc kiểm tra cố ý chặt, nên vài cách viết vô hại như \"giày màu nude\" cũng bị từ chối; hãy viết khác đi (\"giày màu be\"). Chính sách sử dụng nay nêu rõ lệnh cấm hình ảnh riêng tư không có sự đồng ý, kể cả do AI tạo."
+        ],
+        "en": [
+          "Gmail now only sends: the assistant sends an email from your Gmail when you ask, and can no longer read, search, draft or change your mail.",
+          "Add from Google Drive opens Google's own file picker: choose one or more files and they land beside the message box. Drive now opens only the files you pick and the ones Ephapse creates.",
+          "A public page at www.ephapse.net/about.html says what Ephapse is and how it uses Google data, readable without signing in. \"What is Ephapse?\" on the sign-in screen opens it.",
+          "Ephapse does not allow sexual or nude pictures: the server checks every picture request for sexual or nude wording, in English and Vietnamese, and refuses a match before any picture is asked of Google, and every picture request asks Gemini for its strictest filter. The check is strict on purpose, so a few innocent phrasings such as \"nude heels\" are refused too; reword them (\"beige heels\"). The Usage Policy now spells out the ban on non-consensual intimate images, AI-made ones included."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Nếu bạn đã kết nối Google trước bản cập nhật này, kết nối vẫn chạy cho tới khi hết hạn. Nếu bạn đã kết nối Google Drive trước bản cập nhật này, bạn phải ngắt kết nối mọi sản phẩm Google ở Cài đặt → Kết nối rồi kết nối lại thì Thêm từ Google Drive mới dùng được. Làm như vậy cũng chuyển mọi kết nối cũ sang quyền hẹp hơn.",
+          "Chính sách quyền riêng tư đã ghi rõ những điều trên, và bạn sẽ được hỏi đồng ý một lần. Địa chỉ liên hệ trên các trang pháp lý nay là support@ephapse.net."
+        ],
+        "en": [
+          "If you connected Google before this update, it keeps working until the connection ends. If you connected Google Drive before this update, you must disconnect every Google product in Settings → Connectors and connect again before Add from Google Drive works. Doing the same gives any older connection the narrower access.",
+          "The privacy policy says all this, and you are asked once to agree to it. The contact address on the legal pages is now support@ephapse.net."
+        ]
+      }
+    },
+    {
       "version": "1.33.0",
       "date": "2026-11-17",
       "new": {

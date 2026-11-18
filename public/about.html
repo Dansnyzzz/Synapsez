@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ephapse — AI assistant workspace</title>
+  <meta name="description" content="Ephapse is an AI assistant workspace at www.ephapse.net: chat with the AI model you choose, work with your files, search the web, run code and make documents and pictures. How it uses Google user data, and its rule against sexual images." />
+  <link rel="canonical" href="https://www.ephapse.net/about.html" />
+  <meta property="og:title" content="Ephapse — AI assistant workspace" />
+  <meta property="og:description" content="An AI assistant workspace: chat with the AI model you choose, and get work done with your files, the web, a private cloud computer and, only if you connect them, your Google apps." />
+  <meta property="og:url" content="https://www.ephapse.net/about.html" />
+  <link rel="icon" href="/logo.png" />
+  <!-- Ephapse's public home page (Google's branding review, 2026-11-18): what the app is, how it
+       uses Google user data, and that it makes no sexual imagery. Static and script-free, so a
+       reader without JavaScript sees all of it; the same tokens as privacy.html. -->
+  <style>
+    :root { color-scheme: light dark; --text: #1d2129; --dim: #555d6b; --bg: #ffffff; --line: #e3e6ea; --accent: #6d4ae8; }
+    @media (prefers-color-scheme: dark) { :root { --text: #e8eaee; --dim: #a6adba; --bg: #0f1115; --line: #2a2f38; --accent: #a993ff; } }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+    h1 { font-size: 1.6rem; line-height: 1.3; margin: 0 0 8px; }
+    h2 { font-size: 1.15rem; margin: 28px 0 8px; }
+    p, li { color: var(--text); }
+    .dim { color: var(--dim); font-size: 0.92rem; }
+    .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 20px; }
+    .mark { display: block; border-radius: 10px; }
+    .open { font-weight: 600; }
+    hr { border: 0; border-top: 1px solid var(--line); margin: 48px 0; }
+    a { color: var(--accent); overflow-wrap: anywhere; }
+    a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+    ul { padding-left: 1.2em; }
+    li + li { margin-top: 4px; }
+    code { font-size: 0.88em; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <img class="mark" src="/logo.png" width="40" height="40" alt="Ephapse logo" />
+    <a href="#vi" hreflang="vi" lang="vi">Tiếng Việt</a>
+  </header>
+
+  <div id="en" lang="en">
+    <h1>Ephapse — AI assistant workspace</h1>
+
+    <h2 id="what">What Ephapse is</h2>
+    <p>
+      Ephapse (<a href="https://www.ephapse.net/">www.ephapse.net</a>) is an AI assistant workspace. You chat with the AI model you
+      choose — from Anthropic, OpenAI, Google, OpenRouter and others — and it does the work you ask for: it works with your files,
+      searches the web, runs code on a private cloud computer, makes documents, slides, spreadsheets, diagrams and pictures, and,
+      only if you connect them, works with your Google account and other services such as GitHub, Notion and Slack. It works on a
+      phone or a computer, in English or Vietnamese.
+    </p>
+    <p class="open"><a href="/">Open Ephapse</a></p>
+
+    <h2 id="google-user-data">How Ephapse uses Google user data</h2>
+    <p>Only when you connect Google yourself in Settings → Connectors and agree on Google's own consent screen. You choose each product; one you do not allow is one the assistant cannot use.</p>
+    <ul>
+      <li><strong>Gmail</strong> (<code>gmail.send</code>): sends an email you ask it to send. It never reads, searches or changes your mailbox.</li>
+      <li><strong>Google Drive</strong> (<code>drive.file</code>): only the files you pick in Ephapse's Google Drive picker, or files Ephapse creates for you — to read, create, upload, share, move, rename or trash those files.</li>
+      <li><strong>Google Calendar</strong> (<code>calendar</code>): list your events, check free/busy times, and create, update or delete an event.</li>
+      <li><strong>Google Docs</strong> (<code>documents</code>): read a document, create one, append text, or find and replace.</li>
+      <li><strong>Google Sheets</strong> (<code>spreadsheets</code>): list tabs, read a range, write or append rows, create a spreadsheet, or clear a range.</li>
+      <li><strong>Google Forms</strong> (<code>forms.body</code>, <code>forms.responses.readonly</code>): create a form with questions, add questions, read a form, or read its responses.</li>
+      <li><strong>Google Tasks</strong> (<code>tasks</code>): show your task lists and tasks, add a task with a due date, or complete or delete one.</li>
+      <li><strong>Google Contacts</strong> (<code>contacts.readonly</code>): look people up — an email address or phone number by name, or the whole list. Read only.</li>
+    </ul>
+    <p>A Google connection made before the 1.33.1 update may still hold the wider access granted then until you disconnect every Google product you use in Settings → Connectors and connect again. Until then Gmail is still used only to send, but the assistant may still see other files in your Drive.</p>
+    <p>Only to do what you ask in a conversation — send an email, summarise a document, add an event. By default every change to your Google account (sending, creating, editing, sharing, deleting) is shown to you for approval before it is made; you can change that yourself in Settings. Ephapse does not use Google user data for advertising, does not sell it, does not use it to build a profile of you, and does not use it to develop, improve or train AI or machine-learning models — its own or anyone else's.</p>
+    <p>A conversation that holds Google user data is sent only to providers that do not train on it: the Anthropic or OpenAI APIs, or OpenRouter restricted to zero-data-retention endpoints. It is never sent through a Google Gemini API key (to answer, search, make a picture or search documents) or through OrcaRouter.</p>
+    <p>No one at Ephapse reads your Google user data, except with your explicit permission (for example, when you send a conversation for support), when needed to investigate abuse or a security incident, or when the law requires it.</p>
+    <p>Ephapse's use and transfer to any other app of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+    <p>All of it, with how long data is kept and how to revoke access: <a href="/privacy.html#google-user-data">the privacy policy's Google user data section</a>.</p>
+
+    <h2 id="pictures">Pictures and safety</h2>
+    <p>Ephapse can make a picture with Google's Gemini API when a user asks for one.</p>
+    <ul>
+      <li>Ephapse does not allow sexual, nude or intimate images of anyone, including AI-generated non-consensual intimate imagery (AI NCII) and sexual "deepfake" content of real people.</li>
+      <li>Ephapse's server checks every picture request for sexual or nude wording, in English and Vietnamese, and refuses a match before any picture is asked of Google. The assistant is also instructed to refuse such requests itself, and every picture request Ephapse does send asks Gemini for its strictest filter for sexually explicit content.</li>
+      <li>Ephapse's picture tool takes only a text description: it cannot take in an existing photo, so it cannot change or "undress" one.</li>
+      <li>Ephapse does not use Google APIs or Google user data to create, edit or share such imagery. A conversation that holds Google user data is never sent through a Google Gemini API key, so no picture is made from it.</li>
+      <li>The <a href="/usage-policy.html">Usage Policy</a> forbids it, and accounts that try may be suspended.</li>
+      <li>To report misuse, write to <a href="mailto:support@ephapse.net">support@ephapse.net</a>.</li>
+    </ul>
+
+    <h2 id="contact">Contact</h2>
+    <p>Questions, requests about your data, or complaints: <a href="mailto:support@ephapse.net">support@ephapse.net</a>.</p>
+    <p><a href="/privacy.html">Privacy Policy</a> · <a href="/terms.html">Terms of Service</a> · <a href="/usage-policy.html">Usage Policy</a></p>
+  </div>
+
+  <hr />
+
+  <div id="vi" lang="vi">
+    <p class="dim"><a href="#en" hreflang="en" lang="en">English</a></p>
+    <h1>Ephapse — không gian làm việc với trợ lý AI</h1>
+
+    <h2 id="vi-what">Ephapse là gì</h2>
+    <p>
+      Ephapse (<a href="https://www.ephapse.net/">www.ephapse.net</a>) là không gian làm việc với trợ lý AI. Bạn trò chuyện với mô hình AI
+      mình chọn — của Anthropic, OpenAI, Google, OpenRouter và các bên khác — và nó làm việc bạn nhờ: làm việc với tệp của bạn, tìm
+      trên web, chạy mã trên một máy tính đám mây riêng, tạo tài liệu, trang chiếu, bảng tính, sơ đồ và hình ảnh, và, chỉ khi bạn kết
+      nối, làm việc với tài khoản Google và các dịch vụ khác như GitHub, Notion, Slack. Dùng được trên điện thoại hay máy tính, bằng
+      tiếng Việt hay tiếng Anh.
+    </p>
+    <p class="open"><a href="/">Mở Ephapse</a></p>
+
+    <h2 id="vi-google">Ephapse dùng dữ liệu người dùng Google thế nào</h2>
+    <p>Chỉ khi bạn tự kết nối Google ở Cài đặt → Kết nối và đồng ý trên màn hình của Google. Bạn chọn từng sản phẩm; sản phẩm nào không được cho phép thì trợ lý không dùng được.</p>
+    <ul>
+      <li><strong>Gmail</strong> (<code>gmail.send</code>): gửi thư bạn nhờ gửi. Ephapse không bao giờ đọc, tìm hay thay đổi hộp thư của bạn.</li>
+      <li><strong>Google Drive</strong> (<code>drive.file</code>): chỉ những tệp bạn chọn trong bộ chọn tệp Google Drive của Ephapse, hoặc tệp Ephapse tạo cho bạn — để đọc, tạo, tải lên, chia sẻ, di chuyển, đổi tên hay chuyển vào thùng rác những tệp đó.</li>
+      <li><strong>Google Lịch</strong> (<code>calendar</code>): xem sự kiện, xem giờ rảnh, và tạo, sửa hay xoá một sự kiện.</li>
+      <li><strong>Google Tài liệu</strong> (<code>documents</code>): đọc một tài liệu, tạo tài liệu, thêm văn bản, hoặc tìm và thay thế.</li>
+      <li><strong>Google Trang tính</strong> (<code>spreadsheets</code>): xem các trang tính, đọc một vùng, ghi hoặc thêm hàng, tạo bảng tính, hoặc xoá một vùng.</li>
+      <li><strong>Google Biểu mẫu</strong> (<code>forms.body</code>, <code>forms.responses.readonly</code>): tạo biểu mẫu có câu hỏi, thêm câu hỏi, đọc biểu mẫu, hoặc đọc câu trả lời.</li>
+      <li><strong>Google Tasks</strong> (<code>tasks</code>): xem danh sách việc và các việc, thêm việc có hạn, hoặc đánh dấu xong hay xoá một việc.</li>
+      <li><strong>Danh bạ Google</strong> (<code>contacts.readonly</code>): tìm người — email hay số điện thoại theo tên, hoặc cả danh sách. Chỉ đọc.</li>
+    </ul>
+    <p>Kết nối Google tạo trước bản cập nhật 1.33.1 có thể vẫn mang quyền rộng hơn đã cấp lúc đó cho tới khi bạn ngắt kết nối mọi sản phẩm Google đang dùng ở Cài đặt → Kết nối rồi kết nối lại. Trong lúc đó Gmail vẫn chỉ được dùng để gửi thư, nhưng trợ lý vẫn có thể thấy các tệp khác trong Drive.</p>
+    <p>Chỉ để làm việc bạn yêu cầu trong cuộc trò chuyện — gửi một thư, tóm tắt một tài liệu, thêm một sự kiện. Mặc định, mọi thay đổi trong tài khoản Google (gửi, tạo, sửa, chia sẻ, xoá) đều hiện ra để bạn duyệt trước khi thực hiện; bạn có thể tự đổi điều này trong Cài đặt. Ephapse không dùng dữ liệu Google cho quảng cáo, không bán, không dùng để lập hồ sơ về bạn, và không dùng để phát triển, cải thiện hay huấn luyện mô hình AI hoặc học máy — của Ephapse hay của bất kỳ ai.</p>
+    <p>Một cuộc trò chuyện có dữ liệu từ Google chỉ được gửi tới nhà cung cấp không dùng nó để huấn luyện: API của Anthropic hoặc OpenAI, hoặc OpenRouter giới hạn ở các máy chủ không lưu dữ liệu (zero data retention). Nó không bao giờ được gửi qua khoá API Google Gemini (dù để trả lời, tìm kiếm, tạo ảnh hay tìm tài liệu) hay qua OrcaRouter.</p>
+    <p>Không ai ở Ephapse đọc dữ liệu Google của bạn, trừ khi bạn cho phép rõ ràng (ví dụ bạn gửi một cuộc trò chuyện để được hỗ trợ), khi cần để điều tra lạm dụng hoặc sự cố bảo mật, hoặc khi luật bắt buộc.</p>
+    <p>Việc Ephapse sử dụng thông tin nhận được từ API của Google, và chuyển thông tin đó sang bất kỳ ứng dụng nào khác, tuân thủ <a href="https://developers.google.com/terms/api-services-user-data-policy">Chính sách dữ liệu người dùng của Dịch vụ API Google</a>, bao gồm các yêu cầu về Sử dụng giới hạn.</p>
+    <p>Đầy đủ, cùng thời gian lưu và cách thu hồi quyền: <a href="/privacy.html#google">mục Dữ liệu từ tài khoản Google trong chính sách quyền riêng tư</a>.</p>
+
+    <h2 id="vi-pictures">Hình ảnh và an toàn</h2>
+    <p>Ephapse có thể tạo ảnh bằng Gemini API của Google khi người dùng yêu cầu.</p>
+    <ul>
+      <li>Ephapse không cho phép ảnh tình dục, khoả thân hay riêng tư của bất kỳ ai, kể cả hình ảnh riêng tư không có sự đồng ý do AI tạo ra (AI NCII) và nội dung tình dục "deepfake" về người thật.</li>
+      <li>Máy chủ của Ephapse kiểm tra mọi yêu cầu tạo ảnh để tìm từ ngữ tình dục hay khoả thân, bằng tiếng Anh và tiếng Việt, và từ chối yêu cầu khớp trước khi yêu cầu Google tạo bất kỳ ảnh nào. Trợ lý cũng được dặn tự từ chối những yêu cầu như vậy, và mọi yêu cầu tạo ảnh Ephapse gửi đi đều đặt bộ lọc nội dung tình dục chặt nhất của Gemini.</li>
+      <li>Công cụ tạo ảnh của Ephapse chỉ nhận một mô tả bằng chữ: nó không thể nhận một bức ảnh có sẵn, nên không thể sửa hay "cởi đồ" một bức ảnh.</li>
+      <li>Ephapse không dùng API của Google hay dữ liệu người dùng Google để tạo, sửa hay chia sẻ những hình ảnh như vậy. Cuộc trò chuyện có dữ liệu từ Google không bao giờ được gửi qua khoá API Google Gemini, nên không có ảnh nào được tạo từ nó.</li>
+      <li><a href="/usage-policy.html">Chính sách sử dụng</a> cấm việc này, và tài khoản cố làm có thể bị tạm khoá.</li>
+      <li>Để báo cáo vi phạm, gửi tới <a href="mailto:support@ephapse.net">support@ephapse.net</a>.</li>
+    </ul>
+
+    <h2 id="vi-contact">Liên hệ</h2>
+    <p>Câu hỏi, yêu cầu về dữ liệu của bạn, hay khiếu nại: <a href="mailto:support@ephapse.net">support@ephapse.net</a>.</p>
+    <p><a href="/privacy.html">Chính sách quyền riêng tư</a> · <a href="/terms.html">Điều khoản dịch vụ</a> · <a href="/usage-policy.html">Chính sách sử dụng</a></p>
+  </div>
+</main>
+</body>
+</html>

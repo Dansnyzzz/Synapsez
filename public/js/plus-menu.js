@@ -3,6 +3,7 @@ import { api } from './api.js';
 import { toast, describeStep } from './render.js';
 import { closeMenu } from './menu.js';
 import { PLUGINS } from './plugins.js';
+import { openDrivePicker } from './google-picker.js';
 
 /**
  * The + beside the message box, the way Claude's works (owner, 2026-10-14).
@@ -12,7 +13,8 @@ import { PLUGINS } from './plugins.js';
  *
  *   Add files or photos
  *   Skills ›       built-in and your own; picking one rides on the message
- *   Connectors ›   add, manage, switch each one on or off, Google Drive,
+ *   Connectors ›   add, manage, switch each one on or off, Google Drive
+ *                  (Google's own Picker, opened straight from the row),
  *                  and whether tools are loaded up front
  *   Plugins ›      families of built-in tools, each one switchable
  *
@@ -21,8 +23,8 @@ import { PLUGINS } from './plugins.js';
  * does not exist on a phone) and → on the keyboard. Too narrow for panels side
  * by side, each one replaces the last with a ‹ Back row instead.
  *
- * Every name drawn here — a skill, a connector, an MCP server, a Drive file —
- * is somebody's own text, so labels are text nodes, never markup.
+ * Every name drawn here — a skill, a connector, an MCP server — is somebody's
+ * own text, so labels are text nodes, never markup.
  *
  * @typedef {{
  *   id?: string, label?: string, detail?: string, title?: string, icon?: string, tag?: string,
@@ -30,7 +32,6 @@ import { PLUGINS } from './plugins.js';
  *   run?: () => any, select?: () => Promise<any>,
  *   sub?: (row: HTMLElement) => Item[] | Promise<Item[]>,
  *   toggle?: { on: boolean, set: (on: boolean) => Promise<any> },
- *   render?: (panel: Panel, focus: boolean) => HTMLElement,
  * } | null} Item
  * @typedef {{ node: HTMLElement, level: number, parent: HTMLElement|null }} Panel
  * @typedef {{
@@ -38,6 +39,7 @@ import { PLUGINS } from './plugins.js';
  *   pickSkill: (name: string) => void,
  *   picked: () => string[],
  *   attach: (attachment: any) => void,
+ *   room?: () => { left: number, limit: number },
  *   prefs: () => Record<string, any>,
  *   savePrefs: (patch: Record<string, any>) => Promise<any>,
  *   openSettings: (tab: string, focusId?: string) => void,
@@ -59,7 +61,6 @@ const ICON = {
   dots: svg('<circle cx="5" cy="10" r=".9"/><circle cx="10" cy="10" r=".9"/><circle cx="15" cy="10" r=".9"/>'),
   drive: svg('<path d="M7.2 3.5h5.6l4.2 7.3-2.8 4.9H5.8L3 10.8Z"/><path d="m7.2 3.5 4.2 7.3H17M12.8 3.5 5.8 15.7M3 10.8h8.4"/>'),
   tools: svg('<circle cx="9" cy="9" r="5.2"/><path d="m13 13 3.5 3.5"/>'),
-  file: svg('<path d="M11.5 3H6a1.5 1.5 0 0 0-1.5 1.5v11A1.5 1.5 0 0 0 6 17h8a1.5 1.5 0 0 0 1.5-1.5V7Z"/><path d="M11.5 3v4h4"/>'),
   back: svg('<path d="m12 5-5 5 5 5"/>', 15),
   external: svg('<path d="M11.5 3.5H16.5V8.5M16.5 3.5 9.5 10.5"/><path d="M14.5 11.5v3.5a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5V7A1.5 1.5 0 0 1 5 5.5h3.5"/>', 15),
 };
@@ -296,7 +297,7 @@ async function connectorItems(deps) {
 
   const google = linked.find((c) => c.id === 'google');
   if (google && !off.has('google') && google.products?.some((p) => p.id === 'drive' && p.granted)) {
-    items.push({ label: t('plus.drive'), icon: ICON.drive, sub: () => [{ render: (panel, focus) => driveSearch(panel, deps, focus) }] });
+    items.push({ label: t('plus.drive'), icon: ICON.drive, run: () => pickFromDrive(deps) });
   }
   items.push({ label: t('plus.toolAccess'), icon: ICON.tools, sub: () => toolAccessItems(deps) });
   return items;
@@ -337,69 +338,22 @@ function pluginItems(deps) {
 }
 
 /**
- * Google Drive, searched as you type: the newest files first, then whatever
- * matches. Picking one attaches it to the message being written — the server
- * fetches it (a Doc as .docx) and it arrives like any uploaded file.
+ * Google Drive: Google's own Picker, opened straight from the row (owner,
+ * 2026-11-18) — with `drive.file`, a file picked there is one Ephapse may open.
+ * Each one lands in the tray as an upload does, marked as from Drive by the
+ * server; at most as many as the message still has room for, and with the
+ * tray already full it is not opened at all — said in the upload's own words.
  */
-function driveSearch(panel, deps, focus) {
-  const box = el('div', 'plusmenu__drive');
-  const input = /** @type {HTMLInputElement} */ (el('input', 'plusmenu__search'));
-  input.type = 'search';
-  input.placeholder = t('plus.driveSearch');
-  input.setAttribute('aria-label', t('plus.driveSearch'));
-  const list = el('div', 'plusmenu__drivelist');
-  box.append(input, list);
-
-  let asked = 0;
-  let wait = null;
-  const load = async (query) => {
-    const mine = ++asked;
-    list.replaceChildren(loadingRow());
-    try {
-      const { files } = await api.driveFiles(query);
-      if (mine !== asked) return;
-      list.replaceChildren(
-        ...(files.length
-          ? files.map((file) => {
-              const when = file.modified
-                ? // In the interface's language: 10/1/2026 is January to some and October to others.
-                  new Date(file.modified).toLocaleDateString(currentLanguage(), { day: 'numeric', month: 'short', year: 'numeric' })
-                : '';
-              const row = itemButton({
-                label: file.name,
-                icon: ICON.file,
-                // Someone else's file says whose: one shared with you can be named to look like yours.
-                detail: [when, file.sharedBy ? t('plus.sharedBy', { name: file.sharedBy }) : ''].filter(Boolean).join(' · '),
-              });
-              row.addEventListener('click', async (event) => {
-                event.stopPropagation();
-                if (row.getAttribute('aria-busy') === 'true') return;
-                row.setAttribute('aria-busy', 'true');
-                try {
-                  const { attachment } = await api.attachDriveFile(file.id);
-                  deps.attach(attachment);
-                  closePlus();
-                } catch (err) {
-                  row.removeAttribute('aria-busy');
-                  toast(err.message, 'error');
-                }
-              });
-              return row;
-            })
-          : [noteRow(t('plus.driveEmpty'))]),
-      );
-    } catch (err) {
-      if (mine === asked) list.replaceChildren(noteRow(err.message));
-    }
-    if (open) place(panel);
-  };
-  input.addEventListener('input', () => {
-    clearTimeout(wait);
-    wait = setTimeout(() => load(input.value.trim()), 300);
+function pickFromDrive(deps) {
+  const room = deps.room?.();
+  if (room && room.left <= 0) return toast(t('attachment.tooMany', { count: room.limit }), 'error');
+  openDrivePicker({
+    language: currentLanguage(),
+    maxItems: room?.left,
+    onAttaching: () => toast(t('plus.driveAdding')),
+    onPicked: (attachments) => attachments.forEach((attachment) => deps.attach(attachment)),
+    onError: (message) => toast(message, 'error'),
   });
-  load('');
-  if (focus) requestAnimationFrame(() => input.focus({ preventScroll: true }));
-  return box;
 }
 
 /** A coloured initial for a connection that has no logo of its own here. */
@@ -523,7 +477,7 @@ function showPanel(items, level, parent, focus) {
   const fill = (list) => {
     if (!open || !open.panels.includes(panel)) return;
     node.querySelector(':scope > .plusmenu__note.is-loading')?.remove();
-    for (const item of list) node.append(drawItem(item, panel, focus));
+    for (const item of list) node.append(drawItem(item, panel));
     place(panel);
     if (focus) firstItem(panel)?.focus({ preventScroll: true });
   };
@@ -557,13 +511,12 @@ function closeFrom(level, refocus = false) {
   if (refocus) parent?.focus({ preventScroll: true });
 }
 
-const firstItem = (panel) => /** @type {HTMLElement|null} */ (panel.node.querySelector('[data-item]:not(.plusmenu__back), .plusmenu__search'));
+const firstItem = (panel) => /** @type {HTMLElement|null} */ (panel.node.querySelector('[data-item]:not(.plusmenu__back)'));
 
 /** @param {Item} item @param {Panel} panel */
-function drawItem(item, panel, focus) {
+function drawItem(item, panel) {
   if (item === null) return el('hr');
   if (item.note !== undefined) return noteRow(item.note);
-  if (item.render) return item.render(panel, focus);
 
   const row = itemButton(item);
   if (item.id) row.dataset.row = item.id;
@@ -690,8 +643,8 @@ function onScroll(event) {
 
 /**
  * Put every panel back against the +, once a frame at most. Also on a resize —
- * which on a phone is the keyboard opening for the Drive search box, and a
- * menu that closed then could never be typed into.
+ * on a phone, the on-screen keyboard or the browser's toolbar coming and going —
+ * rather than closing the menu under the finger reaching for it.
  */
 function replace() {
   if (!open || replacing) return;
@@ -714,7 +667,6 @@ function onKey(event) {
   if (!open) return;
   const active = /** @type {HTMLElement} */ (document.activeElement);
   const panel = [...open.panels].reverse().find((p) => p.node.contains(active)) || open.panels[open.panels.length - 1];
-  const typing = active?.tagName === 'INPUT';
 
   if (event.key === 'Escape') {
     event.preventDefault();
@@ -727,9 +679,7 @@ function onKey(event) {
     closePlus();
     return;
   }
-  if (typing && !['ArrowDown', 'ArrowUp'].includes(event.key)) return;
-
-  const rows = /** @type {HTMLElement[]} */ ([...panel.node.querySelectorAll('[data-item], .plusmenu__search')]);
+  const rows = /** @type {HTMLElement[]} */ ([...panel.node.querySelectorAll('[data-item]')]);
   const at = rows.indexOf(active);
   let next = null;
   if (event.key === 'ArrowDown') next = rows[(at + 1 + rows.length) % rows.length];

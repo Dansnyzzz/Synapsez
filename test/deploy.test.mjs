@@ -105,7 +105,12 @@ section('vercel.json');
   const expected = { ...SECURITY_HEADERS, 'Strict-Transport-Security': HSTS };
   const drift = Object.keys({ ...expected, ...declared }).filter((k) => expected[k] !== declared[k]);
   check('  carrying exactly the headers Express sets', drift.length === 0, drift.join(', ') || 'identical');
-  check('  including the strict script policy', /script-src 'self'(;|$)/.test(declared['Content-Security-Policy'] || ''));
+  // One script from elsewhere, Google's loader for the Drive Picker, and the Picker's own frame (owner, 2026-11-18).
+  const directive = (csp, name) => (String(csp || '').split(/;\s*/).find((d) => d.startsWith(`${name} `)) || '').split(/\s+/).slice(1);
+  const policies = [SECURITY_HEADERS['Content-Security-Policy'], declared['Content-Security-Policy']];
+  check('  including the strict script policy, with Google\'s Picker loader its one addition', policies.every((csp) => directive(csp, 'script-src').join(' ') === "'self' https://apis.google.com"), policies.map((csp) => directive(csp, 'script-src').join(' ')).join(' | '));
+  check('  and the Picker allowed to open in a frame, from docs.google.com', policies.every((csp) => directive(csp, 'frame-src').includes('https://docs.google.com')), policies.map((csp) => directive(csp, 'frame-src').join(' ')).join(' | '));
+  check('  while the referrer and the opener stay shut', ['Referrer-Policy', 'Cross-Origin-Opener-Policy'].every((k) => declared[k] === SECURITY_HEADERS[k]) && SECURITY_HEADERS['Referrer-Policy'] === 'no-referrer' && SECURITY_HEADERS['Cross-Origin-Opener-Policy'] === 'same-origin');
 
   const crons = (conf.crons || []).map((c) => c.path);
   check('scheduled tasks have a cron', crons.includes('/api/cron/run-tasks'), crons.join(', '));

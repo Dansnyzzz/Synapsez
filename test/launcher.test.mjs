@@ -161,14 +161,25 @@ section('the launcher page is reachable and self-contained');
   check('and nothing is fetched from another host', external.length === 0, external.join(', '));
 
   /*
-   * No inline script. The page is served under `script-src 'self'`, which
-   * refuses one outright — the box used to draw and then do nothing at all,
-   * because its whole behaviour lived in a `<script>` the browser would not run.
+   * No inline script. The page is served under the site's script-src — `'self'`
+   * and, since 1.33.1, Google's loader for the Drive Picker — which refuses one
+   * outright: the box used to draw and then do nothing at all, because its
+   * whole behaviour lived in a `<script>` the browser would not run.
    */
   const inline = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>/gi)];
   check('it has no inline script for the CSP to refuse', inline.length === 0, `${inline.length} inline`);
   const policy = res.headers.get('content-security-policy') || '';
-  check('  and the policy it is served under is the strict one', /script-src 'self'(;|$)/.test(policy), policy.slice(0, 80));
+  const { CONTENT_SECURITY_POLICY } = await import('../server/securityHeaders.js');
+  const scriptSrc = (csp) => (/(?:^|;)\s*script-src ([^;]*)/.exec(csp)?.[1] || '').trim().split(/\s+/);
+  const served = scriptSrc(policy);
+  check(
+    "  and the policy it is served under is the strict one: the site's own script-src, no inline or eval, nothing from elsewhere but Google's Picker loader",
+    served.join(' ') === scriptSrc(CONTENT_SECURITY_POLICY).join(' ') &&
+      served[0] === "'self'" &&
+      !served.some((s) => /unsafe-(inline|eval|hashes)|^\*$|^https?:$|^data:$|^blob:$/.test(s)) &&
+      served.slice(1).every((s) => s === 'https://apis.google.com'),
+    policy.slice(0, 120),
+  );
   const scriptRes = await fetch(`${base}/js/launcher.js`);
   check('its script is served from this origin', scriptRes.status === 200, `HTTP ${scriptRes.status}`);
   const script = await scriptRes.text();

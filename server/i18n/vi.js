@@ -80,8 +80,6 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   /* ── dữ liệu rời khỏi tài khoản ── */
   'The address carries a long block of data to {0}. Check it is not your information leaving — a page or email can ask for exactly this.':
     'Địa chỉ này mang theo một khối dữ liệu dài gửi tới {0}. Hãy kiểm tra đó không phải thông tin của bạn đang bị gửi ra ngoài — một trang web hay email có thể yêu cầu đúng việc này.',
-  '"{0}" is not an email id — use the id from a Gmail search.':
-    '"{0}" không phải mã email — hãy dùng mã lấy từ một lần tìm kiếm Gmail.',
   'Supadata could not read that video: {0}': 'Supadata không đọc được video đó: {0}',
   'Supadata queued video {0} as a background job rather than answering, which this tool cannot wait for. Try a shorter video.':
     'Supadata xếp video {0} vào hàng đợi xử lý nền thay vì trả lời ngay, và công cụ này không chờ được. Hãy thử video ngắn hơn.',
@@ -487,8 +485,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Một bảng nháp có cấu trúc để giải một bài toán khó theo từng bước, sửa lại các bước trước trong lúc làm.',
 
   /* ── tìm kết nối (connectorDirectory.js) ───────────────────────── */
-  'Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks and Contacts: search and send mail, find and read files, see and add events.':
-    'Gmail, Drive, Lịch, Tài liệu, Trang tính, Biểu mẫu, Tasks và Danh bạ: tìm và gửi thư, tìm và đọc tệp, xem và thêm sự kiện.',
+  'Gmail, Drive, Calendar, Docs, Sheets, Forms, Tasks and Contacts: send mail, open the Drive files you pick, see and add events.':
+    'Gmail, Drive, Lịch, Tài liệu, Trang tính, Biểu mẫu, Tasks và Danh bạ: gửi thư, mở các tệp Drive bạn chọn, xem và thêm sự kiện.',
   'Repositories, issues, pull requests and code search on GitHub — read them, and open an issue or a pull request.':
     'Kho mã, issue, pull request và tìm mã trên GitHub — đọc chúng, và mở một issue hay một pull request.',
   'Finds and reads the Notion pages you share with it.': 'Tìm và đọc các trang Notion bạn chia sẻ với nó.',
@@ -750,6 +748,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'There is no workflow with the id "{0}". Call workflow_status to see them.':
     'Không có chuỗi việc nào với id "{0}". Gọi workflow_status để xem danh sách.',
   'Describe the image you want.': 'Hãy mô tả hình bạn muốn.',
+  'Ephapse does not make sexual, nude or intimate images of anyone, so this picture was not made. Tell the user plainly that Ephapse does not make sexual or nude images, under its Usage Policy, and do not try again with other words.':
+    'Ephapse không tạo ảnh tình dục, khoả thân hay riêng tư của bất kỳ ai, nên ảnh này không được tạo. Hãy nói rõ với người dùng rằng Ephapse không tạo ảnh tình dục hay khoả thân, theo Chính sách sử dụng của Ephapse, và đừng thử lại bằng cách diễn đạt khác.',
   'Making pictures needs a Google API key, and this account has none. Tell the user to add one in Settings → Providers → Google Gemini. Their OpenRouter key cannot do this — image models are not part of that catalogue here.':
     'Tạo hình cần Google API key, mà tài khoản này chưa có. Hãy thêm key trong Cài đặt → Nhà cung cấp → Google Gemini. Key OpenRouter không làm được việc này — model tạo hình không nằm trong danh mục đó ở đây.',
   'Give the `url` of the page to read.': 'Hãy cung cấp `url` của trang cần đọc.',
@@ -1085,6 +1085,9 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Đăng nhập Google quá lâu. Hãy bắt đầu lại từ Cài đặt.",
   "Google refused the sign-in ({0}).":
     "Google từ chối đăng nhập ({0}).",
+  // What server/google.js puts in the brackets above, and in the Drive picker's refusal, when
+  // Google's answer gives no reason: translated as the value inside the sentence.
+  'no token': 'không có token',
   "Google did not give a refresh token, so scheduled runs could not reach it. Disconnect and connect again.":
     "Google không cấp refresh token, nên các lần chạy theo lịch sẽ không truy cập được. Hãy ngắt kết nối rồi kết nối lại.",
   "Google is not connected. The user can connect it in Settings → Connectors.":
@@ -1092,6 +1095,12 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   /* ── nút + : thêm tệp từ Google Drive ── */
   'Google Drive is not connected. Connect Google in Settings → Connectors and allow Drive.':
     'Chưa kết nối Google Drive. Hãy kết nối Google trong Cài đặt → Kết nối và cho phép Drive.',
+  'The Google Drive picker is not set up on this deployment. The owner sets GOOGLE_PICKER_API_KEY and GOOGLE_PROJECT_NUMBER — see docs/google.md.':
+    'Bản triển khai này chưa thiết lập trình chọn tệp Google Drive. Chủ sở hữu cần đặt GOOGLE_PICKER_API_KEY và GOOGLE_PROJECT_NUMBER — xem docs/google.md.',
+  'Google would not give the Drive picker a token ({0}). Reconnect Google in Settings → Connectors.':
+    'Google không cấp token cho trình chọn tệp Drive ({0}). Hãy kết nối lại Google trong Cài đặt → Kết nối.',
+  "Google did not confirm that the Drive picker's token is limited to the files you pick, so it was kept off this page. Attach the file from your computer for now.":
+    'Google không xác nhận rằng token của trình chọn tệp Drive chỉ truy cập được các tệp bạn chọn, nên token đó không được đưa lên trang này. Tạm thời hãy đính kèm tệp từ máy tính của bạn.',
   'That is not a Google Drive file.': 'Đó không phải một tệp Google Drive.',
   '{0} is a Google {1}, which has no file to attach. Open it in Drive instead.':
     '{0} là một Google {1}, không có tệp nào để đính kèm. Hãy mở nó trong Drive.',
@@ -1119,8 +1128,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Ảnh được tạo qua key Google Gemini, mà cuộc trò chuyện này có dữ liệu từ tài khoản Google của người dùng, thứ không được gửi tới đó. Hãy báo người dùng; có thể tạo ảnh trong một cuộc trò chuyện mới.",
   "Google (Gemini grounding) returned HTTP {0}":
     "Google (Gemini grounding) trả về HTTP {0}",
-  "action is search, read, send, draft, modify, trash or labels.":
-    "action phải là search, read, send, draft, modify, trash hoặc labels.",
+  "Ephapse can only send mail: Google's free review allows no reading, searching, drafting or changing of mail. Tell the user plainly that this cannot be done here; they can paste an email into the conversation to have it read.":
+    "Ephapse chỉ có thể gửi thư: quy trình xét duyệt miễn phí của Google không cho phép đọc, tìm kiếm, soạn nháp hay thay đổi thư. Hãy nói rõ với người dùng rằng việc này không làm được ở đây; họ có thể dán email vào cuộc trò chuyện để được đọc giúp.",
   "action is list, calendars, create, update, delete or free_busy.":
     "action phải là list, calendars, create, update, delete hoặc free_busy.",
   "action is search, read, create, upload, share, move, rename or trash.":
@@ -1145,10 +1154,6 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "Hãy cung cấp {0}.",
   "Sends an email from your Gmail to {0}. It cannot be unsent.":
     "Gửi email từ Gmail của bạn tới {0}. Không thể thu hồi.",
-  "Saves a draft in your Gmail. Nothing is sent.":
-    "Lưu bản nháp trong Gmail của bạn. Chưa gửi gì cả.",
-  "Moves an email to your Gmail trash.":
-    "Chuyển một email vào thùng rác Gmail.",
   "Changes your Google Calendar and sends an invitation to {0}.":
     "Thay đổi Google Lịch và gửi lời mời tới {0}.",
   "Deletes an event from your Google Calendar.":
