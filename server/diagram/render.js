@@ -20,8 +20,7 @@
  * Pure and deterministic, like the layout: the same layout always gives the same markup.
  */
 
-import { TEXT, lineHeight } from './measure.js';
-import { FIT } from './layout.js';
+import { TEXT, FIT, lineHeight } from './measure.js';
 import { ICONS, ICON_GRID } from './icons.js';
 import { contrast, colour } from '../widgetCheck.js';
 
@@ -255,11 +254,15 @@ export function renderDiagram(layout, { theme = 'light', title = '' } = {}) {
     }
   }
 
-  // Labels last, over the line they name, each on a backing in the canvas colour.
+  // Labels last, over the line they name, each on a backing in the colour behind it: the fill
+  // of the group that holds it, or the canvas — never a white patch on a tint (review,
+  // 2026-11-18). The layout keeps every label wholly inside a group or wholly outside.
+  const holds = (g, b) => b.x >= g.x && b.y >= g.y && b.x + b.w <= g.x + g.w && b.y + b.h <= g.y + g.h;
   for (const e of layout.edges) {
     if (!e.labelBox) continue;
     const b = e.labelBox;
-    out.push(`<rect x="${n(b.x)}" y="${n(b.y)}" width="${n(b.w)}" height="${n(b.h)}" rx="4" fill="${P.canvas}"/>`);
+    const host = layout.groups.find((g) => holds(g, b));
+    out.push(`<rect x="${n(b.x)}" y="${n(b.y)}" width="${n(b.w)}" height="${n(b.h)}" rx="4" fill="${host ? accentOf.get(host.id).fill : P.canvas}"/>`);
     e.labelLines.forEach((line, i) => {
       const y = baseline(b.y + TEXT.labelPadding + i * lineHeight(TEXT.labelSize), TEXT.labelSize);
       out.push(`<text class="c" x="${n(b.x + b.w / 2)}" y="${n(y)}">${escape(line)}</text>`);

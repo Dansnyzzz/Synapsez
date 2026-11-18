@@ -33,15 +33,14 @@
  * (owner, 2026-11-17: "flexible adaptive"): see chooseDirection.
  */
 
-import { TEXT, lineHeight, textWidth, wrapText, measureNode, measureLabel } from './measure.js';
-
-// The shape "auto" aims for, and the most a drawing may shrink to fit the widest it is drawn.
-export const FIT = Object.freeze({ aspect: 16 / 10, maxWidth: 1200, minScale: 0.8 });
+import { TEXT, FIT, lineHeight, textWidth, wrapText, measureNode, measureLabel } from './measure.js';
 
 export const LAYOUT = Object.freeze({
   rankGap: Object.freeze({ right: 72, down: 56 }),
   nodeGap: 24,
-  groupGap: 40,
+  // The visible gap between two groups' boxes, either way (review, 2026-11-18: 8 read as
+  // touching). It replaces the plan's 40 between members, which left 8 between the boxes.
+  groupGap: 24,
   groupMargin: 16,
   groupTitleInset: 10,
   edgeGap: 12,
@@ -49,6 +48,10 @@ export const LAYOUT = Object.freeze({
   laneSpacing: 8,
   laneClearance: 24,
   labelClearance: 8,
+  // How far another edge's line keeps from a label (review B7).
+  labelLineClear: 10,
+  // How far a group's box reaches past the last lane of a loop it holds.
+  loopReach: 16,
   margin: 24,
   sweeps: 4,
   balancePasses: 12,
@@ -142,17 +145,18 @@ function orderTurns(list) {
 }
 
 /**
- * Of a drawing laid out both ways, the one to keep: the one whose box is closer to 16:10,
- * provided it fits 1,200 px wide at a scale of 0.8 or more; otherwise the narrower. Closeness
- * is measured on a log scale, so twice too wide and twice too tall are equally far off. A tie
- * keeps "right", the way a flow is read.
+ * Of a drawing laid out both ways, the one to keep: the one whose text is largest in a 760 px
+ * reply column (review, 2026-11-18, replacing "closer to 16:10 if it fits 1,200 at 0.8": a
+ * 1,422 px drawing won that way and showed its titles at 7.5 px). Within 5 % of each other,
+ * the box closer to 16:10 wins, on a log scale so twice too wide and twice too tall are equally
+ * far off. A tie keeps "right", the way a flow is read.
  */
 export function chooseDirection(right, down) {
+  const textScale = (l) => Math.min(1, FIT.column / l.width);
   const off = (l) => Math.abs(Math.log(l.width / l.height / FIT.aspect));
-  const fits = (l) => l.width * FIT.minScale <= FIT.maxWidth;
-  const closer = off(down) < off(right) ? down : right;
-  if (fits(closer)) return closer;
-  return down.width < right.width ? down : right;
+  const [a, b] = [textScale(right), textScale(down)];
+  if (Math.abs(a - b) > FIT.near * Math.max(a, b)) return b > a ? down : right;
+  return off(down) < off(right) ? down : right;
 }
 
 /**
@@ -190,9 +194,12 @@ function layoutOne(diagram, direction) {
   });
   const labelAcross = (e) => (right ? e.measured.h : e.measured.w);
   const labelAlong = (e) => (right ? e.measured.w : e.measured.h);
-  // Half the room a port needs along its side: 4 px, or half its label and 2 more when the
-  // label sits on the line leaving that port — so the label covers no neighbour's line.
-  const portHalf = (e, out) => (out && e.label ? labelAcross(e) / 2 + 2 : LAYOUT.portSpacing / 2);
+  // Half the room a port needs along its side: 4 px, or half its label and 6 more when the
+  // label sits on the line leaving that port — so a neighbour's line keeps 10 from the label
+  // (review B7: 4 + 6).
+  const portHalf = (e, out) => (out && e.label ? labelAcross(e) / 2 + LAYOUT.labelLineClear - LAYOUT.portSpacing / 2 : LAYOUT.portSpacing / 2);
+  // A loop's two legs stand at least 12 apart, so its turn reads as a loop, not a wobble.
+  const loopHalf = (e, out) => Math.max(portHalf(e, out), 6);
   // Ports keep off a side's corners. On a pill they stay where its round end is within about a
   // pixel of the straight edge (6 px into the curve), so an arrow ends on what is drawn.
   const insetOf = (n) => (n.kind === 'pill' ? Math.max(8, n.radius - 6) : 8);
@@ -251,7 +258,7 @@ function layoutOne(diagram, direction) {
   // stays its own size, centred, and is given as `textBox`.
   const halvesOf = nodes.map(() => ({ in: [], out: [] }));
   for (const e of edges) {
-    if (e.loop) halvesOf[e.from.index].out.push(portHalf(e, true), portHalf(e, false));
+    if (e.loop) halvesOf[e.from.index].out.push(loopHalf(e, true), loopHalf(e, false));
     else {
       halvesOf[tail(e).index].out.push(portHalf(e, true));
       halvesOf[head(e).index].in.push(portHalf(e, false));
@@ -290,7 +297,7 @@ function layoutOne(diagram, direction) {
     }
   }
 
-  const groups = (diagram.groups || []).map((g, index) => ({ index, id: g.id, title: g.title || '', min: Infinity, max: -Infinity, items: [], stacks: new Map(), slack: new Map(), shift: new Map(), header: 0, inner: 0, size: 0, titleLines: [], titleW: 0, v: null, box: null, titleBox: null }));
+  const groups = (diagram.groups || []).map((g, index) => ({ index, id: g.id, title: g.title || '', min: Infinity, max: -Infinity, items: [], stacks: new Map(), slack: new Map(), shift: new Map(), header: 0, band: 0, titleAt: 0, inner: 0, size: 0, titleLines: [], titleW: 0, v: null, box: null, titleBox: null }));
   const groupById = new Map(groups.map((g) => [g.id, g]));
   for (const n of nodes) {
     const g = groupById.get(n.group);
@@ -367,27 +374,140 @@ function layoutOne(diagram, direction) {
     if (groups.length) regroup();
   }
 
+  // Then neighbours swap, or a free box moves across a whole group, wherever that lowers the
+  // crossings — counting a line through a group that holds neither of its ends as four, since
+  // it reads as belonging there (review B5: a line through "Operations" and across its arrow).
+  // Groups keep their one order in every rank, so a group never swaps with a group.
+  // Crossings between two ranks are the pairs whose ends come in opposite orders: counted as
+  // inversions with a Fenwick tree, O(H log H), since this runs for every swap tried.
+  const inversions = (hops, size) => {
+    const pairs = hops.map((h) => [h.a.order, h.b.order]).sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+    const tree = new Array(size + 2).fill(0);
+    let total = 0;
+    let seen = 0;
+    for (let i = 0; i < pairs.length; ) {
+      let j = i;
+      while (j < pairs.length && pairs[j][0] === pairs[i][0]) j += 1;
+      for (let k = i; k < j; k += 1) {
+        let atMost = 0;
+        for (let x = pairs[k][1] + 1; x > 0; x -= x & -x) atMost += tree[x];
+        total += seen - atMost;
+      }
+      for (let k = i; k < j; k += 1) {
+        for (let x = pairs[k][1] + 1; x <= size + 1; x += x & -x) tree[x] += 1;
+        seen += 1;
+      }
+      i = j;
+    }
+    return total;
+  };
+  const gapCost = (r) => {
+    if (r < 0 || r >= maxRank) return 0;
+    const hops = layers[r].flatMap((it) => it.outs);
+    let cost = inversions(hops, layers[r + 1].length);
+    for (const G of groups) {
+      if (G.min > r || G.max < r + 1) continue;
+      const span = (layer) => {
+        const at = layer.flatMap((it, i) => (it.group === G.id ? [i] : []));
+        return [at[0], at.at(-1)];
+      };
+      const [a0, a1] = span(layers[r]);
+      const [b0, b1] = span(layers[r + 1]);
+      for (const h of hops) {
+        if (h.edge.from.group === G.id || h.edge.to.group === G.id) continue;
+        const side = (o, lo, hi) => (o < lo ? -1 : o > hi ? 1 : 0);
+        if (side(h.a.order, a0, a1) !== side(h.b.order, b0, b1)) cost += 4;
+      }
+    }
+    return cost;
+  };
+  const unitsOf = (layer) => {
+    const units = [];
+    for (const it of layer) {
+      const last = units.at(-1);
+      if (last && it.group && last[0].group === it.group) last.push(it);
+      else units.push([it]);
+    }
+    return units;
+  };
+  // Two neighbours both free, or both of one group, change only the crossings between their own
+  // lines when swapped, and no group's: counted on the spot, in place.
+  const swapGain = (u, v) => {
+    let gain = 0;
+    for (const hu of u.ins) for (const hv of v.ins) gain += Math.sign(hu.a.order - hv.a.order);
+    for (const hu of u.outs) for (const hv of v.outs) gain += Math.sign(hu.b.order - hv.b.order);
+    return gain;
+  };
+  for (let pass = 0; pass < 6; pass += 1) {
+    let improved = false;
+    for (let r = 0; r <= maxRank; r += 1) {
+      const layer = layers[r];
+      for (let i = 0; i + 1 < layer.length; i += 1) {
+        const [u, v] = [layer[i], layer[i + 1]];
+        if (u.group !== v.group || swapGain(u, v) <= 0) continue;
+        layer[i] = v;
+        layer[i + 1] = u;
+        v.order = i;
+        u.order = i + 1;
+        improved = true;
+      }
+      if (!groups.length) continue;
+      // A free box and a whole group trade places: every line round the group may change.
+      let units = unitsOf(layers[r]);
+      for (let i = 0; i + 1 < units.length; i += 1) {
+        if (!units[i][0].group === !units[i + 1][0].group) continue;
+        const before = gapCost(r - 1) + gapCost(r);
+        const old = layers[r];
+        const next = [...units.slice(0, i), units[i + 1], units[i], ...units.slice(i + 2)].flat();
+        layers[r] = next;
+        renumber(next);
+        if (gapCost(r - 1) + gapCost(r) < before) {
+          improved = true;
+          units = unitsOf(layers[r]);
+        } else {
+          layers[r] = old;
+          renumber(old);
+        }
+      }
+    }
+    if (!improved) break;
+  }
+
   // ── sizes along the main axis, and where each group's title goes.
   const mainSize = layers.map((layer) => Math.max(0, ...layer.filter((it) => it.type === 'node').map((it) => mainOf(it.node))));
   const titleLine = lineHeight(TEXT.groupTitleSize);
+  // A title band: 10 above the title and 10 below it before the members, which then keep
+  // their 16 from the sides and the bottom — a header that reads as the group's own.
+  const titleBand = (lines) => lines * titleLine + 2 * LAYOUT.groupTitleInset - M;
+  // Inside a group, a stand-in's line passes 12 from a box, as two lines pass each other: the
+  // group stays as narrow as its widest rank (review C9).
+  const gapBetween = (a, b) => (a.type === 'node' && b.type === 'node' ? LAYOUT.nodeGap : LAYOUT.edgeGap);
+  for (const g of groups) {
+    for (let r = g.min; r <= g.max; r += 1) {
+      const stack = layers[r].filter((it) => it.group === g.id && it.type !== 'hold');
+      g.stacks.set(r, stack);
+      g.items.push(...stack);
+      g.inner = Math.max(g.inner, stack.reduce((s, it, i) => s + it.size + (i ? gapBetween(stack[i - 1], it) : 0), 0));
+    }
+  }
   for (const g of groups) {
     if (!g.title) continue;
-    // The title stays inside its group's first rank, where no lane runs: above the members for
-    // "right" (wrapped to that column), beside them for "down" (that row grows to hold it).
+    // A group's title sits in a band across its top, above its members, either way. In "right"
+    // that band is part of the stack across (wrapped to the first column, where no lane runs);
+    // in "down" it is room kept above the first rank, wrapped to the members' width (review,
+    // 2026-11-18: beside the members it left a column of nothing, groups 22–28 % full).
     if (right) {
       g.titleLines = wrapText(g.title, mainSize[g.min], TEXT.groupTitleSize, true);
       g.titleW = mainSize[g.min];
-      g.header = LAYOUT.groupTitleInset + g.titleLines.length * titleLine;
+      g.header = titleBand(g.titleLines.length);
     } else {
-      g.titleLines = wrapText(g.title, TEXT.groupTitleMaxWidth, TEXT.groupTitleSize, true);
+      g.titleLines = wrapText(g.title, Math.min(TEXT.groupTitleMaxWidth, g.inner), TEXT.groupTitleSize, true);
       g.titleW = Math.ceil(Math.max(...g.titleLines.map((l) => textWidth(l, TEXT.groupTitleSize, true))));
-      g.header = LAYOUT.groupTitleInset + g.titleW;
-      mainSize[g.min] = Math.max(mainSize[g.min], Math.ceil(g.titleLines.length * titleLine));
+      g.band = titleBand(g.titleLines.length);
     }
   }
 
   // ── 6. positions across the ranks.
-  const gapBetween = (a, b) => (a.type === 'node' || b.type === 'node' ? LAYOUT.nodeGap : LAYOUT.edgeGap);
   const placeStack = (g, r) => {
     let at = g.header + M + g.shift.get(r);
     const stack = g.stacks.get(r);
@@ -398,12 +518,6 @@ function layoutOne(diagram, direction) {
     });
   };
   for (const g of groups) {
-    for (let r = g.min; r <= g.max; r += 1) {
-      const stack = layers[r].filter((it) => it.group === g.id && it.type !== 'hold');
-      g.stacks.set(r, stack);
-      g.items.push(...stack);
-      g.inner = Math.max(g.inner, stack.reduce((s, it, i) => s + it.size + (i ? gapBetween(stack[i - 1], it) : 0), 0));
-    }
     g.size = g.header + 2 * M + g.inner;
     for (let r = g.min; r <= g.max; r += 1) {
       const used = g.stacks.get(r).reduce((s, it, i, all) => s + it.size + (i ? gapBetween(all[i - 1], it) : 0), 0);
@@ -430,7 +544,7 @@ function layoutOne(diagram, direction) {
       if (prev && prev.v === v) continue;
       const kind = g ? 'block' : it.type;
       if (prev) {
-        const gap = prev.kind === 'block' && kind === 'block' ? LAYOUT.groupGap - 2 * M : prev.kind === 'node' || kind === 'node' ? LAYOUT.nodeGap : LAYOUT.edgeGap;
+        const gap = prev.kind === 'block' && kind === 'block' ? LAYOUT.groupGap : prev.kind === 'node' || kind === 'node' ? LAYOUT.nodeGap : LAYOUT.edgeGap;
         prev.v.succs.push({ v, gap });
         v.preds.push({ v: prev.v, gap });
       }
@@ -478,48 +592,250 @@ function layoutOne(diagram, direction) {
   }
   for (const layer of layers) for (const it of layer) it.start = startOf(it);
 
-  // ── 7. ports: spread along the side facing the next rank (out) and the previous one (in).
-  // Neighbours are their halves apart, the ends their half (or the inset) from the corners, and
-  // what is left over is shared evenly. The side was grown to sideNeed, so it always fits.
-  const spread = (n, halves) => {
-    const k = halves.length;
-    if (k === 0) return [];
-    const first = Math.max(insetOf(n), halves[0]);
-    const last = Math.max(insetOf(n), halves[k - 1]);
-    const steps = halves.slice(1).map((t, i) => halves[i] + t);
-    const spare = Math.max(0, crossOf(n) - first - last - steps.reduce((s, d) => s + d, 0)) / (k + 1);
-    const spots = [n.item.start + first + spare];
-    for (const d of steps) spots.push(spots.at(-1) + d + spare);
-    return spots;
+  // A long edge's stand-ins line up, so it runs down one straight channel instead of winding
+  // (review B7: an edge of 6 bends round the whole drawing). Each stand-in may move as far as
+  // its rank allows without passing or nearing its neighbours; the edge takes the one place
+  // all of them can reach that moves them least.
+  const room = (d) => {
+    const layer = layers[d.rank];
+    const i = layer.indexOf(d);
+    const g = d.group ? groupById.get(d.group) : null;
+    let lo = g ? g.v.pos + g.header + M : -Infinity;
+    let hi = g ? g.v.pos + g.size - M : Infinity;
+    const extent = (x) => (x.group && x.group !== d.group ? [groupById.get(x.group).v.pos, groupById.get(x.group).v.pos + groupById.get(x.group).size] : [x.start, x.start + x.size]);
+    const gapTo = (x) => (d.group ? gapBetween(x, d) : x.type === 'node' && !x.group ? LAYOUT.nodeGap : LAYOUT.edgeGap);
+    for (let j = i - 1; j >= 0; j -= 1) {
+      if (layer[j].type === 'hold') continue;
+      lo = Math.max(lo, extent(layer[j])[1] + gapTo(layer[j]));
+      break;
+    }
+    for (let j = i + 1; j < layer.length; j += 1) {
+      if (layer[j].type === 'hold') continue;
+      hi = Math.min(hi, extent(layer[j])[0] - gapTo(layer[j]));
+      break;
+    }
+    return [lo, hi];
   };
-  for (const n of nodes) {
-    const outs = [...n.item.outs].sort((p, q) => centreOf(p.b) - centreOf(q.b) || p.edge.index - q.edge.index);
-    // A loop takes the two ports at the far end of the side, so it crosses no other way out.
-    const halves = [...outs.map((h) => portHalf(h.edge, true)), ...n.loops.flatMap((e) => [portHalf(e, true), portHalf(e, false)])];
-    const spots = spread(n, halves);
-    outs.forEach((h, i) => {
-      h.s = spots[i];
-    });
-    n.loops.forEach((e, i) => {
-      e.loopPorts = [spots[outs.length + 2 * i], spots[outs.length + 2 * i + 1]];
-    });
-    const ins = [...n.item.ins].sort((p, q) => centreOf(p.a) - centreOf(q.a) || p.edge.index - q.edge.index);
-    const inSpots = spread(n, ins.map((h) => portHalf(h.edge, false)));
-    ins.forEach((h, i) => {
-      h.t = inSpots[i];
-    });
+  const moveTo = (d, x) => {
+    if (d.group) d.offset += x - d.start;
+    else d.v.pos = x;
+    d.start = x;
+  };
+  for (const e of edges) {
+    const chain = e.hops.slice(1).map((h) => h.a);
+    if (!chain.length) continue;
+    const t = e.hops[0].a;
+    const h = e.hops.at(-1).b;
+    const rooms = chain.map(room);
+    const options = [...chain.map((d) => d.start), centreOf(t), centreOf(h)];
+    let best = null;
+    for (const x of options) {
+      if (!rooms.every(([lo, hi]) => x >= lo - 1e-9 && x <= hi + 1e-9)) continue;
+      const cost = chain.reduce((s, d) => s + Math.abs(d.start - x), 0);
+      if (best === null || cost < best.cost - 1e-9) best = { x, cost };
+    }
+    if (best) for (const d of chain) moveTo(d, best.x);
   }
+
+  // In "down", a group's title is wrapped narrow enough that the lines into its first rank can
+  // all arrive beside it, where its boxes' tops leave room (review C9: rewrapped only after
+  // the ports were placed, one title took three lines and a fifth of its group).
+  if (!right) {
+    for (const g of groups) {
+      if (!g.titleLines.length) continue;
+      const from = g.v.pos + M;
+      let room = Math.min(TEXT.groupTitleMaxWidth, g.inner);
+      for (const it of g.stacks.get(g.min)) {
+        if (it.type !== 'node' || !it.ins.length) continue;
+        const need = 2 * it.ins.reduce((s, h) => s + portHalf(h.edge, false), 0) + insetOf(it.node);
+        if (it.start < from + room + 8) room = Math.min(room, it.start + crossOf(it.node) - need - 8 - from);
+      }
+      if (room >= 48 && room < g.titleW) {
+        g.titleLines = wrapText(g.title, room, TEXT.groupTitleSize, true);
+        g.titleW = Math.ceil(Math.max(...g.titleLines.map((l) => textWidth(l, TEXT.groupTitleSize, true))));
+        g.band = titleBand(g.titleLines.length);
+      }
+    }
+  }
+
+  // ── 7. ports, on the side facing the next rank (out) and the previous one (in).
+  // Each port wants to sit opposite the other end of its line, so a line runs straight where
+  // the two boxes overlap and never takes a step for nothing (review B3: steps of 4–11 units,
+  // a 67-unit Z between centres 4 apart). On a side, ports keep the order of what they lead
+  // to, neighbours their two halves apart and the end ones their half (or the inset) from the
+  // corners; the side was grown to sideNeed, so they always fit. Placing them as near as that
+  // allows to where they want to be is an isotonic fit (pool adjacent violators), clamped.
+  const JOG = 12;
+  const sides = [];
+  const portOf = new Map();
+  const addSide = (n, list, lo) => {
+    const side = { n, list, lo, hi: n.item.start + crossOf(n) };
+    list.forEach((en, i) => {
+      en.side = side;
+      en.i = i;
+      if (en.hop) portOf.set(`${en.end}${en.hop.edge.index}:${en.hop.a.rank}`, en);
+    });
+    sides.push(side);
+  };
+  const mid = (h) => (h.a.type === 'node' && h.b.type === 'node' ? (centreOf(h.a) + centreOf(h.b)) / 2 : h.a.type === 'node' ? h.b.start : h.a.start);
   for (const d of dummies) {
     for (const h of d.outs) h.s = d.start;
     for (const h of d.ins) h.t = d.start;
   }
-  // Nearly straight is made straight, so a line never gets a jog too small to read as a turn.
-  // Ports are 8 or more apart, so moving one by under 2 keeps it clear of the next.
+  for (const n of nodes) {
+    const outs = [...n.item.outs].sort((p, q) => centreOf(p.b) - centreOf(q.b) || p.edge.index - q.edge.index);
+    for (const h of outs) h.s = mid(h);
+    // A loop takes the two ports at the far end of the side, so it crosses no other way out.
+    const out = [
+      ...outs.map((h) => ({ hop: h, end: 's', half: portHalf(h.edge, true), get: () => h.s, set: (v) => (h.s = v), want: () => h.t })),
+      ...n.loops.flatMap((e) => [
+        { hop: null, end: 'l', half: loopHalf(e, true), get: () => e.loopPorts[0], set: (v) => (e.loopPorts[0] = v), want: () => Infinity },
+        { hop: null, end: 'l', half: loopHalf(e, false), get: () => e.loopPorts[1], set: (v) => (e.loopPorts[1] = v), want: () => Infinity },
+      ]),
+    ];
+    addSide(n, out, n.item.start);
+    const ins = [...n.item.ins].sort((p, q) => centreOf(p.a) - centreOf(q.a) || p.edge.index - q.edge.index);
+    for (const h of ins) h.t = mid(h);
+    const into = ins.map((h) => ({ hop: h, end: 't', half: portHalf(h.edge, false), get: () => h.t, set: (v) => (h.t = v), want: () => h.s }));
+    // In "down" the lines into a group's first rank cross its title band: they keep clear of
+    // the title when the rest of the side holds them (review C9).
+    let lo = n.item.start;
+    const g = n.group ? groupById.get(n.group) : null;
+    if (!right && g && g.titleLines.length && n.rank === g.min && into.length) {
+      const clear = g.v.pos + M + g.titleW + 8;
+      const need = 2 * into.reduce((s, en) => s + en.half, 0) + insetOf(n);
+      if (clear > lo && n.item.start + crossOf(n) - clear >= need) lo = clear;
+    }
+    addSide(n, into, lo);
+  }
+  const place = (side) => {
+    const { n, list } = side;
+    const k = list.length;
+    if (!k) return;
+    const inset = insetOf(n);
+    const off = [0];
+    for (let i = 1; i < k; i += 1) off.push(off[i - 1] + list[i - 1].half + list[i].half);
+    const L = Math.max(n.item.start + Math.max(inset, list[0].half), side.lo + list[0].half);
+    const U = Math.max(L, side.hi - Math.max(inset, list[k - 1].half) - off[k - 1]);
+    const blocks = [];
+    list.forEach((en, i) => {
+      const want = en.want();
+      blocks.push({ sum: (Number.isFinite(want) ? want : side.hi) - off[i], n: 1 });
+      while (blocks.length > 1 && blocks.at(-2).sum / blocks.at(-2).n > blocks.at(-1).sum / blocks.at(-1).n) {
+        const b = blocks.pop();
+        blocks.at(-1).sum += b.sum;
+        blocks.at(-1).n += b.n;
+      }
+    });
+    let i = 0;
+    for (const b of blocks) {
+      const y = clamp(b.sum / b.n, L, U);
+      for (let j = 0; j < b.n; j += 1, i += 1) list[i].set(y + off[i]);
+    }
+  };
+  for (let round = 0; round < 4; round += 1) for (const side of sides) place(side);
+  // How far a port may move: not past its neighbours' room, nor off its side.
+  const windowOf = (en) => {
+    const { side, i } = en;
+    const { n, list } = side;
+    const inset = insetOf(n);
+    const lo = i > 0 ? list[i - 1].get() + list[i - 1].half + en.half : Math.max(n.item.start + Math.max(inset, en.half), side.lo + en.half);
+    const hi = i < list.length - 1 ? list[i + 1].get() - list[i + 1].half - en.half : side.hi - Math.max(inset, en.half);
+    return [lo, hi];
+  };
+  const inside = (v, span) => v >= span[0] - 1e-9 && v <= span[1] + 1e-9;
+  // A step under 12 is made straight wherever either end can move to meet the other.
+  // Where neither end can meet the other, the step is widened to a clear 12 instead: a turn
+  // that reads as a turn, not a wobble.
+  const straighten = (h) => {
+    const d = Math.abs(h.s - h.t);
+    if (d === 0 || d >= JOG) return;
+    const s = portOf.get(`s${h.edge.index}:${h.a.rank}`);
+    const t = portOf.get(`t${h.edge.index}:${h.a.rank}`);
+    if (t && inside(h.s, windowOf(t))) h.t = h.s;
+    else if (s && inside(h.t, windowOf(s))) h.s = h.t;
+    else {
+      const [a0, a1] = s ? windowOf(s) : [h.s, h.s];
+      const [b0, b1] = t ? windowOf(t) : [h.t, h.t];
+      const lo = Math.max(a0, b0);
+      const hi = Math.min(a1, b1);
+      if (lo <= hi) {
+        h.s = h.t = clamp((h.s + h.t) / 2, lo, hi);
+        return;
+      }
+      const away = (v, from) => [from + JOG, from - JOG].filter((x) => Math.abs(x - v) < JOG + 1e-9).sort((p, q) => Math.abs(p - v) - Math.abs(q - v));
+      const tTo = t ? away(h.t, h.s).find((x) => inside(x, windowOf(t))) : undefined;
+      if (tTo !== undefined) h.t = tTo;
+      else if (s) {
+        const sTo = away(h.s, h.t).find((x) => inside(x, windowOf(s)));
+        if (sTo !== undefined) h.s = sTo;
+      }
+    }
+  };
+  for (const e of edges) for (const h of e.hops) straighten(h);
+  // Two different lines never meet end to end (review B4: one edge's stub into a box in line
+  // with another's stub out of the box above, 8 units apart, read as a single line). Where a
+  // line's way out of one rank and another's way into the next sit under 8 apart, one of them
+  // moves — whichever can, without making a step of its own.
+  const ok = (h, s, t) => Math.abs(s - t) === 0 || Math.abs(s - t) >= JOG;
+  const nudge = (en, away, h) => {
+    const [lo, hi] = windowOf(en);
+    const now = en.get();
+    const other = en.end === 's' ? h.t : h.s;
+    const options = [];
+    for (let d = LAYOUT.portSpacing; d <= 64; d += 4) options.push(away + d, away - d);
+    const fits = options.filter((v) => inside(v, [lo, hi]) && (en.end === 's' ? ok(h, v, other) : ok(h, other, v)));
+    if (!fits.length) return false;
+    en.set(fits.reduce((best, v) => (Math.abs(v - now) < Math.abs(best - now) ? v : best)));
+    return true;
+  };
+  for (let g = 0; g < maxRank; g += 1) {
+    const hopsHere = edges.flatMap((e) => e.hops.filter((h) => h.a.rank === g));
+    for (const A of hopsHere) {
+      for (const B of hopsHere) {
+        if (A === B || Math.abs(A.s - B.t) >= LAYOUT.portSpacing || (A.s === A.t && B.s === B.t)) continue;
+        const bPort = portOf.get(`t${B.edge.index}:${B.a.rank}`);
+        const aPort = portOf.get(`s${A.edge.index}:${A.a.rank}`);
+        if (B.s !== B.t && bPort && nudge(bPort, A.s, B)) continue;
+        if (A.s !== A.t && aPort) nudge(aPort, B.t, A);
+      }
+    }
+  }
+  // A dummy's hops share its one position.
   for (const e of edges) {
     e.hops.forEach((h, k) => {
-      if (Math.abs(h.s - h.t) < 2) h.t = h.s;
       if (k + 1 < e.hops.length) e.hops[k + 1].s = h.t;
     });
+  }
+  // In "down", where each group's title goes in its band, now the lines into its first rank
+  // are known: the leftmost stretch between them that holds it, or else the widest, wrapped
+  // to fit (its band grows a line or two) — never across a line (review C9).
+  for (const g of groups) {
+    g.titleAt = g.v.pos + M;
+    if (right || !g.titleLines.length) continue;
+    const xs = g.stacks.get(g.min).flatMap((it) => it.ins.map((h) => h.t));
+    const lo = g.v.pos + M;
+    const hi = g.v.pos + g.size - M;
+    const stretches = [];
+    let from = lo;
+    for (const x of [...xs].sort((p, q) => p - q)) {
+      if (x - 8 > from) stretches.push([from, x - 8]);
+      from = Math.max(from, x + 8);
+    }
+    if (hi > from) stretches.push([from, hi]);
+    const fits = stretches.find(([a, b]) => b - a >= g.titleW);
+    if (fits) {
+      g.titleAt = fits[0];
+      continue;
+    }
+    const widest = stretches.reduce((best, s) => (!best || s[1] - s[0] > best[1] - best[0] ? s : best), null);
+    if (!widest || widest[1] - widest[0] < 48) continue;
+    const lines = wrapText(g.title, widest[1] - widest[0], TEXT.groupTitleSize, true);
+    if (lines.length > 4) continue;
+    g.titleLines = lines;
+    g.titleW = Math.ceil(Math.max(...lines.map((l) => textWidth(l, TEXT.groupTitleSize, true))));
+    g.band = titleBand(lines.length);
+    g.titleAt = widest[0];
   }
 
   // ── gaps between ranks: room for labels, then one lane per turn.
@@ -528,13 +844,13 @@ function layoutOne(diagram, direction) {
   const turns = Array.from({ length: gapCount }, () => []);
   for (const e of edges) {
     if (e.loop) {
-      e.loopTurn = { edge: e, s: e.loopPorts[0], t: e.loopPorts[1], loop: true, main: 0 };
+      e.loopTurn = { edge: e, s: e.loopPorts[0], t: e.loopPorts[1], loop: true, main: 0, rel: 0 };
       turns[e.from.rank].push(e.loopTurn);
       continue;
     }
     for (const h of e.hops) {
       if (h.s === h.t) continue;
-      h.turn = { edge: e, s: h.s, t: h.t, loop: false, main: 0 };
+      h.turn = { edge: e, s: h.s, t: h.t, loop: false, main: 0, rel: 0 };
       turns[h.a.rank].push(h.turn);
     }
   }
@@ -567,11 +883,68 @@ function layoutOne(diagram, direction) {
       for (const e of col.members) e.labelAlong = along + col.size / 2;
       along += col.size + (i < columns.length - 1 ? 4 : 0);
     });
-    // 4 px between the last label and the first lane, so no lane touches a label.
-    labelRoom[g] = along ? along + 4 : 0;
+    // 10 between the last label and the first lane, so no lane runs near a label (review B7).
+    labelRoom[g] = along ? along + LAYOUT.labelLineClear : 0;
   });
   const C = LAYOUT.laneClearance;
-  const gapSize = turns.map((list, g) => Math.max(g < maxRank ? LAYOUT.rankGap[direction] : 0, 2 * C + labelRoom[g] + Math.max(0, list.length - 1) * LAYOUT.laneSpacing));
+  // What a gap keeps clear at its ends for the groups either side (review, 2026-11-18): a group
+  // starting after it keeps its title band and margin free of lanes; a group ending before it
+  // reaches past any loop of its own, so the loop stays inside it; and between the two, the 24
+  // every pair of groups keeps.
+  // Each only where it applies across: a band or a margin keeps clear of what runs over that
+  // group, not of the whole gap (review C9: a gap sized for the widest needs left a group's
+  // inside two-thirds empty).
+  const ownLoop = (t) => t.loop && t.edge.from.group !== null && groupById.get(t.edge.from.group).max === t.edge.from.rank;
+  const over = (lo, hi, G, pad) => hi > G.v.pos - pad && lo < G.v.pos + G.size + pad;
+  const spanOf = (e) => [e.labelCross - labelAcross(e) / 2, e.labelCross + labelAcross(e) / 2];
+  const step = LAYOUT.laneSpacing;
+  // Each lane's place within its gap: loops first, nearest their box, then the rest.
+  const plans = turns.map((list, g) => {
+    const ordered = orderTurns(list);
+    const loops = ordered.filter((t) => t.loop);
+    const rest = ordered.filter((t) => !t.loop);
+    const ends = groups.filter((G) => G.max === g);
+    const starts = groups.filter((G) => G.min === g + 1);
+    // How far before the next rank something across [lo, hi] must stop: a lane's corner keeps
+    // 24 from a box, and clear of the title band and margin of a group starting there.
+    const clearAt = (lo, hi, base) => Math.max(base, ...starts.filter((G) => over(lo, hi, G, 12)).map((G) => M + G.band + 12));
+    // Labels start 12 into the gap, enough to keep off the box they leave — 24 where a group
+    // ends there, so a label clears that group's border.
+    const labels = reservedIn[g];
+    const lead = labels.some((e) => ends.some((G) => over(...spanOf(e), G, 4))) ? C : 12;
+    const first = labels.length ? Math.max(C, lead + labelRoom[g]) : C;
+    loops.forEach((t, i) => {
+      t.rel = first + i * step;
+    });
+    const lastLoop = loops.length ? first + (loops.length - 1) * step : null;
+    const reach = loops.some(ownLoop) ? lastLoop + LAYOUT.loopReach : 0;
+    const restFirst = lastLoop === null ? first : reach ? reach + LAYOUT.loopReach : lastLoop + step;
+    // A lane well clear of every label's span across needs no room kept for the labels.
+    const clearOfLabels = (t) =>
+      labels.every((e) => {
+        const [a, b] = spanOf(e);
+        return Math.max(t.s, t.t) < a - LAYOUT.labelLineClear || Math.min(t.s, t.t) > b + LAYOUT.labelLineClear;
+      });
+    let prev = -Infinity;
+    for (const t of rest) {
+      t.rel = Math.max(lastLoop === null && clearOfLabels(t) ? C : restFirst, prev + step);
+      prev = t.rel;
+    }
+    const laneNeed = (t) => t.rel + clearAt(Math.min(t.s, t.t), Math.max(t.s, t.t), C);
+    const needs = [g < maxRank ? LAYOUT.rankGap[direction] : 0, ...ordered.map(laneNeed)];
+    for (const e of labels) needs.push(lead + e.labelAlong + labelAlong(e) / 2 + clearAt(...spanOf(e), 12));
+    // Two groups either side of the gap keep 24 between their boxes where they face each other.
+    for (const G of ends) {
+      const own = reach && nodes.some((n) => n.group === G.id && n.rank === g && n.loops.length);
+      for (const H of starts) if (over(G.v.pos, G.v.pos + G.size, H, LAYOUT.groupGap)) needs.push((own ? reach : M) + LAYOUT.groupGap + M + H.band);
+    }
+    const size = Math.max(...needs);
+    // What room is left moves the other lanes off the box they leave, toward the middle.
+    const slack = rest.length ? Math.min(...rest.map((t) => size - laneNeed(t))) : 0;
+    for (const t of rest) t.rel += slack / 2;
+    return { ordered, reach, size, lead };
+  });
+  const gapSize = plans.map((p) => p.size);
   const mainStart = [];
   let at = 0;
   for (let r = 0; r <= maxRank; r += 1) {
@@ -579,13 +952,8 @@ function layoutOne(diagram, direction) {
     at += mainSize[r] + (r < gapCount ? gapSize[r] : 0);
   }
   const gapStart = (g) => mainStart[g] + mainSize[g];
-  turns.forEach((list, g) => {
-    const ordered = orderTurns(list);
-    const from = gapStart(g) + C + labelRoom[g];
-    const to = gapStart(g) + gapSize[g] - C;
-    ordered.forEach((turn, i) => {
-      turn.main = ordered.length === 1 ? (from + to) / 2 : from + ((to - from) * i) / (ordered.length - 1);
-    });
+  plans.forEach((p, g) => {
+    for (const turn of p.ordered) turn.main = gapStart(g) + turn.rel;
   });
   for (const n of nodes) n.mainStart = mainStart[n.rank] + (mainSize[n.rank] - mainOf(n)) / 2;
 
@@ -616,14 +984,36 @@ function layoutOne(diagram, direction) {
   // The text block, centred in a box that may have grown past it for its arrows.
   const textBoxes = nodes.map((n, i) => ({ x: nodeBoxes[i].x + (n.w - n.textW) / 2, y: nodeBoxes[i].y + (n.h - n.textH) / 2, w: n.textW, h: n.textH }));
   for (const g of groups) {
-    const main0 = mainStart[g.min] - M;
-    const main1 = mainStart[g.max] + mainSize[g.max] + M;
+    // Round its members, not their whole ranks: a short box in a tall rank leaves no gap.
+    const members = nodes.filter((n) => n.group === g.id);
+    const main0 = Math.min(...members.map((n) => n.mainStart)) - M - g.band;
+    // A group holding a loop on its last rank reaches past that loop's lane, so the loop and
+    // its label stay inside it (review B6).
+    const ownsLoop = nodes.some((n) => n.group === g.id && n.rank === g.max && n.loops.length);
+    const main1 = ownsLoop && g.max < gapCount && plans[g.max].reach ? gapStart(g.max) + plans[g.max].reach : Math.max(...members.map((n) => n.mainStart + mainOf(n))) + M;
     const [x, y] = xy([main0, g.v.pos]);
     g.box = right ? { x, y, w: main1 - main0, h: g.size } : { x, y, w: g.size, h: main1 - main0 };
     if (g.titleLines.length) {
-      const [tx, ty] = right ? [mainStart[g.min], g.v.pos + LAYOUT.groupTitleInset] : [g.v.pos + LAYOUT.groupTitleInset, mainStart[g.min]];
+      const [tx, ty] = right ? [mainStart[g.min], g.v.pos + LAYOUT.groupTitleInset] : [g.titleAt, main0 + LAYOUT.groupTitleInset];
       g.titleBox = { x: tx, y: ty, w: g.titleW, h: g.titleLines.length * titleLine };
     }
+  }
+  // In "down" the lines into a group's first rank cross its title band. Ports keep clear of
+  // the title where they can (see the ports above); where one cannot, the title moves along
+  // its band to the first place no line runs through.
+  const allSegments = edges.flatMap((e) => e.route.slice(1).map((p, k) => [e.route[k], p]));
+  for (const g of groups) {
+    if (right || !g.titleBox) continue;
+    const t = g.titleBox;
+    const hit = (x) => allSegments.some(([a, b]) => segmentTouches(a, b, { x: x - 4, y: t.y - 2, w: t.w + 8, h: t.h + 4 }));
+    if (!hit(t.x)) continue;
+    const candidates = allSegments
+      .filter(([a, b]) => a[0] === b[0] && Math.max(a[1], b[1]) >= t.y && Math.min(a[1], b[1]) <= t.y + t.h)
+      .map(([a]) => a[0] + 6)
+      .filter((x) => x > t.x)
+      .sort((p, q) => p - q);
+    const free = candidates.find((x) => x + t.w <= g.box.x + g.box.w - M && !hit(x));
+    if (free !== undefined) t.x = free;
   }
 
   // ── 8. labels: on the longest straight part, slid along it until it touches nothing.
@@ -632,20 +1022,31 @@ function layoutOne(diagram, direction) {
   const placed = [];
   const pending = edges.filter((e) => e.label);
   for (const e of pending) {
-    const [cx, cy] = xy([gapStart(e.labelGap) + C + e.labelAlong, e.labelCross]);
+    const [cx, cy] = xy([gapStart(e.labelGap) + plans[e.labelGap].lead + e.labelAlong, e.labelCross]);
     e.reserved = { x: cx - e.measured.w / 2, y: cy - e.measured.h / 2, w: e.measured.w, h: e.measured.h };
   }
   // A slot still held for a label not yet placed is as solid as a box: that keeps every
   // label's own slot free for it to fall back on.
+  // A label sits wholly inside a group or wholly outside it, never across its border (review B6).
+  const groupBoxes = groups.map((g) => g.box);
+  const within = (box, g, pad) => box.x >= g.x + pad && box.y >= g.y + pad && box.x + box.w <= g.x + g.w - pad && box.y + box.h <= g.y + g.h - pad;
   const blocked = (box, e) =>
     nodeBoxes.some((b) => overlaps(box, b, LAYOUT.labelClearance)) ||
     titleBoxes.some((b) => overlaps(box, b, 2)) ||
     placed.some((b) => overlaps(box, b, 2)) ||
-    pending.some((o) => o !== e && overlaps(box, o.reserved, 2));
-  const crossings = (box, e, k, near = segments) => {
-    const grown = { x: box.x - 1, y: box.y - 1, w: box.w + 2, h: box.h + 2 };
-    return near.reduce((n, s) => n + (s.edge === e && s.k === k ? 0 : segmentTouches(s.a, s.b, grown) ? 1 : 0), 0);
-  };
+    pending.some((o) => o !== e && overlaps(box, o.reserved, 2)) ||
+    groupBoxes.some((g) => overlaps(box, g, 4) && !within(box, g, 4));
+  // Lines that come too near: its own edge's other parts touching it, or another edge's within
+  // 10 of it (review B7: a line beside a label reads as that label's).
+  // A line through the label costs far more than one merely near it, so a near miss is never
+  // traded for a crossing.
+  const grow = (box, pad) => ({ x: box.x - pad, y: box.y - pad, w: box.w + 2 * pad, h: box.h + 2 * pad });
+  const crossings = (box, e, k, near = segments) =>
+    near.reduce((n, s) => {
+      if (s.edge === e && s.k === k) return n;
+      if (segmentTouches(s.a, s.b, grow(box, 1))) return n + 100;
+      return n + (s.edge !== e && segmentTouches(s.a, s.b, grow(box, LAYOUT.labelLineClear)) ? 1 : 0);
+    }, 0);
   for (const e of edges) {
     if (!e.label) continue;
     const { w, h } = e.measured;
@@ -658,7 +1059,8 @@ function layoutOne(diagram, direction) {
     search: for (const run of runs) {
       // Only lines near this run can meet a label slid along it: found once, not per step
       // (code review: a 40-box chain with 41 labelled long edges took up to 350 ms).
-      const band = { x: Math.min(run.a[0], run.b[0]) - w / 2 - 2, y: Math.min(run.a[1], run.b[1]) - h / 2 - 2, w: Math.abs(run.b[0] - run.a[0]) + w + 4, h: Math.abs(run.b[1] - run.a[1]) + h + 4 };
+      const reach = LAYOUT.labelLineClear + 2;
+      const band = { x: Math.min(run.a[0], run.b[0]) - w / 2 - reach, y: Math.min(run.a[1], run.b[1]) - h / 2 - reach, w: Math.abs(run.b[0] - run.a[0]) + w + 2 * reach, h: Math.abs(run.b[1] - run.a[1]) + h + 2 * reach };
       const near = segments.filter((s) => segmentTouches(s.a, s.b, band));
       for (let step = 0; step <= 80; step += 1) {
         // From the middle outward, 4 px at a time, alternately each way.

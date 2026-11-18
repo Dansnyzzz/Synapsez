@@ -563,6 +563,132 @@ const ownerPipeline = {
   ],
 };
 
+/**
+ * What a demanding reader sees wrong in a laid-out drawing (review, fix round 1), each as a
+ * list of findings. Coordinates are the drawing's own units.
+ *   jogs        an interior segment under 12: a step for no reason (B3)
+ *   meets       an edge's point within 12 of, and in line with, another edge's segment:
+ *               two arrows that read as one line (B4)
+ *   crossings   two edges crossing (B5)
+ *   foreign     a segment through a group that holds neither of its ends (B5)
+ *   borders     a label touching a group's border (B6)
+ *   loops       a self-loop, or its label, leaving its own group (B6)
+ *   bends       an edge with more than 4 bends (B7)
+ *   nearLabels  a segment within 10 of another edge's label (B7)
+ *   groupGaps   two groups nearer than 24 (C10)
+ *   titles      a segment through a group's title (C9)
+ */
+function quality(layout) {
+  const q = { jogs: [], meets: [], crossings: [], foreign: [], borders: [], loops: [], bends: [], nearLabels: [], groupGaps: [], titles: [] };
+  const name = (e) => `${e.from}→${e.to}`;
+  const segs = layout.edges.map((e) => e.points.slice(1).map((p, k) => [e.points[k], p]));
+  const flat = ([a, b]) => Math.abs(a[1] - b[1]) < 0.01;
+  const len = ([a, b]) => Math.abs(b[0] - a[0]) + Math.abs(b[1] - a[1]);
+  const lo = (s, ax) => Math.min(s[0][ax], s[1][ax]);
+  const hi = (s, ax) => Math.max(s[0][ax], s[1][ax]);
+  // Does an axis-parallel segment meet the open box (grown by `pad`)?
+  const meetsBox = (s, b, pad = 0) => hi(s, 0) > b.x - pad && lo(s, 0) < b.x + b.w + pad && hi(s, 1) > b.y - pad && lo(s, 1) < b.y + b.h + pad;
+  const groupOf = new Map(layout.nodes.map((n) => [n.id, n.group]));
+  layout.edges.forEach((e, i) => {
+    segs[i].forEach((s, k) => {
+      if (k > 0 && k < segs[i].length - 1 && len(s) < 12) q.jogs.push(`${name(e)}: ${len(s).toFixed(1)}`);
+    });
+    if (e.points.length - 2 > 4) q.bends.push(`${name(e)}: ${e.points.length - 2}`);
+    for (const g of layout.groups) {
+      if (groupOf.get(e.from) === g.id || groupOf.get(e.to) === g.id) continue;
+      if (segs[i].some((s) => hi(s, 0) > g.x + 1 && lo(s, 0) < g.x + g.w - 1 && hi(s, 1) > g.y + 1 && lo(s, 1) < g.y + g.h - 1)) q.foreign.push(`${name(e)} through ${g.id}`);
+    }
+    for (const g of layout.groups) if (g.titleBox && segs[i].some((s) => meetsBox(s, g.titleBox, 2))) q.titles.push(`${name(e)} through ${g.id}'s title`);
+  });
+  for (let i = 0; i < layout.edges.length; i += 1) {
+    for (let j = 0; j < layout.edges.length; j += 1) {
+      if (i === j) continue;
+      const [A, B] = [layout.edges[i], layout.edges[j]];
+      // An end of A in line with a segment of B, within 12 of it — unless both end on one port.
+      const ends = [A.points[0], A.points.at(-1)];
+      for (const p of A.points) {
+        for (const s of segs[j]) {
+          const ax = flat(s) ? 1 : 0;
+          if (Math.abs(p[ax] - s[0][ax]) > 0.5) continue;
+          const along = 1 - ax;
+          const off = Math.max(0, lo(s, along) - p[along], p[along] - hi(s, along));
+          const samePort = ends.some((t) => [B.points[0], B.points.at(-1)].some((u) => Math.abs(t[0] - u[0]) < 0.5 && Math.abs(t[1] - u[1]) < 0.5));
+          if (off <= 12 && !samePort) {
+            q.meets.push(`${name(A)} and ${name(B)} at ${Math.round(p[0])},${Math.round(p[1])}`);
+            break;
+          }
+        }
+      }
+      if (j > i) {
+        for (const s of segs[i]) {
+          for (const t of segs[j]) {
+            if (flat(s) === flat(t)) continue;
+            const [h, v] = flat(s) ? [s, t] : [t, s];
+            const [x, y] = [v[0][0], h[0][1]];
+            if (x > lo(h, 0) + 0.5 && x < hi(h, 0) - 0.5 && y > lo(v, 1) + 0.5 && y < hi(v, 1) - 0.5) q.crossings.push(`${name(A)} × ${name(B)}`);
+          }
+        }
+      }
+    }
+    const e = layout.edges[i];
+    if (e.labelBox) {
+      for (const g of layout.groups) {
+        const b = e.labelBox;
+        const touches = b.x - 2 < g.x + g.w && b.x + b.w + 2 > g.x && b.y - 2 < g.y + g.h && b.y + b.h + 2 > g.y;
+        const inside = b.x - 2 >= g.x && b.y - 2 >= g.y && b.x + b.w + 2 <= g.x + g.w && b.y + b.h + 2 <= g.y + g.h;
+        if (touches && !inside) q.borders.push(`"${e.label}" on ${g.id}'s border`);
+      }
+      layout.edges.forEach((o, j) => {
+        if (j !== i && segs[j].some((s) => meetsBox(s, e.labelBox, 10))) q.nearLabels.push(`${name(o)} within 10 of "${e.label}"`);
+      });
+    }
+    if (e.from === e.to && groupOf.get(e.from)) {
+      const g = layout.groups.find((x) => x.id === groupOf.get(e.from));
+      const within = (p) => p[0] >= g.x + 4 && p[0] <= g.x + g.w - 4 && p[1] >= g.y + 4 && p[1] <= g.y + g.h - 4;
+      const box = e.labelBox;
+      if (!e.points.every(within) || (box && !(within([box.x, box.y]) && within([box.x + box.w, box.y + box.h])))) q.loops.push(`${name(e)} leaves ${g.id}`);
+    }
+  }
+  for (let i = 0; i < layout.groups.length; i += 1) {
+    for (let j = i + 1; j < layout.groups.length; j += 1) {
+      const [a, b] = [layout.groups[i], layout.groups[j]];
+      const gap = Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w), b.y - (a.y + a.h), a.y - (b.y + b.h));
+      if (gap < 24 - 1e-6) q.groupGaps.push(`${a.id}/${b.id}: ${gap.toFixed(1)}`);
+    }
+  }
+  return q;
+}
+const QUALITY_KINDS = ['jogs', 'meets', 'crossings', 'foreign', 'borders', 'loops', 'bends', 'nearLabels', 'groupGaps', 'titles'];
+// Counts over the 600 random small layouts before fix round 1 (63a6e59), as ceilings.
+const SWEEP_CEILING = { jogs: 1322, meets: 174, crossings: 1446, foreign: 522, borders: 247, loops: 346, bends: 582, nearLabels: 1205, groupGaps: 224, titles: 0 };
+// How much of a group is empty: its area less its members'.
+const emptyShare = (layout, g) => 1 - layout.nodes.filter((n) => n.group === g.id).reduce((s, n) => s + n.w * n.h, 0) / (g.w * g.h);
+
+// The reviewer's third fixture (fix round 1): four groups, every kind of box, all but two icons.
+const iconsFixture = {
+  groups: [{ id: 'edge', title: 'Edge' }, { id: 'svc', title: 'Services' }, { id: 'data', title: 'Data' }, { id: 'ops', title: 'Operations' }],
+  nodes: [
+    { id: 'u', title: 'Customer', icon: 'user', kind: 'pill' },
+    { id: 'cdn', title: 'CDN', lines: ['static assets'], icon: 'cloud', group: 'edge' },
+    { id: 'gw', title: 'API gateway', lines: ['rate limits', 'auth check'], icon: 'server', group: 'edge' },
+    { id: 'auth', title: 'Auth', icon: 'lock', group: 'svc' },
+    { id: 'search', title: 'Search', icon: 'search', group: 'svc' },
+    { id: 'chat', title: 'Chat service', lines: ['streams replies'], icon: 'chat', group: 'svc' },
+    { id: 'cache', title: 'Redis cache', icon: 'cache', group: 'data' },
+    { id: 'db', title: 'Postgres', icon: 'database', group: 'data' },
+    { id: 'docs', title: 'Object store', icon: 'document', group: 'data' },
+    { id: 'jobs', title: 'Workers', icon: 'gear', group: 'ops' },
+    { id: 'events', title: 'Event bus', icon: 'bolt', group: 'ops' },
+    { id: 'metrics', title: 'Metrics', icon: 'chart', group: 'ops' },
+    { id: 'note', title: 'Nightly backups', kind: 'note' },
+  ],
+  edges: [
+    { from: 'u', to: 'cdn' }, { from: 'cdn', to: 'gw', label: 'HTTPS' }, { from: 'gw', to: 'auth' }, { from: 'gw', to: 'search' }, { from: 'gw', to: 'chat' },
+    { from: 'search', to: 'cache', label: 'hit' }, { from: 'chat', to: 'db' }, { from: 'chat', to: 'events', style: 'dashed' }, { from: 'events', to: 'jobs' },
+    { from: 'jobs', to: 'docs' }, { from: 'jobs', to: 'metrics', style: 'dashed' }, { from: 'db', to: 'note', style: 'dashed' },
+  ],
+};
+
 /** Whether markup is well-formed XML: quoted attributes, escaped text, every tag closed in order, one root. */
 function wellFormed(xml) {
   const stack = [];
@@ -600,17 +726,21 @@ section('"auto" lays a drawing out both ways and keeps the better shape');
   const wide = layoutDiagram(valid(fan));
   check('a wide, shallow one (one box fanning out to six) goes right', wide.direction === 'right', `${wide.direction} ${Math.round(wide.width)}×${Math.round(wide.height)}`);
   check('  and is exactly the layout that direction gives', isDeepStrictEqual(wide, layoutDiagram({ ...valid(fan), direction: 'right' })) && isDeepStrictEqual(long, layoutDiagram({ ...valid(chain(8)), direction: 'down' })));
-  const off = (l) => Math.abs(Math.log(l.width / l.height / 1.6));
-  const both = ['right', 'down'].map((direction) => layoutDiagram({ ...valid(pipeline), direction }));
-  const auto = layoutDiagram(valid(pipeline));
-  const closer = off(both[1]) < off(both[0]) ? 'down' : 'right';
-  check('the owner\'s pipeline takes the one closer to 16:10', auto.direction === closer, `${auto.direction}: right ${off(both[0]).toFixed(2)} off, down ${off(both[1]).toFixed(2)} off`);
+  // Review C8: the text a person reads in a 760 px reply column decides, not the box's shape.
+  const atColumn = (l) => TEXT.titleSize * Math.min(1, 760 / l.width);
+  for (const [name, input] of [['pipeline', pipeline], ['owner\'s 4-layer pipeline', ownerPipeline], ['icons', iconsFixture]]) {
+    const both = ['right', 'down'].map((direction) => layoutDiagram({ ...valid(input), direction }));
+    const auto = layoutDiagram(valid(input));
+    check(`${name}: auto keeps the way its titles are largest at 760 px (or within 5 %)`, atColumn(auto) >= Math.max(...both.map(atColumn)) * 0.95 - 1e-9, `${auto.direction}: titles ${atColumn(auto).toFixed(1)} px; right ${atColumn(both[0]).toFixed(1)}, down ${atColumn(both[1]).toFixed(1)}`);
+  }
+  const iconsAuto = layoutDiagram(valid(iconsFixture));
+  check('the icons drawing, auto, shows its titles at 11 px or more in a 760 px column', atColumn(iconsAuto) >= 11, `${iconsAuto.direction}, ${Math.round(iconsAuto.width)} wide: ${atColumn(iconsAuto).toFixed(1)} px`);
   // The rule itself, on boxes only.
   const box = (width, height, tag) => ({ width, height, tag });
-  check('closer to 16:10 wins when it fits 1,200 at 0.8', chooseDirection(box(1000, 900, 'r'), box(800, 500, 'd')).tag === 'd');
-  check('  a closer one too wide even at 0.8 loses to the narrower', chooseDirection(box(1600, 1000, 'r'), box(700, 2000, 'd')).tag === 'd' && chooseDirection(box(700, 2000, 'r'), box(1600, 1000, 'd')).tag === 'r');
-  check('  1,500 wide still fits (1,200 at 0.8)', chooseDirection(box(1500, 940, 'r'), box(400, 2000, 'd')).tag === 'r');
-  check('  when neither fits, the narrower', chooseDirection(box(3000, 1900, 'r'), box(2000, 400, 'd')).tag === 'd');
+  check('larger text at 760 wins: 897 wide beats 1,422 wide', chooseDirection(box(1422, 511, 'r'), box(897, 991, 'd')).tag === 'd');
+  check('  however well the wider one is shaped, when its text is over 5 % smaller', chooseDirection(box(900, 560, 'r'), box(760, 2000, 'd')).tag === 'd');
+  check('  both within the column: the shape closer to 16:10 decides', chooseDirection(box(700, 300, 'r'), box(400, 600, 'd')).tag === 'r' && chooseDirection(box(700, 120, 'r'), box(400, 260, 'd')).tag === 'd');
+  check('  within 5 % of each other, the shape decides too', chooseDirection(box(800, 400, 'r'), box(780, 700, 'd')).tag === 'r');
   check('  and a tie keeps right', chooseDirection(box(800, 500, 'r'), box(800, 500, 'd')).tag === 'r');
   check('"right" and "down" still force their way', layoutDiagram(valid({ ...chain(8), direction: 'right' })).direction === 'right' && layoutDiagram(valid({ ...fan, direction: 'down' })).direction === 'down');
 }
@@ -680,7 +810,24 @@ section('the drawing: well-formed, escaped, one marker, every edge where the lay
   check('a box is a card: an 8 px radius and the soft shadow', layout.nodes.filter((n) => n.kind === 'box').every((n) => rectOf(n).rx === 8 && /filter="url\(#s/.test(rectOf(n).rest)));
   check('the shadow is the spec\'s: 6 % opacity, 1 px down, a 3 px blur', /<feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#0F172A" flood-opacity="0.06"\/>/.test(svg));
   const labelled = layout.edges.filter((e) => e.labelBox);
-  check('each label sits on a backing in the canvas colour, exactly its label box', labelled.every((e) => rects.some((r) => Math.abs(r.x - e.labelBox.x) < 0.01 && Math.abs(r.y - e.labelBox.y) < 0.01 && Math.abs(r.w - e.labelBox.w) < 0.01 && /fill="#FFFFFF"/.test(r.rest))));
+  check('each label sits on a backing exactly its label box', labelled.every((e) => rects.some((r) => Math.abs(r.x - e.labelBox.x) < 0.01 && Math.abs(r.y - e.labelBox.y) < 0.01 && Math.abs(r.w - e.labelBox.w) < 0.01)));
+  // Review C11: the backing is the colour behind it — its group's fill inside a group, the
+  // canvas outside — so no white patch sits on a tint.
+  const backingWrong = [];
+  for (const theme of ['light', 'dark']) {
+    for (const input of [pipeline, ownerPipeline, iconsFixture]) {
+      const { layout: l, svg: s } = drawOf({ ...input, theme });
+      const P = palette(theme);
+      for (const e of l.edges.filter((x) => x.labelBox)) {
+        const b = e.labelBox;
+        const gi = l.groups.findIndex((g) => b.x >= g.x && b.y >= g.y && b.x + b.w <= g.x + g.w && b.y + b.h <= g.y + g.h);
+        const want = gi >= 0 ? P.accents[gi].fill : P.canvas;
+        const rect = new RegExp(`<rect x="${Math.round(b.x * 100) / 100}" y="${Math.round(b.y * 100) / 100}" width="[\\d.]+" height="[\\d.]+" rx="4" fill="(#[0-9A-F]{6})"`).exec(s);
+        if (!rect || rect[1] !== want) backingWrong.push(`${theme} "${e.label}": ${rect?.[1]} for ${want}`);
+      }
+    }
+  }
+  check('a label\'s backing is its group\'s fill inside a group, the canvas outside', backingWrong.length === 0, backingWrong.slice(0, 3).join(' | '));
   const accents = palette().accents;
   check('each group is tinted in its own accent, its title in that accent\'s dark shade', layout.groups.every((g, i) => rects.some((r) => Math.abs(r.x - g.x) < 0.01 && r.rest.includes(`fill="${accents[i].fill}"`) && r.rest.includes(`stroke="${accents[i].edge}"`)) && svg.includes(`fill="${accents[i].ink}">${g.titleLines[0]}</text>`)));
 
@@ -777,6 +924,46 @@ section('both themes keep text at 4.5:1');
   check('the dark amber group reads amber, not olive: red clearly over green, green over blue', r - g >= 4 && g > b, palette('dark').accents[3].fill);
   check('the dark canvas is the page\'s own dark paper', palette('dark').canvas === '#0F1720');
   check('eight accents, as many as a diagram may have groups, none repeated', new Set(palette().accents.map((a) => a.accent)).size === 8 && new Set(palette('dark').accents.map((a) => a.accent)).size === 8);
+}
+
+section('the reviewer\'s three drawings read cleanly, every way (fix round 1)');
+{
+  for (const [name, input] of [['owner', ownerPipeline], ['pipeline', pipeline], ['icons', iconsFixture]]) {
+    for (const direction of ['auto', 'right', 'down']) {
+      const layout = layoutDiagram(valid({ ...input, direction }));
+      const q = quality(layout);
+      for (const kind of QUALITY_KINDS) check(`${name} ${direction} (${layout.direction}): no ${kind}`, q[kind].length === 0, q[kind].slice(0, 3).join(' | '));
+      check(`${name} ${direction}: still every Task 1 rule`, problems(layout).length === 0 && labelsOverLines(layout).length === 0 && sideBySide(layout).length === 0, [...problems(layout), ...labelsOverLines(layout), ...sideBySide(layout)].slice(0, 2).join(' | '));
+    }
+  }
+  // Review C9: groups were 22–28 % full (72–78 % empty), a title column beside the members and
+  // nothing in it. Now the title is a band across the top, a group hugs its members, and a gap
+  // keeps room for a group's title only where that group is.
+  //
+  // t4 is the exception, and pinned where it is: its two boxes sit either side of the gap
+  // between ranks 3 and 4, which carries three lines from t2 to t4 and keeps them clear of t3's
+  // title band. In a layered layout that gap is shared by the whole rank, so t4 cannot close it
+  // without breaking the ranks' alignment (fix round 1 report: a concern for the controller).
+  const auto = layoutDiagram(valid(ownerPipeline));
+  const empty = (layout) => layout.groups.map((g) => `${g.id} ${(100 * emptyShare(layout, g)).toFixed(1)}%`).join(' ');
+  const limit = { t1: 0.55, t2: 0.55, t3: 0.55, t4: 0.66 };
+  check('owner, as auto draws it: t1–t3 at most 55 % empty, t4 at most 66 % (was 52/73/72/78)', auto.groups.every((g) => emptyShare(auto, g) <= limit[g.id]), empty(auto));
+  console.log(`    owner right, not what auto draws: ${empty(layoutDiagram(valid({ ...ownerPipeline, direction: 'right' })))}`);
+}
+
+section('random drawings: the same findings, counted, no worse than before fix round 1');
+{
+  const counts = Object.fromEntries(QUALITY_KINDS.map((k) => [k, 0]));
+  for (let seed = 1; seed <= 300; seed += 1) {
+    const n = 5 + (seed % 11);
+    const d = valid(bigDiagram(seed, { n, m: n + (seed % (n + 1)), groups: Math.min(seed % 4, Math.floor(n / 3)) }));
+    for (const direction of ['right', 'down']) {
+      const q = quality(layoutDiagram({ ...d, direction }));
+      for (const kind of QUALITY_KINDS) counts[kind] += q[kind].length;
+    }
+  }
+  console.log(`    600 small layouts: ${QUALITY_KINDS.map((k) => `${k} ${counts[k]}`).join(', ')}`);
+  for (const kind of QUALITY_KINDS) check(`600 small layouts: ${kind} no more than before (${SWEEP_CEILING[kind]})`, counts[kind] <= SWEEP_CEILING[kind], `${counts[kind]}`);
 }
 
 console.log(failures ? `\n\x1b[31m${failures} failed\x1b[0m` : '\n\x1b[32mall passed\x1b[0m');
