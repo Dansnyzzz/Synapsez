@@ -27,6 +27,7 @@ const { DRAWING_FIT } = await import('../public/js/drawing-fit.js');
 const { LIMITS, DIRECTIONS, THEMES, KINDS, STYLES, ICON_NAMES, validateDiagram } = await import('../server/diagram/validate.js');
 const { layoutDiagram } = await import('../server/diagram/layout.js');
 const { renderDiagram } = await import('../server/diagram/render.js');
+const { textWidth } = await import('../server/diagram/measure.js');
 
 const skill = (id) => BUILTIN_SKILLS.find((s) => s.id === id) || null;
 const textOf = (id) => skill(id)?.instructions || '';
@@ -37,21 +38,29 @@ const two = (x) => x.toFixed(2);
 // What each skill may weigh. The spec (2026-11-17 §"Adaptive and professional") asked for the
 // guide at about 7,000 characters and a recipe family at about 9,000; with every skeleton a
 // complete drawing (480 to 1,300 characters each, about 4,500 a family) the prose around them was
-// cut to the numbers and a family of four came to about 10,200, the family of six to 11,200. Read
-// only when one applies, so the size is paid on the turns that draw; the description is in every
-// prompt, so it stays short.
-const BUDGET = { 'builtin:drawing': 7500, 'builtin:svg-flows': 10500, 'builtin:svg-structures': 11500 };
+// cut to the numbers and a family of four came to about 10,200, the family of six to 11,200. Fix
+// round 1 (review, 2026-11-19) added what the check cannot see: rooms by line count, the page's
+// own background, a call to itself on the last party, colour by kind of item. Read only when one
+// applies, so the size is paid on the turns that draw; the description is in every prompt, so it
+// stays at 145 characters or fewer.
+const BUDGET = { 'builtin:drawing': 8000, 'builtin:svg-flows': 10750, 'builtin:svg-structures': 12000 };
+const DESCRIPTION = 145;
 const RECIPES = {
   'builtin:svg-flows': ['decision', 'loop', 'swimlanes', 'sequence'],
   'builtin:svg-structures': ['tree', 'mindmap', 'pyramid', 'cycle', 'venn', 'stack'],
 };
 
 section('the drawing skills are on the menu, within their budgets');
+{
+  // A recipe family added later must be held here too, not slip past with no budget or no fills.
+  const family = BUILTIN_SKILLS.map((s) => s.id).filter((id) => id.startsWith('builtin:svg-'));
+  check('every builtin:svg-* skill has a budget here and its recipes listed', family.length >= 2 && family.every((id) => id in BUDGET && id in RECIPES), family.filter((id) => !(id in BUDGET && id in RECIPES)).join(', '));
+}
 for (const [id, budget] of Object.entries(BUDGET)) {
   const s = skill(id);
-  check(`${id} is a built-in skill`, !!s);
+  check(`${id} is a built-in skill, under the visuals plugin`, !!s && s.plugin === 'visuals');
   if (!s) continue;
-  check(`  its description is at most 200 characters, near 170 (${s.description.length})`, s.description.length <= 200 && s.description.length >= 120);
+  check(`  its description says when to read it in ${DESCRIPTION} characters or fewer (${s.description.length})`, s.description.length <= DESCRIPTION && s.description.length >= 100);
   check(`  its instructions are within ${budget} characters (${s.instructions.length})`, s.instructions.length <= budget && s.instructions.length >= budget * 0.6);
   check('  found by the word after "builtin:" and by its name', findBuiltinSkill(id.split(':')[1])?.id === id && findBuiltinSkill(s.name)?.id === id);
 }
@@ -116,8 +125,8 @@ function readPalette(g) {
     const first = key.split(/[ ,]/)[0];
     out.rows.push({ key: first, light: { hex: hexes(l), num: nums(l) }, dark: { hex: hexes(d), num: nums(d) } });
   }
-  const canvas = /light \(canvas (#[0-9A-F]{6})\) \| dark \(canvas (#[0-9A-F]{6})\)/.exec(g);
-  if (canvas) [out.light.canvas, out.dark.canvas] = [canvas[1], canvas[2]];
+  const canvas = /light \(canvas (#[0-9A-F]{6}), page (#[0-9A-F]{6})\) \| dark \(canvas (#[0-9A-F]{6})\)/.exec(g);
+  if (canvas) [out.light.canvas, out.light.page, out.dark.canvas] = [canvas[1], canvas[2], canvas[3]];
   for (const r of out.rows) {
     for (const theme of ['light', 'dark']) {
       const [a, b, c] = r[theme].hex;
@@ -160,6 +169,17 @@ section('every contrast the guide states is computed again, and every text pair 
       ...P.fam.flatMap((f) => [[`${f.name} ink on its tint`, f.inkA, f.tint], [`muted on ${f.name}`, P.muted, f.tint], [`${f.name} ink on canvas`, f.inkA, P.canvas]]),
     ].filter(([, a, b]) => ratio(a, b) < 4.5);
     check(`  every text pair a recipe uses reads at 4.5:1 or more`, low.length === 0, low.map(([n, a, b]) => `${n} ${two(ratio(a, b))}`).join(' | '));
+  }
+  // A light drawing on a light page has no paper of its own: it sits on the page's background
+  // (review, fix round 1: the old edge was 2.86:1 there). That colour is read from the page's CSS.
+  {
+    const css = (await import('node:fs')).readFileSync(new URL('../public/css/app.css', import.meta.url), 'utf8');
+    const pageBg = [...css.matchAll(/--bg:\s*(#[0-9a-fA-F]{6})/g)].map((m) => m[1].toUpperCase()).find((hex) => colour(hex) && contrast(colour(hex), [255, 255, 255]) < 1.2);
+    const P = PAL.light;
+    check(`the light page the guide names is the page's own background (${pageBg})`, !!P.page && P.page === pageBg, `${P.page} against ${pageBg}`);
+    const text = [['ink', P.ink], ['muted', P.muted], ...P.fam.map((f) => [`${f.name} ink`, f.inkA])].filter(([, hex]) => ratio(hex, P.page) < 4.5);
+    const lines = [['line', P.line], ['card edge', P.edge], ...P.fam.map((f) => [`${f.name} stroke`, f.stroke])].filter(([, hex]) => Math.min(ratio(hex, P.page), ratio(hex, P.canvas)) < 3);
+    check('  on it, every text pair still reads at 4.5:1 and every edge and stroke at 3:1, as the guide says', !!P.page && text.length === 0 && lines.length === 0 && guide.includes(`On the page's ${P.page}`), [...text, ...lines].map(([n, hex]) => `${n} ${two(ratio(hex, P.page))}`).join(' | '));
   }
   const least = (theme, pick) => two(Math.min(...PAL[theme].fam.map(pick)));
   const mutedLine = /Muted on any tint: at least (\d+\.\d\d) light, (\d+\.\d\d) dark\. Strokes against the canvas: at least (\d+\.\d\d) light, (\d+\.\d\d) dark\./.exec(guide);
@@ -238,6 +258,84 @@ function wellFormed(xml) {
   return roots === 1 ? '' : `${roots} roots`;
 }
 
+// ── what the check cannot see ───────────────────────────────────────────────────────────────
+
+const unescapeXml = (s) => String(s).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+const toSegment = ([px, py], [ax, ay], [bx, by]) => {
+  const [dx, dy] = [bx - ax, by - ay];
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy || 1)));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+};
+const inPolygon = ([x, y], pts) => {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i, i += 1) {
+    const [xi, yi] = pts[i];
+    const [xj, yj] = pts[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+};
+const toBox = ([x, y], b) => Math.hypot(Math.max(b.x0 - x, 0, x - b.x1), Math.max(b.y0 - y, 0, y - b.y1));
+
+/**
+ * The checker reads only rects as text holders, so text in a circle or a polygon, text beside a
+ * shape it does not belong to, a Venn region and a sequence label over a lifeline go unseen
+ * (review, fix round 1). Measured here the way the checker measures text: the estimate of
+ * measure.js, the box from 0.8 of the size above the baseline to 0.25 below.
+ */
+function blindSpots(name, svg) {
+  const width = Number(/viewBox="0 0 ([\d.]+) /.exec(svg)?.[1] || 720);
+  const rootSize = Number(/<svg\b[^>]*font-size="([\d.]+)"/.exec(svg)?.[1] || 16);
+  const texts = [...svg.matchAll(/<text\b([^>]*)>([^<]*)<\/text>/g)].map(([, a, body]) => {
+    const at = (k) => new RegExp(`(?:^|\\s)${k}="([^"]*)"`).exec(a)?.[1];
+    const size = Number(at('font-size') || rootSize);
+    const text = unescapeXml(body);
+    const w = textWidth(text, size, /600|bold/.test(at('font-weight') || ''));
+    const [x, y] = [Number(at('x')), Number(at('y'))];
+    const anchor = at('text-anchor') || 'middle';
+    const x0 = anchor === 'middle' ? x - w / 2 : anchor === 'end' ? x - w : x;
+    const box = { x0, x1: x0 + w, y0: y - 0.8 * size, y1: y + 0.25 * size };
+    return { text, box, corners: [[box.x0, box.y0], [box.x1, box.y0], [box.x0, box.y1], [box.x1, box.y1]], centre: [(box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2] };
+  });
+  const circles = [...svg.matchAll(/<circle cx="([\d.-]+)" cy="([\d.-]+)" r="([\d.]+)"([^>]*)>/g)].map((m) => ({ c: [Number(m[1]), Number(m[2])], r: Number(m[3]), venn: /fill-opacity/.test(m[4]) }));
+  const polygons = [...svg.matchAll(/<polygon points="([^"]+)"/g)].map((m) => m[1].trim().split(/\s+/).map((p) => p.split(',').map(Number)));
+  const lifelines = [...svg.matchAll(/<line x1="([\d.]+)" y1="64" x2="\1"/g)].map((m) => Number(m[1]));
+  const found = [];
+  const say = (t, what) => found.push(`"${t.text}" ${what}`);
+  const inside = (p, c) => c.r - Math.hypot(p[0] - c.c[0], p[1] - c.c[1]);
+  const venn = circles.filter((c) => c.venn);
+  for (const t of texts) {
+    if (t.box.x0 < 24 - 0.5 || t.box.x1 > width - 24 + 0.5) say(t, `runs into the ${Math.round(t.box.x0 < 24 ? t.box.x0 : t.box.x1)} margin`);
+    // A Venn region: every corner in exactly the circles its middle is in, 6 px inside each outline.
+    if (venn.length) {
+      const want = venn.map((c) => inside(t.centre, c) > 0);
+      const worst = Math.min(...t.corners.flatMap((p) => venn.map((c, i) => (want[i] ? inside(p, c) : -inside(p, c)))));
+      if (worst < 6) say(t, `is ${worst.toFixed(1)} px from a circle's outline (6 wanted)`);
+    }
+    // Text in a circle or polygon stays 4 px inside it; text outside stays 4 px clear of it.
+    for (const c of circles.filter((k) => !k.venn)) {
+      if (inside(t.centre, c) > 0) {
+        const least = Math.min(...t.corners.map((p) => inside(p, c)));
+        if (least < 4) say(t, `is ${least.toFixed(1)} px inside its circle (4 wanted)`);
+      } else if (toBox(c.c, t.box) < c.r + 4) say(t, `comes within ${(toBox(c.c, t.box) - c.r).toFixed(1)} px of a circle`);
+    }
+    for (const pts of polygons) {
+      const edges = pts.map((p, i) => [p, pts[(i + 1) % pts.length]]);
+      if (inPolygon(t.centre, pts)) {
+        const least = Math.min(...t.corners.map((p) => (inPolygon(p, pts) ? Math.min(...edges.map(([a, b]) => toSegment(p, a, b))) : -1)));
+        if (least < 4) say(t, `is ${least.toFixed(1)} px inside its shape (4 wanted)`);
+      } else {
+        let least = Infinity;
+        for (const [a, b] of edges) for (let k = 0; k <= 64; k += 1) least = Math.min(least, toBox([a[0] + ((b[0] - a[0]) * k) / 64, a[1] + ((b[1] - a[1]) * k) / 64], t.box));
+        if (least < 4) say(t, `comes within ${least.toFixed(1)} px of a shape it is not in`);
+      }
+    }
+    // A sequence label never sits on a lifeline: the dashes would run through its words.
+    if (name === 'sequence' && t.box.y0 > 64) for (const x of lifelines) if (t.box.x0 - 4 < x && x < t.box.x1 + 4) say(t, `sits on the lifeline at x ${Math.round(x)}`);
+  }
+  return found;
+}
+
 const rad = (deg) => (deg * Math.PI) / 180;
 const fam = (P, i) => P.fam[i % 6];
 const colours = (P, f = P.fam[0]) => ({ ink: P.ink, muted: P.muted, line: P.line, card: P.card, edge: P.edge, ground: P.ground, rule: P.rule, solid: P.solid, onSolid: P.onSolid, tint: f.tint, stroke: f.stroke, inkA: f.inkA });
@@ -290,9 +388,9 @@ const FILL = {
   },
   swimlanes(P, { lanes, steps, arrows }) {
     const m = Math.max(...steps.map((s) => s.col)) + 1;
-    const w = Math.floor((552 - 24 * (m - 1)) / m);
+    const w = Math.floor((540 - 24 * (m - 1)) / m);
     const laneY = (i) => 24 + 84 * i;
-    const at = steps.map((s) => ({ ...s, x: 128 + s.col * (w + 24), y: laneY(s.lane) + 16, cy: laneY(s.lane) + 42 }));
+    const at = steps.map((s) => ({ ...s, x: 140 + s.col * (w + 24), y: laneY(s.lane) + 16, cy: laneY(s.lane) + 42 }));
     const H = 48 + 84 * lanes.length;
     const d = ([a, b]) => {
       const [p, q] = [at[a], at[b]];
@@ -326,7 +424,8 @@ const FILL = {
     const yEnd = ys.at(-1) + 24;
     const H = yEnd + 24;
     const labels = messages.map((msg, j) => {
-      if (msg.self !== undefined) return { lx: xOf(msg.self) + 36, ly: ys[j] - 4.6, anchor: 'start', label: msg.label };
+      // On the last party a call to itself turns left, its label mirrored, so it stays on the canvas.
+      if (msg.self !== undefined) return msg.self === k - 1 ? { lx: xOf(msg.self) - 36, ly: ys[j] - 4.6, anchor: 'end', label: msg.label } : { lx: xOf(msg.self) + 36, ly: ys[j] - 4.6, anchor: 'start', label: msg.label };
       const right = msg.to > msg.from;
       return { lx: xOf(msg.from) + (right ? 10 : -10), ly: ys[j] - 8, anchor: right ? 'start' : 'end', label: msg.label };
     });
@@ -337,7 +436,7 @@ const FILL = {
         party: parties.map((name, i) => ({ x: xOf(i), bx: xOf(i) - w / 2, w, yEnd, name })),
         call: messages.map((msg, j) => ({ msg, y: ys[j] })).filter(({ msg }) => msg.self === undefined && !msg.reply).map(({ msg, y }) => ({ x1: xOf(msg.from), x2: xOf(msg.to), y })),
         reply: messages.map((msg, j) => ({ msg, y: ys[j] })).filter(({ msg }) => msg.reply).map(({ msg, y }) => ({ x1: xOf(msg.from), x2: xOf(msg.to), y })),
-        self: messages.map((msg, j) => ({ msg, y: ys[j] })).filter(({ msg }) => msg.self !== undefined).map(({ msg, y }) => ({ x: xOf(msg.self), top: y - 18 })),
+        self: messages.map((msg, j) => ({ msg, y: ys[j] })).filter(({ msg }) => msg.self !== undefined).map(({ msg, y }) => ({ x: xOf(msg.self), top: y - 18, out: msg.self === k - 1 ? -28 : 28, back: msg.self === k - 1 ? 28 : -28 })),
         label: labels,
       },
     };
@@ -392,7 +491,7 @@ const FILL = {
           const bot = funnel ? t - d : t + d;
           const y = 24 + i * (hb + 6);
           const my = y + hb / 2;
-          const f = fam(P, i);
+          const f = fam(P, 0);
           const notes = pair(b.note, my);
           return { x1: 200 - t / 2, x2: 200 + t / 2, x3: 200 + bot / 2, x4: 200 - bot / 2, y, yb: y + hb, ty: my + 5, my, lx: 200 + (t + bot) / 4 + 8, ny1: notes.a, ny2: notes.b, title: b.title, note1: b.note[0], note2: b.note[1] ?? null, tint: f.tint, stroke: f.stroke, inkA: f.inkA };
         }),
@@ -417,7 +516,7 @@ const FILL = {
         }),
         node: steps.map((lines, i) => {
           const [nx, ny] = on(angle(i));
-          const f = fam(P, i);
+          const f = fam(P, 0);
           const t = pair(lines, ny);
           return { nx, ny, r, ty1: t.a, ty2: t.b, line1: lines[0], line2: lines[1] ?? null, tint: f.tint, stroke: f.stroke, inkA: f.inkA };
         }),
@@ -453,7 +552,7 @@ const FILL = {
       H,
       top: { H, ...colours(P) },
       each: {
-        layer: layers.map((l, i) => ({ y: 24 + i * (hb + 8), w, h: hb, ty: 24 + i * (hb + 8) + hb / 2 + 5, name: l.name, tint: fam(P, i).tint, stroke: fam(P, i).stroke, inkA: fam(P, i).inkA })),
+        layer: layers.map((l, i) => ({ y: 24 + i * (hb + 8), w, h: hb, ty: 24 + i * (hb + 8) + hb / 2 + 5, name: l.name, tint: fam(P, 0).tint, stroke: fam(P, 0).stroke, inkA: fam(P, 0).inkA })),
         chip: layers.flatMap((l, i) => {
           const m = l.chips.length;
           const cw = (areaW - 8 * (m - 1)) / m;
@@ -523,7 +622,7 @@ const SAMPLES = {
       messages: [
         { from: 0, to: 1, label: '1. Bấm thanh toán' },
         { from: 1, to: 2, label: '2. Tạo đơn' },
-        { self: 2, label: '3. Kiểm tra tồn kho' },
+        { self: 2, label: '3. Kiểm tồn kho' },
         { from: 2, to: 3, label: '4. Yêu cầu trừ tiền' },
         { from: 3, to: 2, label: '5. Đã trừ tiền', reply: true },
         { from: 2, to: 1, label: '6. Đơn đã thanh toán', reply: true },
@@ -532,18 +631,20 @@ const SAMPLES = {
     },
     extreme: {
       parties: ['Khách', 'Web', 'API', 'Kho', 'Cổng TT', 'Email'],
+      // Labels at the room six parties leave: 13 characters a message, 9 a call to itself, one of
+      // them on the last party, where it turns left (review, fix round 1).
       messages: [
         { from: 0, to: 1, label: '1. Đặt hàng' },
         { from: 1, to: 2, label: '2. POST /đơn' },
         { from: 2, to: 3, label: '3. Giữ hàng' },
         { from: 3, to: 2, label: '4. Đã giữ', reply: true },
         { from: 2, to: 4, label: '5. Trừ tiền' },
-        { self: 4, label: '6. Xác thực OTP' },
+        { self: 4, label: '6. Mã OTP' },
         { from: 4, to: 2, label: '7. Thành công', reply: true },
-        { from: 2, to: 5, label: '8. Gửi hoá đơn' },
-        { from: 5, to: 0, label: '9. Email hoá đơn' },
-        { from: 2, to: 1, label: '10. Đơn xong', reply: true },
-        { from: 1, to: 0, label: '11. Cảm ơn bạn', reply: true },
+        { from: 2, to: 5, label: '8. Hoá đơn' },
+        { self: 5, label: '9. Ký số' },
+        { from: 5, to: 0, label: '10. Gửi email' },
+        { from: 2, to: 1, label: '11. Đơn xong', reply: true },
       ],
     },
   },
@@ -593,14 +694,16 @@ const SAMPLES = {
     },
   },
   cycle: {
-    comfortable: { hub: 'PDCA', caption: 'Mỗi vòng một tháng', steps: [['1. Lập kế', 'hoạch'], ['2. Thực', 'hiện'], ['3. Kiểm', 'tra'], ['4. Cải tiến']] },
+    comfortable: { hub: 'PDCA', caption: 'Một vòng mỗi tháng, đo cuối kỳ', steps: [['1. Lập kế', 'hoạch'], ['2. Thực', 'hiện'], ['3. Kiểm', 'tra'], ['4. Cải tiến']] },
     extreme: { hub: 'Vòng đời sản phẩm', caption: 'Lặp lại mỗi quý', steps: [['Ý tưởng'], ['Thiết kế'], ['Làm mẫu'], ['Thử'], ['Đo'], ['Học'], ['Sửa'], ['Ra mắt']] },
   },
   venn: {
-    comfortable: { sets: ['Nhóm Thiết kế', 'Nhóm Kỹ thuật'], regions: { A: ['Nghiên cứu người dùng', 'Bản vẽ giao diện', 'Hệ thống màu'], AB: ['Bản mẫu', 'Kiểm thử'], B: ['Máy chủ', 'Cơ sở dữ liệu', 'Triển khai', 'Giám sát'] } },
+    // Four lines in every region, each region's longest line at its room (24, 11, 24).
+    comfortable: { sets: ['Nhóm Thiết kế', 'Nhóm Kỹ thuật'], regions: { A: ['Nghiên cứu người dùng', 'Bản vẽ giao diện', 'Hệ thống màu và kiểu chữ', 'Hướng dẫn thương hiệu'], AB: ['Bản mẫu', 'Kiểm thử', 'Sửa lỗi', 'Đánh giá UX'], B: ['Máy chủ', 'Cơ sở dữ liệu', 'Triển khai', 'Giám sát và cảnh báo'] } },
     extreme: {
       sets: ['Kỹ năng', 'Đam mê', 'Thị trường cần'],
-      regions: { A: ['Kế toán', 'Phân tích'], B: ['Âm nhạc', 'Du lịch'], C: ['Chăm sóc người già'], AB: ['Sở thích'], AC: ['Nghề'], BC: ['Sứ mệnh'], ABC: ['Ikigai'] },
+      // The most lines each region holds, the longest at its room: 4 alone (17, 17, 23), 3 in a pair (6), 1 in the middle (6).
+      regions: { A: ['Kế toán', 'Phân tích số liệu', 'Viết báo cáo', 'Thuyết trình'], B: ['Âm nhạc', 'Du lịch', 'Nấu ăn', 'Chụp ảnh'], C: ['Chăm sóc người cao tuổi', 'Giáo dục trẻ em', 'Năng lượng sạch', 'Y tế cộng đồng'], AB: ['Viết', 'blog', 'nấu ăn'], AC: ['Nghề', 'tư vấn', 'thuế'], BC: ['Sứ', 'mệnh', 'xã hội'], ABC: ['Ikigai'] },
     },
   },
   stack: {
@@ -659,9 +762,10 @@ for (const [id, names] of Object.entries(RECIPES)) {
         // height cap of an 800 px window. The page fits it to what is drawn, which is no larger.
         const shown = Math.min(DRAWING_FIT.column / 720, (DRAWING_FIT.heightShare * DRAWING_FIT.window) / filled.H);
         const { issues, canvas } = checkDiagram(svg);
-        const ok = !left && !xml && filled.H <= 560 && smallest * shown >= 12 && issues.length === 0 && canvas === theme;
-        check(`${label}: ${filled.H} tall, smallest text ${num(smallest * shown)} px as shown, nothing for the check to find`, ok,
-          [left && `left unfilled: ${left.join(' ')}`, xml, filled.H > 560 && `H ${filled.H}`, smallest * shown < 12 && `text ${num(smallest * shown)} px`, canvas !== theme && `read as ${canvas}`, ...issues].filter(Boolean).join(' | '));
+        const blind = blindSpots(name, svg);
+        const ok = !left && !xml && filled.H <= 560 && smallest * shown >= 12 && issues.length === 0 && canvas === theme && blind.length === 0;
+        check(`${label}: ${filled.H} tall, smallest text ${num(smallest * shown)} px as shown, nothing for the check to find, nor where it cannot look`, ok,
+          [left && `left unfilled: ${left.join(' ')}`, xml, filled.H > 560 && `H ${filled.H}`, smallest * shown < 12 && `text ${num(smallest * shown)} px`, canvas !== theme && `read as ${canvas}`, ...issues, ...blind].filter(Boolean).join(' | '));
         shots.push({ name: `${name}-${size}-${theme}`, svg, theme });
       }
     }
@@ -677,6 +781,22 @@ section('the fills are judged, not waved through');
   check('an arrow stopped short of its box is caught', short !== good && checkDiagram(short).issues.some((i) => /points at nothing/.test(i)), checkDiagram(short).issues[0] || 'nothing found');
   const crowded = good.replace(/(<text x="200" y=")([\d.]+)(" font-weight="600" fill="#1E40AF">)/, (m, a, y, b) => `${a}${Number(y) - 40}${b}`);
   check('a text pushed onto another is caught', crowded !== good && checkDiagram(crowded).issues.length > 0, checkDiagram(crowded).issues[0] || 'nothing found');
+  // Where the checker cannot look (review, fix round 1), the geometry above must catch the same
+  // faults the reviewer drew: a call to itself on the last party not turned left, a Venn line
+  // past its room, a caption long enough to reach a stage, a label over a lifeline.
+  const svgOf = (n) => shots.find((s) => s.name === n)?.svg || '';
+  const seq = svgOf('sequence-extreme-light');
+  const unturned = seq.replace(/(<text x=")([\d.]+)(" y="[\d.]+" text-anchor=")end(" font-size="12.5">9\. Ký số<\/text>)/, (m, a, x, b, c) => `${a}${Number(x) + 72}${b}start${c}`);
+  check('  a call to itself on the last party, not turned left, is caught', unturned !== seq && blindSpots('sequence', unturned).some((f) => /margin/.test(f)), blindSpots('sequence', unturned)[0] || 'nothing found');
+  const wide = seq.replace('>1. Đặt hàng<', '>1. Đặt hàng qua ứng dụng<');
+  check('  a message label longer than its room, over the next lifeline, is caught', wide !== seq && blindSpots('sequence', wide).some((f) => /lifeline/.test(f)), blindSpots('sequence', wide)[0] || 'nothing found');
+  const venn = svgOf('venn-extreme-light');
+  // The bottom line, where the circle narrows, is the one the room is set by.
+  const over = venn.replace('>Y tế cộng đồng<', '>Y tế cộng đồng và môi trường<');
+  check('  a Venn line past its region\'s room is caught', over !== venn && blindSpots('venn', over).some((f) => /circle's outline/.test(f)), blindSpots('venn', over)[0] || 'nothing found');
+  const cyc = svgOf('cycle-comfortable-light');
+  const long = cyc.replace('>Một vòng mỗi tháng, đo cuối kỳ<', '>Một vòng mỗi tháng, đo và họp đánh giá cuối kỳ với cả nhóm<');
+  check('  a caption long enough to reach a stage is caught', long !== cyc && blindSpots('cycle', long).some((f) => /circle/.test(f)), blindSpots('cycle', long)[0] || 'nothing found');
 }
 
 // The filled drawings, for a person to look at: `node test/drawing-skills.test.mjs --out <dir>`.

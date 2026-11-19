@@ -408,9 +408,10 @@ Look at the finished file with \`look_at\` and fix what you see before answering
   // pass checkDiagram with nothing found, light and dark, comfortable and at its extreme.
   {
     id: 'builtin:drawing',
+    plugin: 'visuals',
     name: 'Drawing diagrams and pictures',
     description:
-      'Before drawing anything in the conversation: which tool to use, the diagram input, and the design system (canvas, type, palette, arrows) every hand-drawn SVG follows.',
+      'Before drawing anything in the conversation: which tool to use, the diagram input, and the design system every hand-drawn SVG follows.',
     instructions: `# Drawing diagrams and pictures
 
 Every drawing is checked before anyone sees it; a flawed one comes back to you to redraw, once. Pick the tool, then place everything by the numbers below, never by eye.
@@ -430,24 +431,23 @@ Every drawing is checked before anyone sees it; a flawed one comes back to you t
 - \`nodes\`: up to 40; \`id\` up to 40 letters, digits, _ or -, each its own; \`title\` up to 60 characters; \`lines\` up to 6 of up to 80; \`kind\` box (default), pill (a start or end) or note (an aside); \`group\`; \`icon\`: user, server, database, cloud, cache, gear, document, chat, lock, chart, search, bolt.
 - \`edges\`: up to 80; \`from\`, \`to\`, \`label\` up to 60 characters, \`style\` solid or dashed.
 - \`groups\`: up to 8, never nested, none empty. \`direction\`: auto (default, the better shape), right or down. \`theme\`: light (default) or dark.
-A refusal names what to change: change it and send again.
 
 ## 3. The design system, for every \`svg\`
-**Canvas.** \`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 {H}" font-family="system-ui, sans-serif" font-size="13" text-anchor="middle" fill="{ink}">\`, everything 24 px inside (x 24 to 696), H at most 560. Why: a drawing is shown in a column 710 px wide, at most 72 % of the window high (576 px in an 800 px window), fitted to what is drawn. A 720 × 560 canvas shows at 0.986 or more, so 12.5 px text reads at 12.3 px or more; 960 wide would show at 0.74 (12.5 → 9.2 px), 720 tall at 0.81 (→ 10.1 px). A phone's column is about 320 px: each recipe says what to draw there. The widget's \`title\` is its caption; do not repeat it inside.
+**Canvas.** \`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 {H}" font-family="system-ui, sans-serif" font-size="13" text-anchor="middle" fill="{ink}">\`, everything 24 px inside (x 24 to 696), H at most 560. Why: a drawing is shown in a column 710 px wide, at most 72 % of the window high (576 px in an 800 px window), fitted to what is drawn. A 720 × 560 canvas shows at 0.986 or more, so 12.5 px text reads at 12.3 px or more; 960 wide would show at 0.74 (12.5 → 9.2 px), 720 tall at 0.81 (→ 10.1 px). A phone's column is about 320 px: draw a recipe's Narrow variant when the person says they are on a phone, or asks for a narrow or vertical drawing. The widget's \`title\` is its caption; do not repeat it inside.
 
-**Type.** 14 semibold (\`font-weight="600"\`) for titles and names, 13 for body, 12.5 for labels and nothing smaller, 16 semibold for one hub. Each line its own \`<text>\`, 18 px apart at 13 (1.35 em). A line centred on y has its baseline at y + 0.35 × size: + 4.5 at 13, + 5 at 14, + 5.6 at 16, + 4.4 at 12.5.
+**Type.** 14 semibold (\`font-weight="600"\`) for titles and names, 13 for body, 12.5 for labels and nothing smaller, 16 semibold for one hub. Each extra line is its own \`<text>\` 18 px lower at 13 (1.35 em); the check reads a \`<tspan x="…" dy="1.35em">\` the same, and its messages suggest that form. A line centred on y has its baseline at y + 0.35 × size: + 4.5 at 13, + 5 at 14, + 5.6 at 16, + 4.4 at 12.5.
 
 **Fit.** A character is about 0.55 × size wide (0.6 semibold, a full size for Chinese or Japanese): 7.15 px at 13, 7.8 at 13 semibold, 8.4 at 14 semibold, 6.9 at 12.5. A line fits in its box less 24; longer, break it at a space and grow the box a line. The check measures the same way and fails text wider than its box less 6. Sentence case: capitals run wider.
 
 **Grid.** 8 px: gaps 8, 16, 24, 32 or 40; radius 8, a pill half its height.
 
-**Palette.** One family per meaning; text on a tint in that family's ink. WCAG ratios, computed: against the canvas for ink, muted, line and edge; of the text on it for solid; of the ink on the tint for a family.
-| | light (canvas #FFFFFF) | dark (canvas #0F1720) |
+**Palette.** Unordered categories (tree heads, branches, lanes): a family each; past 6, repeat them in order (i mod 6) so neighbours differ, or colour only what matters and the rest slate. Ordered items (bands, stages, layers): one family, since order shows in position. Text on a tint is in its family's ink. WCAG ratios, computed: against the canvas for ink, muted, line and edge; of the text on it for solid; of the ink on the tint for a family.
+| | light (canvas #FFFFFF, page #F7F9FB) | dark (canvas #0F1720) |
 |---|---|---|
 | ink | #1F2937 14.68 | #E5E7EB 14.58 |
 | muted | #4B5563 7.56 | #A3ADBB 7.95 |
 | line (arrows, connectors) | #64748B 4.76 | #8391A5 5.64 |
-| card, edge | #FFFFFF #8696AB 3.02 | #1E293B #5B6B82 3.33 |
+| card, edge | #FFFFFF #7D8DA3 3.38 | #1E293B #5B6B82 3.33 |
 | ground, rule | #F8FAFC #CBD5E1 | #131C27 #2A3642 |
 | solid, text on it | #1E40AF #FFFFFF 8.72 | #60A5FA #0F1720 7.10 |
 | family | tint stroke ink | tint stroke ink |
@@ -458,11 +458,11 @@ A refusal names what to change: change it and send again.
 | rose | #FFE4E6 #E11D48 #9F1239 6.68 | #432B36 #FB7185 #FECDD3 9.09 |
 | cyan | #CFFAFE #0891B2 #155E75 6.49 | #13404D #22D3EE #A5F3FC 9.01 |
 | slate | #F1F5F9 #64748B #1E293B 13.35 | #2C3641 #94A3B8 #E2E8F0 9.96 |
-Muted on any tint: at least 6.19 light, 4.85 dark. Strokes against the canvas: at least 3.19 light, 6.63 dark. Venn fills are each family's stroke at 16 % opacity (dark 20 %): ink where three overlap reads at least 7.58 light, 4.65 dark. In a recipe, \`{ink}\`, \`{card}\` and the rest are these; \`{tint}\`, \`{stroke}\`, \`{inkA}\` one family's. Light is the default and reads on either page theme; draw dark when a dark look is asked for.
+Muted on any tint: at least 6.19 light, 4.85 dark. Strokes against the canvas: at least 3.19 light, 6.63 dark. On the page's #F7F9FB, where light drawings also sit, text still reads at 4.5 or more and edges and strokes at 3. Venn fills are each family's stroke at 16 % opacity (dark 20 %): ink where three overlap reads at least 7.58 light, 4.65 dark. In a recipe, \`{ink}\`, \`{card}\` and the rest are these; \`{tint}\`, \`{stroke}\`, \`{inkA}\` one family's. Light is the default and reads on either page theme; draw dark when a dark look is asked for.
 
 **Strokes and arrows.** Lines 1.5 px in \`{line}\`, box edges 1 px, dashes \`5 4\`. One marker in \`<defs>\` serves every arrow:
 \`<marker id="ah" viewBox="0 0 10 10" refX="8.6" refY="5" markerWidth="7" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0L10 5L0 10z" fill="{line}"/></marker>\`
-Arrows go first, in one \`<g fill="none" stroke="{line}" stroke-width="1.5" marker-end="url(#ah)">\`, as straight runs (\`M x y H x V y\`); the shapes go over them. **Shadow** (optional, cards only, once): \`<filter id="sh" x="-10%" y="-10%" width="120%" height="140%"><feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#0F172A" flood-opacity="0.06"/></filter>\`; on dark #000000 at 0.35.
+Arrows go first, in one \`<g fill="none" stroke="{line}" stroke-width="1.5" marker-end="url(#ah)">\`, as straight runs (\`M x y H x V y\`); the shapes go over them. **Shadow** (optional, cards only, once): \`<filter id="sh" height="140%"><feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-opacity="0.06"/></filter>\`; on dark, flood-opacity 0.35.
 
 ## 4. What the check looks for
 - An arrow ends within 14 px of the edge of the shape it points to: aim exactly at a side, a rim, a corner; never a centre, inside, or open space. It starts on the edge it leaves and points at a shape, not a bare word.
@@ -476,16 +476,17 @@ Arrows go first, in one \`<g fill="none" stroke="{line}" stroke-width="1.5" mark
 Work out every coordinate from the recipe; check the widest text of each kind against its box; name each arrow's two edges. If the check lists problems you get one redraw: fix exactly those, or send boxes and arrows as a \`diagram\`.
 
 ## 6. Pictures
-For \`generate_image\`, give the subject (who or what, doing what, where), the style (photograph, watercolour, flat vector, 3D render), the composition (close or wide, what is left empty) and the light and colour. Set \`aspect_ratio\` for where it goes: 16:9 a slide, 9:16 a story, 4:3 or 3:4 a page, 1:1 a post. Ask for no text in it, since generated lettering comes out wrong; add words afterwards in SVG or HTML. The prompt may be English; describe the result in the person's language. No logo that is not theirs, no living artist's style by name. Without \`generate_image\`, say so and offer an SVG illustration.`,
+For \`generate_image\`, give the subject, the style (photograph, watercolour, flat vector, 3D render), the composition (close or wide, what is left empty) and the light and colour. Set \`aspect_ratio\` for where it goes: 16:9 a slide, 9:16 a story, 4:3 or 3:4 a page, 1:1 a post. Ask for no text in it (generated lettering comes out wrong) and add words afterwards in SVG or HTML. The prompt may be English; describe the result in the person's language. No logo that is not theirs, no living artist's style by name. Without \`generate_image\`, say so and offer an SVG illustration.`,
   },
   {
     id: 'builtin:svg-flows',
+    plugin: 'visuals',
     name: 'Drawing: flows',
     description:
-      'SVG recipes for flows a diagram cannot draw: yes/no decisions, a loop back until a check passes, swimlanes across roles, sequence diagrams. Read after the drawing guide.',
+      'SVG recipes for flows a diagram cannot draw: yes/no decisions, loops back, swimlanes, sequence diagrams. Read after the drawing guide.',
     instructions: `# Drawing: flows
 
-Read "Drawing diagrams and pictures" first: its palette, type, marker and checks hold here. Plain boxes and arrows are a \`diagram\`; these four are what it cannot draw. \`{name}\` is a value worked out by the arithmetic under the skeleton; lines between \`<!-- each x -->\` and \`<!-- /each -->\` repeat once per x; leave out a second line you do not need.
+Read "Drawing diagrams and pictures" first: its palette, type, marker and checks hold here. Plain boxes and arrows are a \`diagram\`; these four are what it cannot draw. \`{name}\` is a value worked out by the arithmetic under the skeleton; lines between \`<!-- each x -->\` and \`<!-- /each -->\` repeat once per x; leave out a second line you do not need. **Narrow** is for a phone, or when a narrow or vertical drawing is asked for.
 
 ## Decision flow
 **Use it** for yes/no questions: the main path straight down, each exception out to the right. No question worth a diamond: \`diagram\`.
@@ -519,7 +520,7 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 \`\`\`
 **Place.** Spine shapes are 40 tall (start and end rx 20, a step rx 8) or 80 (a question); the first y = 24, the next y + h + 32; a link: y1 = y + h, y2 = the next y. Step: ty = y + 25. Question: cy = y + 40, bottom = y + 80, ty1 = cy - 4.5, ty2 = cy + 13.5 (one line: ty1 = cy + 4.5), yesY = y + 100.4, noY = cy - 8, oy = cy - 20, oty = cy + 4.5. H = the last y + h + 24. Room: a question 13 characters a line, 2 lines; a step 25; an outcome 30; an exit label 17.
 **Many:** it fits while the heights + 32 × (shapes - 1) ≤ 512: six shapes with two questions, five with three. More: split at a question into two drawings, or a \`diagram\`, which grows taller and stays readable.
-**Long text:** a two-line step is 59 tall (baselines y + 24.5, y + 43.5); all below moves 19.
+**Long text:** a two-line step is 56 tall (baselines y + 23.5 and y + 42.5), and all below moves 16.
 **Narrow:** phone: a \`diagram\`, direction down, each question a box ending in "?".
 **Dark:** swap the palette; nothing moves.
 **Polish:** only questions tinted; pills at the ends; the yes path never bends; a failed end may take rose's stroke.
@@ -569,9 +570,9 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 <defs><marker id="ah" viewBox="0 0 10 10" refX="8.6" refY="5" markerWidth="7" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0L10 5L0 10z" fill="{line}"/></marker></defs>
 <!-- each lane -->
 <rect x="24" y="{y}" width="672" height="84" fill="{ground}" stroke="{rule}"/>
-<rect x="28" y="{hy}" width="84" height="76" rx="6" fill="{tint}"/>
-<text x="70" y="{ny1}" font-weight="600" fill="{inkA}">{name1}</text>
-<text x="70" y="{ny2}" font-weight="600" fill="{inkA}">{name2}</text>
+<rect x="28" y="{hy}" width="96" height="76" rx="6" fill="{tint}"/>
+<text x="76" y="{ny1}" font-weight="600" fill="{inkA}">{name1}</text>
+<text x="76" y="{ny2}" font-weight="600" fill="{inkA}">{name2}</text>
 <!-- /each -->
 <g fill="none" stroke="{line}" stroke-width="1.5" marker-end="url(#ah)">
 <!-- each arrow -->
@@ -585,7 +586,7 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 <!-- /each -->
 </svg>
 \`\`\`
-**Place.** Lane i: y = 24 + 84i, hy = y + 4, name ny1 = y + 46.5 (two lines: y + 37.5, y + 55.5). A column per moment: w = (552 - 24(m - 1)) / m, rounded down (120 for 4, 91 for 5). A step in lane i, column c: x = 128 + c(w + 24), y = lane y + 16, cx = x + w/2, cy = lane y + 42, ty1 = cy + 4.5 (two lines: cy - 4.5, cy + 13.5). H = 48 + 84 × lanes. Arrow a to b: same lane M(xa + w) cy H xb; next column, other lane M(xa + w) cya H(xb - 16) V cyb H xb, turning in the gap; same column M cx (ya + 52) V yb down, M cx ya V(yb + 52) up, past empty slots only. Room: a lane name 9 characters a line; a step w - 24 (13 at 4 columns, 9 at 5), 2 lines.
+**Place.** Lane i: y = 24 + 84i, hy = y + 4, name ny1 = y + 46.5 (two lines: y + 37.5, y + 55.5). A column per moment: w = (540 - 24(m - 1)) / m, rounded down (117 for 4, 88 for 5). A step in lane i, column c: x = 140 + c(w + 24), y = lane y + 16, cx = x + w/2, cy = lane y + 42, ty1 = cy + 4.5 (two lines: cy - 4.5, cy + 13.5). H = 48 + 84 × lanes. Arrow a to b: same lane M(xa + w) cy H xb; next column, other lane M(xa + w) cya H(xb - 16) V cyb H xb, turning in the gap; same column M cx (ya + 52) V yb down, M cx ya V(yb + 52) up, past empty slots only. Room: a lane name 9 characters a line; a step w - 24 (13 at 4 columns, 8 at 5), 2 lines.
 **Many:** 6 lanes, 5 columns (H 552); simultaneous steps share a column. More: split by phase, or a \`diagram\` with a group per lane.
 **Long text:** two lines a step; more in your reply under its number.
 **Narrow:** phone: a \`diagram\`, direction down, a group per lane.
@@ -613,7 +614,7 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 <path d="M{x1} {y}H{x2}" stroke-dasharray="5 4"/>
 <!-- /each -->
 <!-- each self -->
-<path d="M{x} {top}h28v18h-28"/>
+<path d="M{x} {top}h{out}v18h{back}"/>
 <!-- /each -->
 </g>
 <!-- each label -->
@@ -621,7 +622,7 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 <!-- /each -->
 </svg>
 \`\`\`
-**Place.** k parties, p = 672 / k; party i: x = 24 + p(i + 0.5), w = the smaller of 160 and p - 16, bx = x - w/2. Message j from the top: y = 104 + 40j, x1 the sender's x, x2 the receiver's; its label by the sender: rightward lx = x1 + 10, anchor start; leftward lx = x1 - 10, anchor end; ly = y - 8. A call to itself takes a slot, its loop above the line: top = y - 18, label lx = x + 36, ly = y - 4.6, start. yEnd = the last y + 24, H = yEnd + 24. Room: a name w - 24 (15 characters at 4 parties, 8 at 6); a label p - 20 (21 at 4, 13 at 6).
+**Place.** k parties, p = 672 / k; party i: x = 24 + p(i + 0.5), w = the smaller of 160 and p - 16, bx = x - w/2. Message j from the top: y = 104 + 40j, x1 the sender's x, x2 the receiver's; its label by the sender: rightward lx = x1 + 10, anchor start; leftward lx = x1 - 10, anchor end; ly = y - 8. A call to itself takes a slot, its loop above the line: top = y - 18, out = 28, back = -28, its label lx = x + 36, ly = y - 4.6, anchor start; on the last party it turns left: out = -28, back = 28, lx = x - 36, anchor end. yEnd = the last y + 24, H = yEnd + 24. Room: a name w - 24 (15 characters at 4 parties, 8 at 6); a label p - 20 (21 at 4, 13 at 6); a call to itself p - 44 (18 at 4, 9 at 6).
 **Many:** 6 parties, 11 messages (H 552); more: split at a pause ("Đăng nhập", "Thanh toán").
 **Long text:** a numbered verb and object ("3. Trừ tiền"); the detail in your reply under that number.
 **Narrow:** phone: W 360, at most 3 parties, p = 312 / k.
@@ -631,12 +632,13 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
   },
   {
     id: 'builtin:svg-structures',
+    plugin: 'visuals',
     name: 'Drawing: structures',
     description:
-      'SVG recipes for structures and wholes: org chart or tree, mind map, pyramid or funnel, cycle, Venn diagram, layered stack. Read after the drawing guide.',
+      'SVG recipes for structures: org chart or tree, mind map, pyramid or funnel, cycle, Venn diagram, layered stack. Read after the drawing guide.',
     instructions: `# Drawing: structures
 
-Read "Drawing diagrams and pictures" first: its palette, type, marker and checks hold here. \`{name}\` is a value worked out by the arithmetic under the skeleton; lines between \`<!-- each x -->\` and \`<!-- /each -->\` repeat once per x; leave out a second line you do not need.
+Read "Drawing diagrams and pictures" first: its palette, type, marker and checks hold here. \`{name}\` is a value worked out by the arithmetic under the skeleton; lines between \`<!-- each x -->\` and \`<!-- /each -->\` repeat once per x; leave out a second line you do not need. **Narrow** is for a phone, or when a narrow or vertical drawing is asked for.
 
 ## Org chart or tree
 **Use it** for a hierarchy of up to three levels: a company, a product range, a site map. Lines meaning "sends to" make a \`diagram\`.
@@ -670,7 +672,7 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 \`\`\`
 **Place.** k heads, slot s = 672 / k; head i: cx = 24 + s(i + 0.5), w = the smaller of 200 and s - 16, x = cx - w/2; bus0, bus1 = the first and last cx. Leaf j: x = head x + 20, w = head w - 20, y = 192 + 40j, cx = x + w/2, ty = y + 20.5; spine from sx = head x + 8 to sy = the last leaf y + 16; tick from sx to lx = leaf x at leaf y + 16. H = 208 + 40 × the most leaves (192 with none). Room: the root 18 characters; a head w - 24 (20 at 3 heads, 11 at 5); a leaf w - 44 (21, 10).
 **Many:** 5 heads of 8 leaves (H 528), or 6 heads without; more: the busiest branch as its own tree.
-**Long text:** two-line leaves (12.5 muted at y + 38) are 48 tall at a pitch of 56, 6 a head.
+**Long text:** two-line leaves are 48 tall at a pitch of 56 (y = 192 + 56j): the name at y + 19.5, the second line (12.5 muted) at y + 37.5, the tick and the spine's end at y + 24; 6 a head (H 544).
 **Narrow:** phone: W 360, an indented list, a level 20 further right, rows 40 apart.
 **Dark:** swap the palette.
 **Polish:** a family per head; plain leaves; the root the only solid; no arrowheads.
@@ -721,7 +723,7 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 **Long text:** the note carries it; a long title moves into the note.
 **Narrow:** phone: W 360, the shape alone at x 180, widest 312 (d = 192 / n), notes in your reply.
 **Dark:** swap the palette.
-**Polish:** a family per band; a funnel's notes give count and share ("1.420 đơn (11 %)"); leaders end at 392 so notes align.
+**Polish:** one family for every band (the order is in the shape); a funnel's notes give count and share ("1.420 đơn (11 %)"); leaders end at 392 so notes align.
 **Pitfalls:** widths drawn to numbers (use \`chart\`); a title wider than the narrow edge; a pointed top.
 
 ## Cycle
@@ -745,12 +747,12 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 <text x="360" y="{capY}" font-size="12.5" fill="{muted}">{caption}</text>
 </svg>
 \`\`\`
-**Place.** R = 168, r = 52 (to 6 stages) or R = 192, r = 40 (7, 8); cy = 24 + R + r, H = 2cy. Stage i at a = -90 + 360i / n: nx = 360 + R cos a, ny = cy + R sin a; ty1 = ny - 4.5, ty2 = ny + 13.5 (one line: ny + 4.5). Arrows ride the big circle: δ = 2 asin(r / 2R) (17.81° or 11.96°); from angle a + δ to the next angle - δ, at (360 + R cos, cy + R sin): both ends on the rims. cty = cy + 5.6, capY = cy + 26. Room: 11 characters a line at r 52; one line of 8 at r 40; the hub 19.
+**Place.** R = 168, r = 52 (to 6 stages) or R = 192, r = 40 (7, 8); cy = 24 + R + r, H = 2cy. Stage i at a = -90 + 360i / n: nx = 360 + R cos a, ny = cy + R sin a; ty1 = ny - 4.5, ty2 = ny + 13.5 (one line: ny + 4.5). Arrows ride the big circle: δ = 2 asin(r / 2R) (17.81° or 11.96°); from angle a + δ to the next angle - δ, at (360 + R cos, cy + R sin): both ends on the rims. cty = cy + 5.6, capY = cy + 26. Room: 11 characters a line at r 52; one line of 8 at r 40; the hub 19, the caption 30.
 **Many:** over 8: phases, in a cycle of phases.
 **Long text:** a word or two a stage, numbered; the rest in your reply.
 **Narrow:** phone: W 360, centre x 180, R 112, r 44, 6 stages, cy 180, H 360.
 **Dark:** swap the palette.
-**Polish:** "1. Lập kế hoạch" at the top, clockwise; a family per stage; the caption says how long a turn takes.
+**Polish:** "1. Lập kế hoạch" at the top, clockwise; one family for every stage; the caption says how long a turn takes.
 **Pitfalls:** arrows centre to centre (use ± δ); sweep flag 0 bends inward (keep "0 0 1"); a long name spills past the rim, unseen by the check.
 
 ## Venn diagram
@@ -773,8 +775,8 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 **Place.** Circles overlap 35 % of a diameter (centres 1.3r apart); op 0.16, dark 0.2.
 - Two sets, H 378: circles (261, 202), (459, 202), r 152; names (208, 40), (512, 40); regions A (208, 202), both (360, 202), B (512, 202).
 - Three, H 476: circles (282, 170), (438, 170), (360, 305), r 120; names (244, 40), (476, 40), (360, 448); regions A (244, 147), B (476, 147), C (360, 349), AB (360, 146), AC (301, 249), BC (419, 249), ABC (360, 215).
-Line k of L: y = the region's y - 9(L - 1) + 4.5 + 18k. Room: two sets 24 characters alone, 11 shared, 4 lines; three sets 19 alone (28 in C), one line of 8 in a pair, 7 in all three.
-**Many:** 4 items a region.
+Line k of L: y = the region's y - 9(L - 1) + 4.5 + 18k. Room, characters a line for 1, 2, 3 or 4 lines, 6 px inside the outlines: two sets, alone 25, 25, 25, 24 and both 13, 12, 12, 11; three sets, A or B alone 19, 19, 18, 17, C alone 28, 26, 25, 23, a pair 8, 7, 6 (3 lines at most), all three 6 (one line).
+**Many:** 4 lines a region; with three sets, 3 in a pair and 1 in the middle.
 **Long text:** a short tag, the sentence in your reply.
 **Narrow:** phone: three short lists.
 **Dark:** swap the palette, op 0.2.
@@ -805,10 +807,10 @@ Line k of L: y = the region's y - 9(L - 1) + 4.5 + 18k. Room: two sets 24 charac
 \`\`\`
 **Place.** k layers from the person down, h = 64 (to 6) or 48 (7, 8): y = 24 + i(h + 8); w = 576 with the bar, 672 without; ty = y + h/2 + 5. m chips: cw = (w - 176 - 8(m - 1)) / m; chip j: x = 184 + j(cw + 8), y = layer y + (h - 32)/2, cx = x + cw/2, ty = y + 20.5. The bar (slate): h = k × h + 8(k - 1); words one a line, 18 apart, centred on 24 + h/2. H = 24 + k × h + 8(k - 1) + 24. Room: a name 16 characters; a chip cw - 24 (13 at 4 chips, 9 with the bar); a bar word 7.
 **Many:** 8 layers (H 488), 5 chips (4 with the bar); more: the four that matter and "+3".
-**Long text:** two-line chips are 48 tall in an 80 layer, lines at y + 19.5 and + 37.5.
+**Long text:** two-line chips are 48 tall in a 72 layer (chip y = layer y + 12, lines at its y + 19.5 and + 37.5, the name at layer y + 41): up to 6 layers (H 520).
 **Narrow:** phone: W 360, no bar, names above chips, two a row, 84 a row.
 **Dark:** swap the palette.
-**Polish:** a family per layer, in order; the bar slate, belonging to no layer; chips one width per layer.
+**Polish:** one family for every layer; the bar slate, belonging to no layer; chips one width per layer.
 **Pitfalls:** arrows between layers (calls are a \`diagram\`); chips sized to their words; turned bar words.`,
   },
 ];

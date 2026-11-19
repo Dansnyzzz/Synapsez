@@ -41,10 +41,12 @@ const SKILL_BUDGET = 4200;
 // The drawing guide and its recipe families (2026-11-19) carry whole SVG skeletons, and are held
 // to budgets of their own, with every recipe filled and checked, in drawing-skills.test.mjs.
 const ownBudget = (id) => id === 'builtin:drawing' || id.startsWith('builtin:svg-');
-// 15 skills at about 2,620 when this was written: about 660 tokens a step. 2026-11-19: the drawing
-// guide and two recipe families brought it to about 3,200 (800 tokens); the two families still to
-// come (svg-sequences, svg-layouts) fit under this, and nothing past them should.
-const MENU_BUDGET = 3650;
+// 15 skills at about 2,620 when this was written: about 660 tokens a step. 2026-11-19 (review, fix
+// round 1): the drawing guide and two recipe families, their descriptions held to 145 characters,
+// came to 3,125. The two families still to come (svg-sequences, svg-layouts) add at most 340
+// (name, 145, and the 8 the menu line costs, each): 3,465, and about a tenth of the five drawing
+// skills' 835 on top. Nothing past them should fit.
+const MENU_BUDGET = 3550;
 
 const INVISIBLE = /[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]|[\u{E0000}-\u{E007F}]/u;
 const toolNames = new Set(TOOLS.map((t) => t.name));
