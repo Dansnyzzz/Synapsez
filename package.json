@@ -1,6 +1,6 @@
 {
   "name": "ai-remote",
-  "version": "1.33.2",
+  "version": "1.33.3",
   "private": true,
   "type": "module",
   "description": "Ephapse — a self-hosted, multi-provider agentic AI workspace you can drive from any device.",
@@ -133,7 +133,7 @@
     "test:widget-check": "node test/widget-check.test.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": "22.x"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.123.0",
@@ -176,6 +176,7 @@
   },
   "allowScripts": {
     "@google/genai": false,
-    "protobufjs": false
+    "protobufjs": false,
+    "tesseract.js": false
   }
 }

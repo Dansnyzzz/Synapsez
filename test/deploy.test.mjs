@@ -171,6 +171,15 @@ section('dependencies');
     /(^|[^\d])(20|22|24)/.test(pkg.engines?.node || ''),
     pkg.engines?.node,
   );
+  // A range such as ">=20" lets Vercel move to the next major by itself (its build warns so);
+  // 22 is what .nvmrc, CI and the tests run on (1.33.3).
+  check(
+    'the Node version is pinned to one major, the one .nvmrc names',
+    /^\d+\.x$/.test(pkg.engines?.node || '') && pkg.engines.node === `${read('.nvmrc').trim()}.x`,
+    pkg.engines?.node,
+  );
+  // tesseract.js's only install script is `opencollective-postinstall || true`, a donation message.
+  check('install scripts that only print are denied, tesseract.js among them', pkg.allowScripts?.['tesseract.js'] === false, JSON.stringify(pkg.allowScripts));
 
   // PGlite is 25MB and exists for local runs and tests. It must stay out of the
   // deployed bundle, which means nothing may import it except behind a branch

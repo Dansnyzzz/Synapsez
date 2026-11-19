@@ -7,8 +7,12 @@
  *   npm run domain:check -- https://example.com you@example.com
  */
 import { checkDomain } from '../server/domainCheck.js';
+import { parseMailbox } from '../server/email.js';
 
-const [url = process.env.PUBLIC_URL || '', mailFrom = process.env.EMAIL_FROM || process.env.GMAIL_USER || ''] = process.argv.slice(2);
+const [url = process.env.PUBLIC_URL || '', typed] = process.argv.slice(2);
+// Read the way the app reads a sender (1.33.3), so `Name <you@example.com>` checks example.com, not "example.com>".
+const sender = typed !== undefined ? parseMailbox(typed) : parseMailbox(process.env.EMAIL_FROM) || parseMailbox(process.env.GMAIL_USER);
+const mailFrom = sender?.address || '';
 const result = await checkDomain({ url, mailFrom });
 const marks = { ok: '✓', warn: '!', fail: '✕', unknown: '?' };
 console.log(`\n${result.host || '(no address)'} — checked ${result.checkedAt}\n`);

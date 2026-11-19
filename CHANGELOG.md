@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-11-19 — Mail sends when the sender is written as "Name <address>" in any setting (1.33.3)
+
+**What happened.** Confirmation codes stopped arriving on www.ephapse.net. Resend refused every message with a 422 `validation_error`, "Invalid `from` field", because the request's sender was `"Ephapse" <Ephapse <support@ephapse.net>>`. `GMAIL_USER` held `Ephapse <support@ephapse.net>`, `EMAIL_FROM` was not set for Production, and only `EMAIL_FROM` was read as `Name <address>`. The login fallback was taken as a bare address and wrapped a second time.
+
+**The fix.** `server/email.js` now reads every source of the sender with one parser, `parseMailbox`. The sources are tried in order: `EMAIL_FROM`, then the SMTP login (`SMTP_USER` with `SMTP_HOST`, otherwise `GMAIL_USER`), then Resend's test sender `onboarding@resend.dev`. Each may be written as `addr@x`, `Name <addr@x>` or `"Name" <addr@x>`, with spaces around it or quotes around the whole value. The parser returns a bare address that has passed a check: one `@`, no spaces, brackets, quotes or line breaks, a dot in the domain, at most 254 characters.
+
+- A value that is not one usable address is skipped for the next source. The log gets one warning per instance that names the variable, never its value. Mail goes out from the next source instead of every message failing.
+- The From line is always `"Name" <bare address>`, so one address can no longer sit inside another.
+- When `GMAIL_USER` carries a name, Gmail's login uses the bare address. An SMTP login that is a user name (SendGrid's `apikey`) is kept as the login and never used as the sender.
+- The address check also sees the bare address: Settings → System → Address safety, and `npm run domain:check`. The CLI used to read `EMAIL_FROM` raw, so `Name <you@example.com>` would have checked the domain `example.com>`.
+
+**Owner step (Vercel, a few minutes).** Go to Settings → Environment Variables. Set `EMAIL_FROM` = `Ephapse <support@ephapse.net>` for **Production**, not only Preview or Development. If mail goes through Resend, remove `GMAIL_USER` and `GMAIL_APP_PASSWORD`. While both are set, the event-theme mail still goes through Gmail (`smtp.gmail.com`), which works only if `support@ephapse.net` is a real Google mailbox with that App Password. Then redeploy, because a changed variable reaches only the deployments built after it. Until the owner does this step, this release reads `support@ephapse.net` out of `GMAIL_USER`, so Resend is sent a valid sender.
+
+**Node 22, and one install script fewer.** `engines.node` is now `22.x` instead of `>=20`. Vercel's build warned that `>=20` would move to the next major on its own. 22 is what `.nvmrc`, CI and the tests run on. The lockfile's root entry says the same, and the computer installers (`public/setup.sh`, `public/setup.ps1`) now ask for Node 22 or newer instead of 20. `tesseract.js` joins `allowScripts` as denied, because its only install script is `opencollective-postinstall || true`, a donation message.
+
+**Two build warnings that are not ours.**
+
+- `npm warn deprecated node-domexception` comes from Google's SDK: `@google/genai` → `google-auth-library` → `gaxios` 7 → `node-fetch` 3 → `fetch-blob` → `node-domexception`. It goes away when Google's packages move off `node-fetch`.
+- The `cache-dir` npm config warning comes from Vercel's build machine. Nothing in this repository sets it: there is no `.npmrc`.
+
+**Tests.** `test/email.test.mjs` replays the incident end to end through Resend with `fetch` stubbed. It checks every accepted way of writing `EMAIL_FROM`, `GMAIL_USER` with a name and the login it gives, and `SMTP_USER` both with a name and as a user name. It checks that eight broken values fall back with exactly one warning that never prints the value, and that the domain check reads `ephapse.net`. A hundred hostile combinations of both settings never give a header with one address inside another. `test/deploy.test.mjs` pins `engines.node` to `.nvmrc`'s major and the denied `tesseract.js` script.
+
+**Not verified live:** a real send through Resend from `support@ephapse.net`, which needs the domain verified at Resend, and the next Vercel build's warnings.
+
 ## 2026-11-18 — A page that cannot start says so, never a black screen (1.33.2)
 
 **What happened.** After the 1.33.1 deploy the owner's browser ran the new page with the old `app.js`, which looked for the removed "What is Ephapse?" button, threw, and left both the sign-in screen and the app hidden: a black screen, until a hard reload. Measured live the same day: `www.ephapse.net` goes through Cloudflare, whose Browser Cache TTL answers `/js/*` and `/css/*` with `public, max-age=14400, must-revalidate`, overriding the `max-age=0` Vercel sends, while the HTML is not cached. So for four hours after any deploy a returning browser can pair the new page with old scripts. There is no build step and no hashed file names to make that impossible.

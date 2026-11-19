@@ -1,6 +1,18 @@
 {
   "entries": [
     {
+      "version": "1.33.3",
+      "date": "2026-11-19",
+      "fixed": {
+        "vi": [
+          "Mã xác nhận và các thư khác lại được gửi đi khi người gửi được ghi dạng \"Tên <địa chỉ>\" ở bất kỳ thiết lập nào. Một thiết lập người gửi không phải là địa chỉ dùng được thì bị bỏ qua, kèm một cảnh báo trong nhật ký máy chủ, thay vì làm mọi thư đều không gửi được."
+        ],
+        "en": [
+          "Confirmation codes and other mail send again when the sender is written as \"Name <address>\" in any setting. A sender setting that is not a usable address is skipped, with a warning in the server log, instead of making every mail fail."
+        ]
+      }
+    },
+    {
       "version": "1.33.2",
       "date": "2026-11-18",
       "fixed": {
