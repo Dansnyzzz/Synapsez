@@ -38,7 +38,13 @@ const MAX_INSTRUCTIONS = Number(String(limitSource?.[1] || '').replace(/_/g, '')
 const MAX_NAME = 60;
 const MAX_DESCRIPTION = 200;
 const SKILL_BUDGET = 4200;
-const MENU_BUDGET = 2750; // 15 skills at about 2,620 when this was written: about 660 tokens a step
+// The drawing guide and its recipe families (2026-11-19) carry whole SVG skeletons, and are held
+// to budgets of their own, with every recipe filled and checked, in drawing-skills.test.mjs.
+const ownBudget = (id) => id === 'builtin:drawing' || id.startsWith('builtin:svg-');
+// 15 skills at about 2,620 when this was written: about 660 tokens a step. 2026-11-19: the drawing
+// guide and two recipe families brought it to about 3,200 (800 tokens); the two families still to
+// come (svg-sequences, svg-layouts) fit under this, and nothing past them should.
+const MENU_BUDGET = 3650;
 
 const INVISIBLE = /[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]|[\u{E0000}-\u{E007F}]/u;
 const toolNames = new Set(TOOLS.map((t) => t.name));
@@ -55,7 +61,7 @@ section('every built-in skill is well formed');
     if (!skill.name || skill.name !== skill.name.trim() || skill.name.length > MAX_NAME) bad.push('name');
     if (!skill.description || skill.description.length > MAX_DESCRIPTION || /\n/.test(skill.description)) bad.push(`description ${skill.description?.length}`);
     if (!skill.instructions || skill.instructions.length > MAX_INSTRUCTIONS) bad.push(`instructions over ${MAX_INSTRUCTIONS}`);
-    if (skill.instructions.length > SKILL_BUDGET) bad.push(`instructions ${skill.instructions.length} over the ${SKILL_BUDGET} we aim for`);
+    if (skill.instructions.length > SKILL_BUDGET && !ownBudget(skill.id)) bad.push(`instructions ${skill.instructions.length} over the ${SKILL_BUDGET} we aim for`);
     if (INVISIBLE.test(`${skill.name}${skill.description}${skill.instructions}`)) bad.push('invisible characters');
     if (/\r/.test(skill.instructions)) bad.push('carriage return');
     check(`${skill.id}: name, description (${skill.description.length}), instructions (${skill.instructions.length})`, bad.length === 0, bad.join('; '));
@@ -81,7 +87,7 @@ section('only tools that exist are named, and nothing the app cannot do is asked
 {
   // Anything shaped like a tool name: lower-case words joined by underscores. CSS, attributes
   // and HTML in these skills use hyphens, so a snake_case word is a tool or a parameter.
-  const PARAMETERS = new Set(['file_id']);
+  const PARAMETERS = new Set(['file_id', 'aspect_ratio']);
   for (const skill of BUILTIN_SKILLS) {
     const text = `${skill.description}\n${skill.instructions}`;
     const named = new Set(text.match(/\b[a-z]+(?:_[a-z]+)+\b/g) || []);

@@ -2136,6 +2136,9 @@ section('skills: uploaded and scanned, files carried and read back (owner, 2026-
   check('a file name a path cannot hold, a second SKILL.md, twins and too many are refused', /not a file name/.test(refuse([{ name: '../etc/passwd', content: '' }])) && /not a file name/.test(refuse([{ name: 'SKILL.md', content: '' }])) && /Two files/.test(refuse([{ name: 'a.md', content: '' }, { name: 'A.md', content: '' }])) && /at most/.test(refuse(Array.from({ length: 11 }, (_, i) => ({ name: `f${i}.md`, content: '' })))));
   const { BUILTIN_SKILLS } = await import('../server/skills/builtin.js');
   check('skill-creator is built in, for Create with Claude', !!BUILTIN_SKILLS.find((s) => s.name === 'skill-creator' && /skill_write/.test(s.instructions)));
+  // The drawing guide (owner, 2026-11-17): every recipe is filled and checked in drawing-skills.test.mjs.
+  const drawing = (id) => BUILTIN_SKILLS.find((s) => s.id === id)?.instructions || '';
+  check('the drawing guide is built in: diagram first, then a recipe skill for every other kind of drawing', /`diagram`/.test(drawing('builtin:drawing')) && /<marker id="ah"/.test(drawing('builtin:drawing')) && ['decision', 'loop', 'swimlanes', 'sequence'].every((r) => drawing('builtin:svg-flows').includes(`<!-- recipe:${r} -->`)) && ['tree', 'mindmap', 'pyramid', 'cycle', 'venn', 'stack'].every((r) => drawing('builtin:svg-structures').includes(`<!-- recipe:${r} -->`)));
 
   const { serversInConfig } = await import('../public/js/mcp-config.js');
   const fromConfig = serversInConfig({ mcpServers: { files: { command: 'npx', args: ['-y', 'x'], env: { A: '1' } }, docs: { url: 'https://mcp.example.com/mcp', headers: { Authorization: 'Bearer t' } }, broken: { nothing: true } } });
