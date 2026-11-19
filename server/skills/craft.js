@@ -414,12 +414,12 @@ Look at the finished file with \`look_at\` and fix what you see before answering
       'Before drawing anything in the conversation: which tool to use, the diagram input, and the design system every hand-drawn SVG follows.',
     instructions: `# Drawing diagrams and pictures
 
-Every drawing is checked before anyone sees it; a flawed one comes back to you to redraw, once. Pick the tool, then place everything by the numbers below, never by eye.
+Every drawing is checked before anyone sees it; a flawed one comes back to you, once. Pick the tool, then place everything by the numbers below, never by eye.
 
 ## 1. Which tool
 - Numbers (a trend, a comparison, shares): \`chart\`.
 - Boxes joined by arrows (a flow, an architecture, a pipeline): \`show_widget\` with \`diagram\`; Ephapse places them, so every arrow connects.
-- Any other drawing: \`show_widget\` with \`svg\`, from a recipe in "Drawing: flows" (yes/no decisions, a loop back, swimlanes, sequence diagrams) or "Drawing: structures" (org chart or tree, mind map, pyramid or funnel, cycle, Venn, layered stack), read with \`skill_read\`.
+- Any other drawing: \`show_widget\` with \`svg\`, from a recipe read with \`skill_read\`: "Drawing: flows" (decisions, loops, swimlanes, sequence diagrams), "Drawing: structures" (tree, mind map, pyramid or funnel, cycle, Venn, layered stack), "Drawing: sequences" (timeline or roadmap, numbered steps, Gantt plan, customer journey) or "Drawing: layouts" (comparison, 2×2 matrix, pros and cons, KPI cards, infographic panel, labelled picture).
 - A photo-like or painted picture: \`generate_image\` (section 6).
 - Something to keep, print or send: \`create_file\`.
 
@@ -433,9 +433,9 @@ Every drawing is checked before anyone sees it; a flawed one comes back to you t
 - \`groups\`: up to 8, never nested, none empty. \`direction\`: auto (default, the better shape), right or down. \`theme\`: light (default) or dark.
 
 ## 3. The design system, for every \`svg\`
-**Canvas.** \`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 {H}" font-family="system-ui, sans-serif" font-size="13" text-anchor="middle" fill="{ink}">\`, everything 24 px inside (x 24 to 696), H at most 560. Why: a drawing is shown in a column 710 px wide, at most 72 % of the window high (576 px in an 800 px window), fitted to what is drawn. A 720 × 560 canvas shows at 0.986 or more, so 12.5 px text reads at 12.3 px or more; 960 wide would show at 0.74 (12.5 → 9.2 px), 720 tall at 0.81 (→ 10.1 px). A phone's column is about 320 px: draw a recipe's Narrow variant when the person says they are on a phone, or asks for a narrow or vertical drawing. The widget's \`title\` is its caption; do not repeat it inside.
+**Canvas.** \`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 {H}" font-family="system-ui, sans-serif" font-size="13" text-anchor="middle" fill="{ink}">\`, everything 24 px inside (x 24 to 696), H at most 560. Why: a drawing is shown in a column 710 px wide, at most 72 % of the window high (576 px in an 800 px window), fitted to what is drawn. A 720 × 560 canvas shows at 0.986 or more, so 12.5 px text reads at 12.3 px or more; 960 wide would show at 0.74 (12.5 → 9.2 px), 720 tall at 0.81 (→ 10.1 px). A phone's column is about 320 px: draw a recipe's Narrow variant when the person is on a phone or asks for a narrow or vertical drawing. The widget's \`title\` is its caption; do not repeat it inside.
 
-**Type.** 14 semibold (\`font-weight="600"\`) for titles and names, 13 for body, 12.5 for labels and nothing smaller, 16 semibold for one hub. Each extra line is its own \`<text>\` 18 px lower at 13 (1.35 em); the check reads a \`<tspan x="…" dy="1.35em">\` the same, and its messages suggest that form. A line centred on y has its baseline at y + 0.35 × size: + 4.5 at 13, + 5 at 14, + 5.6 at 16, + 4.4 at 12.5.
+**Type.** 14 semibold (\`font-weight="600"\`) for titles and names, 13 for body, 12.5 for labels and nothing smaller, 16 semibold for one hub. Each extra line is its own \`<text>\` 18 px lower at 13. Where a check message says \`<tspan x=… dy="1.2em">\`, use a \`<text>\` 18 px lower instead. A line centred on y has its baseline at y + 0.35 × size: + 4.5 at 13, + 5 at 14, + 5.6 at 16, + 4.4 at 12.5.
 
 **Fit.** A character is about 0.55 × size wide (0.6 semibold, a full size for Chinese or Japanese): 7.15 px at 13, 7.8 at 13 semibold, 8.4 at 14 semibold, 6.9 at 12.5. A line fits in its box less 24; longer, break it at a space and grow the box a line. The check measures the same way and fails text wider than its box less 6. Sentence case: capitals run wider.
 
@@ -458,7 +458,7 @@ Every drawing is checked before anyone sees it; a flawed one comes back to you t
 | rose | #FFE4E6 #E11D48 #9F1239 6.68 | #432B36 #FB7185 #FECDD3 9.09 |
 | cyan | #CFFAFE #0891B2 #155E75 6.49 | #13404D #22D3EE #A5F3FC 9.01 |
 | slate | #F1F5F9 #64748B #1E293B 13.35 | #2C3641 #94A3B8 #E2E8F0 9.96 |
-Muted on any tint: at least 6.19 light, 4.85 dark. Strokes against the canvas: at least 3.19 light, 6.63 dark. On the page's #F7F9FB, where light drawings also sit, text still reads at 4.5 or more and edges and strokes at 3. Venn fills are each family's stroke at 16 % opacity (dark 20 %): ink where three overlap reads at least 7.58 light, 4.65 dark. In a recipe, \`{ink}\`, \`{card}\` and the rest are these; \`{tint}\`, \`{stroke}\`, \`{inkA}\` one family's. Light is the default and reads on either page theme; draw dark when a dark look is asked for.
+Muted on any tint: at least 6.19 light, 4.85 dark. Strokes against the canvas: at least 3.19 light, 6.63 dark. On the page's #F7F9FB, where light drawings also sit, text still reads at 4.5 or more and edges and strokes at 3. Venn fills are each family's stroke at 16 % opacity (dark 20 %): ink where three overlap reads at least 7.58 light, 4.65 dark. In a recipe, \`{ink}\`, \`{card}\` and the rest are these; \`{tint}\`, \`{stroke}\`, \`{inkA}\` one family's. Light is the default, on either page theme; dark only when asked.
 
 **Strokes and arrows.** Lines 1.5 px in \`{line}\`, box edges 1 px, dashes \`5 4\`. One marker in \`<defs>\` serves every arrow:
 \`<marker id="ah" viewBox="0 0 10 10" refX="8.6" refY="5" markerWidth="7" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0L10 5L0 10z" fill="{line}"/></marker>\`
@@ -518,13 +518,13 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 <!-- /each -->
 </svg>
 \`\`\`
-**Place.** Spine shapes are 40 tall (start and end rx 20, a step rx 8) or 80 (a question); the first y = 24, the next y + h + 32; a link: y1 = y + h, y2 = the next y. Step: ty = y + 25. Question: cy = y + 40, bottom = y + 80, ty1 = cy - 4.5, ty2 = cy + 13.5 (one line: ty1 = cy + 4.5), yesY = y + 100.4, noY = cy - 8, oy = cy - 20, oty = cy + 4.5. H = the last y + h + 24. Room: a question 13 characters a line, 2 lines; a step 25; an outcome 30; an exit label 17.
+**Place.** Spine shapes are 40 tall (start and end rx 20, a step rx 8) or 80 (a question); the first y = 24, the next y + h + 32; a link: y1 = y + h, y2 = the next y. Step: ty = y + 25. Question: cy = y + 40, bottom = y + 80, ty1 = cy - 4.5, ty2 = cy + 13.5 (one line: ty1 = cy + 4.5), yesY = y + 100.4, noY = cy - 8, oy = cy - 20, oty = cy + 4.5. H = the last y + h + 24. Room: a question 13 characters on the first line, 12 on the second; a step 25; an outcome 30; an exit label 17.
 **Many:** it fits while the heights + 32 × (shapes - 1) ≤ 512: six shapes with two questions, five with three. More: split at a question into two drawings, or a \`diagram\`, which grows taller and stays readable.
 **Long text:** a two-line step is 56 tall (baselines y + 23.5 and y + 42.5), and all below moves 16.
 **Narrow:** phone: a \`diagram\`, direction down, each question a box ending in "?".
 **Dark:** swap the palette; nothing moves.
 **Polish:** only questions tinted; pills at the ends; the yes path never bends; a failed end may take rose's stroke.
-**Pitfalls:** an exit from the diamond's centre (leave from its right corner); a label on its own line; an exit across the spine; a question line over 13, which spills past the slanted sides unseen by the check.
+**Pitfalls:** an exit from the diamond's centre (leave from its right corner); a label on its own line; an exit across the spine; a question over 13 and 12, which spills past the slanted sides unseen by the check.
 
 ## Loop back
 **Use it** when steps repeat until a check passes: review rounds, retries, tuning. Steps left to right, the check last, the way back over the top.
@@ -700,7 +700,7 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 **Long text:** branches are 2-3 word headings; detail in your reply.
 **Narrow:** phone: W 360, centre (180, 244) 136 wide, radii 112 and 200, 6 branches 112 wide, H 488.
 **Dark:** swap the palette.
-**Polish:** a family per branch, its spoke 2 px in its stroke; clockwise in speaking order.
+**Polish:** a family per branch in table order (i mod 6), its spoke 2 px in its stroke; with 7 the seventh takes green, as blue would sit beside the first; clockwise in speaking order.
 **Pitfalls:** spokes drawn last; branches by eye; arrowheads; a second level (its own map).
 
 ## Pyramid or funnel
@@ -807,10 +807,347 @@ Line k of L: y = the region's y - 9(L - 1) + 4.5 + 18k. Room, characters a line 
 \`\`\`
 **Place.** k layers from the person down, h = 64 (to 6) or 48 (7, 8): y = 24 + i(h + 8); w = 576 with the bar, 672 without; ty = y + h/2 + 5. m chips: cw = (w - 176 - 8(m - 1)) / m; chip j: x = 184 + j(cw + 8), y = layer y + (h - 32)/2, cx = x + cw/2, ty = y + 20.5. The bar (slate): h = k × h + 8(k - 1); words one a line, 18 apart, centred on 24 + h/2. H = 24 + k × h + 8(k - 1) + 24. Room: a name 16 characters; a chip cw - 24 (13 at 4 chips, 9 with the bar); a bar word 7.
 **Many:** 8 layers (H 488), 5 chips (4 with the bar); more: the four that matter and "+3".
-**Long text:** two-line chips are 48 tall in a 72 layer (chip y = layer y + 12, lines at its y + 19.5 and + 37.5, the name at layer y + 41): up to 6 layers (H 520).
+**Long text:** two-line chips: all layers 72, chips 48 tall (chip y = layer y + 12, lines at its y + 19.5 and + 37.5, the name at layer y + 41), up to 6 layers (H 520).
 **Narrow:** phone: W 360, no bar, names above chips, two a row, 84 a row.
 **Dark:** swap the palette.
 **Polish:** one family for every layer; the bar slate, belonging to no layer; chips one width per layer.
 **Pitfalls:** arrows between layers (calls are a \`diagram\`); chips sized to their words; turned bar words.`,
+  },
+  {
+    id: 'builtin:svg-sequences',
+    plugin: 'visuals',
+    name: 'Drawing: sequences',
+    description:
+      'SVG recipes for things in order: a timeline or roadmap, numbered steps, a Gantt-style plan, a customer journey. Read after the drawing guide.',
+    instructions: `# Drawing: sequences
+
+Read "Drawing diagrams and pictures" first: its palette, type, marker and checks hold here. \`{name}\` is a value worked out by the arithmetic under the skeleton; lines between \`<!-- each x -->\` and \`<!-- /each -->\` repeat once per x; leave out a line you do not need. **Narrow** is for a phone, or when a narrow or vertical drawing is asked for. Things in order take one family: the order is in the position.
+
+## Timeline or roadmap
+**Use it** for dated moments in order: milestones, a roadmap by quarter, a company's history. Lengths of time that overlap: the Gantt plan.
+
+<!-- recipe:timeline -->
+\`\`\`svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 {H}" font-family="system-ui, sans-serif" font-size="13" text-anchor="middle" fill="{ink}">
+<!-- each spine -->
+<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{rule}" stroke-width="2"/>
+<!-- /each -->
+<!-- each card -->
+<line x1="{cx}" y1="{sy}" x2="{cx}" y2="{y}" stroke="{rule}"/>
+<rect x="{x}" y="{y}" width="{w}" height="80" rx="8" fill="{card}" stroke="{edge}"/>
+<text x="{cx}" y="{ty}" font-size="14" font-weight="600">{title}</text>
+<text x="{cx}" y="{ny1}" fill="{muted}">{note1}</text>
+<text x="{cx}" y="{ny2}" fill="{muted}">{note2}</text>
+<!-- /each -->
+<!-- each item -->
+<circle cx="{dx}" cy="{dy}" r="6" fill="{dot}" stroke="{stroke}" stroke-width="2"/>
+<text x="{tx}" y="{ty}" text-anchor="{anchor}" font-weight="600" fill="{inkA}">{date}</text>
+<!-- /each -->
+<!-- each title -->
+<text x="{lx}" y="{ty}" text-anchor="start" font-size="14" font-weight="600">{title}</text>
+<!-- /each -->
+</svg>
+\`\`\`
+**Place.** One row up to 6; 7 to 12 in two rows of ⌈n/2⌉. Row r: its spine from (24, sy) to (696, sy), sy = 56 + 160r; m a row, s = 672 / m. Item i: cx = 24 + s(i + 0.5); its dot dx = cx, dy = sy; its date tx = cx, ty = sy - 18, anchor middle; its card w = the smaller of 200 and s - 16, x = cx - w/2, y = sy + 24, ty = y + 25, ny1 = y + 47, ny2 = y + 65. H = 24 + 160 × rows. Room: a date s - 16 (12 characters at 6 a row, 19 at 4); a title w - 24 (8, 15, 20 at 6, 4, 3 a row); a note w - 24 at 13 (10, 17, 24), 2 lines.
+**Many:** 13 to 16 go down one spine, with no cards: from (136, 24) to (136, H - 24); item i: dx = 136, dy = 40 + 32i, the date tx = 120, ty = dy + 4.5, anchor end, the title lx = 156, ty = dy + 5. H = 32n + 48 (560 at 16). Room: a date 12, a title 64. More: a drawing a year or phase.
+**Long text:** a title and two lines a card; the detail in your reply under its date.
+**Narrow:** phone: W 360, the vertical form with its spine at x 104 (tx 88, lx 124): a date 8, a title 25, up to 16.
+**Dark:** swap the palette.
+**Polish:** a done dot filled (\`{dot}\` = \`{stroke}\`), one to come hollow (\`{card}\`); the card for now edged in \`{stroke}\`; every date in one form ("Q1/2027" or "T3/2027").
+**Pitfalls:** slots spaced by elapsed time (keep them even; lengths that matter are a Gantt plan); cards of different heights; a date wider than its slot runs into the next, unseen by the check.
+
+## Numbered steps
+**Use it** for 2 to 8 steps someone follows in order, each with a short how: setting up, signing up, a recipe. Steps that branch or loop: "Drawing: flows".
+
+<!-- recipe:steps -->
+\`\`\`svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 {H}" font-family="system-ui, sans-serif" font-size="13" text-anchor="middle" fill="{ink}">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8.6" refY="5" markerWidth="7" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0L10 5L0 10z" fill="{line}"/></marker></defs>
+<g fill="none" stroke="{line}" stroke-width="1.5" marker-end="url(#ah)">
+<!-- each link -->
+<path d="{d}"/>
+<!-- /each -->
+</g>
+<!-- each step -->
+<rect x="{x}" y="{y}" width="{w}" height="152" rx="8" fill="{card}" stroke="{edge}"/>
+<rect x="{bx}" y="{by}" width="32" height="32" rx="16" fill="{solid}"/>
+<text x="{cx}" y="{ny}" font-size="14" font-weight="600" fill="{onSolid}">{n}</text>
+<text x="{cx}" y="{ty}" font-size="14" font-weight="600">{title}</text>
+<text x="{cx}" y="{ly1}" fill="{muted}">{line1}</text>
+<text x="{cx}" y="{ly2}" fill="{muted}">{line2}</text>
+<text x="{cx}" y="{ly3}" fill="{muted}">{line3}</text>
+<!-- /each -->
+</svg>
+\`\`\`
+**Place.** m = n up to 4, else ⌈n/2⌉ a row in two rows; w = (672 - 32(m - 1)) / m, rounded down (320, 202, 144 at 2, 3, 4). Step in row r, column c: x = 24 + c(w + 32), y = 24 + 192r, cx = x + w/2; the badge bx = cx - 16, by = y + 16, its number ny = y + 37; ty = y + 76; ly1, ly2, ly3 = y + 100, 118, 136. A link in a row: M(x + w) (y + 32) H(the next x); from the last of row 1 to the first of row 2: M(its cx) (y + 152) V(y + 172) H(the first cx) V(y + 192). H = 192 × rows + 8. Room: a title w - 24 (35, 21, 14 characters); a line w - 24 at 13 (41, 24, 16), 3 lines.
+**Many:** 8 in two rows (H 392); more: phases, a drawing each.
+**Long text:** three lines of how; the rest in your reply under its number.
+**Narrow:** phone: W 360, two a row, w = (312 - 32) / 2 = 140: a title 13, a line 16, up to 4.
+**Dark:** swap the palette.
+**Polish:** the badges solid, the cards white and one height; a title starts with its verb ("Tải ứng dụng"); arrows only between steps.
+**Pitfalls:** the number in a circle (text in a circle is judged against the canvas, so white on a strong circle fails: the badge is a rect with rx 16); an arrow across a card to reach row 2; a fourth line.
+
+## Gantt plan
+**Use it** for work over weeks or months: tasks with a start and a length, the phases they sit in, milestones and today. Moments with no length: a timeline.
+
+<!-- recipe:gantt -->
+\`\`\`svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 {H}" font-family="system-ui, sans-serif" font-size="13" text-anchor="middle" fill="{ink}">
+<text x="24" y="44" text-anchor="start" font-size="12.5" font-weight="600" fill="{muted}">{head}</text>
+<!-- each unit -->
+<line x1="{x}" y1="56" x2="{x}" y2="{gy}" stroke="{rule}"/>
+<text x="{cx}" y="44" font-size="12.5" fill="{muted}">{unit}</text>
+<!-- /each -->
+<!-- each row -->
+<text x="24" y="{ty}" text-anchor="start" font-weight="{weight}">{name}</text>
+<!-- /each -->
+<!-- each bar -->
+<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{rx}" fill="{fill}" stroke="{stroke}"/>
+<!-- /each -->
+<!-- each done -->
+<rect x="{x}" y="{y}" width="{w}" height="24" rx="6" fill="{stroke}"/>
+<!-- /each -->
+<!-- each milestone -->
+<polygon points="{x},{t} {r},{cy} {x},{b} {l},{cy}" fill="{solid}"/>
+<!-- /each -->
+<!-- each now -->
+<line x1="{x}" y1="56" x2="{x}" y2="{gy}" stroke="{rose}" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="{x}" y="{ly}" text-anchor="{anchor}" font-size="12.5" font-weight="600" fill="{roseInk}">{label}</text>
+<!-- /each -->
+</svg>
+\`\`\`
+**Place.** u units from x 216 to 696, uw = 480 / u (120, 80, 60, 40 at 4, 6, 8, 12). Unit line j from 0 to u: x = 216 + j × uw, its label at cx = x + uw/2 (none on the last). Row i: cy = 82 + 36i, ty = cy + 4.5, weight 600 for a phase, 400 for a task. A task's bar: x = 216 + start × uw, w = length × uw, y = cy - 12, h 24, rx 6, fill \`{tint}\`; a phase's: y = cy - 4, h 8, rx 4, fill \`{stroke}\`; done, the share of a task's bar from its start. A milestone at x = 216 + at × uw: t = cy - 9, b = cy + 9, l = x - 9, r = x + 9. gy = 64 + 36 × rows. Today: x = 216 + now × uw, ly = gy + 20, anchor middle (end past x 660); H = gy + 48, or gy + 24 without it. Room: a task 24 characters, a phase 22, the head 24; a unit uw - 8 at 12.5 (16, 10, 7, 4).
+**Many:** 12 rows and 12 units (H 544); more: a drawing a phase, or weeks gathered into months.
+**Long text:** names to their room; owners and notes in your reply, by row.
+**Narrow:** phone: W 360, units from x 24 to 336 (6 at most), each name on its own row above its bar.
+**Dark:** swap the palette.
+**Polish:** one family for every bar; a phase thin and semibold above its tasks; done filled, the rest tinted; today the one rose (\`{rose}\`, \`{roseInk}\`: rose's stroke and ink), dashed; milestones solid diamonds.
+**Pitfalls:** bars placed by eye (each end on the unit arithmetic); a name on its bar (names go on the left); arrows between bars (they tangle: say what waits on what in your reply); a milestone past x 687.
+
+## Customer journey
+**Use it** for what a customer does, feels and meets at each stage, from first hearing of you to telling a friend: where it hurts, and what to do about it.
+
+<!-- recipe:journey -->
+\`\`\`svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 {H}" font-family="system-ui, sans-serif" font-size="13" text-anchor="middle" fill="{ink}">
+<!-- each stage -->
+<polygon points="{x},24 {xr},24 {xp},44 {xr},64 {x},64 {xn},44" fill="{tint}" stroke="{stroke}"/>
+<text x="{cx}" y="49" font-size="14" font-weight="600" fill="{inkA}">{name}</text>
+<!-- /each -->
+<!-- each lane -->
+<text x="24" y="{ly}" text-anchor="start" font-size="12.5" font-weight="600" fill="{muted}">{lane}</text>
+<!-- /each -->
+<!-- each cell -->
+<rect x="{x}" y="{y}" width="{w}" height="56" rx="8" fill="{fill}" stroke="{rim}"/>
+<text x="{cx}" y="{ty1}" fill="{text}">{line1}</text>
+<text x="{cx}" y="{ty2}" fill="{text}">{line2}</text>
+<!-- /each -->
+<!-- each curve -->
+<line x1="24" y1="{mid}" x2="{right}" y2="{mid}" stroke="{rule}" stroke-dasharray="4 4"/>
+<polyline points="{points}" fill="none" stroke="{line}" stroke-width="2"/>
+<!-- /each -->
+<!-- each feeling -->
+<circle cx="{cx}" cy="{dy}" r="6" fill="{mood}"/>
+<text x="{cx}" y="{wy}" fill="{moodInk}">{word}</text>
+<!-- /each -->
+</svg>
+\`\`\`
+**Place.** n stages, w = (672 - 8(n - 1)) / n (218.67, 162, 128, 105.33 at 3 to 6); stage i: x = 24 + i(w + 8), cx = x + w/2, xr = x + w - 12, xp = x + w, xn = x + 12 (the first: xn = x). Lanes from y 80 down. A lane of cells takes 100: ly = y + 16, cells at y + 28, their middle cy = y + 56 (ty1 = cy - 4.5, ty2 = cy + 13.5; one line cy + 4.5). The feelings take 144: ly = y + 16, mid = y + 68, right = 696, a dot at dy = mid - 16s for a feeling s from -2 to 2, the polyline through the dots, the word at wy = y + 124. H = the end of the last lane + 8. Room: a stage w - 32 at 14 semibold (22, 15, 11, 8 characters); a cell w - 24 (27, 19, 14, 11), 2 lines; a word w - 8 (29, 21, 16, 13).
+**Many:** 3 to 6 stages; 3 lanes and the feelings (H 532), or 4 lanes without; more: two maps, before and after buying.
+**Long text:** two lines a cell; the rest in your reply under its stage.
+**Narrow:** phone: the stages as a numbered list in your reply, the lowest feeling named; a map needs the width.
+**Dark:** swap the palette.
+**Polish:** one family for the stages; cells white, what hurts in rose's tint, stroke and ink (\`{fill}\`, \`{rim}\`, \`{text}\`), ideas in green's; a dot and its word green above the dashed line, slate on it, rose under it.
+**Pitfalls:** a stage name past the slanted ends (the room is the inside, which the check cannot see); words on the curve; a curve with no words.`,
+  },
+  {
+    id: 'builtin:svg-layouts',
+    plugin: 'visuals',
+    name: 'Drawing: layouts',
+    description:
+      'SVG recipes for layouts: comparison, 2×2 matrix, pros and cons, KPI cards, infographic panel, labelled picture. Read after the drawing guide.',
+    instructions: `# Drawing: layouts
+
+Read "Drawing diagrams and pictures" first: its palette, type, marker and checks hold here. \`{name}\` is a value worked out by the arithmetic under the skeleton; lines between \`<!-- each x -->\` and \`<!-- /each -->\` repeat once per x; leave out a line you do not need. **Narrow** is for a phone, or when a narrow or vertical drawing is asked for. Options, quadrants and cards have no order: a family each.
+
+## Comparison
+**Use it** for 2 to 4 options weighed on the same points: plans, products, suppliers. Amounts to compare: \`chart\`.
+
+<!-- recipe:compare -->
+\`\`\`svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 {H}" font-family="system-ui, sans-serif" font-size="13" text-anchor="middle" fill="{ink}">
+<!-- each option -->
+<rect x="{x}" y="24" width="{w}" height="{h}" rx="8" fill="{card}" stroke="{rim}" stroke-width="{sw}"/>
+<rect x="{px}" y="30" width="{pw}" height="56" rx="6" fill="{plate}"/>
+<text x="{cx}" y="53" font-size="14" font-weight="600" fill="{on}">{name}</text>
+<text x="{cx}" y="73" font-size="12.5" fill="{on}">{sub}</text>
+<!-- /each -->
+<!-- each rule -->
+<line x1="24" y1="{y}" x2="696" y2="{y}" stroke="{rule}"/>
+<!-- /each -->
+<!-- each point -->
+<text x="24" y="{ty}" text-anchor="start" font-weight="600">{label}</text>
+<!-- /each -->
+<!-- each value -->
+<text x="{vx}" y="{ty}" text-anchor="{anchor}" fill="{tone}">{value}</text>
+<!-- /each -->
+</svg>
+\`\`\`
+**Place.** A table, the points down the left: options from x0 = 200, w = (496 - 16(k - 1)) / k (240, 154.67, 112 at 2, 3, 4). Cards, no points column: x0 = 24, w = (672 - 16(k - 1)) / k (328, 213.33, 156). Option i: x = x0 + i(w + 16), cx = x + w/2, px = x + 6, pw = w - 12. Row r: ty = 120.5 + 40r; in a table, rules between rows at y = 96 + 40r and a value at vx = cx, anchor middle; on a card vx = x + 16, anchor start, no rules. h = 80 + 40 × rows, H = h + 48. Room: a point 20 characters; a name pw - 24, a sub pw - 24 at 12.5, a value w - 24 (on a card w - 32): at 3 options 14, 17, 18 (cards 21, 25, 25), at 4 9, 11, 12 (14, 17, 17).
+**Many:** 4 options, 10 rows (H 528); more: two drawings.
+**Long text:** a value is a number, a yes or a few words; the why in your reply.
+**Narrow:** phone: W 360, two options as cards (w 148), a point a row.
+**Dark:** swap the palette.
+**Polish:** a family per option, its plate \`{tint}\` with \`{on}\` = \`{inkA}\`; the one you recommend: plate and \`{rim}\` \`{solid}\` at \`{sw}\` 2 (else \`{edge}\`, 1), \`{on}\` = \`{onSolid}\`, and why in your reply; a yes "✓ Có" in green's ink, a no "—" in \`{muted}\`.
+**Pitfalls:** a "best" tag across a card's edge (a rect half out of another is an overlap); points in a different order per option; colour as the only sign of yes or no.
+
+## 2×2 matrix
+**Use it** for items sorted by two judgements: impact and effort, urgent and important, value and risk. Positions that are measured: \`chart\`.
+
+<!-- recipe:matrix -->
+\`\`\`svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 520" font-family="system-ui, sans-serif" font-size="13" text-anchor="middle" fill="{ink}">
+<!-- each quadrant -->
+<rect x="{x}" y="{y}" width="296" height="192" rx="8" fill="{tint}" stroke="{stroke}"/>
+<text x="{tx}" y="{ty}" text-anchor="start" font-size="14" font-weight="600" fill="{inkA}">{title}</text>
+<!-- /each -->
+<!-- each item -->
+<text x="{tx}" y="{ty}" text-anchor="start">{item}</text>
+<!-- /each -->
+<text x="24" y="40" text-anchor="start" font-size="12.5" font-weight="600" fill="{muted}">{yName}</text>
+<text x="84" y="156.4" text-anchor="end" font-size="12.5" fill="{muted}">{yHigh}</text>
+<text x="84" y="356.4" text-anchor="end" font-size="12.5" fill="{muted}">{yLow}</text>
+<text x="244" y="468" font-size="12.5" fill="{muted}">{xLow}</text>
+<text x="548" y="468" font-size="12.5" fill="{muted}">{xHigh}</text>
+<text x="396" y="490" font-size="12.5" font-weight="600" fill="{muted}">{xName}</text>
+</svg>
+\`\`\`
+**Place.** Quadrants at x 96 or 400 and y 56 (high) or 256 (low); tx = x + 16, the title ty = y + 30, item k: ty = y + 56 + 20k. Room: a title 31 characters, an item 36 (its "• " counted), 7 a quadrant; yHigh, yLow 8; xLow, xHigh 40; yName 40 and xName 77, with their arrows ("Tác động ↑", "Công sức →").
+**Many:** 7 items a quadrant; more: the top 6 and "+3 việc khác".
+**Long text:** an item on one line; the reasons in your reply.
+**Narrow:** phone: the four quadrants as four short lists in your reply; a 2×2 needs the width.
+**Dark:** swap the palette.
+**Polish:** a family a quadrant: the one to act on green, the one to drop slate, the others blue and amber; titles are verdicts ("Làm ngay"); each axis says low and high at its ends.
+**Pitfalls:** a turned axis title (the y title goes above the plot); quadrants of unequal size; an item on the line between two.
+
+## Pros and cons, before and after
+**Use it** for two sides of one question: for and against a choice, before and after a change, now and the goal.
+
+<!-- recipe:sides -->
+\`\`\`svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 {H}" font-family="system-ui, sans-serif" font-size="13" text-anchor="middle" fill="{ink}">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8.6" refY="5" markerWidth="7" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto"><path d="M0 0L10 5L0 10z" fill="{line}"/></marker></defs>
+<!-- each arrow -->
+<path d="M340 58H380" fill="none" stroke="{line}" stroke-width="1.5" marker-end="url(#ah)"/>
+<!-- /each -->
+<!-- each side -->
+<rect x="{x}" y="24" width="316" height="{h}" rx="8" fill="{card}" stroke="{edge}"/>
+<rect x="{px}" y="30" width="304" height="56" rx="6" fill="{tint}"/>
+<text x="{cx}" y="63.6" font-size="16" font-weight="600" fill="{inkA}">{title}</text>
+<!-- /each -->
+<!-- each point -->
+<text x="{mx}" y="{ty}" font-size="14" font-weight="600" fill="{inkA}">{mark}</text>
+<text x="{tx}" y="{ty}" text-anchor="start">{line1}</text>
+<text x="{tx}" y="{ty2}" text-anchor="start">{line2}</text>
+<!-- /each -->
+<!-- each verdict -->
+<rect x="24" y="{vy}" width="672" height="48" rx="8" fill="{ground}" stroke="{rule}"/>
+<text x="360" y="{vty}" font-weight="600">{verdict}</text>
+<!-- /each -->
+</svg>
+\`\`\`
+**Place.** Sides at x 24 and 380: px = x + 6, cx = x + 158. Point j: ty = 116 + 28j, plus 18 for each two-line point above it, ty2 = ty + 18; its mark mx = x + 24, its text tx = x + 40. h = the longer side's last baseline - 2. The verdict: vy = h + 40, vty = vy + 28.5, H = vy + 72; without it H = h + 48. The arrow is for before and after only. Room: a title 29 characters at 16; a point 36 a line, 2 lines; the verdict 83.
+**Many:** the longer side's last baseline at most 424 with the verdict (12 one-line points), 480 without.
+**Long text:** two lines a point; the evidence in your reply.
+**Narrow:** phone: W 360, one side above the other, the arrow pointing down.
+**Dark:** swap the palette.
+**Polish:** for in green, against in rose, marks "+" and "−"; before slate, after green, marks "•"; both cards one height; the verdict names the winner and its condition.
+**Pitfalls:** colour alone telling the sides apart (keep marks and titles); padding a side to look heavier; an arrow on pros and cons.
+
+## KPI cards
+**Use it** for 2 to 12 headline numbers, each with how it moved: a monthly report, a dashboard's top line.
+
+<!-- recipe:kpi -->
+\`\`\`svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 {H}" font-family="system-ui, sans-serif" font-size="13" text-anchor="middle" fill="{ink}">
+<!-- each card -->
+<rect x="{x}" y="{y}" width="{w}" height="136" rx="8" fill="{card}" stroke="{edge}"/>
+<circle cx="{dx}" cy="{dy}" r="4" fill="{stroke}"/>
+<text x="{lx}" y="{ly}" text-anchor="start" fill="{muted}">{label}</text>
+<text x="{vx}" y="{vy}" text-anchor="start" font-size="28" font-weight="600">{value}</text>
+<text x="{vx}" y="{cy}" text-anchor="start" font-size="12.5" font-weight="600" fill="{tone}">{change}</text>
+<polyline points="{spark}" fill="none" stroke="{stroke}" stroke-width="2"/>
+<!-- /each -->
+</svg>
+\`\`\`
+**Place.** m a row, up to 4: w = (672 - 16(m - 1)) / m (328, 213.33, 156 at 2, 3, 4). Card in row r, column c: x = 24 + c(w + 16), y = 24 + 152r; dx = x + 20, dy = y + 24; lx = x + 32, ly = y + 28.5; vx = x + 16, vy = y + 72; cy = y + 98. The spark, p values: point j at (x + 16 + j(w - 32) / (p - 1), y + 124 - 16(v - least) / (most - least)), flat at y + 116 when all are equal. H = 152 × rows + 32. Room: a label w - 48 (39, 23, 15 characters); a value w - 32 at 28 semibold (17, 10, 7); a change w - 32 at 12.5 semibold (39, 24, 16).
+**Many:** 12 in three rows (H 488); more: a table.
+**Long text:** a label names what is counted ("Doanh thu T11"); causes in your reply.
+**Narrow:** phone: W 360, two a row (w 148): a label 13, a value 6, a change 15.
+**Dark:** swap the palette.
+**Polish:** a family a card, for its dot and spark; the change in green's ink when good, rose's when bad, \`{muted}\` when flat, whichever way it points ("▼ 8 % chi phí" is good); one period on every card ("so với T10").
+**Pitfalls:** a value with no unit ("1,2 tỷ đ", "%"); a spark read as exact (it has no scale); values of different precision.
+
+## Infographic panel
+**Use it** for one finding at a glance: a headline number and what it means, 2 to 4 facts behind it, and their source.
+
+<!-- recipe:panel -->
+\`\`\`svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 400" font-family="system-ui, sans-serif" font-size="13" text-anchor="middle" fill="{ink}">
+<rect x="24" y="24" width="672" height="112" rx="8" fill="{solid}"/>
+<text x="48" y="96" text-anchor="start" font-size="40" font-weight="600" fill="{onSolid}">{big}</text>
+<text x="232" y="74" text-anchor="start" font-size="16" font-weight="600" fill="{onSolid}">{say1}</text>
+<text x="232" y="98" text-anchor="start" font-size="16" font-weight="600" fill="{onSolid}">{say2}</text>
+<!-- each fact -->
+<circle cx="{cx}" cy="208" r="40" fill="none" stroke="{ring}" stroke-width="8"/>
+<path d="M{cx} 168A40 40 0 {large} 1 {ex} {ey}" fill="none" stroke="{stroke}" stroke-width="8" stroke-linecap="round"/>
+<text x="{cx}" y="213.6" font-size="16" font-weight="600" fill="{inkA}">{value}</text>
+<text x="{cx}" y="280" font-size="14" font-weight="600">{title}</text>
+<text x="{cx}" y="300" fill="{muted}">{line1}</text>
+<text x="{cx}" y="318" fill="{muted}">{line2}</text>
+<!-- /each -->
+<line x1="24" y1="344" x2="696" y2="344" stroke="{rule}"/>
+<text x="24" y="368" text-anchor="start" font-size="12.5" fill="{muted}">{source}</text>
+</svg>
+\`\`\`
+**Place.** k facts, s = 672 / k; fact i: cx = 24 + s(i + 0.5). A share p runs clockwise from the top to a = -90 + 360p degrees: ex = cx + 40 cos a, ey = 208 + 40 sin a, large = 1 past one half; \`{ring}\` = \`{tint}\`. All of it (p = 1): no path, \`{ring}\` = \`{stroke}\`; not a share ("4,8/5"): no path. Room: the big number 6 characters at 40; the statement 45 a line at 16, 2 lines; a ring's value 6; a title s - 24 (37, 23, 17 at 2, 3, 4); a line s - 24 at 13 (43, 27, 20); the source 96.
+**Many:** 4 facts; more: KPI cards.
+**Long text:** the statement in two lines; a fact's detail in your reply.
+**Narrow:** phone: W 360, the number above the statement in a taller band, facts two a row.
+**Dark:** swap the palette.
+**Polish:** one family for the rings, the band the one solid; each arc is the number in its ring; the source always, under the rule ("Nguồn: khảo sát 1.200 khách, 10/2026").
+**Pitfalls:** 100 % drawn as an arc (its ends meet: nothing shows); shares that do not add up drawn as if they did; no source.
+
+## Labelled illustration
+**Use it** to name the parts of one thing: a device, a product, a screen, a room. A real-looking picture: \`generate_image\`, the names in your reply.
+
+<!-- recipe:labelled -->
+\`\`\`svg
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 {H}" font-family="system-ui, sans-serif" font-size="13" text-anchor="middle" fill="{ink}">
+<!-- each part -->
+<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{rx}" fill="{fill}" stroke="{rim}" stroke-width="1.5"/>
+<!-- /each -->
+<!-- each round -->
+<circle cx="{cx}" cy="{cy}" r="{r}" fill="{fill}" stroke="{rim}" stroke-width="1.5"/>
+<!-- /each -->
+<g fill="none" stroke="{line}" stroke-width="1.5">
+<!-- each leader -->
+<path d="M{x1} {y1}H{x2}L{px} {py}"/>
+<!-- /each -->
+</g>
+<!-- each callout -->
+<circle cx="{px}" cy="{py}" r="4" fill="{line}" stroke="{card}" stroke-width="1.5"/>
+<text x="{tx}" y="{ty}" text-anchor="{anchor}" font-size="14" font-weight="600">{name}</text>
+<text x="{tx}" y="{ny}" text-anchor="{anchor}" font-size="12.5" fill="{muted}">{note}</text>
+<!-- /each -->
+</svg>
+\`\`\`
+**Place.** The figure from rects and circles in x 248 to 472, y 24 to H - 24, each part wholly inside another or clear of it. A named point (px, py) left of 360 is labelled on the left: tx = 216, anchor end, x1 = 224, x2 = 240; else tx = 504, anchor start, x1 = 496, x2 = 480. Down each side, in the order of py: ty = py + 5, or 52 below the label above if that is lower; ny = ty + 18, y1 = ty - 5. H = the lower of the figure's bottom and the last ny + 4, plus 24. Room: a name 22 characters, a note 27 at 12.5.
+**Many:** 5 a side; more: numbered dots on the figure, the names in your reply.
+**Long text:** a name and one note; the rest in your reply.
+**Narrow:** phone: W 360, numbered dots on the figure, the names in your reply.
+**Dark:** swap the palette; the dot's \`{card}\` ring parts it from the part.
+**Polish:** one family for the figure (tints, strokes for rims), \`{card}\` for a screen or glass; names say what a part is, notes what it does.
+**Pitfalls:** leaders crossing (keep each side in the order of its points; two that still cross swap labels); a label over the figure; detail drawn by eye.`,
   },
 ];

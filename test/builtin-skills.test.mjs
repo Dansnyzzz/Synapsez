@@ -45,7 +45,7 @@ const ownBudget = (id) => id === 'builtin:drawing' || id.startsWith('builtin:svg
 // round 1): the drawing guide and two recipe families, their descriptions held to 145 characters,
 // came to 3,125. The two families still to come (svg-sequences, svg-layouts) add at most 340
 // (name, 145, and the 8 the menu line costs, each): 3,465, and about a tenth of the five drawing
-// skills' 835 on top. Nothing past them should fit.
+// skills' 835 on top. Nothing past them should fit. Task 4b: with them the menu is 3,462.
 const MENU_BUDGET = 3550;
 
 const INVISIBLE = /[\u00AD\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]|[\u{E0000}-\u{E007F}]/u;
