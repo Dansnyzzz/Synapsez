@@ -691,7 +691,14 @@ export function createApp() {
     rateLimit('register'),
     wrap(async (req, res) => {
       try {
-        const { user, confirm } = await registerUser(body(req), req, res);
+        // An address waiting for its code answers like a sign-in (1.33.3), so it is counted like
+        // one: the password in the sign-in buckets, a fresh code in the resend buckets, the same
+        // ones /api/login and /api/register/resend fill.
+        const meter = async (action) => {
+          const blocked = await consumeLimit(req, action, await accountKey(req.body?.email));
+          if (blocked) throw Object.assign(new Error(blocked.body.error), { status: blocked.status, code: blocked.body.code, retryAfterSec: blocked.retryAfterSec });
+        };
+        const { user, confirm } = await registerUser(body(req), req, res, { meter });
         // What the person ticked — the privacy notice, and since 2026-10-26 the
         // terms and the usage policy — by version, in their security record
         // (LAW-001): consent has to be shown, not assumed. The form insists on
@@ -705,7 +712,10 @@ export function createApp() {
       } catch (err) {
         // A closed deployment is a 403, not a bad request — the client can tell
         // "you may not" from "you got that wrong" and say something useful.
-        res.status(err.status || 400).json({ error: clientError(err) });
+        // Only the codes the page acts on are passed on, never a database's own.
+        const code = ['email_unconfirmed', 'email_pending', 'rate_limited'].includes(err.code) ? err.code : undefined;
+        if (err.retryAfterSec) res.set('Retry-After', String(err.retryAfterSec));
+        res.status(err.status || 400).json({ error: clientError(err), code, ...(code === 'email_unconfirmed' ? { email: err.email } : {}) });
       }
     }),
   );

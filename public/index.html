@@ -179,6 +179,12 @@
 
         <button class="btn btn--primary btn--block" type="submit" id="gate-submit" data-i18n-js>Sign in</button>
         <p class="gate__error" id="gate-error" role="alert" hidden></p>
+        <!-- Signing up with an address still waiting for its code (1.33.3): the two ways
+             back to it, the address carried over. Named by the message above them. -->
+        <div class="gate__pending" id="gate-pending" role="group" aria-labelledby="gate-error" hidden>
+          <button class="btn btn--ghost" type="button" id="gate-pending-signin" data-i18n="gate.pending.signin">Sign in</button>
+          <button class="btn btn--ghost" type="button" id="gate-pending-forgot" data-i18n="gate.pending.forgot">Forgot password</button>
+        </div>
         <p class="gate__note" id="gate-note" hidden></p>
         <div class="gate__links">
           <button class="gate__switch" type="button" id="gate-switch" data-i18n-js hidden>

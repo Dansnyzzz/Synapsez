@@ -2013,6 +2013,9 @@ export const en = {
   'legal.thanks': 'Thank you — your agreement is saved.',
   'gate.consentNeeded': 'Tick the box to agree to the terms, the usage policy and the privacy notice first.',
   'gate.forgot': 'Forgot your password?',
+  // Signing up with an address still waiting for its code (1.33.3).
+  'gate.pending.signin': 'Sign in',
+  'gate.pending.forgot': 'Forgot password',
   'gate.about': 'Ephapse is an AI assistant: chat with the model you choose, work with your files and, only if you connect them, your Gmail, Drive, Calendar and other Google apps, to do what you ask.',
   'gate.privacy': 'Privacy policy',
   'gate.what': 'What is Ephapse?',

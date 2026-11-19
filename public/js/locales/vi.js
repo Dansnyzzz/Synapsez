@@ -1999,6 +1999,9 @@ export const vi = {
   'legal.thanks': 'Cảm ơn bạn — đã lưu sự đồng ý của bạn.',
   'gate.consentNeeded': 'Hãy đánh dấu đồng ý với điều khoản, chính sách sử dụng và thông báo xử lý dữ liệu cá nhân trước.',
   'gate.forgot': 'Quên mật khẩu?',
+  // Signing up with an address still waiting for its code (1.33.3).
+  'gate.pending.signin': 'Đăng nhập',
+  'gate.pending.forgot': 'Quên mật khẩu',
   'gate.about': 'Ephapse là trợ lý AI: trò chuyện với mô hình bạn chọn, làm việc với tệp của bạn và, chỉ khi bạn kết nối, với Gmail, Drive, Lịch và các ứng dụng Google khác, để làm việc bạn yêu cầu.',
   'gate.privacy': 'Chính sách quyền riêng tư',
   'gate.what': 'Ephapse là gì?',

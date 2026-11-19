@@ -11530,6 +11530,154 @@ section('a row of tabs or radios is one Tab stop, walked with the arrows (UI-013
   check('a screen-reader-only announcer is on the page (UI-008)', marks.announcer === 'polite', JSON.stringify(marks));
 }
 
+/*
+ * 1.33.3, the owner live: the confirmation mail never came, they left the code screen, and
+ * signing up again said only "That email is already registered." Now the password chosen
+ * brings back the code box, and another password says how to get back, with "Sign in" and
+ * "Forgot password" beside the message, the address carried over. Each page here has an
+ * address of its own (x-real-ip), so the suite's other sign-ups do not share its limit.
+ */
+section('signing up again with an address waiting for its code leads back to it (1.33.3)');
+{
+  process.env.EMAIL_CONFIRMATION = 'on';
+  const pageErrors = [];
+  const first = 'the-first-long-password';
+  const other = 'a-different-long-password';
+  const visit = async (options) => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 860 }, ...options });
+    const guest = await context.newPage();
+    guest.on('pageerror', (err) => pageErrors.push(err.message));
+    await guest.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+    await guest.waitForSelector('#gate-switch:not([hidden])');
+    return { context, guest };
+  };
+  // To the sign-up form from wherever the gate is, as a person would: the switch below the card.
+  const toSignUp = async (guest) => {
+    for (let i = 0; i < 3 && (await guest.isHidden('#gate-username')); i += 1) await guest.click('#gate-switch');
+  };
+  const signUp = async (guest, username, password, email = 'waiting@test.local') => {
+    await toSignUp(guest);
+    await guest.fill('#gate-username', username);
+    await guest.fill('#gate-email', email);
+    await guest.fill('#gate-password', password);
+    await guest.check('#gate-consent');
+    await guest.click('#gate-submit');
+    await guest.waitForFunction(() => !document.getElementById('gate-error').hidden || !document.getElementById('gate-confirm').hidden, null, { timeout: 10_000 }).catch(() => {});
+  };
+  const look = (guest) =>
+    guest.evaluate(() => {
+      const box = (id) => /** @type {HTMLInputElement} */ (document.getElementById(id));
+      const group = document.getElementById('gate-pending');
+      return {
+        error: box('gate-error').hidden ? '' : box('gate-error').textContent,
+        ways: !!group && !group.hidden && group.getClientRects().length > 0,
+        labelledBy: group?.getAttribute('aria-labelledby') || '',
+        role: group?.getAttribute('role') || '',
+        signin: box('gate-pending-signin')?.textContent.trim() || '',
+        forgot: box('gate-pending-forgot')?.textContent.trim() || '',
+        code: !box('gate-confirm').hidden,
+        note: box('gate-note').hidden ? '' : box('gate-note').textContent,
+        signupForm: !box('gate-username').hidden,
+        passwordShown: !box('gate-password-field').hidden,
+        email: box('gate-email').value,
+        password: box('gate-password').value,
+        sub: box('gate-sub').textContent,
+        focused: document.activeElement?.id || '',
+        app: !document.getElementById('app').hidden,
+        wide: document.documentElement.scrollWidth,
+      };
+    });
+
+  const { context, guest } = await visit({ extraHTTPHeaders: { 'x-real-ip': '10.77.0.1' } });
+  try {
+    // An account waiting for its code: the mail never came, and the person left the code screen.
+    await signUp(guest, 'waiting.one', first);
+    const made = await look(guest);
+    check('the first sign-up asks for the code', made.code && !made.app, JSON.stringify(made));
+    await guest.evaluate(() => localStorage.removeItem('ephapse:gate-draft'));
+    await guest.reload({ waitUntil: 'domcontentloaded' });
+    await guest.waitForSelector('#gate-switch:not([hidden])');
+
+    // Another password: the message, and the two ways back, the first one focused.
+    await signUp(guest, 'waiting.two', other, 'Waiting@test.local');
+    const pending = await look(guest);
+    check('another password says the address waits for its code, and how to get back', /waiting to be confirmed/.test(pending.error) && /Forgot password/.test(pending.error) && !/already registered/.test(pending.error) && !pending.code && !pending.app, JSON.stringify(pending));
+    check('  with "Sign in" and "Forgot password" beside it, a group the message names, focus on the first', pending.ways && pending.role === 'group' && pending.labelledBy === 'gate-error' && pending.signin === 'Sign in' && pending.forgot === 'Forgot password' && pending.focused === 'gate-pending-signin', JSON.stringify(pending));
+    await guest.keyboard.press('Tab');
+    check('  both reached by Tab, in order', (await guest.evaluate(() => document.activeElement?.id)) === 'gate-pending-forgot');
+    await guest.keyboard.press('Shift+Tab');
+
+    // "Sign in", pressed from the keyboard: the sign-in form with the address, the other password gone.
+    await guest.keyboard.press('Enter');
+    const signin = await look(guest);
+    check('"Sign in" opens signing in with the address filled in, the password box empty and focused', /Sign in to continue/.test(signin.sub) && !signin.signupForm && signin.passwordShown && signin.email === 'Waiting@test.local' && signin.password === '' && signin.focused === 'gate-password' && !signin.ways && !signin.error, JSON.stringify(signin));
+    await guest.fill('#gate-password', first);
+    await guest.click('#gate-submit');
+    await guest.waitForSelector('#gate-confirm:not([hidden])', { timeout: 10_000 }).catch(() => {});
+    const viaSignin = await look(guest);
+    check('  and signing in there with the password chosen brings the code box', viaSignin.code && /waiting@test\.local/i.test(viaSignin.note) && viaSignin.focused === 'gate-confirmcode', JSON.stringify(viaSignin));
+
+    // "Forgot password", from the keyboard: the reset form with the address.
+    await signUp(guest, 'waiting.two', other);
+    await guest.keyboard.press('Tab');
+    await guest.keyboard.press('Enter');
+    const forgot = await look(guest);
+    check('"Forgot password" opens the reset with the address filled in, the button to send focused', /send you a reset code/.test(forgot.sub) && !forgot.signupForm && !forgot.passwordShown && forgot.email === 'waiting@test.local' && forgot.focused === 'gate-submit' && !forgot.ways, JSON.stringify(forgot));
+
+    // The password chosen, at sign-up: the code box at once, as signing in gives.
+    await signUp(guest, 'waiting.three', first);
+    const again = await look(guest);
+    check('signing up again with the password chosen shows the code box at once, saying where the code went', again.code && !again.ways && /Confirm your email first/.test(again.error) && /waiting@test\.local/.test(again.note) && again.focused === 'gate-confirmcode' && !again.app, JSON.stringify(again));
+    const { getStore } = await import('../server/store/index.js');
+    const held = await getStore().getUserByEmail('waiting@test.local');
+    check('  and nothing was made or renamed: one account, its first username', held?.username === 'waiting.one' && (await getStore().getUserByUsername('waiting.two')) === null && (await getStore().getUserByUsername('waiting.three')) === null, held?.username);
+  } finally {
+    await context.close();
+  }
+
+  // In Vietnamese, on a phone.
+  const vi = await visit({ viewport: { width: 360, height: 740 }, locale: 'vi-VN', extraHTTPHeaders: { 'x-real-ip': '10.77.0.2' } });
+  try {
+    await signUp(vi.guest, 'waiting.vi', other);
+    const said = await look(vi.guest);
+    check('in Vietnamese: the message and both ways back, inside a 360px phone', /chờ xác nhận/.test(said.error) && said.ways && said.signin === 'Đăng nhập' && said.forgot === 'Quên mật khẩu' && said.wide <= 360, JSON.stringify(said));
+    // Readable in both themes: each button's words against what is behind it, and big enough to press.
+    const measure = () =>
+      vi.guest.evaluate(() => {
+        const channel = (v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+        const rgb = (c) => (c.match(/[\d.]+/g) || []).map(Number);
+        const lum = (c) => { const [r, g, b] = rgb(c).slice(0, 3).map((n) => channel(n / 255)); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+        const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100; };
+        // The nearest solid colour behind an element: a ghost button is see-through.
+        const behind = (el) => {
+          for (let at = el; at; at = at.parentElement) {
+            const c = getComputedStyle(at).backgroundColor;
+            const alpha = rgb(c)[3];
+            if (c && c !== 'transparent' && (alpha === undefined || alpha >= 0.95)) return c;
+          }
+          return 'rgb(255, 255, 255)';
+        };
+        return ['gate-pending-signin', 'gate-pending-forgot'].map((id) => {
+          const button = /** @type {HTMLElement} */ (document.getElementById(id));
+          if (!button) return { id, ratio: 0, tall: 0 };
+          const box = button.getBoundingClientRect();
+          return { id, ratio: ratio(getComputedStyle(button).color, behind(button)), tall: Math.round(box.height) };
+        });
+      });
+    await vi.guest.emulateMedia({ colorScheme: 'light' });
+    await vi.guest.waitForTimeout(150);
+    const light = await measure();
+    await vi.guest.emulateMedia({ colorScheme: 'dark' });
+    await vi.guest.waitForTimeout(150);
+    const dark = await measure();
+    check('  each button readable (4.5:1 or more) in light and dark, and at least 36px tall', [...light, ...dark].every((m) => m.ratio >= 4.5 && m.tall >= 36), JSON.stringify({ light, dark }));
+  } finally {
+    await vi.context.close();
+  }
+  check('no script error on any of it', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
+  delete process.env.EMAIL_CONFIRMATION;
+}
+
 await browser.close();
 server.close();
 removeTemp(process.env.DATA_DIR);

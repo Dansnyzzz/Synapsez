@@ -1,6 +1,6 @@
 # Changelog
 
-## 2026-11-19 — Mail sends when the sender is written as "Name <address>" in any setting (1.33.3)
+## 2026-11-19 — Mail sends when the sender is written as `Name <address>` in any setting, and signing up again leads back to the code (1.33.3)
 
 **What happened.** Confirmation codes stopped arriving on www.ephapse.net. Resend refused every message with a 422 `validation_error`, "Invalid `from` field", because the request's sender was `"Ephapse" <Ephapse <support@ephapse.net>>`. `GMAIL_USER` held `Ephapse <support@ephapse.net>`, `EMAIL_FROM` was not set for Production, and only `EMAIL_FROM` was read as `Name <address>`. The login fallback was taken as a bare address and wrapped a second time.
 
@@ -21,6 +21,15 @@
 - The `cache-dir` npm config warning comes from Vercel's build machine. Nothing in this repository sets it: there is no `.npmrc`.
 
 **Tests.** `test/email.test.mjs` replays the incident end to end through Resend with `fetch` stubbed. It checks every accepted way of writing `EMAIL_FROM`, `GMAIL_USER` with a name and the login it gives, and `SMTP_USER` both with a name and as a user name. It checks that eight broken values fall back with exactly one warning that never prints the value, and that the domain check reads `ephapse.net`. A hundred hostile combinations of both settings never give a header with one address inside another. `test/deploy.test.mjs` pins `engines.node` to `.nvmrc`'s major and the denied `tesseract.js` script.
+
+**Signing up again with an address waiting for its code.** The owner hit this live: the confirmation mail never came because of the sender bug above, they left the code screen, and signing up again with the same email said only "That email is already registered." That was a dead end for 24 hours, until the unconfirmed address is released.
+
+- **With the password chosen the first time**, signing up again now works exactly like signing in to that account. A fresh code goes out and the page shows the code box for that email at once, with the same `email_unconfirmed` answer sign-in gives. Nothing new is made, and the stored password, name and username stay as they were.
+- **With another password**, the answer is `email_pending`: "That email is waiting to be confirmed. Sign in with the password you chose to get a new code, or use Forgot password." Below it are two buttons. **Sign in** switches to signing in with the email filled in and the password box emptied. **Forgot password** opens the reset with the email filled in. Both are reachable by keyboard, in Vietnamese and English. The pending account's credentials are never replaced, because that would let anyone take over a sign-up that is waiting for its code. The answer reveals nothing that "already registered" did not.
+- A confirmed account still gets "That email is already registered.", whichever password is typed. An address unconfirmed for over a day is released as before.
+- **Limits:** this path checks the password and can send a code. It therefore counts against the same limits as signing in and as asking for a new code, in the same buckets `/api/login` and `/api/register/resend` use, on top of sign-up's own limit. Ten wrong sign-ins from an address stop that address's sign-up guesses at the account. Five new codes asked for from an address mean signing up again from there sends no sixth.
+
+Tests: `test/http.test.mjs` covers all three cases, that nothing changes, the Vietnamese message and both limits. `test/ui.test.mjs` drives the page: the message and its two buttons, Tab order and focus, each button's destination with the email carried over, the code box from signing up again, Vietnamese on a 360px phone, and contrast in light and dark.
 
 **Not verified live:** a real send through Resend from `support@ephapse.net`, which needs the domain verified at Resend, and the next Vercel build's warnings.
 

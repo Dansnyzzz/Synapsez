@@ -1661,6 +1661,82 @@ section('a new account confirms its email with a code');
   }
 }
 
+/*
+ * 1.33.3, the owner live: the confirmation mail never came, they left the code screen, and
+ * signing up again answered only "That email is already registered.", a dead end. Signing up
+ * again with the password chosen is now a sign-in for that account (a fresh code, the code
+ * box); with another password it says how to get back, and never replaces the pending
+ * account's credentials, which would let anyone take over a sign-up waiting for its code.
+ */
+section('signing up again with an address waiting for its code leads back to the code (1.33.3)');
+{
+  const at = (ip) => ({ headers: { 'x-real-ip': ip } });
+  const password = 'ivy-first-long-password';
+  const before = process.env.EMAIL_CONFIRMATION;
+  process.env.EMAIL_CONFIRMATION = 'on';
+  const printed = [];
+  const realLog = console.log;
+  console.log = (...args) => {
+    printed.push(args.join(' '));
+    if (!/email \(no provider|to: {6}|subject:|confirmation code|─────/.test(String(args[0]))) realLog(...args);
+  };
+  const codesSent = () => printed.filter((l) => /is your \S+ confirmation code/.test(l)).length;
+  const lastCode = () => /(\d{6}) is your/.exec([...printed].reverse().find((l) => /is your \S+ confirmation code/.test(l)) || '')?.[1] || '';
+  const PENDING = 'That email is waiting to be confirmed. Sign in with the password you chose to get a new code, or use Forgot password.';
+  try {
+    const made = await jar().call('POST', '/api/register', { email: 'ivy@example.com', password, username: 'ivy.p' }, at('10.61.0.1'));
+    check('an account waits for its code', made.status === 202 && made.json?.confirm === true, `${made.status} ${JSON.stringify(made.json)}`);
+    const held = await store.getUserByEmail('ivy@example.com');
+    const users = await store.countUsers();
+
+    // The same password: exactly a sign-in for the unconfirmed account.
+    const sent = codesSent();
+    const again = jar();
+    const same = await again.call('POST', '/api/register', { email: ' IVY@example.com ', password, username: 'someone.else', name: 'Someone Else' }, at('10.61.0.2'));
+    check('the password chosen gives the code box, as signing in does', same.status === 403 && same.json?.code === 'email_unconfirmed' && same.json?.email === 'ivy@example.com', `${same.status} ${JSON.stringify(same.json)}`);
+    check('  with a fresh code sent', codesSent() === sent + 1, `${codesSent() - sent} sent`);
+    check('  and no session', (await again.call('GET', '/api/bootstrap')).status === 401);
+    const after = await store.getUserByEmail('ivy@example.com');
+    check('  nothing made, nothing changed: the same account, password, name and username', (await store.countUsers()) === users && after.id === held.id && after.password_hash === held.password_hash && after.name === held.name && after.username === 'ivy.p' && (await store.getUserByUsername('someone.else')) === null, JSON.stringify({ name: after.name, username: after.username }));
+
+    // Another password: a way back, and the pending account untouched.
+    const sentBefore = codesSent();
+    const other = await jar().call('POST', '/api/register', { email: 'ivy@example.com', password: 'a-different-long-password', username: 'ivy.taken', name: 'Taker' }, at('10.61.0.3'));
+    check('another password says the address waits, and how to get back', other.status === 400 && other.json?.code === 'email_pending' && other.json?.error === PENDING, `${other.status} ${JSON.stringify(other.json)}`);
+    const kept = await store.getUserByEmail('ivy@example.com');
+    check('  the pending account keeps its password hash, name and username, and nothing is made', kept.id === held.id && kept.password_hash === held.password_hash && kept.name === held.name && kept.username === 'ivy.p' && (await store.countUsers()) === users && (await store.getUserByUsername('ivy.taken')) === null);
+    check('  and no code goes out', codesSent() === sentBefore, `${codesSent() - sentBefore} sent`);
+    const viSaid = await jar().call('POST', '/api/register', { email: 'ivy@example.com', password: 'a-different-long-password', username: 'ivy.taken' }, { headers: { 'x-real-ip': '10.61.0.4', 'x-language': 'vi' } });
+    check('  said in Vietnamese to a Vietnamese page', viSaid.json?.code === 'email_pending' && /chờ xác nhận/.test(viSaid.json?.error || ''), viSaid.json?.error);
+
+    // The fresh code from signing up again is the one that works.
+    const code = lastCode();
+    const confirmed = await jar().call('POST', '/api/register/confirm', { email: 'ivy@example.com', code }, at('10.61.0.2'));
+    check('the fresh code confirms the account', confirmed.status === 200, `${confirmed.status} ${confirmed.json?.error || ''}`);
+
+    // Confirmed: "already registered", with the right password too, and no code.
+    const sentNow = codesSent();
+    const taken = await jar().call('POST', '/api/register', { email: 'ivy@example.com', password, username: 'ivy.two' }, at('10.61.0.5'));
+    const takenOther = await jar().call('POST', '/api/register', { email: 'ivy@example.com', password: 'a-different-long-password', username: 'ivy.two' }, at('10.61.0.5'));
+    check('a confirmed account is "already registered", whichever password', taken.status === 400 && taken.json?.error === 'That email is already registered.' && !taken.json?.code && takenOther.json?.error === 'That email is already registered.' && !takenOther.json?.code, `${JSON.stringify(taken.json)} ${JSON.stringify(takenOther.json)}`);
+    check('  and sends no code', codesSent() === sentNow);
+
+    // The same limits as signing in and asking for a code again, shared with those routes.
+    await jar().call('POST', '/api/register', { email: 'jade@example.com', password, username: 'jade.p' }, at('10.61.1.1'));
+    for (let i = 0; i < 10; i += 1) await jar().call('POST', '/api/login', { email: 'jade@example.com', password: `wrong-password-${i}` }, at('10.61.1.2'));
+    const guessed = await jar().call('POST', '/api/register', { email: 'jade@example.com', password: 'yet-another-long-guess', username: 'jade.q' }, at('10.61.1.2'));
+    check('ten wrong sign-ins from an address stop its sign-up guesses at that account too', guessed.status === 429 && guessed.json?.code === 'rate_limited' && Number(guessed.headers.get('retry-after')) > 0, `${guessed.status} ${JSON.stringify(guessed.json)} retry-after=${guessed.headers.get('retry-after')}`);
+    for (let i = 0; i < 5; i += 1) await jar().call('POST', '/api/register/resend', { email: 'jade@example.com' }, at('10.61.1.3'));
+    const sentLimited = codesSent();
+    const spam = await jar().call('POST', '/api/register', { email: 'jade@example.com', password, username: 'jade.r' }, at('10.61.1.3'));
+    check('five new codes asked for from an address: signing up again from there sends no sixth', spam.status === 429 && codesSent() === sentLimited, `${spam.status} ${codesSent() - sentLimited} sent`);
+  } finally {
+    console.log = realLog;
+    if (before === undefined) delete process.env.EMAIL_CONFIRMATION;
+    else process.env.EMAIL_CONFIRMATION = before;
+  }
+}
+
 // ── the SePay webhook ───────────────────────────────────────────────
 section('the SePay webhook is checked on the raw bytes');
 {

@@ -326,6 +326,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'That feedback was not found.': 'Không tìm thấy góp ý đó.',
   'Those are not the current documents. Reload the page to read them.':'Đó không phải bản hiện hành của các văn bản. Hãy tải lại trang để đọc chúng.',
   'That email is already registered.': 'Email này đã được đăng ký.',
+  'That email is waiting to be confirmed. Sign in with the password you chose to get a new code, or use Forgot password.':
+    'Email này đang chờ xác nhận. Hãy đăng nhập bằng mật khẩu bạn đã chọn để nhận mã mới, hoặc dùng Quên mật khẩu.',
   'This account has been suspended.': 'Tài khoản này đã bị tạm khoá.',
   'Enter the code from your authenticator app.': 'Nhập mã từ ứng dụng xác thực của bạn.',
   'That code is not right. Try the next one.': 'Mã không đúng. Hãy thử mã tiếp theo.',

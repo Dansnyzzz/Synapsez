@@ -281,6 +281,26 @@ export function confirmationRequired() {
 const unconfirmed = (email) =>
   Object.assign(new Error('Confirm your email first: enter the 6-digit code we sent to it.'), { status: 403, code: 'email_unconfirmed', email });
 
+/*
+ * Signing up again with an address that waits for its code (1.33.3; owner, live: the code
+ * never came, they left the code screen, and "already registered" was a dead end). Always
+ * throws. With the password the account was made with it is a sign-in for that account: a
+ * fresh code and the code box, nothing made and nothing changed. With another, it says how
+ * to get back, and the pending account keeps its credentials: replacing them would let
+ * anyone take over a sign-up waiting for its code. `meter` charges the same buckets as
+ * signing in (the password is checked here) and as asking for a code again (one is sent).
+ */
+async function answerWaiting(user, password, req, meter) {
+  await meter('login');
+  if (!(await verifyPassword(password, user.password_hash))) {
+    throw Object.assign(new Error('That email is waiting to be confirmed. Sign in with the password you chose to get a new code, or use Forgot password.'), { status: 400, code: 'email_pending' });
+  }
+  if (user.suspended_at) throw Object.assign(new Error('This account has been suspended.'), { status: 403 });
+  await meter('confirm-send');
+  await issueLink({ user, req, kind: 'confirm' });
+  throw unconfirmed(user.email);
+}
+
 /**
  * A fresh confirmation code for an account still waiting for one. Answers the same
  * whether or not the address has such an account, so it says nothing about who
@@ -463,8 +483,12 @@ export function signupOpen() {
  * @param {{ email?: string, password?: string, name?: string, username?: string }} input
  *   `username` is asked for by the sign-up form (2026-10-20). An API client that
  *   sends none still gets an account, which can take a name in its settings.
+ * @param {any} req
+ * @param {any} res
+ * @param {{ meter?: (action: 'login' | 'confirm-send') => Promise<void> }} [options]
+ *   `meter` throws when the rate limit for that action is spent (the route passes it).
  */
-export async function registerUser({ email, password, name, username }, req, res) {
+export async function registerUser({ email, password, name, username }, req, res, { meter = async () => {} } = {}) {
   const store = getStore();
 
   const normalised = String(email || '').trim().toLowerCase();
@@ -483,7 +507,9 @@ export async function registerUser({ email, password, name, username }, req, res
      * another person's email cannot keep them from signing up, and that person can
      * claim it at once anyway with "Forgot password", which proves the inbox.
      */
-    const stale = !existing.email_verified_at && confirmationRequired() && Date.now() - new Date(existing.created_at).getTime() > UNCONFIRMED_HOLD_MS;
+    const waiting = !existing.email_verified_at && confirmationRequired();
+    const stale = waiting && Date.now() - new Date(existing.created_at).getTime() > UNCONFIRMED_HOLD_MS;
+    if (waiting && !stale) await answerWaiting(existing, password, req, meter);
     if (!stale) throw new Error('That email is already registered.');
     await store.deleteUser(existing.id);
   }
