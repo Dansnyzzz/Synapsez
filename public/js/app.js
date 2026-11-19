@@ -811,12 +811,18 @@ $('gate-pending-forgot').addEventListener('click', () => {
   $('gate-submit').focus();
 });
 
-/** The code box, with what was sent and where. @param {string} [email] */
-function askForConfirmation(email) {
+/**
+ * The code box, with what was sent and where. With `sent` false no new code went out (the
+ * resend limit, 1.33.3): the box is for the last one, and the server's words say so, so
+ * "we sent a code" is not said beside them.
+ *
+ * @param {string} [email] @param {boolean} [sent]
+ */
+function askForConfirmation(email, sent = true) {
   if (email) /** @type {HTMLInputElement} */ ($('gate-email')).value = email;
   /** @type {HTMLInputElement} */ ($('gate-confirmcode')).value = '';
   setGateMode('confirm');
-  note(t('gate.note.confirmSent', { email: /** @type {HTMLInputElement} */ ($('gate-email')).value.trim() }));
+  if (sent) note(t('gate.note.confirmSent', { email: /** @type {HTMLInputElement} */ ($('gate-email')).value.trim() }));
   $('gate-confirmcode').focus();
 }
 
@@ -924,7 +930,7 @@ $('gate-form').addEventListener('submit', async (event) => {
     // Signing up again with the password chosen answers the same (1.33.3).
     if (err.code === 'email_unconfirmed') {
       needsTotp = false;
-      askForConfirmation(err.email);
+      askForConfirmation(err.email, err.sent !== false);
       fail(err.message);
     } else if (err.code === 'email_pending') {
       needsTotp = false;

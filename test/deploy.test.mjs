@@ -178,6 +178,16 @@ section('dependencies');
     /^\d+\.x$/.test(pkg.engines?.node || '') && pkg.engines.node === `${read('.nvmrc').trim()}.x`,
     pkg.engines?.node,
   );
+  // The launcher and the computer installers refuse anything older than that same major.
+  {
+    const major = read('.nvmrc').trim();
+    const floors = {
+      launcher: /const MIN_NODE = (\d+);/.exec(read('scripts/launch.js'))?.[1],
+      sh: /"\$major" -ge (\d+) \]/.exec(read('public/setup.sh'))?.[1],
+      ps1: /\$major -lt (\d+)\)/.exec(read('public/setup.ps1'))?.[1],
+    };
+    check('the launcher and both installers ask for the Node .nvmrc names, or newer', Object.values(floors).every((n) => n === major), JSON.stringify({ major, ...floors }));
+  }
   // tesseract.js's only install script is `opencollective-postinstall || true`, a donation message.
   check('install scripts that only print are denied, tesseract.js among them', pkg.allowScripts?.['tesseract.js'] === false, JSON.stringify(pkg.allowScripts));
 

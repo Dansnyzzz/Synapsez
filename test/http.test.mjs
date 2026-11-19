@@ -1729,7 +1729,49 @@ section('signing up again with an address waiting for its code leads back to the
     for (let i = 0; i < 5; i += 1) await jar().call('POST', '/api/register/resend', { email: 'jade@example.com' }, at('10.61.1.3'));
     const sentLimited = codesSent();
     const spam = await jar().call('POST', '/api/register', { email: 'jade@example.com', password, username: 'jade.r' }, at('10.61.1.3'));
-    check('five new codes asked for from an address: signing up again from there sends no sixth', spam.status === 429 && codesSent() === sentLimited, `${spam.status} ${codesSent() - sentLimited} sent`);
+    const NOT_SENT = /No new code was sent/;
+    check('five new codes asked for from an address: signing up again from there sends no sixth, and says so beside the code box', spam.status === 403 && spam.json?.code === 'email_unconfirmed' && spam.json?.email === 'jade@example.com' && spam.json?.sent === false && NOT_SENT.test(spam.json?.error || '') && codesSent() === sentLimited, `${spam.status} ${JSON.stringify(spam.json)} ${codesSent() - sentLimited} sent`);
+
+    // Review round 1: a wrong password through sign-up is a guess at the account, recorded as /api/login records one.
+    const jade = await store.getUserByEmail('jade@example.com');
+    const failedSignIns = async () => (await store.listAudit(jade.id, 200)).filter((e) => e.kind === 'sign_in_failed').length;
+    await new Promise((r) => setTimeout(r, 200));
+    const failedBefore = await failedSignIns();
+    const guess = await jar().call('POST', '/api/register', { email: 'jade@example.com', password: 'not-jades-long-password', username: 'jade.s' }, at('10.61.1.4'));
+    await new Promise((r) => setTimeout(r, 200));
+    check("a wrong password through sign-up is in the account's security record as a failed sign-in", guess.json?.code === 'email_pending' && (await failedSignIns()) === failedBefore + 1, `${guess.json?.code} ${failedBefore} -> ${await failedSignIns()}`);
+
+    // Review round 1: every confirmation code is metered. Signing in to a waiting account sends one only within the resend limit.
+    await jar().call('POST', '/api/register', { email: 'lena@example.com', password, username: 'lena.p' }, at('10.61.2.1'));
+    const atStart = codesSent();
+    const logins = [];
+    for (let i = 0; i < 6; i += 1) logins.push(await jar().call('POST', '/api/login', { email: 'lena@example.com', password }, at('10.61.2.2')));
+    check('five sign-ins from an address to a waiting account send five codes', logins.slice(0, 5).every((r) => r.status === 403 && r.json?.code === 'email_unconfirmed' && r.json?.sent === true) && codesSent() === atStart + 5, `${logins.map((r) => `${r.status}:${r.json?.sent}`).join(',')} ${codesSent() - atStart} sent`);
+    check('  the sixth still opens the code box, sends none, and says so', logins[5].status === 403 && logins[5].json?.code === 'email_unconfirmed' && logins[5].json?.email === 'lena@example.com' && logins[5].json?.sent === false && NOT_SENT.test(logins[5].json?.error || '') && codesSent() === atStart + 5, JSON.stringify(logins[5].json));
+    const viNotSent = await jar().call('POST', '/api/login', { email: 'lena@example.com', password }, { headers: { 'x-real-ip': '10.61.2.2', 'x-language': 'vi' } });
+    check('  in Vietnamese too', viNotSent.json?.sent === false && /Chưa gửi mã mới/.test(viNotSent.json?.error || ''), viNotSent.json?.error);
+
+    // A suspended account waiting for its code: signing up again with its password is refused, with no code and no session.
+    await jar().call('POST', '/api/register', { email: 'mona@example.com', password, username: 'mona.p' }, at('10.61.3.1'));
+    const mona = await store.getUserByEmail('mona@example.com');
+    await store.updateUser(mona.id, { suspended: true });
+    const sentBeforeSuspended = codesSent();
+    const suspendedAnswer = await jar().call('POST', '/api/register', { email: 'mona@example.com', password, username: 'mona.q' }, at('10.61.3.2'));
+    check('a suspended account waiting for its code is refused as suspended, with no code and no cookie', suspendedAnswer.status === 403 && suspendedAnswer.json?.error === 'This account has been suspended.' && !suspendedAnswer.json?.code && codesSent() === sentBeforeSuspended && !suspendedAnswer.headers.get('set-cookie'), `${suspendedAnswer.status} ${JSON.stringify(suspendedAnswer.json)} cookie=${suspendedAnswer.headers.get('set-cookie')}`);
+
+    // The account-wide ceiling: twenty codes an hour for the account from everywhere, through sign-up too.
+    await jar().call('POST', '/api/register', { email: 'nina@example.com', password, username: 'nina.p' }, at('10.61.4.1'));
+    const ninaStart = codesSent();
+    const spread = [];
+    for (let i = 0; i < 21; i += 1) spread.push(await jar().call('POST', '/api/register', { email: 'nina@example.com', password, username: 'nina.q' }, at(`10.61.5.${i + 1}`)));
+    check('twenty re-sign-ups from twenty addresses send twenty codes; a twenty-first, from yet another, sends none', spread.slice(0, 20).every((r) => r.json?.sent === true) && spread[20].status === 403 && spread[20].json?.code === 'email_unconfirmed' && spread[20].json?.sent === false && codesSent() === ninaStart + 20, `${spread.map((r) => r.json?.sent).join(',')} ${codesSent() - ninaStart} sent`);
+
+    // Review round 1: without a meter nothing is unmetered; it is refused as a developer error.
+    const { registerUser, loginUser } = await import('../server/auth.js');
+    const unmetered = await registerUser({ email: 'olga@example.com', password, username: 'olga.p' }, { headers: {} }, null).then(() => 'went ahead', (err) => err);
+    check('signing up with no rate-limit meter is refused, and makes nothing', unmetered instanceof Error && /meter/.test(unmetered.message) && (await store.getUserByEmail('olga@example.com')) === null, String(unmetered?.message || unmetered));
+    const unmeteredLogin = await loginUser({ email: 'lena@example.com', password }, { headers: {} }, null).then(() => 'went ahead', (err) => err);
+    check('  and so is signing in', unmeteredLogin instanceof Error && /meter/.test(unmeteredLogin.message), String(unmeteredLogin?.message || unmeteredLogin));
   } finally {
     console.log = realLog;
     if (before === undefined) delete process.env.EMAIL_CONFIRMATION;

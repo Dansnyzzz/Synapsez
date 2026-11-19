@@ -62,12 +62,14 @@ async function request(method, path, body, options = {}) {
   }
 
   if (!res.ok) {
-    const err = /** @type {Error & { code?: string, status?: number, email?: string, findings?: any[] }} */ (new Error(json.error || messageFor(res.status, unparsed)));
+    const err = /** @type {Error & { code?: string, status?: number, email?: string, sent?: boolean, findings?: any[] }} */ (new Error(json.error || messageFor(res.status, unparsed)));
     // Callers branch on this — e.g. 'totp_required' is a step, not a failure.
     err.code = json.code;
     err.status = res.status;
     // The address a sign-in's "confirm your email" names, so the code box can show it.
     if (typeof json.email === 'string') err.email = json.email;
+    // Whether that answer sent a new code, or the resend limit held it back (1.33.3).
+    if (typeof json.sent === 'boolean') err.sent = json.sent;
     // What a safety scan found, when that is why it was refused (a shared skill).
     if (Array.isArray(json.findings)) err.findings = json.findings;
     throw err;

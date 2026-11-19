@@ -11631,6 +11631,19 @@ section('signing up again with an address waiting for its code leads back to it 
     const { getStore } = await import('../server/store/index.js');
     const held = await getStore().getUserByEmail('waiting@test.local');
     check('  and nothing was made or renamed: one account, its first username', held?.username === 'waiting.one' && (await getStore().getUserByUsername('waiting.two')) === null && (await getStore().getUserByUsername('waiting.three')) === null, held?.username);
+
+    // Review round 1: every code is counted, five an hour from one address. Two went out above;
+    // three more sign-ins send three, and the fourth still opens the box but sends none.
+    let last = null;
+    for (let i = 0; i < 4; i += 1) {
+      await guest.click('#gate-switch');
+      await guest.fill('#gate-email', 'waiting@test.local');
+      await guest.fill('#gate-password', first);
+      await guest.click('#gate-submit');
+      await guest.waitForSelector('#gate-confirm:not([hidden])', { timeout: 10_000 }).catch(() => {});
+      last = await look(guest);
+    }
+    check('past the resend limit, signing in still opens the code box, says no new code was sent, and not that one was', last.code && /No new code was sent/.test(last.error) && !last.note && last.focused === 'gate-confirmcode', JSON.stringify(last));
   } finally {
     await context.close();
   }

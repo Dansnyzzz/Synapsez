@@ -133,24 +133,31 @@ export const senderAddress = () => senderMailbox().address;
 
 /**
  * The mailbox mail is sent from: EMAIL_FROM, else the SMTP login, else Resend's test sender.
- * Every source goes through parseMailbox, so the address is always bare.
+ * Every source goes through parseMailbox, so the address is always bare. Also says which
+ * setting it came from (`source`: the variable, or `default`) and which configured settings
+ * were skipped as unusable, by name only, for `npm run domain:check`.
+ *
+ * @returns {{ name: string, address: string, source: string, unusable: string[] }}
  */
-function senderMailbox() {
+export function senderMailbox() {
+  const unusable = [];
   const configured = String(process.env.EMAIL_FROM || '').trim();
   if (configured) {
     const mailbox = parseMailbox(configured);
-    if (mailbox) return { name: mailbox.name || 'Ephapse', address: mailbox.address };
+    if (mailbox) return { name: mailbox.name || 'Ephapse', address: mailbox.address, source: 'EMAIL_FROM', unusable };
     warnUnusable('EMAIL_FROM', configured);
+    unusable.push('EMAIL_FROM');
   }
   const variable = loginVariable();
   const login = smtpSettings() ? String(process.env[variable] || '').trim() : '';
   // A login with neither @ nor < is a user name (SendGrid's "apikey"), never meant as a sender.
   if (/[@<]/.test(login)) {
     const mailbox = parseMailbox(login);
-    if (mailbox) return { name: mailbox.name || 'Ephapse', address: mailbox.address };
+    if (mailbox) return { name: mailbox.name || 'Ephapse', address: mailbox.address, source: variable, unusable };
     warnUnusable(variable, login);
+    unusable.push(variable);
   }
-  return { name: 'Ephapse', address: 'onboarding@resend.dev' };
+  return { name: 'Ephapse', address: 'onboarding@resend.dev', source: 'default', unusable };
 }
 
 /**

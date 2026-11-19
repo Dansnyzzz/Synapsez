@@ -25,11 +25,31 @@
 **Signing up again with an address waiting for its code.** The owner hit this live: the confirmation mail never came because of the sender bug above, they left the code screen, and signing up again with the same email said only "That email is already registered." That was a dead end for 24 hours, until the unconfirmed address is released.
 
 - **With the password chosen the first time**, signing up again now works exactly like signing in to that account. A fresh code goes out and the page shows the code box for that email at once, with the same `email_unconfirmed` answer sign-in gives. Nothing new is made, and the stored password, name and username stay as they were.
-- **With another password**, the answer is `email_pending`: "That email is waiting to be confirmed. Sign in with the password you chose to get a new code, or use Forgot password." Below it are two buttons. **Sign in** switches to signing in with the email filled in and the password box emptied. **Forgot password** opens the reset with the email filled in. Both are reachable by keyboard, in Vietnamese and English. The pending account's credentials are never replaced, because that would let anyone take over a sign-up that is waiting for its code. The answer reveals nothing that "already registered" did not.
+- **With another password**, the answer is `email_pending`: "That email is waiting to be confirmed. Sign in with the password you chose to get a new code, or use Forgot password." Below it are two buttons. **Sign in** switches to signing in with the email filled in and the password box emptied. **Forgot password** opens the reset with the email filled in. Both are reachable by keyboard, in Vietnamese and English. The pending account's credentials are never replaced, because that would let anyone take over a sign-up that is waiting for its code.
+- **What this answer reveals.** "Already registered" told anyone who typed an address that it had an account. `email_pending` also tells them that the account has not confirmed its email, so it was signed up within the last day and is still waiting for its code. It says nothing about the name, the username or the password. A wrong password here is written to the account's security record as a failed sign-in, as `/api/login` writes one.
 - A confirmed account still gets "That email is already registered.", whichever password is typed. An address unconfirmed for over a day is released as before.
-- **Limits:** this path checks the password and can send a code. It therefore counts against the same limits as signing in and as asking for a new code, in the same buckets `/api/login` and `/api/register/resend` use, on top of sign-up's own limit. Ten wrong sign-ins from an address stop that address's sign-up guesses at the account. Five new codes asked for from an address mean signing up again from there sends no sixth.
+- **Limits:** this path checks the password and can send a code. It therefore counts against the same limits as signing in and as asking for a new code, in the same buckets `/api/login` and `/api/register/resend` use, on top of sign-up's own limit. Ten wrong sign-ins from an address stop that address's sign-up guesses at the account with a 429.
+- **Every confirmation code is now counted.** Signing in to an account still waiting for its code has always sent a fresh one, and nothing limited how often. That code, and the one signing up again sends, now count against the "Send a new code" limit: five an hour per address and account, twenty an hour for the account from everywhere. Past it, the code box still opens, but no code is sent and the page says so ("No new code was sent, because too many were asked for: enter the last code we sent, or ask for a new one later."), instead of also saying a code was sent.
+- The functions behind signing in and signing up refuse to run without a rate-limit meter, so a new caller cannot send codes or check passwords unmetered by leaving it out.
 
-Tests: `test/http.test.mjs` covers all three cases, that nothing changes, the Vietnamese message and both limits. `test/ui.test.mjs` drives the page: the message and its two buttons, Tab order and focus, each button's destination with the email carried over, the code box from signing up again, Vietnamese on a 360px phone, and contrast in light and dark.
+Tests: `test/http.test.mjs` covers:
+
+- all three cases, and that nothing changes;
+- the Vietnamese messages;
+- the failed-sign-in record;
+- the sign-in and the account-wide code ceilings;
+- a suspended account waiting for its code (refused as suspended, no code, no cookie);
+- the missing meter.
+
+`test/ui.test.mjs` drives the page:
+
+- the message and its two buttons, Tab order and focus;
+- each button's destination with the email carried over;
+- the code box from signing up again;
+- the code box past the code limit, with no "we sent a code";
+- Vietnamese on a 360px phone, and contrast in light and dark.
+
+`test/domain-check.test.mjs` runs `npm run domain:check` offline. It now reads the sender through the app's own `senderMailbox()`, in the app's own order (`SMTP_USER` with `SMTP_HOST`, `GMAIL_USER` only with `GMAIL_APP_PASSWORD`), and names a setting it skipped as unusable without printing its value. `npm start`'s launcher asks for Node 22 too (`scripts/launch.js`).
 
 **Not verified live:** a real send through Resend from `support@ephapse.net`, which needs the domain verified at Resend, and the next Vercel build's warnings.
 

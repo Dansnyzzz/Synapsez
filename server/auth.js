@@ -277,9 +277,46 @@ export function confirmationRequired() {
   return emailBackend() !== 'console';
 }
 
-/** An error the sign-in page answers with the code box. @param {string} email */
-const unconfirmed = (email) =>
-  Object.assign(new Error('Confirm your email first: enter the 6-digit code we sent to it.'), { status: 403, code: 'email_unconfirmed', email });
+/**
+ * An error the sign-in page answers with the code box. `sent` is false when no new code
+ * went out because the account's code-sending limit was spent: the box still shows, for
+ * the last code, and the words say none was sent.
+ *
+ * @param {string} email @param {boolean} [sent]
+ */
+// Each sentence its own `new Error('…')`, so scripts/server-messages.js reads both for server/i18n.
+const unconfirmed = (email, sent = true) =>
+  Object.assign(
+    sent
+      ? new Error('Confirm your email first: enter the 6-digit code we sent to it.')
+      : new Error('Confirm your email first. No new code was sent, because too many were asked for: enter the last code we sent, or ask for a new one later.'),
+    { status: 403, code: 'email_unconfirmed', email, sent },
+  );
+
+/*
+ * How a sign-in route meters what it does (1.33.3 review): `meter(action)` counts one attempt
+ * in that action's buckets (ratelimit.js `consume`) and answers null, or what to say when the
+ * limit is spent. Required, so nothing here can run unmetered by being called without one.
+ */
+function requireMeter(meter) {
+  if (typeof meter !== 'function') throw Object.assign(new Error('Signing up or in was called without a rate-limit meter.'), { status: 500 });
+  return meter;
+}
+
+/** A spent limit as the error the route answers with: a 429 and when to try again. */
+const overLimit = (blocked) => Object.assign(new Error(blocked.body.error), { status: blocked.status, code: blocked.body.code, retryAfterSec: blocked.retryAfterSec });
+
+/*
+ * Every confirmation code a sign-in or a sign-up sends again goes through here (1.33.3 review),
+ * counted in the same `confirm-send` buckets as "Send a new code": five an hour per address
+ * and account, twenty for the account. Past that the code box still shows, and says that no
+ * new code was sent. Always throws.
+ */
+async function askForCode(user, req, meter) {
+  const spent = await meter('confirm-send');
+  if (!spent) await issueLink({ user, req, kind: 'confirm' });
+  throw unconfirmed(user.email, !spent);
+}
 
 /*
  * Signing up again with an address that waits for its code (1.33.3; owner, live: the code
@@ -287,18 +324,17 @@ const unconfirmed = (email) =>
  * throws. With the password the account was made with it is a sign-in for that account: a
  * fresh code and the code box, nothing made and nothing changed. With another, it says how
  * to get back, and the pending account keeps its credentials: replacing them would let
- * anyone take over a sign-up waiting for its code. `meter` charges the same buckets as
- * signing in (the password is checked here) and as asking for a code again (one is sent).
+ * anyone take over a sign-up waiting for its code. The password is counted as a sign-in
+ * attempt, and a wrong one carries the account's id so the route records it as /api/login does.
  */
 async function answerWaiting(user, password, req, meter) {
-  await meter('login');
+  const guessing = await meter('login');
+  if (guessing) throw overLimit(guessing);
   if (!(await verifyPassword(password, user.password_hash))) {
-    throw Object.assign(new Error('That email is waiting to be confirmed. Sign in with the password you chose to get a new code, or use Forgot password.'), { status: 400, code: 'email_pending' });
+    throw Object.assign(new Error('That email is waiting to be confirmed. Sign in with the password you chose to get a new code, or use Forgot password.'), { status: 400, code: 'email_pending', accountId: user.id });
   }
   if (user.suspended_at) throw Object.assign(new Error('This account has been suspended.'), { status: 403 });
-  await meter('confirm-send');
-  await issueLink({ user, req, kind: 'confirm' });
-  throw unconfirmed(user.email);
+  await askForCode(user, req, meter);
 }
 
 /**
@@ -485,10 +521,11 @@ export function signupOpen() {
  *   sends none still gets an account, which can take a name in its settings.
  * @param {any} req
  * @param {any} res
- * @param {{ meter?: (action: 'login' | 'confirm-send') => Promise<void> }} [options]
- *   `meter` throws when the rate limit for that action is spent (the route passes it).
+ * @param {{ meter: (action: 'login' | 'confirm-send') => Promise<any> }} options
+ *   `meter` is required: see requireMeter.
  */
-export async function registerUser({ email, password, name, username }, req, res, { meter = async () => {} } = {}) {
+export async function registerUser({ email, password, name, username }, req, res, { meter } = /** @type {any} */ ({})) {
+  requireMeter(meter);
   const store = getStore();
 
   const normalised = String(email || '').trim().toLowerCase();
@@ -551,8 +588,12 @@ export async function registerUser({ email, password, name, username }, req, res
 /**
  * `email` is the sign-in box, which takes the email or the username (2026-10-20);
  * the field keeps its name so an older page or an API client goes on working.
+ *
+ * @param {any} input @param {any} req @param {any} res
+ * @param {{ meter: (action: 'confirm-send') => Promise<any> }} options  required: see requireMeter
  */
-export async function loginUser({ email, password, code, remember }, req, res) {
+export async function loginUser({ email, password, code, remember }, req, res, { meter } = /** @type {any} */ ({})) {
+  requireMeter(meter);
   const store = getStore();
 
   const user = await findUserByIdentifier(email);
@@ -585,10 +626,8 @@ export async function loginUser({ email, password, code, remember }, req, res) {
   // An account whose email is not confirmed is sent a fresh code and asked for it,
   // with no session: the sign-in page shows the code box at once (owner, 2026-11-09).
   // Accounts made before confirmation existed were marked confirmed then, and stay so.
-  if (!user.email_verified_at && confirmationRequired()) {
-    await issueLink({ user, req, kind: 'confirm' });
-    throw unconfirmed(user.email);
-  }
+  // The code is counted as a resend (1.33.3 review): a right password is no licence to flood a mailbox.
+  if (!user.email_verified_at && confirmationRequired()) await askForCode(user, req, meter);
   await store.touchUser(user.id);
   // Anything but an explicit "no" keeps the old thirty-day behaviour, so API
   // callers and older clients that never send the flag are unaffected.

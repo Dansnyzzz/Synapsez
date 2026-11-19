@@ -164,12 +164,15 @@ key — someone using their own is never limited, because it is not your money.
 
 ### Email
 
-**There is no confirmation step.** Sign up and you are in. An address that does not exist is a
-problem for whoever typed it, not something to hold a working account hostage over — and a
-deployment with no mail provider could never have released the hostage anyway.
+**A new account confirms its email with a code.** Since 2026-11-09, wherever mail can be sent, signing
+up sends a 6-digit code to the address and the account is not used until it is entered (`EMAIL_CONFIRMATION`
+turns this `on` or `off`; unset, it is on whenever a mail provider is set up). With no provider there is no
+code, since nobody could receive one. An address never confirmed is held for a day, then released. Signing in,
+or signing up again with the password chosen, sends a fresh code; codes count against the same limit as
+"Send a new code" (five an hour per address and account, twenty for the account).
 
-Email is used for two things: letting somebody who forgot their password get back in, and the
-assistant's `send_email` tool. Pick one backend, or none:
+Email is used for three things: those confirmation codes, letting somebody who forgot their password get
+back in, and the assistant's `send_email` tool. Pick one backend, or none:
 
 | Backend | Set | Notes |
 |---|---|---|
@@ -177,6 +180,10 @@ assistant's `send_email` tool. Pick one backend, or none:
 | **Resend** | `RESEND_API_KEY` | Plain HTTPS. Sends only from a domain you have verified with Resend, so not from a gmail.com address. |
 | **SMTP** | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | Any other provider. Wins over the Gmail variables when both are set. |
 | **Console** | nothing | Mail is printed to the server log. Fine locally for a reset code — and `send_email` refuses, saying the email was **not** sent, rather than pretending. |
+
+**The sender is a full address on a real domain** (`EMAIL_FROM`, else the SMTP login): `addr@example.com` or
+`Name <addr@example.com>`. A value that is not one, a local `@localhost` sender included, is skipped with a warning
+in the log, and mail goes from the next setting, or Resend's test sender `onboarding@resend.dev` (1.33.3).
 
 **`send_email` writes as the business, from the deployment's mailbox.** Every account shares the one
 sending mailbox — a provider will not send as an address it has not verified. The From line carries the
