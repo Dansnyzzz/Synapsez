@@ -10,6 +10,8 @@
  *   - a tool row names the file, and a search says what it found
  *   - reasoning stays reasoning
  *   - the owner adds an administrator, who sees what they were given
+ *   - a drawing held back for its redraw is shown once its turn is over: saved, shared, live
+ *     through a stand-in provider (finished, stopped), and kept out of sight while it waits
  *
  *   npm run test:ui
  */
@@ -1067,6 +1069,209 @@ section('signing up asks for the code sent to the email, then lets you in');
   check('  and what was typed on the way is no longer kept', (await guest.evaluate(() => localStorage.getItem('ephapse:gate-draft'))) === null);
   await guest.close();
   delete process.env.EMAIL_CONFIRMATION;
+}
+
+/* ── A drawing held back for its redraw (1.34.0, final review, I2) ─── */
+section('a drawing held back for its redraw is shown when its turn is over, and only then');
+{
+  // A first hand drawing that failed its check is held back (server/tools/cloud.js), its markup on
+  // the step's widget marked `held`. The page shows it once the person's turn ends with no drawing
+  // shown after it, and the step says so (render.js settleHeldDrawings): saved, shared and live.
+  await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#model-chip');
+  await closeDialogs();
+  const flawed = (word) => `<svg viewBox="0 0 200 100"><rect x="10" y="10" width="60" height="30" fill="#fff"/><text x="12" y="30" font-size="14" fill="#222">${word} quá dài không vừa hộp</text></svg>`;
+  const clean = (word) => `<svg viewBox="0 0 200 100"><rect x="10" y="10" width="180" height="40" fill="#e8f0fe"/><text x="100" y="35" text-anchor="middle" font-size="14" fill="#1d2733">${word}</text></svg>`;
+  const heldWidget = (word) => ({ title: 'Sơ đồ', markup: flawed(word), kind: 'svg', canvas: 'light', held: true });
+  const SHOWN = 'Checked the drawing — shown as drawn';
+  const AGAIN = 'Checked the drawing — drawn again';
+  const seed = async (id, title, messages) => {
+    await store.createChat(me.id, { id, title, model: 'auto' });
+    const when = new Date().toISOString();
+    for (const m of messages) await store.appendMessage(me.id, id, { createdAt: when, ...m });
+  };
+  const drawCall = (callId, svg) => ({ role: 'assistant', text: '', toolCalls: [{ id: callId, name: 'show_widget', input: { title: 'Sơ đồ', svg } }] });
+  const drawResult = (callId, widget, content) => ({ role: 'tool', results: [{ toolCallId: callId, name: 'show_widget', content, isError: false, ms: 40, widget }] });
+  const heldSaid = 'Did not show "Sơ đồ" yet: a check of the drawing found these problems, and the user has not seen it:\n- the text is wider than its box';
+  // What is on screen under `root`: the drawings a person can see (their frame's document), the
+  // held places left, and each drawing step's head.
+  const onScreen = (p, root) => p.evaluate((sel) => ({
+    shown: [...document.querySelectorAll(`${sel} .widget`)].filter((n) => n.getClientRects().length > 0).map((n) => /** @type {HTMLIFrameElement} */ (n.querySelector('.widget__frame'))?.srcdoc || ''),
+    held: document.querySelectorAll(`${sel} [data-drawing="held"]`).length,
+    heads: [...document.querySelectorAll(`${sel} .tool > summary .tool__name`)].map((n) => n.textContent.trim()).filter((s) => /drawing|hình vẽ/i.test(s)),
+  }), root);
+  const openSeeded = async (id, title) => {
+    await reload();
+    await page.click(`.chat-row[data-chat="${id}"] .chat-item`);
+    await page.waitForFunction((want) => document.getElementById('chat-title').textContent === want, title);
+    await page.waitForTimeout(500);
+    return onScreen(page, '#messages');
+  };
+  const hasOnly = (seen, word) => seen.shown.length === 1 && seen.shown[0].includes(word);
+
+  // (a) A held drawing, and nothing drawn after it: the turn is over, so it is shown.
+  await seed('c-held-a', 'Held, then nothing', [
+    { id: 'ha-u', role: 'user', text: 'Vẽ sơ đồ' },
+    { id: 'ha-a1', ...drawCall('ha-c1', flawed('Nhãn A')) },
+    { id: 'ha-t1', ...drawResult('ha-c1', heldWidget('Nhãn A'), heldSaid) },
+    { id: 'ha-a2', role: 'assistant', text: 'Here it is.' },
+  ]);
+  const a = await openSeeded('c-held-a', 'Held, then nothing');
+  check('(a) reopened, a held drawing with nothing after it is shown: one drawing, its own markup', hasOnly(a, 'Nhãn A'), JSON.stringify({ shown: a.shown.length, held: a.held }));
+  check('  no held place is left', a.held === 0, String(a.held));
+  check(`  its step reads "${SHOWN}"`, a.heads.length === 1 && a.heads[0] === SHOWN, a.heads.join(' | '));
+
+  // (b) A held drawing, then a drawing shown: the redraw is the one on screen.
+  await seed('c-held-b', 'Held, then redrawn', [
+    { id: 'hb-u', role: 'user', text: 'Vẽ sơ đồ' },
+    { id: 'hb-a1', ...drawCall('hb-c1', flawed('Nhãn B1')) },
+    { id: 'hb-t1', ...drawResult('hb-c1', heldWidget('Nhãn B1'), heldSaid) },
+    { id: 'hb-a2', ...drawCall('hb-c2', clean('Nhãn B2')) },
+    { id: 'hb-t2', ...drawResult('hb-c2', { title: 'Sơ đồ', markup: clean('Nhãn B2'), kind: 'svg', canvas: 'light' }, 'Drew "Sơ đồ" in the conversation.') },
+    { id: 'hb-a3', role: 'assistant', text: 'Fixed.' },
+  ]);
+  const b = await openSeeded('c-held-b', 'Held, then redrawn');
+  check('(b) a held drawing with a drawing after it in the turn: only the second is on screen', hasOnly(b, 'Nhãn B2') && !b.shown.some((s) => s.includes('Nhãn B1')), JSON.stringify({ shown: b.shown.map((s) => /Nhãn B\d/.exec(s)?.[0]), held: b.held }));
+  check(`  the first step reads "${AGAIN}", the second "Checked the drawing"`, b.heads.length === 2 && b.heads[0] === AGAIN && b.heads[1] === 'Checked the drawing', b.heads.join(' | '));
+  check('  and no held place is left', b.held === 0, String(b.held));
+
+  // (c) A held drawing, then the person's next message and a turn with no drawing: their message ended its turn.
+  await seed('c-held-c', 'Held, then a new turn', [
+    { id: 'hc-u1', role: 'user', text: 'Vẽ sơ đồ' },
+    { id: 'hc-a1', ...drawCall('hc-c1', flawed('Nhãn C')) },
+    { id: 'hc-t1', ...drawResult('hc-c1', heldWidget('Nhãn C'), heldSaid) },
+    { id: 'hc-u2', role: 'user', text: 'Thôi, nói bằng lời' },
+    { id: 'hc-a2', role: 'assistant', text: 'In words, then.' },
+  ]);
+  const c = await openSeeded('c-held-c', 'Held, then a new turn');
+  check('(c) a held drawing whose turn ended at the person\'s next message is shown', hasOnly(c, 'Nhãn C') && c.held === 0 && c.heads[0] === SHOWN, JSON.stringify({ shown: c.shown.length, held: c.held, heads: c.heads }));
+
+  // (e) The shared page of (a), for somebody signed out.
+  const { path: link } = await page.evaluate(async () => (await fetch('/api/chats/c-held-a/share', { method: 'POST' })).json());
+  const visitor = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+  const tab = await visitor.newPage();
+  const tabErrors = [];
+  tab.on('pageerror', (err) => tabErrors.push(err.message));
+  await tab.goto(`http://127.0.0.1:${PORT}${link}`, { waitUntil: 'domcontentloaded' });
+  await tab.waitForFunction(() => document.getElementById('share-thread')?.getAttribute('aria-busy') === 'false', null, { timeout: 10_000 }).catch(() => {});
+  const e = await onScreen(tab, '#share-thread');
+  check('(e) on the shared page of (a): one drawing, settled, its step saying so', !!link && hasOnly(e, 'Nhãn A') && e.held === 0 && e.heads.length === 1 && e.heads[0] === SHOWN, JSON.stringify({ link: !!link, shown: e.shown.length, held: e.held, heads: e.heads }));
+  check('  with no script error there', tabErrors.length === 0, tabErrors.slice(0, 2).join(' | '));
+  await visitor.close();
+
+  // (d) Live, through the real server and a stand-in provider (as test/ui-stop.test.mjs does): the
+  // model loads show_widget, sends a drawing the check fails, and then either answers when let go
+  // or asks a question. The real tool holds the drawing back; the page shows it at `done` only.
+  const http = await import('node:http');
+  const { setApiKey, setPrefs } = await import('../server/settings.js');
+  let letGo = () => {};
+  const answerHeld = new Promise((resolve) => (letGo = resolve));
+  // The "stopper" never answers its third request: it is stopped with Stop instead.
+  let freeStopper = () => {};
+  const stopperHeld = new Promise((resolve) => (freeStopper = resolve));
+  const asked = [];
+  const provider = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (chunk) => (raw += chunk));
+    req.on('end', async () => {
+      const body = JSON.parse(raw || '{}');
+      const model = String(body.model || '');
+      const tools = (body.messages || []).filter((m) => m.role === 'tool').length;
+      asked.push({ model, tools });
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      const send = (choice, usage) => res.write(`data: ${JSON.stringify({ choices: [choice], ...(usage ? { usage } : {}) })}\n\n`);
+      const end = (reason) => {
+        send({ delta: {}, finish_reason: reason }, { prompt_tokens: 50, completion_tokens: 5 });
+        res.write('data: [DONE]\n\n');
+        res.end();
+      };
+      const call = (name, args) => {
+        send({ delta: { tool_calls: [{ index: 0, id: `call_${name}_${tools}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] } });
+        end('tool_calls');
+      };
+      if (tools === 0) return call('load_tools', { names: ['show_widget'] });
+      if (tools === 1) return call('show_widget', { title: 'Sơ đồ', svg: flawed(/asker/.test(model) ? 'Nhãn E' : /stopper/.test(model) ? 'Nhãn F' : 'Nhãn D') });
+      if (/asker/.test(model)) return call('ask_options', { questions: [{ question: 'Màu nào?', options: [{ label: 'Xanh' }, { label: 'Lục' }] }] });
+      if (/stopper/.test(model)) {
+        await stopperHeld;
+        return res.destroyed || res.writableEnded ? undefined : end('stop');
+      }
+      await answerHeld;
+      send({ delta: { content: 'Here it is.' } });
+      return end('stop');
+    });
+  });
+  await new Promise((r) => provider.listen(0, '127.0.0.1', r));
+  const baseBefore = process.env.OPENAI_BASE_URL;
+  process.env.OPENAI_BASE_URL = `http://127.0.0.1:${provider.address().port}/v1`;
+  const prefsBefore = await store.getUserSetting(me.id, 'prefs');
+  try {
+    await setApiKey(me.id, 'openai', 'sk-test-key');
+    const startLive = async (model, words) => {
+      await setPrefs(me.id, { toolPolicy: 'auto', qualityGate: false, defaultModel: model });
+      await reload();
+      await page.click('#new-chat, [data-new-chat]');
+      await page.waitForTimeout(200);
+      await page.fill('#input', words);
+      await page.keyboard.press('Enter');
+      await page.waitForFunction(() => !!document.querySelector('#messages [data-drawing="held"]'), null, { timeout: 20_000 }).catch(() => {});
+      await page.waitForTimeout(600);
+    };
+
+    await startLive('openai/held-drawer', 'Vẽ sơ đồ đi');
+    const before = await onScreen(page, '#messages');
+    check('(d) live: the real tool held the drawing back, and before `done` nothing is on screen', before.held === 1 && before.shown.length === 0, JSON.stringify({ held: before.held, shown: before.shown.length, asked }));
+    check('  while the turn runs, its step reads "Checked the drawing — redrawing"', before.heads.length === 1 && before.heads[0] === 'Checked the drawing — redrawing', before.heads.join(' | '));
+    letGo();
+    await page.waitForFunction(() => document.querySelectorAll('#messages .widget').length > 0, null, { timeout: 15_000 }).catch(() => {});
+    await page.waitForTimeout(400);
+    const after = await onScreen(page, '#messages');
+    check('  after `done`, exactly one drawing, the held one', hasOnly(after, 'Nhãn D') && after.held === 0, JSON.stringify({ shown: after.shown.length, held: after.held }));
+    check(`  and its step reads "${SHOWN}"`, after.heads.length === 1 && after.heads[0] === SHOWN, after.heads.join(' | '));
+    const liveChat = await page.evaluate(() => /** @type {HTMLElement|null} */ (document.querySelector('.chat-row.is-active'))?.dataset.chat || '');
+    if (liveChat) {
+      await reload();
+      await page.click(`.chat-row[data-chat="${liveChat}"] .chat-item`);
+      await page.waitForTimeout(800);
+      const again = await onScreen(page, '#messages');
+      check('  reopened from what was saved, the same', hasOnly(again, 'Nhãn D') && again.held === 0 && again.heads[0] === SHOWN, JSON.stringify({ shown: again.shown.length, held: again.held, heads: again.heads }));
+    } else check('  reopened from what was saved, the same', false, 'no open chat row');
+
+    // Stopped with Stop while the model is still working after the held try: the turn is over.
+    await startLive('openai/held-stopper', 'Vẽ rồi tôi bấm dừng');
+    const running = await onScreen(page, '#messages');
+    check('(d) stopped: while it runs the held drawing is out of sight', running.held === 1 && running.shown.length === 0, JSON.stringify({ held: running.held, shown: running.shown.length }));
+    await page.click('#stop');
+    await page.waitForFunction(() => document.querySelectorAll('#messages .widget').length > 0, null, { timeout: 10_000 }).catch(() => {});
+    await page.waitForTimeout(400);
+    const stopped = await onScreen(page, '#messages');
+    check(`  after Stop, exactly one drawing, the held one, its step reading "${SHOWN}"`, hasOnly(stopped, 'Nhãn F') && stopped.held === 0 && stopped.heads.length === 1 && stopped.heads[0] === SHOWN, JSON.stringify({ shown: stopped.shown.length, held: stopped.held, heads: stopped.heads }));
+
+    // A turn waiting on the person's answer is not over: its held drawing stays out of sight, live and reopened.
+    await startLive('openai/held-asker', 'Vẽ rồi hỏi tôi');
+    await page.waitForFunction(() => document.getElementById('question')?.hidden === false, null, { timeout: 15_000 }).catch(() => {});
+    await page.waitForTimeout(600);
+    const waiting = await onScreen(page, '#messages');
+    const asking = asked.some((r) => /asker/.test(r.model) && r.tools === 2) && (await page.evaluate(() => document.getElementById('question')?.hidden === false));
+    check('(d) waiting on a question: the held drawing stays out of sight', asking && waiting.held === 1 && waiting.shown.length === 0 && waiting.heads[0] === 'Checked the drawing — redrawing', JSON.stringify({ asking, held: waiting.held, shown: waiting.shown.length, heads: waiting.heads }));
+    const waitingChat = await page.evaluate(() => /** @type {HTMLElement|null} */ (document.querySelector('.chat-row.is-active'))?.dataset.chat || '');
+    if (waitingChat) {
+      await reload();
+      await page.click(`.chat-row[data-chat="${waitingChat}"] .chat-item`);
+      await page.waitForTimeout(800);
+      const reopened = await onScreen(page, '#messages');
+      check('  and reopened while it waits, still', reopened.held === 1 && reopened.shown.length === 0, JSON.stringify({ held: reopened.held, shown: reopened.shown.length }));
+    } else check('  and reopened while it waits, still', false, 'no open chat row');
+    await closeDialogs();
+  } finally {
+    letGo();
+    freeStopper();
+    if (baseBefore === undefined) delete process.env.OPENAI_BASE_URL;
+    else process.env.OPENAI_BASE_URL = baseBefore;
+    await store.setUserSetting(me.id, 'prefs', prefsBefore);
+    provider.closeAllConnections();
+    await new Promise((r) => provider.close(r));
+  }
 }
 
 check('no script error on any of it', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
