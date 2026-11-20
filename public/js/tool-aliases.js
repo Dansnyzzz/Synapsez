@@ -318,9 +318,16 @@ function calculateInput(input) {
   const out = { ...input };
   const given = out[named];
   for (const k of CALC_FIELDS) delete out[k];
-  out.expression = Array.isArray(given) ? `[${given.map((item) => asText(item)).join(', ')}]` : given;
+  out.expression = Array.isArray(given) ? `[${given.map(listItemText).join(', ')}]` : given;
   return out;
 }
+
+// One item of that list as text. A list inside it reads as `String` read it, `[1, 2]` as "1,2",
+// item by item so that a value with its own `toString` still cannot throw (final review, M7:
+// `asText` alone read a nested list as nothing). Past 32 levels a list is nothing, so no depth
+// a model sends can run the stack out.
+const listItemText = (/** @type {unknown} */ item, depth = 0) =>
+  Array.isArray(item) ? (depth >= 32 ? '' : item.map((inner) => listItemText(inner, depth + 1)).join(',')) : asText(item);
 
 /**
  * Arguments that are not JSON, but say plainly what was meant.

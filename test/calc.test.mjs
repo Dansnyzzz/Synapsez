@@ -227,6 +227,19 @@ section('several figures in one call');
   const sentAsList = canonicalInput('calculate', { expression: ['8-5.5', 8, '(8-5.5)/2.5'] });
   check('a JSON list of figures reads as the list form', sentAsList.expression === '[8-5.5, 8, (8-5.5)/2.5]' && validateArguments(schema, sentAsList).ok, JSON.stringify(sentAsList));
   check('  another name for the expression does too', canonicalInput('calculate', { formula: '1 + 1' }).expression === '1 + 1');
+  // Final review, M7: a list inside the list read as nothing once String() went; it reads as String() read it.
+  const nested = canonicalInput('calculate', { expression: [[1, 2], 3] });
+  check('  a list inside the list reads as String() read it, not as nothing', nested.expression === '[1,2, 3]', JSON.stringify(nested));
+  let deep = [7];
+  for (let i = 0; i < 100000; i += 1) deep = [deep];
+  const odd = (() => {
+    try {
+      return canonicalInput('calculate', { expression: [[{ toString: 1 }, ['4', true]], deep, null] }).expression;
+    } catch (e) {
+      return `threw: ${e.message}`;
+    }
+  })();
+  check('  a value with its own toString inside it, or a list 100,000 deep, never throws', odd === '[,4,true, , ]', odd);
 
   const raw = '{"expression": [8-5.5, 8, 5-5.5, (8-5.5)/2.5, 5.5]}';
   const saved = salvageArguments('calculate', raw);
