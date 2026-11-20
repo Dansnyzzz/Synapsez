@@ -2165,7 +2165,7 @@ export const TOOLS = [
     // task list for multi-step work" left the judgement entirely open, and a
     // one-step plan is the result.
     description:
-      'Show the user a live checklist, for work that genuinely has three or more steps of different kinds. Not for a question, a lookup or a single edit — a checklist above a short answer is noise, and short work is finished faster than it is planned. Send the whole list again on every update, with exactly one item in_progress. ' +
+      'Show the user a live checklist, for work that genuinely has three or more steps of different kinds. Not for a question, a lookup or a single edit — a checklist above a short answer is noise, and short work is finished faster than it is planned. Resend the whole list on every update, with exactly one item in_progress. ' +
       'Keep it true as you go: mark a step done the moment it is finished and start the next in the same call; when new work turns up or the user asks for more mid-way, add it as a step (with a detail) where it belongs, reorder or drop steps that changed. Before your final answer every step you did must be done.',
     parameters: {
       type: 'object',

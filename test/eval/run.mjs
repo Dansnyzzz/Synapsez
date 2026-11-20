@@ -107,7 +107,10 @@ const { buildSystemPrompt, promptVersion } = await import('../../server/agent.js
 // 5ae79d6e2bc3 (2026-11-19): "What is behind your tools", four lines — no details of the services
 // behind the tools, none revealed, abilities in general words; the citation example names a site,
 // not a router; "resend" became "send again". No case rests on any of it; all 18 still pass.
-const PROMPT_STAMP = '5ae79d6e2bc3';
+// 2b471642c5ae (2026-11-20, fix round 1): "internal limits, what the services behind the tools cost"
+// instead of "limits, prices", so the person's own caps and plan prices stay theirs to ask about;
+// "resend the list" back as it was (the scan now knows the brand from the verb). All 18 still pass.
+const PROMPT_STAMP = '2b471642c5ae';
 
 const bold = (s) => `\x1b[1m${s}\x1b[0m`;
 const green = (s) => `\x1b[32m${s}\x1b[0m`;

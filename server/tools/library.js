@@ -295,7 +295,9 @@ async function convertUnitsTool({ value, from, to }, context = {}) {
     const amount = Number(value);
     if (!Number.isFinite(amount)) throw new Error('Give the value as a number.');
     const money = await convertMoney(amount, a, b, { signal: context.signal || null }).catch((err) => {
-      throw new Error(`There is no rate from ${a} to ${b} today: ${err?.message || err}`);
+      // Which rate sources were asked, and what each said, is the log's (fix round 1, I1).
+      log.info('convert_units: no rate', { from: a, to: b, error: String(err?.message || err).slice(0, 300) });
+      throw new Error(`There is no rate from ${a} to ${b} right now. Try again later, or say the rate could not be fetched.`);
     });
     return (
       `${fmt(amount)} ${a} = ${fmt(Number(money.value.toPrecision(12)))} ${b} ` +

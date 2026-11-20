@@ -1,6 +1,7 @@
 import { streamCompletion } from '../providers/index.js';
 import { priceTurn } from '../providers/catalog.js';
 import { record as recordUsage } from '../usage.js';
+import { modelFailure } from '../tools/plainFailure.js';
 
 /**
  * One model call for a research role, its output collected to a string and its
@@ -52,18 +53,26 @@ export async function askModel({
   const clock = left != null ? AbortSignal.timeout(Math.max(1_000, left)) : null;
   const bounded = clock && signal && typeof AbortSignal.any === 'function' ? AbortSignal.any([signal, clock]) : clock || signal;
 
-  for await (const ev of stream({ userId, entry, system, messages, effort, signal: bounded })) {
-    if (ev.type === 'text') text += ev.delta ?? '';
-    else if (ev.type === 'done' && ev.usage) {
-      spent = ev.usage;
-      if (budget) {
-        const inTok = ev.usage.input || 0;
-        const outTok = ev.usage.output || 0;
-        budget.spent += inTok + outTok;
-        budget.tokensIn = (budget.tokensIn || 0) + inTok;
-        budget.tokensOut = (budget.tokensOut || 0) + outTok;
+  // The provider's own sentence (the deployment's key, its monthly limit, the router) is the log's: what a
+  // model reads of the failure — extract's answer, the debate's transcript — is modelFailure's (fix round 1).
+  // The caller's own Stop is passed through as it came.
+  try {
+    for await (const ev of stream({ userId, entry, system, messages, effort, signal: bounded })) {
+      if (ev.type === 'text') text += ev.delta ?? '';
+      else if (ev.type === 'done' && ev.usage) {
+        spent = ev.usage;
+        if (budget) {
+          const inTok = ev.usage.input || 0;
+          const outTok = ev.usage.output || 0;
+          budget.spent += inTok + outTok;
+          budget.tokensIn = (budget.tokensIn || 0) + inTok;
+          budget.tokensOut = (budget.tokensOut || 0) + outTok;
+        }
       }
     }
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    throw modelFailure(err);
   }
 
   /**

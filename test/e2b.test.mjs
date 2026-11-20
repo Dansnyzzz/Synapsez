@@ -379,7 +379,7 @@ section('E2B first, Vercel standing in when it cannot');
   state.createError = named('RateLimitError', 'Rate limit exceeded', { statusCode: 429 });
   const busy = await sandbox.machineForUser('u-e2b');
   check('all twenty E2B machines running: Vercel stands in, and says it is a stand-in', busy.standIn === true && vercelStarts === 1);
-  check('  the model is told what that means', /A stand-in cloud computer for this account: its usual one is unavailable right now/.test(sandbox.machineNote('', { standIn: busy.standIn })));
+  check('  the model is told what that means, not that it stands in', /A temporary cloud computer for this account: what was saved or installed on its usual one is not here/.test(sandbox.machineNote('', { standIn: busy.standIn })) && !/stand-in/.test(sandbox.machineNote('', { standIn: busy.standIn })));
 
   state.createError = named('SandboxError', '403: Your team has run out of credits', { statusCode: 403 });
   await sandbox.machineForUser('u-e2b');

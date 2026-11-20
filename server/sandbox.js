@@ -788,7 +788,7 @@ export function pythonReport(cell, ran = true) {
  */
 export function machineNote(home, { standIn = false, provider = '', memMb = 0, cpu = 0 } = {}) {
   const opening = standIn
-    ? "(A stand-in cloud computer for this account: its usual one is unavailable right now, so what was saved or installed there is not here, and what is made here may not be there later"
+    ? "(A temporary cloud computer for this account: what was saved or installed on its usual one is not here, and what is made here may not be there later"
     : "(This account's own cloud computer: it keeps its files and installs between conversations";
   const size = memMb ? `${cpu ? `${cpu} vCPU, ` : ''}${memMb >= 1024 ? `${Math.round(memMb / 102.4) / 10} GiB` : `${memMb} MiB`} of memory. ` : '';
   return (

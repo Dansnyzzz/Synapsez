@@ -923,8 +923,9 @@ export function formatResults(query, { results, attempts = [], answer = null, as
       return `No results for "${query}". Search could not run: ${why}. Try again later, or answer from what you know and say you could not search. Tried: nothing.`;
     }
     const failed = attempts.map(failedBecause).filter((reason) => reason !== 'no results');
+    // What to do goes before "Tried:", which the transcript shows the person as the reason alone (fix round 1, M2).
     return failed.length
-      ? `No results for "${query}". Tried: web search (${failed[0]} — try again in a minute; if it fails again, say you could not search).`
+      ? `No results for "${query}". The search could not look just now: try again in a minute, and if it fails again, say you could not search. Tried: web search (${failed[0]}).`
       : `No results for "${query}". Tried: web search (no results).`;
   }
 

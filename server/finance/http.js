@@ -35,14 +35,16 @@ export class SourceError extends Error {
   /**
    * @param {string} source
    * @param {string} message
-   * @param {{ status?: number, standAside?: boolean }} [options]
+   * @param {{ status?: number, standAside?: boolean, infra?: boolean }} [options]  `infra`: the source could not be
+   *   asked or did not answer (switched off, resting, unreachable, refused), as against having no such data
    */
-  constructor(source, message, { status = 0, standAside = false } = {}) {
+  constructor(source, message, { status = 0, standAside = false, infra = false } = {}) {
     super(message);
     this.name = 'SourceError';
     this.source = source;
     this.status = status;
     this.standAside = standAside;
+    this.infra = infra;
   }
 }
 
@@ -181,15 +183,15 @@ export async function getResponse(source, url, { headers = {}, timeoutMs = 8000,
   const name = sourceOf(source);
   const label = sourceLabel(name);
   if (!enabled(name)) {
-    if (switchOf(name) === 'off') throw new SourceError(name, `${label} is switched off on this deployment (FIN_SOURCE_${name.toUpperCase()}=off).`);
-    throw new SourceError(name, `${label} turns away servers like this one, so it is not asked here (FIN_SOURCE_${name.toUpperCase()}=on asks anyway).`);
+    if (switchOf(name) === 'off') throw new SourceError(name, `${label} is switched off on this deployment (FIN_SOURCE_${name.toUpperCase()}=off).`, { infra: true });
+    throw new SourceError(name, `${label} turns away servers like this one, so it is not asked here (FIN_SOURCE_${name.toUpperCase()}=on asks anyway).`, { infra: true });
   }
   const aside = standingAside(name);
-  if (aside) throw new SourceError(name, `${label} refused a request recently, so it is left alone for about ${Math.max(1, minutes(aside - Date.now()))} more minutes.`, { standAside: true });
+  if (aside) throw new SourceError(name, `${label} refused a request recently, so it is left alone for about ${Math.max(1, minutes(aside - Date.now()))} more minutes.`, { standAside: true, infra: true });
   const ua = userAgent(name);
-  if (!ua) throw new SourceError(name, 'SEC needs SEC_USER_AGENT ("Ephapse <contact email>") set on the deployment, so SEC was not asked.');
+  if (!ua) throw new SourceError(name, 'SEC needs SEC_USER_AGENT ("Ephapse <contact email>") set on the deployment, so SEC was not asked.', { infra: true });
   for (const tier of TIERS[name] || []) {
-    if (!(await take(tier, 1))) throw new SourceError(name, `${label}'s shared allowance (${tier}) is used up for now, so it was not asked.`);
+    if (!(await take(tier, 1))) throw new SourceError(name, `${label}'s shared allowance (${tier}) is used up for now, so it was not asked.`, { infra: true });
   }
   await pace(name);
 
@@ -214,20 +216,20 @@ export async function getResponse(source, url, { headers = {}, timeoutMs = 8000,
   } catch (err) {
     if (signal?.aborted) throw err;
     const timedOut = limit.aborted || err?.name === 'TimeoutError';
-    throw new SourceError(name, timedOut ? `${label} did not answer within ${Math.round(timeoutMs / 1000)} s.` : `${label} could not be reached (${err?.cause?.code || err?.name || 'network error'}).`);
+    throw new SourceError(name, timedOut ? `${label} did not answer within ${Math.round(timeoutMs / 1000)} s.` : `${label} could not be reached (${err?.cause?.code || err?.name || 'network error'}).`, { infra: true });
   }
   // The relay refusing (its secret, its list, its size) is the relay's, not Vietcap's: no standing aside.
   if (relay && res.headers?.get?.('x-finance-relay') !== 'passed') {
-    throw new SourceError(name, `${label} could not be asked through the Singapore relay (HTTP ${res.status}).`, { status: res.status });
+    throw new SourceError(name, `${label} could not be asked through the Singapore relay (HTTP ${res.status}).`, { status: res.status, infra: true });
   }
   // A bare 400 with next to nothing in it, from a source known to answer refusals that way.
   const bare400 = res.status === 400 && REFUSES_WITH_400.has(name) && (await res.clone().text().catch(() => '')).trim().length <= 8;
   if (res.status === 403 || res.status === 429 || bare400) {
     const ms = ASIDE_MS[name] ?? ASIDE_MS.default;
     asideUntil.set(name, Date.now() + ms);
-    throw new SourceError(name, `${label} refused the request (HTTP ${res.status}), so it is left alone for ${minutes(ms)} minutes.`, { status: res.status, standAside: true });
+    throw new SourceError(name, `${label} refused the request (HTTP ${res.status}), so it is left alone for ${minutes(ms)} minutes.`, { status: res.status, standAside: true, infra: true });
   }
-  if (okOnly && !res.ok) throw new SourceError(name, `${label} answered HTTP ${res.status}.`, { status: res.status });
+  if (okOnly && !res.ok) throw new SourceError(name, `${label} answered HTTP ${res.status}.`, { status: res.status, infra: true });
   return res;
 }
 

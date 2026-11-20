@@ -390,11 +390,11 @@ export async function readPicture(result, { userId, chatId = null, signal } = { 
     const row = await getStore().getAttachment(userId, id);
     if (!row) throw new Error('the copy to look at was not stored');
     const picture = await groundedImage(row);
-    const { text, model } = await lookWith({ userId, chatId, images: [{ mime: picture.mime, data: picture.data, name: row.name }], signal });
+    const { text } = await lookWith({ userId, chatId, images: [{ mime: picture.mime, data: picture.data, name: row.name }], signal });
     return {
       ...result,
       content: `${result.content}\n\n${text}`,
-      note: readNote(model, id),
+      note: readNote(id),
     };
   } catch (err) {
     return {
@@ -421,13 +421,15 @@ function withShotNote(result, args) {
 }
 
 /**
- * The two lines the app adds for the model about a picture — who read it, and
- * where a step's screenshot is. Its words, not the person's: the screen leaves
+ * The two lines the app adds for the model about a picture — that it was read,
+ * and where a step's screenshot is. Its words, not the person's: the screen leaves
  * them out (`forDisplay` in render.js, held to these sentences by test/features).
+ * Not who read it: a model the person did not pick may have (fix round 1, I2);
+ * render.js matches this and the older "[Read by …]" that stored transcripts carry.
  *
- * @param {string} model @param {string} id
+ * @param {string} id
  */
-export const readNote = (model, id) => `[Read by ${model}. It is on screen for the user as file ${id} — look_at with that file_id and a question looks again.]`;
+export const readNote = (id) => `[Read from the picture; the text may contain mistakes. It is on screen for the user as file ${id} — look_at with that file_id and a question looks again.]`;
 /** @param {string} id */
 export const shotNote = (id) => `[Screenshot of this step: file ${id} — look_at with that file_id reads what is on screen.]`;
 

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { assertPublic, safeFetch } from '../util/safeFetch.js';
 import { cloudTransport, stdioPlace } from './cloud.js';
+import { log } from '../util/trace.js';
 
 /**
  * Whether this process may start a stdio MCP server as a child of its own.
@@ -394,10 +395,13 @@ export async function connectMcp(config) {
     } else if (place === 'local') {
       transport = stdioTransport({ command: config.command, args: config.args, env: config.env, cwd: config.cwd });
     } else {
+      // The setting that would allow it here is the operator's, in the log: this sentence also
+      // reaches the system prompt's line for a broken server (fix round 1, M4).
+      if (!process.env.VERCEL) log.warn('mcp: a stdio server has nowhere to run — set up the cloud computer, or ALLOW_MCP_STDIO=1 on a machine you trust');
       throw new Error(
         process.env.VERCEL
           ? 'stdio MCP servers run on each account\'s cloud computer, and it is switched off on this deployment. Use an http server, or ask the owner to switch the cloud computer back on.'
-          : 'stdio MCP servers need the cloud computer, which this deployment does not have, or ALLOW_MCP_STDIO=1 on a machine you trust. Or use an http server.',
+          : 'stdio MCP servers need the cloud computer, which this deployment does not have. Use an http server, or ask the owner to set one up.',
       );
     }
   }

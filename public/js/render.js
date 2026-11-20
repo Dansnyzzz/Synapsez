@@ -67,11 +67,12 @@ const ms = tookText;
  * says something similar is left alone.
  */
 const MODEL_NOTES = [
-  /\n*^\((?:This account's own cloud computer: it keeps its files and installs between conversations|A stand-in cloud computer for this account: its usual one is unavailable right now)[^\n]*(?: — about (?:ten|fifteen) idle minutes\.|running programs included\.)\)$/m,
+  /\n*^\((?:This account's own cloud computer: it keeps its files and installs between conversations|A stand-in cloud computer for this account: its usual one is unavailable right now|A temporary cloud computer for this account: what was saved or installed on its usual one is not here)[^\n]*(?: — about (?:ten|fifteen) idle minutes\.|running programs included\.)\)$/m,
   /^\[Python: (?:the same live session|a new session) — [^\n]*\]\n?/m,
   /\n*^Showed the user (?:the figure|\d+ figures) in the conversation: [^\n]*\(id [^\n)]*\)\.$/m,
   /\n*^Handed [^\n]* to the user — it is in the conversation to open and download\. Its id is [^\n]*; publish_file with that id makes a link to share\.[^\n]*$/m,
-  /\n*^\[Read by [^\n]* — look_at with that file_id and a question looks again\.\]$/m,
+  // Who read a picture: older notes named the model ("[Read by …]", kept in stored transcripts); the new one does not.
+  /\n*^\[(?:[Rr]ead by|Read from the picture)[^\n]* — look_at with that file_id and a question looks again\.\]$/m,
   /\n*^\[Screenshot of this step: file [^\n]* — look_at with that file_id reads what is on screen\.\]$/m,
   // What a question's result tells the model to do next (`answerText`).
   /\n*^Carry on with what they chose\. Do not ask this again\.$/m,

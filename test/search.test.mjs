@@ -168,7 +168,7 @@ section('every engine refusing is an answer too');
   check('no results rather than a thrown error', outcome.results.length === 0 && outcome.engine === null);
   const text = formatResults('anything', outcome);
   check('every engine tried is recorded, with its reason, for the log', outcome.attempts.length === 4 && /subscription token is invalid/.test(JSON.stringify(outcome.attempts)), JSON.stringify(outcome.attempts.map((a) => a.engine)));
-  check('while the reply says only that the search could not look, and what to do', /^No results for "anything"\. Tried: web search \((?!no results)[^)]*try again/.test(text) && !/Exa|DuckDuckGo|Tavily|Brave|subscription token/.test(text), text.slice(0, 200));
+  check('while the reply says only that the search could not look, and what to do', /^No results for "anything"\. The search could not look just now: try again[^.]*\. Tried: web search \((?!no results)[^)]*\)\.$/.test(text) && !/Exa|DuckDuckGo|Tavily|Brave|subscription token/.test(text), text.slice(0, 200));
   await heal();
 }
 

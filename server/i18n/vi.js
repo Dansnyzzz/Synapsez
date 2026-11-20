@@ -662,14 +662,35 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   "Web search is not set up on this server. Tell the user search is unavailable, and answer from what you know, saying so.":
     "Máy chủ này chưa thiết lập tìm kiếm web. Hãy nói với người dùng là chưa tìm kiếm được, và trả lời theo những gì bạn biết, nói rõ điều đó.",
   // A service behind a tool failing, said plainly (server/tools/plainFailure.js).
-  "{0} did not answer in time. Try once more{1}.":
-    "{0} không phản hồi kịp. Hãy thử thêm một lần{1}.",
-  "{0} is busy right now. Try again in a minute{1}.":
-    "{0} đang bận. Hãy thử lại sau một phút{1}.",
-  "{0} has used its allowance for this period. Try again later{1}.":
-    "{0} đã dùng hết hạn mức của kỳ này. Hãy thử lại sau{1}.",
-  "{0} did not work just now. Try again in a moment{1}; if it fails again, tell the user it is unavailable right now.":
-    "{0} vừa không thành công. Hãy thử lại sau giây lát{1}; nếu vẫn lỗi, hãy nói với người dùng là hiện chưa dùng được.",
+  "Could not {0}: it did not answer in time. Try once more{1}.":
+    "Không thể {0}: không phản hồi kịp. Hãy thử thêm một lần{1}.",
+  "Could not {0} right now: too many requests at once. Try again in a minute{1}.":
+    "Chưa thể {0} lúc này: quá nhiều yêu cầu cùng lúc. Hãy thử lại sau một phút{1}.",
+  "Could not {0}: the allowance for this period is used, so do not try again now{1}. Tell the user it can be done later.":
+    "Không thể {0}: hạn mức của kỳ này đã dùng hết, nên đừng thử lại lúc này{1}. Hãy nói với người dùng là có thể làm sau.",
+  "Could not {0} just now. Try again in a moment{1}; if it fails again, tell the user it is unavailable right now.":
+    "Vừa không thể {0}. Hãy thử lại sau giây lát{1}; nếu vẫn lỗi, hãy nói với người dùng là hiện chưa dùng được.",
+  "Could not {0}: the key in {1} was refused. Ask the user to check it there.":
+    "Không thể {0}: key trong {1} bị từ chối. Hãy nhờ người dùng kiểm tra lại ở đó.",
+  "Could not {0}: the request was refused as asked. Check {1} before trying again{2}.":
+    "Không thể {0}: yêu cầu bị từ chối đúng như đã gửi. Hãy kiểm tra {1} trước khi thử lại{2}.",
+  // A model called inside a tool failing (server/tools/plainFailure.js `modelFailure`).
+  "The free allowance for this month is used. The user can add their own key in Settings → Providers.":
+    "Hạn mức miễn phí của tháng này đã dùng hết. Người dùng có thể thêm key riêng trong Cài đặt → Nhà cung cấp.",
+  "This model needs the user's own key: Settings → Providers.":
+    "Model này cần key riêng của người dùng: Cài đặt → Nhà cung cấp.",
+  "This model needs an API key the account does not have. The user can add one in Settings → Providers.":
+    "Model này cần một API key mà tài khoản chưa có. Người dùng có thể thêm trong Cài đặt → Nhà cung cấp.",
+  "This conversation holds data from the user's Google account, which this model may not be sent. Tell the user to pick another model.":
+    "Cuộc trò chuyện này có dữ liệu từ tài khoản Google của người dùng, không được gửi tới model này. Hãy nhờ người dùng chọn model khác.",
+  "The model is busy right now. Try again in a few minutes.":
+    "Model đang bận. Hãy thử lại sau vài phút.",
+  "The model did not answer in time. Try once more, or with a smaller request.":
+    "Model không trả lời kịp. Hãy thử thêm một lần, hoặc với yêu cầu nhỏ hơn.",
+  "The model's key was refused. The user can check their keys in Settings → Providers.":
+    "Key của model bị từ chối. Người dùng có thể kiểm tra key trong Cài đặt → Nhà cung cấp.",
+  "The model did not answer just now. Try again in a moment.":
+    "Model vừa không trả lời. Hãy thử lại sau giây lát.",
   'no results': 'không có kết quả',
   'Give a question to research.': 'Hãy đưa ra câu hỏi cần nghiên cứu.',
   'That research run belongs to another account.': 'Lượt nghiên cứu đó thuộc về tài khoản khác.',
@@ -874,8 +895,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   /* ── MCP, tệp, nhà cung cấp, cơ sở dữ liệu ── */
   "stdio MCP servers run on each account's cloud computer, and it is switched off on this deployment. Use an http server, or ask the owner to switch the cloud computer back on.":
     "Máy chủ MCP stdio chạy trên máy tính đám mây của từng tài khoản, mà bản triển khai này đang tắt nó. Hãy dùng máy chủ http, hoặc nhờ chủ ứng dụng bật lại máy tính đám mây.",
-  "stdio MCP servers need the cloud computer, which this deployment does not have, or ALLOW_MCP_STDIO=1 on a machine you trust. Or use an http server.":
-    "Máy chủ MCP stdio cần máy tính đám mây, mà bản triển khai này không có, hoặc ALLOW_MCP_STDIO=1 trên máy bạn tin tưởng. Hoặc dùng máy chủ http.",
+  "stdio MCP servers need the cloud computer, which this deployment does not have. Use an http server, or ask the owner to set one up.":
+    "Máy chủ MCP stdio cần máy tính đám mây, mà bản triển khai này không có. Hãy dùng máy chủ http, hoặc nhờ chủ ứng dụng thiết lập.",
   'stdio servers need either the cloud computer (the Vercel Sandbox) or ALLOW_MCP_STDIO on a machine you trust, and this deployment has neither. An http server works everywhere.':
     'Máy chủ stdio cần máy tính đám mây (Vercel Sandbox) hoặc ALLOW_MCP_STDIO trên máy bạn tin tưởng, mà bản triển khai này không có cái nào. Máy chủ http thì chạy ở đâu cũng được.',
   'This conversation has read something from outside — a page, a search result, a server. A note saved now is read at the start of every later conversation, so check it carries nothing that came from there.':
@@ -1245,7 +1266,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'The cloud computer took more than {0}s to hand over {1}, so it was not read. Try once more; if it is slow again, make a smaller copy first.':
     'Máy tính đám mây mất hơn {0} giây để đưa ra {1}, nên chưa đọc được. Hãy thử lại một lần; nếu vẫn chậm, hãy tạo một bản nhỏ hơn trước.',
   stopped: 'đã dừng',
-  'None of the models that can see could read it — {0}': 'Không model thị giác nào đọc được — {0}',
+  "The picture could not be read just now. Try again in a moment, or ask the user what it shows.":
+    "Vừa không đọc được ảnh. Hãy thử lại sau giây lát, hoặc hỏi người dùng ảnh có gì.",
   // Share links.
   'Only something the assistant made can be shared by link. Uploaded files stay private.':
     'Chỉ những gì trợ lý tạo ra mới chia sẻ được bằng link. Tệp tải lên luôn được giữ riêng tư.',
@@ -1590,7 +1612,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   '{0} is offered for {1} — not for {2}.{3}': '{0} có cho {1} — không có cho {2}.{3}',
   'Vietcap lists no covered warrants or index futures{0}.': 'Vietcap không có chứng quyền hay hợp đồng tương lai chỉ số nào{0}.',
   'macro needs an indicator: gdp, cpi (inflation), unemployment, rate, 10y, population — or a World Bank or FRED code.': 'macro cần một chỉ tiêu: gdp, cpi (lạm phát), unemployment (thất nghiệp), rate (lãi suất), 10y, population (dân số) — hoặc một mã của Ngân hàng Thế giới hay FRED.',
-  'There is no rate from {0} to {1} today: {2}': 'Hôm nay không có tỷ giá từ {0} sang {1}: {2}',
+  "There is no rate from {0} to {1} right now. Try again later, or say the rate could not be fetched.":
+    "Hiện chưa có tỷ giá từ {0} sang {1}. Hãy thử lại sau, hoặc nói rằng chưa lấy được tỷ giá.",
   // The Bot page's team features (spec B, 2026-11-11).
   '{0} is done — see the group.': '{0} đã xong — xem trong nhóm.',
   'That is not a team file: it does not read as JSON.': 'Đây không phải tệp nhóm bot: không đọc được dưới dạng JSON.',

@@ -13,6 +13,7 @@ import * as fx from './sources/fx.js';
 import * as gold from './sources/gold.js';
 import * as macro from './sources/macro.js';
 import * as fmarket from './sources/fmarket.js';
+import { log } from '../util/trace.js';
 
 /**
  * `market_data`: one tool, fourteen kinds, over the finance layer (spec §1).
@@ -108,7 +109,13 @@ async function runChain(kind, market, step, ctx) {
       if (value !== undefined && value !== null) return { value, source, failed };
     } catch (err) {
       if (ctx.signal?.aborted) throw err;
-      failed.push({ source, message: short(err) });
+      // What each source said is the log's (fix round 1, I1): its settings, its relay, its socket
+      // and HTTP codes, the chain itself. The model reads only whether any source had the data
+      // (format.js `unavailable`); `infra` tells "could not be asked" from "has no such data".
+      log.info('finance: a source did not answer', { source, kind, market, error: short(err) });
+      // A status other than "no such thing" (400, 404, 410, 422) is the source not answering, not the data missing.
+      const status = Number(err?.status) || 0;
+      failed.push({ source, message: short(err), infra: err?.name !== 'SourceError' || err?.infra === true || (status > 0 && ![400, 404, 410, 422].includes(status)) });
     }
   }
   return { value: null, source: null, failed };
@@ -155,7 +162,8 @@ async function answerQuote(req, ctx) {
   const answers = await Promise.all(req.symbols.map((s) => quoteOne(s, req, ctx)));
   const ok = answers.filter((a) => a.quote);
   const attribution = [...new Set(ok.flatMap((a) => a.quote.attribution || ATTRIBUTION[baseOf(a.source)] || []))];
-  const lines = answers.map((a) => (a.quote ? `${F.quoteLine(a.quote, { lang: req.lang, session: a.session })}${a.failed.length ? ` ${F.fallbackNote(a.failed, a.source, req.lang)}` : ''}` : F.unavailable(a.symbol, a.failed, req.lang)));
+  // A source that failed on the way is the log's (runChain); the line cites the one that answered.
+  const lines = answers.map((a) => (a.quote ? F.quoteLine(a.quote, { lang: req.lang, session: a.session }) : F.unavailable(a.symbol, a.failed, req.lang)));
   const text = answers.length === 1 && ok.length ? `${lines[0]} · ${F.disclaimer(req.lang)}` : [...lines, F.disclaimer(req.lang)].join('\n');
   return { text, attribution, widget: ok.length ? F.quoteWidget(ok.map((a) => a.quote), { lang: req.lang, session: ok.length === 1 ? ok[0].session : undefined, attribution }) : undefined };
 }
@@ -213,7 +221,7 @@ async function answerHistory(req, ctx, { intraday = false } = {}) {
   const attribution = h.attribution || ATTRIBUTION[baseOf(run.source)] || [];
   const note = !req.adjusted && h.adjusted && !intraday ? (req.lang === 'vi' ? 'Đã hỏi giá gốc, nhưng chỉ VNDIRECT có giá gốc và nó không trả lời được: đây là giá đã điều chỉnh.' : 'Raw prices were asked for, but only VNDIRECT has them and it did not answer: these are adjusted.') : '';
   const series = { ...h, note: [h.note, note].filter(Boolean).join(' ') || undefined };
-  return { text: F.historyText(series, { lang: req.lang, label, failed: run.failed, intraday }), attribution, widget: F.historyWidget(series, { lang: req.lang, label, attribution }) };
+  return { text: F.historyText(series, { lang: req.lang, label, intraday }), attribution, widget: F.historyWidget(series, { lang: req.lang, label, attribution }) };
 }
 
 /** The kinds whose answer is one object from one source, formatted by `format`. */
@@ -244,7 +252,7 @@ const ANSWERS = {
         const load = { vietcap: () => vietcap.statements(symbol, req.statement, req.statementPeriod, ctx), kbs: () => kbs.statements(symbol, req.statement, req.statementPeriod, ctx), sec: () => sec.statements(symbol, req.statement, req.statementPeriod, ctx), yahoo: () => yahoo.statements(symbol, req.statement, req.statementPeriod, { ...ctx, market: req.market, board: 'HOSE' }) }[source];
         return load ? keep(key, ttlFor('statements'), load, ctx) : undefined;
       },
-      (s, run) => F.statementText(s, { lang: req.lang, failed: run.failed }),
+      (s, run) => F.statementText(s, { lang: req.lang }),
     ),
 
   ratios: (req, ctx) =>
@@ -263,7 +271,7 @@ const ANSWERS = {
         }[source];
         return load ? keep(key, ttlFor('ratios'), load, ctx) : undefined;
       },
-      (r, run) => F.ratiosText(r, { lang: req.lang, failed: run.failed }),
+      (r, run) => F.ratiosText(r, { lang: req.lang }),
     ),
 
   profile: (req, ctx) =>
@@ -276,7 +284,7 @@ const ANSWERS = {
         const load = { vietcap: () => vietcap.profile(symbol, ctx), kbs: () => kbs.profile(symbol, ctx), sec: () => sec.profile(symbol, ctx), yahoo: () => yahoo.profile(symbol, { ...ctx, market: req.market }), coingecko: () => coingecko.profile(symbol, ctx) }[source];
         return load ? keep(key, ttlFor('profile', { source }), load, ctx) : undefined;
       },
-      (p, run) => F.profileText(p, { lang: req.lang, failed: run.failed, title: req.symbols[0] }),
+      (p, run) => F.profileText(p, { lang: req.lang, title: req.symbols[0] }),
     ),
 
   events: (req, ctx) => {
@@ -294,7 +302,7 @@ const ANSWERS = {
         }[source];
         return load ? keep(key, ttlFor('events'), load, ctx) : undefined;
       },
-      (list, run) => F.eventsText(list, { lang: req.lang, failed: run.failed, label: req.symbols[0].toUpperCase(), source: run.source }),
+      (list, run) => F.eventsText(list, { lang: req.lang, label: req.symbols[0].toUpperCase(), source: run.source }),
     );
   },
 
@@ -313,7 +321,7 @@ const ANSWERS = {
         }[source];
         return load ? keep(key, ttlFor('news'), load, ctx) : undefined;
       },
-      (list, run) => F.newsText(list, { lang: req.lang, failed: run.failed, label: req.symbols[0].toUpperCase(), source: run.source }),
+      (list, run) => F.newsText(list, { lang: req.lang, label: req.symbols[0].toUpperCase(), source: run.source }),
     );
   },
 
@@ -327,7 +335,7 @@ const ANSWERS = {
         const load = { fmarket: () => fmarket.fund(symbol, ctx), yahoo: async () => yahoo.fund(symbol, { ...ctx, market: req.market, board: req.market === 'vn' ? await vnBoardIfHose(symbol, ctx) : null }) }[source];
         return load ? keep(key, ttlFor('fund'), load, ctx) : undefined;
       },
-      (f, run) => F.fundText(f, { lang: req.lang, failed: run.failed }),
+      (f, run) => F.fundText(f, { lang: req.lang }),
     ),
 
   options: (req, ctx) => {
@@ -343,7 +351,7 @@ const ANSWERS = {
           if (!list.length) throw new Error(`Vietcap lists no covered warrants or index futures${under ? ` on ${under}` : ''}.`);
           return { list };
         },
-        (v, run) => F.listingText(v.list, { lang: req.lang, failed: run.failed, label: req.symbols[0]?.toUpperCase() || 'VN' }),
+        (v, run) => F.listingText(v.list, { lang: req.lang, label: req.symbols[0]?.toUpperCase() || 'VN' }),
       );
     }
     return answerSimple(
@@ -351,7 +359,7 @@ const ANSWERS = {
       ctx,
       'options',
       (source, symbol) => (source === 'yahoo' ? keep(`yahoo|options|${symbol.toUpperCase()}|${req.date || ''}`, ttlFor('options', { market: 'us', now: ctx.now }), () => yahoo.options(symbol, req.date, { ...ctx, market: 'us' }), ctx) : undefined),
-      (o, run) => F.optionsText(o, { lang: req.lang, failed: run.failed }),
+      (o, run) => F.optionsText(o, { lang: req.lang }),
     );
   },
 
@@ -370,14 +378,14 @@ const ANSWERS = {
     );
     const ok = answers.filter((a) => a.run.value);
     const attribution = [...new Set(ok.flatMap((a) => a.run.value.attribution || []))];
-    const text = answers.map((a) => (a.run.value ? F.fxText(a.run.value, { lang: req.lang, failed: a.run.failed }) : F.unavailable(`${a.base}/${a.quote}`, a.run.failed, req.lang))).join('\n');
+    const text = answers.map((a) => (a.run.value ? F.fxText(a.run.value, { lang: req.lang }) : F.unavailable(`${a.base}/${a.quote}`, a.run.failed, req.lang))).join('\n');
     return { text, attribution, widget: ok.length ? F.fxWidget(ok[0].run.value, { lang: req.lang, attribution }) : undefined };
   },
 
   gold: async (req, ctx) => {
     const run = await runChain('gold', req.market, (source) => (source === 'sjc' ? gold.sjc(ctx) : source === 'yahoo' ? gold.world(ctx) : undefined), ctx);
     if (!run.value) return { text: F.unavailable(req.lang === 'vi' ? 'Giá vàng' : 'Gold', run.failed, req.lang) };
-    return { text: F.goldText(run.value, { lang: req.lang, failed: run.failed, source: run.source }), attribution: [], widget: F.goldWidget(run.value, { lang: req.lang, source: run.source }) };
+    return { text: F.goldText(run.value, { lang: req.lang, source: run.source }), attribution: [], widget: F.goldWidget(run.value, { lang: req.lang, source: run.source }) };
   },
 
   macro: (req, ctx) => {
@@ -393,7 +401,7 @@ const ANSWERS = {
         const load = { worldbank: () => macro.worldBank(country, indicator, 6, ctx), nso: () => macro.nso(indicator, ctx), fred: () => macro.fred(indicator, 12, ctx), ecb: () => macro.ecbSeries(indicator, 12, ctx) }[source];
         return load ? keep(key, ttlFor('macro'), load, ctx) : undefined;
       },
-      (m, run) => F.macroText(m, { lang: req.lang, failed: run.failed }),
+      (m, run) => F.macroText(m, { lang: req.lang }),
     );
   },
 
@@ -405,7 +413,7 @@ const ANSWERS = {
       ctx,
       'screen',
       (source) => (source === 'sec' ? keep(`sec|screen|${indicator.toLowerCase()}|${period || ''}`, ttlFor('screen'), () => sec.screen(indicator, period, ctx, { now: ctx.now }), ctx) : undefined),
-      (s, run) => F.screenText(s, { lang: req.lang, failed: run.failed }),
+      (s, run) => F.screenText(s, { lang: req.lang }),
     );
   },
 };

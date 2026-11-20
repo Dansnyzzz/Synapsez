@@ -30,7 +30,7 @@ import { sendTelegramNow } from '../outbox.js';
 import { checkDiagram } from '../widgetCheck.js';
 import { searchConnectorsTool, suggestConnectorsTool } from '../connectorDirectory.js';
 import { codeContextTool } from './codeContext.js';
-import { getPrefs, getApiKey, maskPersonalFor } from '../settings.js';
+import { getPrefs, getApiKeys, maskPersonalFor } from '../settings.js';
 import { sendEmail, emailBackend, senderName } from '../email.js';
 import { composeMessage, KIND_NAMES } from '../mailTemplate.js';
 import { safeFetch, readCapped, assertPublic } from '../util/safeFetch.js';
@@ -3060,7 +3060,9 @@ async function generateImageTool({ prompt, name, aspect_ratio: aspectRatio, coun
     );
   }
 
-  const key = await getApiKey(userId, 'google');
+  // The first key, and whether it is the person's own: a key they added is one they can check.
+  const [googleKey] = await getApiKeys(userId, 'google');
+  const key = googleKey?.key || '';
   if (!key) {
     // The setting the person adds is named, because they are the one who must add it.
     throw new Error(
@@ -3077,7 +3079,8 @@ async function generateImageTool({ prompt, name, aspect_ratio: aspectRatio, coun
   // The image service's own error (its status, its words, its address) goes to the log; the
   // model is told plainly (plainFailure.js). The Usage Policy refusal is this app's own sentence.
   const { images, usage, refusal } = await requestImages(ai, { model, prompt: text, count: wanted, aspectRatio }).catch((err) => {
-    throw fromAService(err) ? plainFailure(err, { what: 'Making the picture', tool: 'generate_image' }) : err;
+    if (!fromAService(err)) throw err;
+    throw plainFailure(err, { what: 'make the picture', args: 'the description and the aspect ratio', ownKey: googleKey.shared ? '' : 'Settings → Providers → Google Gemini', tool: 'generate_image' });
   });
 
   /*
@@ -3241,14 +3244,14 @@ async function lookAtOffice({ bytes, name, pages, ask, source, userId, chatId = 
     };
   }
   const rows = await Promise.all(look.pictures.map((p) => getStore().getAttachment(userId, p.id)));
-  const { text, model } = await lookWith({
+  const { text } = await lookWith({
     userId,
     chatId,
     images: rows.filter(Boolean).map((row) => ({ mime: row.mime, data: row.data, name: row.name })),
     question: ask || 'Describe how this document looks as well as what it says: layout, colours, pictures, anything overflowing or cut off.',
     signal,
   });
-  return { content: untrusted(`${source} (read by ${model})`, `${pictureNote(name, look, { told: true })}\n\n${text}`), pictures: look.pictures.map((p) => ({ ...p, toldOnly: true })), shot: { id: first.id, name: first.name } };
+  return { content: untrusted(source, `${pictureNote(name, look, { told: true })}\n\n${text}`), pictures: look.pictures.map((p) => ({ ...p, toldOnly: true })), shot: { id: first.id, name: first.name } };
 }
 
 /**
@@ -3401,9 +3404,10 @@ async function lookAtTool(
     return lookAtTool({ file_id: latest.id, url: undefined, path: undefined, pages, question }, { userId, chatId, signal, see: lookWith, readCloudFile });
   }
 
-  const { text, model } = await lookWith({ userId, chatId, ...item, question: ask, signal });
+  const { text } = await lookWith({ userId, chatId, ...item, question: ask, signal });
   // The reading is of somebody else's picture, so it is outside content too.
-  const content = untrusted(`${source} (read by ${model})`, text);
+  // The picture's own words, under its own name: not the model that read them (fix round 1, I2).
+  const content = untrusted(source, text);
   return shot ? { content, shot } : content;
 }
 
@@ -3494,13 +3498,16 @@ function paperLine(paper, i) {
 const firecrawlAside = (err, instead) => {
   if (!err?.skip) return null;
   log.info('firecrawl: stood aside', { reason: String(err.message).slice(0, 160) });
-  return /allowance|credit|share/i.test(String(err.message))
+  const why = String(err.message);
+  // "today's free index searches are used" is a day's allowance (fix round 1, M6): said as today's, to try later.
+  if (/today|daily|per day/i.test(why)) return `This is not available right now: today's allowance is used, so try again later or tomorrow. ${instead}`;
+  return /allowance|credit|share|\bused\b/i.test(why)
     ? `This is not available right now: its allowance for this period is used, so try again later. ${instead}`
     : `This is not available right now. ${instead}`;
 };
 
 /** A failure from the indexes or the site reader, said plainly (plainFailure.js); this app's own sentences pass as they are. */
-const indexFailure = (err, what, instead) => (fromAService(err) ? plainFailure(err, { what, instead, tool: 'firecrawl' }) : err);
+const indexFailure = (err, what, instead, args) => (fromAService(err) ? plainFailure(err, { what, instead, args, tool: 'firecrawl' }) : err);
 
 /**
  * research_index — Firecrawl's free indexes: about 43 million research paper abstracts
@@ -3547,7 +3554,7 @@ async function researchIndexTool({ op = 'papers', query, id, k, from, to, sort, 
   } catch (err) {
     const aside = firecrawlAside(err, 'Use web_search with category "research paper" instead.');
     if (aside) return aside;
-    throw indexFailure(err, 'Searching research papers and law', 'use web_search with category "research paper" instead');
+    throw indexFailure(err, 'search research papers and law', 'use web_search with category "research paper" instead', 'the query, the id and the dates');
   }
   throw new Error('op is one of "papers", "read", "related" or "law".');
 }
@@ -3627,7 +3634,7 @@ async function sitePagesTool({ op = 'map', url, search: term, limit, include_pat
   } catch (err) {
     const aside = firecrawlAside(err, 'Use web_fetch on the pages instead.');
     if (aside) return aside;
-    throw indexFailure(err, "Listing and reading a site's pages", 'use web_fetch on the pages instead');
+    throw indexFailure(err, "list or read the site's pages", 'use web_fetch on the pages instead', 'the address and include_paths');
   } finally {
     await hold.settle(units);
   }

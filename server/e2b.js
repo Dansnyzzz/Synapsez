@@ -87,7 +87,8 @@ const NETWORK = { allowPublicTraffic: true };
 /** The month's E2B allowance cannot pay for the time a machine would be awake. */
 export class E2BOutOfCredit extends Error {
   constructor() {
-    super('The cloud computer has used this month\'s share of its credit.');
+    // Said as the model may pass it on: not the credit, not its share (fix round 1, M3).
+    super('The cloud computer is not available again until next month.');
     this.name = 'E2BOutOfCredit';
   }
 }

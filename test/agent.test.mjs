@@ -194,7 +194,8 @@ section('a failing sub-agent is reported as failed');
   const { stream } = scriptedProvider([{ throws: 'the provider fell over' }]);
   const output = await runParallel({ user, chatId: null, tasks: ['anything'], stream });
 
-  check('the failure is surfaced', /Failed: the provider fell over/.test(output), output.slice(0, 90));
+  // Said plainly; the provider's own sentence is the log's (fix round 1, modelFailure).
+  check('the failure is surfaced, in plain words', /Failed: The model did not answer just now/.test(output) && !/the provider fell over/.test(output), output.slice(0, 160));
   check(
     'and the summary says so rather than implying success',
     /1 of them failed/.test(output),
@@ -1238,7 +1239,7 @@ section('the model is told both when to plan and when not to');
   check('and, just as explicitly, when not to', /\*\*Do not plan when/.test(agentSrc));
   check('with a countable threshold rather than an adjective', /three or more steps/.test(agentSrc));
   check('it asks for one in_progress at a time', /one step `in_progress`/.test(agentSrc));
-  check('and for the plan to be revised when reality differs', /send the list again/i.test(agentSrc));
+  check('and for the plan to be revised when reality differs', /resend the list/i.test(agentSrc));
 
   // On a model under 40k only the first sentence of a description survives, so
   // the threshold has to sit inside it rather than trailing after.

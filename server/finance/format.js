@@ -21,7 +21,10 @@ const W = {
     points: 'điểm', adjusted: 'đã điều chỉnh (cổ tức, chia tách, phát hành)', raw: 'giá gốc, chưa điều chỉnh', volumesRaw: 'Khối lượng không điều chỉnh.',
     first: 'đầu kỳ', last: 'cuối kỳ', min: 'thấp nhất', max: 'cao nhất', change: 'thay đổi',
     more: (n) => `${n} dòng trước đó không hiện — hỏi khoảng ngắn hơn, hoặc vẽ biểu đồ.`,
-    unavailable: 'tạm thời không lấy được dữ liệu', failed: 'không trả lời', answeredBy: 'trả lời bằng',
+    unavailable: 'tạm thời không lấy được dữ liệu',
+    noData: 'không nguồn nào có dữ liệu này; hãy kiểm tra mã, thị trường hoặc khoảng ngày',
+    tryLater: 'hãy thử lại sau vài phút, hoặc nói rằng hiện chưa lấy được',
+    notHere: 'mục này không có ở đây; hãy nói rõ với người dùng',
     upcom: 'tham chiếu UPCoM = giá bình quân phiên trước', band: 'trần/sàn tính theo biên độ', ato: 'giá 09:00–09:15 là giá dự kiến, chưa phải giá khớp',
     history: 'lịch sử giá', intraday: 'trong phiên', year: 'năm', quarter: 'quý', unit: 'đơn vị', period: 'kỳ',
     published: 'công bố', audited: 'đã kiểm toán', reviewed: 'đã soát xét', unaudited: 'chưa kiểm toán', consolidated: 'hợp nhất', parent: 'riêng/công ty mẹ',
@@ -36,7 +39,10 @@ const W = {
     points: 'points', adjusted: 'adjusted (dividends, splits, issues)', raw: 'raw, not adjusted', volumesRaw: 'Volumes are not adjusted.',
     first: 'first', last: 'last', min: 'low', max: 'high', change: 'change',
     more: (n) => `${n} earlier rows not shown — ask for a shorter period, or a chart.`,
-    unavailable: 'temporarily unavailable', failed: 'failed', answeredBy: 'answered by',
+    unavailable: 'temporarily unavailable',
+    noData: 'no source has data for this; check the symbol, the market or the dates',
+    tryLater: 'try again in a few minutes, or say it could not be fetched right now',
+    notHere: 'this is not available here; say so plainly',
     upcom: "UPCoM's reference is yesterday's average price", band: 'ceiling/floor worked out from the band', ato: 'a price between 09:00 and 09:15 is an auction indication, not a trade',
     history: 'price history', intraday: 'intraday', year: 'year', quarter: 'quarter', unit: 'unit', period: 'period',
     published: 'published', audited: 'audited', reviewed: 'reviewed', unaudited: 'unaudited', consolidated: 'consolidated', parent: 'parent / stand-alone',
@@ -92,18 +98,13 @@ export function asOfText(iso, zone = 'UTC', lang = 'en', { dateOnly = false } = 
   return `${day} ${two(w.h)}:${two(w.mi)} ${name}`;
 }
 
-/** The note after an answer's sources: who failed on the way, who answered. */
-export function fallbackNote(failed, answeredBy, lang) {
-  if (!failed?.length) return '';
-  const w = words(lang);
-  return `(${failed.map((f) => `${sourceLabel(f.source)} ${w.failed}: ${f.message}`).join('; ')} — ${w.answeredBy} ${sourceLabel(answeredBy)}.)`;
-}
-
-/** "FPT: temporarily unavailable — VNDIRECT: …; KBS: …" */
+// What a symbol with no answer says (fix round 1, I1). Which sources were asked, and what each said — a
+// setting, a relay, a socket or HTTP code, one source failing over to another — is the log's (index.js
+// `runChain`). The model hears whether the data exists, and what to do.
 export function unavailable(label, failed, lang) {
   const w = words(lang);
-  const why = (failed || []).map((f) => `${sourceLabel(f.source)}: ${f.message}`).join('; ');
-  return `${label}: ${w.unavailable}${why ? ` — ${why}` : ' — no source is switched on for this.'}`;
+  const noData = failed?.length && failed.every((f) => !f.infra);
+  return `${label}: ${w.unavailable} — ${noData ? w.noData : failed?.length ? w.tryLater : w.notHere}.`;
 }
 
 /* ── quote ──────────────────────────────────────────────────────── */
@@ -184,7 +185,7 @@ export function quoteWidget(quotes, { lang, session, attribution = [] }) {
 const csvNum = (v, digits) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? '' : String(Math.round(Number(v) * 10 ** digits) / 10 ** digits));
 
 /** A summary line, then at most 30 rows (the newest), as CSV. */
-export function historyText(h, { lang, label, failed, intraday = false }) {
+export function historyText(h, { lang, label, intraday = false }) {
   const w = words(lang);
   const digits = digitsFor(h.unit);
   const bars = h.bars;
@@ -208,7 +209,6 @@ export function historyText(h, { lang, label, failed, intraday = false }) {
   const lines = [head];
   if (h.adjusted) lines.push(w.volumesRaw);
   if (h.note) lines.push(h.note);
-  if (failed?.length) lines.push(fallbackNote(failed, h.source, lang));
   lines.push(summary, columns, ...shown.map((b) => [b.t.slice(0, intraday ? 16 : 10), csvNum(b.o, digits), csvNum(b.h, digits), csvNum(b.l, digits), csvNum(b.c, digits), csvNum(b.v, 0)].join(',')));
   if (bars.length > shown.length) lines.push(w.more(bars.length - shown.length));
   return lines.join('\n');
@@ -250,7 +250,7 @@ function scaleFor(unit, lang) {
   return { div: 1e6, label: lang === 'vi' ? `triệu ${unit}` : `million ${unit}` };
 }
 
-export function statementText(s, { lang, failed }) {
+export function statementText(s, { lang }) {
   const w = words(lang);
   const scale = scaleFor(s.unit, lang);
   const meta = s.periods
@@ -264,7 +264,6 @@ export function statementText(s, { lang, failed }) {
   ];
   if (meta.length) lines.push(meta.join(' · '));
   if (s.note) lines.push(s.note);
-  if (failed?.length) lines.push(fallbackNote(failed, s.source, lang));
   lines.push(`${w.period},${s.periods.map((p) => p.label.replace(/,/g, ' ')).join(',')}`);
   for (const l of s.lines.slice(0, 15)) {
     const name = String((lang === 'vi' ? l.label_vi : l.label_en) || l.label_en || l.code).replace(/,/g, ' ').trim();
@@ -275,11 +274,10 @@ export function statementText(s, { lang, failed }) {
   return lines.join('\n');
 }
 
-export function ratiosText(r, { lang, failed }) {
+export function ratiosText(r, { lang }) {
   const w = words(lang);
   const lines = [[r.symbol, w.ratios, r.asOf, `${w.source} ${sourceLabel(r.source)}`, disclaimer(lang)].filter(Boolean).join(' · ')];
   if (r.note) lines.push(r.note);
-  if (failed?.length) lines.push(fallbackNote(failed, r.source, lang));
   for (const i of r.items) {
     const name = lang === 'vi' ? i.label_vi : i.label_en;
     const value = i.kind === 'fraction' ? `${fmt(i.value * 100, lang, 2)}${lang === 'vi' ? ' %' : '%'}` : i.kind === 'money' ? (r.currency === 'VND' ? `${fmt(i.value / 1e9, lang, 0)} ${w.billion}` : `${fmt(i.value / 1e9, lang, 2)} bn ${r.currency || ''}`.trim()) : fmt(i.value, lang, 2);
@@ -289,11 +287,10 @@ export function ratiosText(r, { lang, failed }) {
 }
 
 /** Any flat object as "key: value" lines, skipping the empty and the bookkeeping. */
-export function profileText(p, { lang, failed, title }) {
+export function profileText(p, { lang, title }) {
   const w = words(lang);
   const skip = new Set(['source', 'attribution', 'symbol']);
   const lines = [[p.symbol || title, w.profile, `${w.source} ${sourceLabel(p.source)}`, disclaimer(lang)].filter(Boolean).join(' · ')];
-  if (failed?.length) lines.push(fallbackNote(failed, p.source, lang));
   for (const [key, value] of Object.entries(p)) {
     if (skip.has(key) || value === undefined || value === null || value === '' || (Array.isArray(value) && !value.length)) continue;
     const shown = typeof value === 'number' ? (/Owned|Limit|freeFloat/.test(key) && value <= 1 ? `${fmt(value * 100, lang, 2)}${lang === 'vi' ? ' %' : '%'}` : fmt(value, lang, 2)) : Array.isArray(value) ? value.join(', ') : String(value);
@@ -302,10 +299,9 @@ export function profileText(p, { lang, failed, title }) {
   return lines.join('\n');
 }
 
-export function eventsText(list, { lang, failed, label, source }) {
+export function eventsText(list, { lang, label, source }) {
   const w = words(lang);
   const lines = [[label, w.events, `${w.source} ${sourceLabel(source)}`, disclaimer(lang)].join(' · ')];
-  if (failed?.length) lines.push(fallbackNote(failed, source, lang));
   for (const e of list.slice(0, 12)) {
     const title = (lang === 'vi' ? e.title_vi : e.title_en) || e.title_en || e.title_vi || e.code;
     const dates = [e.exDate ? `${w.exDate} ${e.exDate}` : '', e.recordDate ? `${w.record} ${e.recordDate}` : '', e.payDate ? `${w.pay} ${e.payDate}` : ''].filter(Boolean).join(' · ');
@@ -314,18 +310,16 @@ export function eventsText(list, { lang, failed, label, source }) {
   return lines.join('\n');
 }
 
-export function newsText(list, { lang, failed, label, source }) {
+export function newsText(list, { lang, label, source }) {
   const w = words(lang);
   const lines = [[label, w.news, `${w.source} ${sourceLabel(source)}`, disclaimer(lang)].join(' · ')];
-  if (failed?.length) lines.push(fallbackNote(failed, source, lang));
   for (const n of list.slice(0, 8)) lines.push(`${n.date ? `${n.date} · ` : ''}${n.title}${n.publisher ? ` — ${n.publisher}` : ''} · ${n.url}`);
   return lines.join('\n');
 }
 
-export function fundText(f, { lang, failed }) {
+export function fundText(f, { lang }) {
   const w = words(lang);
   const lines = [[f.code, f.name, w.fund, `${w.source} ${sourceLabel(f.source)}`, disclaimer(lang)].filter(Boolean).join(' · ')];
-  if (failed?.length) lines.push(fallbackNote(failed, f.source, lang));
   if (f.nav !== undefined && f.nav !== null) lines.push(`NAV: ${fmt(f.nav, lang, 2)} ${unitWord(f.currency, lang)}${f.asOf ? ` (${f.asOf.slice(0, 10)})` : ''}`);
   for (const key of ['manager', 'type', 'category', 'family']) if (f[key]) lines.push(`${key}: ${f[key]}`);
   if (f.managementFee !== undefined && f.managementFee !== null) lines.push(`managementFee: ${fmt(f.managementFee, lang, 2)}${lang === 'vi' ? ' %' : '%'}`);
@@ -334,10 +328,9 @@ export function fundText(f, { lang, failed }) {
   return lines.join('\n');
 }
 
-export function optionsText(o, { lang, failed }) {
+export function optionsText(o, { lang }) {
   const w = words(lang);
   const lines = [[o.symbol, w.options, o.expiry, o.price !== null && o.price !== undefined ? `${fmt(o.price, lang, 2)} ${o.currency}` : '', `${w.source} ${sourceLabel(o.source)}`, w.may, disclaimer(lang)].filter(Boolean).join(' · ')];
-  if (failed?.length) lines.push(fallbackNote(failed, o.source, lang));
   if (o.expiries?.length) lines.push(`expiries: ${o.expiries.join(', ')}`);
   for (const [side, list] of [['calls', o.calls], ['puts', o.puts]]) {
     if (!list?.length) continue;
@@ -348,14 +341,14 @@ export function optionsText(o, { lang, failed }) {
 }
 
 /** Covered warrants or index futures listed on the Vietnamese market (codes only). */
-export function listingText(list, { lang, failed, label }) {
+export function listingText(list, { lang, label }) {
   const w = words(lang);
-  return [[label, w.options, `${w.source} Vietcap`, disclaimer(lang)].join(' · '), ...(failed?.length ? [fallbackNote(failed, 'vietcap', lang)] : []), list.slice(0, 60).join(', ') + (list.length > 60 ? ` … (+${list.length - 60})` : '')].join('\n');
+  return [[label, w.options, `${w.source} Vietcap`, disclaimer(lang)].join(' · '), list.slice(0, 60).join(', ') + (list.length > 60 ? ` … (+${list.length - 60})` : '')].join('\n');
 }
 
 /* ── fx, gold, macro, screen ────────────────────────────────────── */
 
-export function fxText(result, { lang, failed }) {
+export function fxText(result, { lang }) {
   const w = words(lang);
   const rates = result.rates;
   const bank = rates.some((r) => /^bank/.test(r.kind));
@@ -367,7 +360,6 @@ export function fxText(result, { lang, failed }) {
   } else {
     for (const r of rates) lines.push(`${r.base}/${r.quote} · ${fmt(r.rate, lang, r.rate > 100 ? 2 : 6)} · ${w.reference_rate} · ${r.date} · ${w.source} ${sourceLabel(result.source)} · ${disclaimer(lang)}`);
   }
-  if (failed?.length) lines.push(fallbackNote(failed, result.source, lang));
   return lines.join('\n');
 }
 
@@ -391,16 +383,14 @@ export function fxWidget(result, { lang, attribution = [] }) {
   };
 }
 
-export function goldText(rows, { lang, failed, source }) {
+export function goldText(rows, { lang, source }) {
   const w = words(lang);
   if (source === 'sjc') {
     const lines = [[`SJC · ${w.gold}`, w.luong, asOfText(rows[0].asOf, 'Asia/Ho_Chi_Minh', lang), `${w.source} SJC`, disclaimer(lang)].join(' · ')];
-    if (failed?.length) lines.push(fallbackNote(failed, 'sjc', lang));
     for (const r of rows.slice(0, 12)) lines.push(`${r.name}${r.branch ? ` · ${r.branch}` : ''} · ${w.buy} ${fmt(r.buy, lang, 0)} · ${w.sell} ${fmt(r.sell, lang, 0)}`);
     return lines.join('\n');
   }
   const lines = rows.map((q) => `${q.name} (${q.symbol}) · ${fmt(q.price, lang, 2)} ${q.unit} (${pct(q.changePct, lang)}) · ${asOfText(q.asOf, q.zone, lang)} · ${w.may} · ${w.source} ${sourceLabel(q.source)} · ${disclaimer(lang)}`);
-  if (failed?.length) lines.push(fallbackNote(failed, 'yahoo', lang));
   return lines.join('\n');
 }
 
@@ -430,18 +420,16 @@ export function goldWidget(rows, { lang, source, attribution = [] }) {
   return { ...quoteWidget([q], { lang, attribution }), view: 'gold', title: q.name };
 }
 
-export function macroText(m, { lang, failed }) {
+export function macroText(m, { lang }) {
   const w = words(lang);
   const lines = [[m.country, m.indicator, m.unit ? `${w.unit}: ${m.unit}` : '', `${w.source} ${sourceLabel(m.source)}`, disclaimer(lang)].filter(Boolean).join(' · ')];
-  if (failed?.length) lines.push(fallbackNote(failed, m.source, lang));
   lines.push(m.points.slice(0, 12).map((p) => `${p.date}: ${fmt(p.value, lang, 2)}`).join(' · '));
   return lines.join('\n');
 }
 
-export function screenText(s, { lang, failed }) {
+export function screenText(s, { lang }) {
   const w = words(lang);
   const lines = [[`US · ${s.label} (${s.tag})`, s.period, `${w.unit}: ${lang === 'vi' ? 'triệu USD' : 'million USD'}`, s.companies ? `${s.companies} filers` : '', `${w.source} SEC EDGAR`, disclaimer(lang)].filter(Boolean).join(' · ')];
-  if (failed?.length) lines.push(fallbackNote(failed, 'sec', lang));
   s.rows.forEach((r, i) => lines.push(`${i + 1}. ${r.name} · ${fmt(r.value / 1e6, lang, 1)} · ${r.end}`));
   return lines.join('\n');
 }
