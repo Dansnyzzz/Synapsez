@@ -3345,6 +3345,25 @@ section('diagrams that come out right (1.34.0)');
   check('1.34.0 is released first, in both languages, with arrays of the same length', JSON.parse(read('public/changelog.json')).entries[0].version === '1.34.0' && !!log && all('en').length > 0 && all('vi').length === all('en').length && ['new', 'improved', 'fixed'].every((s) => (log[s]?.vi?.length || 0) === (log[s]?.en?.length || 0)));
   check('  and package.json and CHANGELOG.md carry it', JSON.parse(read('package.json')).version === '1.34.0' && read('CHANGELOG.md').includes('(1.34.0)'));
   check('  and the README says what can be drawn', /^\| \*\*Diagrams\*\* \|.*every line starts and ends on its box/m.test(read('README.md')));
+  // Final review, I1: the claims kept to what shipped. The assistant redraws, not Ephapse; only a
+  // hand drawing is checked; only the recipes are tested in dark mode and at narrow widths.
+  const diagramsRow = read('README.md').split(/\r?\n/).find((line) => line.startsWith('| **Diagrams** |')) || '';
+  check(
+    '  the README claims the check for hand drawings, the redraw for the assistant, and dark mode and narrow widths for the recipes',
+    /Every hand-drawn picture is checked before you see it; if a line misses or boxes overlap, the assistant draws it once more, and if it does not, the first drawing is shown as it was\./.test(diagramsRow) &&
+      /The recipes are tested in dark mode and at narrow widths\./.test(diagramsRow) &&
+      !/Ephapse checks every drawing|draws it again once|small sizes/.test(diagramsRow),
+    diagramsRow.slice(-260),
+  );
+  const notes = [...(log?.improved?.en || []), ...(log?.improved?.vi || [])].join(' ');
+  check(
+    '  and so do the in-app notes, in both languages, the redraw said once',
+    log?.improved?.en?.length === 2 && /the assistant draws it once more/.test(log.improved.en[0]) && /trợ lý vẽ lại một lần/.test(log.improved.vi[0]) &&
+      /recipes are tested in dark mode and at narrow widths/.test(log.improved.en[1]) && /Các mẫu vẽ được kiểm thử ở chế độ tối và khổ hẹp/.test(log.improved.vi[1]) &&
+      !/small sizes|cỡ nhỏ|Ephapse checks the drawing|Diagrams are checked/.test(notes) && notes.match(/once more|vẽ lại một lần/g)?.length === 2,
+    JSON.stringify(log?.improved?.en || []),
+  );
+  check('  and CHANGELOG.md says the limits are named with how to fit them, not that the drawing is split', /told which limit it hit and how to fit within it/.test(read('CHANGELOG.md')) && !/told which limit it hit and splits the drawing in two/.test(read('CHANGELOG.md')));
 }
 
 console.log(failures === 0 ? '\n\x1b[32mAll feature checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
