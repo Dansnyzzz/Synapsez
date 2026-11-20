@@ -5,22 +5,22 @@
       "date": "2026-11-20",
       "new": {
         "vi": [
-          "Sơ đồ giờ ra gọn và dễ đọc: luồng công việc, cấu trúc, trình tự, mốc thời gian và bố cục đều được xếp sẵn, mỗi hộp một chỗ, không chồng lên nhau."
+          "Sơ đồ giờ ra gọn và dễ đọc hơn. Sơ đồ hộp và mũi tên được Ephapse xếp sẵn, mỗi hộp một chỗ; trình tự, mốc thời gian và bố cục được vẽ theo các mẫu đã kiểm thử và có kiểm tra lại."
         ],
         "en": [
-          "Diagrams now come out tidy and readable: flows, structures, sequences, timelines and layouts are arranged for you, each box in its own place, nothing piled on top of anything else."
+          "Diagrams come out tidier and more readable. Boxes-and-arrows diagrams are arranged for you, each box in its own place; sequences, timelines and layouts are drawn from tested recipes and checked."
         ]
       },
       "improved": {
         "vi": [
           "Với sơ đồ do Ephapse xếp, các đường nối bắt đầu và kết thúc đúng trên hộp của chúng. Các hình vẽ khác được kiểm tra, và nếu có đường nối trượt khỏi hộp thì được vẽ lại một lần.",
           "Ephapse kiểm tra hình vẽ trước khi bạn xem: nếu một đường nối trượt khỏi hộp hoặc các hộp chồng lên nhau, hình được vẽ lại một lần, nên bạn thường nhận ngay bản đã sửa.",
-          "Sơ đồ được kiểm tra ở chế độ tối và ở cỡ nhỏ: chữ vẫn đọc được, màu đủ tương phản trên cả nền sáng lẫn nền tối."
+          "Sơ đồ được kiểm tra ở chế độ tối và ở cỡ nhỏ: chữ được kiểm tra để vẫn đọc được, và màu được kiểm tra để nổi bật trên cả nền sáng lẫn nền tối."
         ],
         "en": [
           "In diagrams that Ephapse arranges, lines start and end on their boxes. Other drawings are checked, and drawn again once if a line misses its box.",
           "Ephapse checks the drawing before you see it: if a line misses its box or boxes sit on top of each other, the drawing is made again once, so you usually get the corrected one straight away.",
-          "Diagrams are checked in dark mode and at small sizes: the text stays readable and the colours stand out on both light and dark backgrounds."
+          "Diagrams are checked in dark mode and at small sizes: the text is checked to stay readable and the colours to stand out on both light and dark backgrounds."
         ]
       }
     },
