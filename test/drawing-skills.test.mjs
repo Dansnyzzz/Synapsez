@@ -44,8 +44,10 @@ const two = (x) => x.toFixed(2);
 // applies, so the size is paid on the turns that draw; the description is in every prompt, so it
 // stays at 145 characters or fewer. Task 4b (2026-11-19): sequences, four recipes, came to 10,859;
 // layouts, six of them, to 13,616, its skeletons alone 5,695. The brief's "about 12,000" would
-// cost the arithmetic, so the overrun is reported with a proposed split instead.
-const BUDGET = { 'builtin:drawing': 8000, 'builtin:svg-flows': 10750, 'builtin:svg-structures': 12000, 'builtin:svg-sequences': 11100, 'builtin:svg-layouts': 13900 };
+// cost the arithmetic, so the overrun is reported with a proposed split instead. Fix round 1 of
+// that review added today's label, the phone's Gantt and comparison, and crowded leaders: 11,117 and
+// 14,117.
+const BUDGET = { 'builtin:drawing': 8000, 'builtin:svg-flows': 10750, 'builtin:svg-structures': 12000, 'builtin:svg-sequences': 11350, 'builtin:svg-layouts': 14400 };
 const DESCRIPTION = 145;
 const RECIPES = {
   'builtin:svg-flows': ['decision', 'loop', 'swimlanes', 'sequence'],
@@ -386,6 +388,9 @@ function blindSpots(name, svg) {
   const circles = els.filter((e) => e.tag === 'circle');
   const polygons = els.filter((e) => e.tag === 'polygon').map((e) => e.pts);
   const lifelines = [...svg.matchAll(/<line x1="([\d.]+)" y1="64" x2="\1"/g)].map((m) => Number(m[1]));
+  // A Gantt plan's unit lines, which all start at y 56: its left and right edges and its foot.
+  const units = [...svg.matchAll(/<line x1="([\d.]+)" y1="56" x2="\1" y2="([\d.]+)"/g)].map((m) => [Number(m[1]), Number(m[2])]);
+  const plan = units.length ? { x0: Math.min(...units.map((u) => u[0])), x1: Math.max(...units.map((u) => u[0])), bottom: Math.max(...units.map((u) => u[1])) } : null;
   const found = [];
   const say = (t, what) => found.push(`"${t.text}" ${what}`);
   const inside = (p, c) => c.r - Math.hypot(p[0] - c.c[0], p[1] - c.c[1]);
@@ -430,6 +435,8 @@ function blindSpots(name, svg) {
         if (least < 4) say(t, `comes within ${least.toFixed(1)} px of a shape it is not in`);
       }
     }
+    // Today's label in a Gantt plan stays over the plan, between its first and last unit lines.
+    if (name === 'gantt' && plan && t.y > plan.bottom && (t.box.x0 < plan.x0 - 0.5 || t.box.x1 > plan.x1 + 0.5)) say(t, `runs past the plan (${Math.round(t.box.x0)} to ${Math.round(t.box.x1)}, the plan ${plan.x0} to ${plan.x1})`);
     // A sequence label never sits on a lifeline: the dashes would run through its words.
     if (name === 'sequence' && t.box.y0 > 64) for (const x of lifelines) if (t.box.x0 - 4 < x && x < t.box.x1 + 4) say(t, `sits on the lifeline at x ${Math.round(x)}`);
   }
@@ -461,8 +468,15 @@ function blindSpots(name, svg) {
   for (const e of els.filter((s) => s.box && s.tag !== 'text')) {
     if (e.box.x0 < 24 - 0.5 || e.box.x1 > width - 24 + 0.5 || e.box.y0 < 24 - 0.5 || e.box.y1 > height - 24 + 0.5) found.push(`a ${e.tag} at (${Math.round(e.box.x0)}, ${Math.round(e.box.y0)}) runs into the margin`);
   }
-  // A labelled picture's leaders never cross one another.
+  // A labelled picture's leaders never cross one another, and none passes within 6 px of a point
+  // that is not its own (the dot is 4 across its radius).
   const leaders = plain.filter((e) => e.leader);
+  // The callouts' dots are drawn after the leaders; a figure's own small circles come before them.
+  const dots = circles.filter((c) => name === 'labelled' && c.r === 4 && leaders.length && c.order > leaders[0].order).map((c) => c.c);
+  leaders.forEach((l, i) => {
+    const own = l.segs.at(-1)?.[1];
+    for (const d of dots) if (own && Math.hypot(d[0] - own[0], d[1] - own[1]) > 0.5 && Math.min(...l.segs.map(([a, b]) => toSegment(d, a, b))) < 6) found.push(`leader ${i + 1} passes within 6 px of the point at (${Math.round(d[0])}, ${Math.round(d[1])})`);
+  });
   for (let i = 0; i < leaders.length; i += 1) {
     for (let j = i + 1; j < leaders.length; j += 1) {
       if (leaders[i].segs.some((s) => leaders[j].segs.some((u) => crosses(s, u)))) found.push(`leaders ${i + 1} and ${j + 1} cross`);
@@ -761,16 +775,19 @@ const FILL = {
       },
     };
   },
-  gantt(P, { head, units, rows, now }) {
+  gantt(P, { head, units, rows, now, W = 720 }) {
     const [f, rose] = [P.fam[0], P.fam[4]];
-    const uw = 480 / units.length;
+    // The plan runs from x0 to x1: 216 to 696, or 136 to 336 on a phone.
+    const [x0, x1] = W === 360 ? [136, 336] : [216, 696];
+    const uw = (x1 - x0) / units.length;
     const gy = 64 + 36 * rows.length;
     const H = now ? gy + 48 : gy + 24;
     const cy = (i) => 82 + 36 * i;
-    const X = (t) => 216 + t * uw;
+    const X = (t) => x0 + t * uw;
     const which = (key) => rows.map((r, i) => ({ r, i })).filter(({ r }) => r[key] !== undefined);
     return {
       H,
+      W,
       top: { H, ...colours(P, f), head, gy, rose: rose.stroke, roseInk: rose.inkA },
       each: {
         unit: [...units, null].map((unit, j) => ({ x: X(j), cx: unit === null ? null : X(j) + uw / 2, unit })),
@@ -778,7 +795,7 @@ const FILL = {
         bar: which('length').map(({ r, i }) => (r.phase ? { x: X(r.start), y: cy(i) - 4, w: r.length * uw, h: 8, rx: 4, fill: f.stroke } : { x: X(r.start), y: cy(i) - 12, w: r.length * uw, h: 24, rx: 6, fill: f.tint })),
         done: which('done').map(({ r, i }) => ({ x: X(r.start), y: cy(i) - 12, w: r.done * r.length * uw })),
         milestone: which('at').map(({ r, i }) => ({ x: X(r.at), t: cy(i) - 9, b: cy(i) + 9, l: X(r.at) - 9, r: X(r.at) + 9, cy: cy(i) })),
-        now: now ? [{ x: X(now.at), ly: gy + 20, anchor: X(now.at) > 660 ? 'end' : 'middle', label: now.label }] : [],
+        now: now ? [{ x: X(now.at), ly: gy + 20, anchor: X(now.at) > x1 - 60 ? 'end' : X(now.at) < x0 + 60 ? 'start' : 'middle', label: now.label }] : [],
       },
     };
   },
@@ -814,17 +831,18 @@ const FILL = {
     };
   },
   // ── Task 4b: layouts ──
-  compare(P, { points, options, best }) {
+  compare(P, { points, options, best, W = 720 }) {
     const k = options.length;
     const table = !!points;
     const x0 = table ? 200 : 24;
-    const w = ((table ? 496 : 672) - 16 * (k - 1)) / k;
+    const w = ((table ? 496 : W - 48) - 16 * (k - 1)) / k;
     const rows = Math.max(...options.map((o) => o.values.length));
     const h = 80 + 40 * rows;
     const X = (i) => x0 + i * (w + 16);
     const tone = (v) => (v.tone === 'yes' ? P.fam[1].inkA : v.tone === 'no' ? P.muted : P.ink);
     return {
       H: h + 48,
+      W,
       top: { H: h + 48, ...colours(P) },
       each: {
         option: options.map((o, i) => {
@@ -900,7 +918,7 @@ const FILL = {
     const s = 672 / facts.length;
     return {
       H: 400,
-      top: { H: 400, ...colours(P, f), big, say1: say[0], say2: say[1] ?? null, source },
+      top: { H: 400, ...colours(P, f), big, sy: say.length > 1 ? 74 : 86, say1: say[0], say2: say[1] ?? null, source },
       each: {
         fact: facts.map((ft, i) => {
           const cx = 24 + s * (i + 0.5);
@@ -917,12 +935,22 @@ const FILL = {
     const paint = { tint: f.tint, stroke: f.stroke, card: P.card, ground: P.ground, edge: P.edge, solid: P.solid };
     // Each side in the order of its points, each label at its point's height or 52 below the one above.
     const callouts = [points.filter((p) => p.px < 360), points.filter((p) => p.px >= 360)].flatMap((list, side) => {
+      const at = side === 0 ? { tx: 216, anchor: 'end', x1: 224, x2: 240 } : { tx: 504, anchor: 'start', x1: 496, x2: 480 };
       let above = -Infinity;
-      return [...list].sort((a, b) => a.py - b.py).map((p) => {
-        const ty = Math.max(p.py + 5, above + 52);
-        above = ty;
-        return { ...p, ty, ny: ty + 18, y1: ty - 5, ...(side === 0 ? { tx: 216, anchor: 'end', x1: 224, x2: 240 } : { tx: 504, anchor: 'start', x1: 496, x2: 480 }) };
-      });
+      const order = [...list].sort((a, b) => a.py - b.py);
+      const ty = order.map((p) => (above = Math.max(p.py + 5, 36, above + 52)));
+      // Two that cross swap their points (and names): each swap shortens the pair, so it ends.
+      const line = (k) => [[at.x2, ty[k] - 5], [order[k].px, order[k].py]];
+      for (let again = true; again; ) {
+        again = false;
+        for (let i = 0; i < order.length; i += 1) for (let j = i + 1; j < order.length; j += 1) {
+          if (crosses(line(i), line(j))) {
+            [order[i], order[j]] = [order[j], order[i]];
+            again = true;
+          }
+        }
+      }
+      return order.map((p, k) => ({ ...at, ...p, ty: ty[k], ny: ty[k] + 18, y1: ty[k] - 5 }));
     });
     const bottom = Math.max(...parts.map((p) => p.y + p.h), ...rounds.map((c) => c.cy + c.r));
     const H = Math.max(bottom, ...callouts.map((c) => c.ny + 4)) + 24;
@@ -1191,7 +1219,8 @@ const SAMPLES = {
         { name: 'Kiểm thử', start: 4, length: 1 },
         { name: 'Ra mắt', at: 5 },
       ],
-      now: { at: 2.5, label: 'Hôm nay' },
+      // Early in the plan, so its dated label is anchored at its start.
+      now: { at: 0.5, label: 'Hôm nay (5/1)' },
     },
     // Twelve weeks, twelve rows: a task 24, a phase 22, the head 24, a week's label 4; today past 660.
     extreme: {
@@ -1211,7 +1240,24 @@ const SAMPLES = {
         { name: 'Quảng cáo trên mạng', start: 10.5, length: 1.5 },
         { name: 'Ra mắt chính thức', at: 11 },
       ],
-      now: { at: 11.5, label: 'Hôm nay' },
+      now: { at: 11.5, label: 'Hôm nay (13/5)' },
+    },
+    // A phone: the plan from x 136 to 336, six months, a name or the head 13; today in the middle.
+    narrow: {
+      W: 360,
+      head: 'Kế hoạch 2027',
+      units: ['T1', 'T2', 'T3', 'T4', 'T5', 'T6'],
+      rows: [
+        { phase: true, name: 'Thiết kế', start: 0, length: 2 },
+        { name: 'Nghiên cứu KH', start: 0, length: 1, done: 1 },
+        { name: 'Thiết kế UI', start: 0.5, length: 1.5, done: 0.6 },
+        { phase: true, name: 'Xây dựng', start: 2, length: 3.5 },
+        { name: 'Viết nội dung', start: 2, length: 1.5, done: 0.5 },
+        { name: 'Lập trình', start: 2.5, length: 2.5 },
+        { name: 'Kiểm thử', start: 4.5, length: 1 },
+        { name: 'Ra mắt', at: 5.5 },
+      ],
+      now: { at: 3, label: 'Hôm nay (19/11)' },
     },
   },
   journey: {
@@ -1263,9 +1309,19 @@ const SAMPLES = {
       points: null,
       best: 1,
       options: [
-        { name: 'Gói tự làm', sub: 'Phù hợp người làm tự do', values: ['✓ Mẫu hoá đơn có sẵn', '✓ Lưu 30 ngày lịch sử', '— Không có hỗ trợ riêng'] },
-        { name: 'Gói cửa hàng nhỏ', sub: 'Cửa hàng có 1–5 nhân viên', values: ['✓ Bán hàng tại quầy', '✓ Kết nối máy in hoá đơn', '✓ Hỗ trợ email trong 2h'] },
-        { name: 'Gói chuỗi cửa hàng', sub: 'Mọi điểm bán, một sổ sách', values: ['✓ Báo cáo theo từng điểm', '✓ Phân quyền nhân viên', '✓ Người hỗ trợ riêng 24/7'] },
+        { name: 'Gói tự làm', sub: 'Phù hợp người làm tự do', values: ['Giá: 0 đ', 'Người dùng: 1', 'Lưu trữ: 1 GB', 'Hỗ trợ: diễn đàn'] },
+        { name: 'Gói cửa hàng nhỏ', sub: 'Cửa hàng có 1–5 nhân viên', values: ['Giá: 99.000 đ mỗi tháng', 'Người dùng: tối đa 3', 'Lưu trữ: 5 GB cho cả nhóm', 'Hỗ trợ: email, trong ngày'] },
+        { name: 'Gói chuỗi cửa hàng', sub: 'Mọi điểm bán, một sổ sách', values: ['Giá: 249.000 đ mỗi tháng', 'Người dùng: tối đa 10', 'Lưu trữ: 100 GB', 'Hỗ trợ: điện thoại 24/7'] },
+      ],
+    },
+    // A phone: two cards 148 wide, a name 13, a sub 16, a value 16.
+    narrow: {
+      W: 360,
+      points: null,
+      best: 1,
+      options: [
+        { name: 'Cơ bản', sub: 'cho một người', values: ['Giá: 99.000 đ', 'Người dùng: 3', 'Lưu trữ: 5 GB', 'Hỗ trợ: email'] },
+        { name: 'Đội nhóm', sub: 'nhiều người chọn', values: ['Giá: 249.000 đ', 'Người dùng: 10', 'Lưu trữ: 100 GB', 'Hỗ trợ: 24/7'] },
       ],
     },
   },
@@ -1346,7 +1402,7 @@ const SAMPLES = {
   panel: {
     comfortable: {
       big: '62 %',
-      say: ['khách mua lần hai trong vòng 30 ngày', 'khi được nhắc bằng email cá nhân'],
+      say: ['khách mua lần hai khi được nhắc bằng email'],
       facts: [
         { share: 0.62, value: '62 %', title: 'Mua lần hai', lines: ['trong 30 ngày, có email', 'nhắc theo tên khách'] },
         { share: 0.35, value: '35 %', title: 'Không có email nhắc', lines: ['cùng kỳ năm ngoái'] },
@@ -1386,6 +1442,28 @@ const SAMPLES = {
         { px: 364, py: 36, name: 'Camera trước', note: '12 MP, mở khoá bằng mặt' },
         { px: 424, py: 96, name: 'Nút nguồn', note: 'Giữ 3 giây để tắt' },
         { px: 420, py: 200, name: 'Khung nhôm', note: 'Chống nước IP68' },
+      ],
+    },
+    // A washing machine's control strip: five buttons within 32 px of height, the nearer ones lower,
+    // so straight leaders by height cross; swapping the crossed pairs' points leaves none crossing.
+    crowded: {
+      parts: [
+        { x: 248, y: 24, w: 224, h: 312, rx: 12, fill: 'card', rim: 'edge' },
+        { x: 256, y: 52, w: 208, h: 60, rx: 6, fill: 'tint', rim: 'stroke' },
+        ...[344, 324, 304, 284, 264].map((x, k) => ({ x: x - 5, y: 59 + 8 * k, w: 10, h: 10, rx: 3, fill: 'card', rim: 'stroke' })),
+        { x: 392, y: 64, w: 60, h: 24, rx: 4, fill: 'ground', rim: 'edge' },
+        { x: 426, y: 196, w: 12, h: 40, rx: 4, fill: 'ground', rim: 'edge' },
+      ],
+      rounds: [{ cx: 352, cy: 216, r: 72, fill: 'ground', rim: 'edge' }, { cx: 352, cy: 216, r: 52, fill: 'card', rim: 'stroke' }],
+      points: [
+        { px: 344, py: 64, name: 'Nút khởi động', note: 'Bấm để bắt đầu hoặc dừng' },
+        { px: 324, py: 72, name: 'Nút giặt nhanh', note: 'Giặt 15 phút cho đồ ít bẩn' },
+        { px: 304, py: 80, name: 'Chọn nhiệt độ nước', note: 'Lạnh, 30, 40 hoặc 60 độ' },
+        { px: 284, py: 88, name: 'Chọn tốc độ vắt', note: '400 đến 1.200 vòng mỗi phút' },
+        { px: 264, py: 96, name: 'Nút hẹn giờ', note: 'Xong vào giờ bạn chọn' },
+        { px: 422, py: 76, name: 'Màn hình hiển thị', note: 'Thời gian còn lại, lỗi' },
+        { px: 404, py: 216, name: 'Cửa lồng giặt', note: 'Kính chịu nhiệt, khoá' },
+        { px: 438, py: 228, name: 'Tay nắm cửa', note: 'Kéo nhẹ khi máy đã dừng' },
       ],
     },
     // A web page's areas, five a side, each name 22 and note 27.
@@ -1486,19 +1564,24 @@ for (const [id, names] of Object.entries(RECIPES)) {
 // Every room a sequences or layouts recipe states, filled to the letter, as the review filled
 // Task 4's (review, fix round 1: stated rooms overflowed at their maximum): each text exactly as
 // long as its room, at every count the recipe gives a figure for, each at its most lines and rows.
-section('every room a sequences or layouts recipe states holds a text exactly that long');
+section('every room a sequences or layouts recipe states holds a text exactly that long, light and dark');
 {
   const chars = (n) => {
     const s = 'Đủ chữ thử nghiệm '.repeat(Math.ceil(n / 9) + 1).slice(0, n);
     return s.endsWith(' ') ? `${s.slice(0, -1)}ạ` : s;
   };
   const times = (n, make) => Array.from({ length: n }, (_, i) => make(i));
-  const ganttAt = (u, roomUnit) => ({
-    head: chars(24),
-    units: times(u, () => chars(roomUnit)),
-    rows: times(11, (i) => (i % 4 === 0 ? { phase: true, name: chars(22), start: 0, length: u / 2 } : { name: chars(24), start: (i % u) / 2, length: 1, done: 0.5 })).concat([{ name: chars(24), at: u / 2 }]),
-    now: { at: u - 0.25, label: 'Hôm nay' },
-  });
+  // Today's label (16) at the plan's end, start or middle; on a phone every name is 13.
+  const ganttAt = (u, roomUnit, now, W = 720) => {
+    const [task, phase, head] = W === 360 ? [13, 13, 13] : [24, 22, 24];
+    return {
+      W,
+      head: chars(head),
+      units: times(u, () => chars(roomUnit)),
+      rows: times(11, (i) => (i % 4 === 0 ? { phase: true, name: chars(phase), start: 0, length: u / 2 } : { name: chars(task), start: (i % u) / 2, length: 1, done: 0.5 })).concat([{ name: chars(task), at: u / 2 }]),
+      now: { at: { end: u - 0.25, start: 0.25, middle: u / 2 }[now], label: chars(16) },
+    };
+  };
   const journeyAt = (n, [stage, cell, word]) => ({
     stages: times(n, () => chars(stage)),
     lanes: [
@@ -1508,7 +1591,8 @@ section('every room a sequences or layouts recipe states holds a text exactly th
       { name: chars(40), tone: 'idea', cells: times(n, () => [chars(cell), chars(cell)]) },
     ],
   });
-  const compareAt = (k, table, [name, sub, value]) => ({
+  const compareAt = (k, table, [name, sub, value], W = 720) => ({
+    W,
     points: table ? times(10, () => chars(20)) : null,
     best: 1,
     options: times(k, () => ({ name: chars(name), sub: chars(sub), values: times(10, () => chars(value)) })),
@@ -1529,9 +1613,16 @@ section('every room a sequences or layouts recipe states holds a text exactly th
       ['8 in rows of 4: a title 14, a line 16', { steps: times(8, () => ({ title: chars(14), lines: times(3, () => chars(16)) })) }],
       ['a phone, 4: a title 13, a line 16', { W: 360, steps: times(4, () => ({ title: chars(13), lines: times(3, () => chars(16)) })) }],
     ],
-    gantt: [[4, 16], [6, 10], [8, 7], [12, 4]].map(([u, room]) => [`${u} units, 12 rows: a unit ${room}, a task 24, a phase 22, the head 24`, ganttAt(u, room)]),
+    gantt: [
+      ...[[4, 16], [6, 10], [8, 7], [12, 4]].map(([u, room]) => [`${u} units, 12 rows: a unit ${room}, a task 24, a phase 22, the head 24, today's label 16 at the end`, ganttAt(u, room, 'end')]),
+      ...['start', 'middle'].map((at) => [`12 units: today's label 16 at the ${at}`, ganttAt(12, 4, at)]),
+      ...[[4, 6], [6, 3]].flatMap(([u, room]) => ['start', 'middle', 'end'].map((at) => [`a phone, ${u} units: a unit ${room}, a name 13, today's label 16 at the ${at}`, ganttAt(u, room, at, 360)])),
+    ],
     journey: [[3, [22, 27, 29]], [4, [15, 19, 21]], [5, [11, 14, 16]], [6, [8, 11, 13]]].map(([n, r]) => [`${n} stages, 3 lanes and the feelings: a stage ${r[0]}, a cell ${r[1]}, a word ${r[2]}`, journeyAt(n, r)]),
-    compare: [[3, true, [14, 17, 18]], [4, true, [9, 11, 12]], [3, false, [21, 25, 25]], [4, false, [14, 17, 17]]].map(([k, table, r]) => [`${k} ${table ? 'in a table' : 'cards'}, 10 rows: a name ${r[0]}, a sub ${r[1]}, a value ${r[2]}${table ? ', a point 20' : ''}`, compareAt(k, table, r)]),
+    compare: [
+      ...[[3, true, [14, 17, 18]], [4, true, [9, 11, 12]], [3, false, [21, 25, 25]], [4, false, [14, 17, 17]]].map(([k, table, r]) => [`${k} ${table ? 'in a table' : 'cards'}, 10 rows: a name ${r[0]}, a sub ${r[1]}, a value ${r[2]}${table ? ', a point 20' : ''}`, compareAt(k, table, r)]),
+      ['a phone, 2 cards, 10 rows: a name 13, a sub 16, a value 16', compareAt(2, false, [13, 16, 16], 360)],
+    ],
     matrix: [['7 items of 36 a quadrant, a title 31, the axes 8, 40, 40 and 77', {
       axes: { yName: chars(40), yHigh: chars(8), yLow: chars(8), xLow: chars(40), xHigh: chars(40), xName: chars(77) },
       quads: [1, 0, 3, 6].map((f) => ({ title: chars(31), fam: f, items: times(7, () => chars(34)) })),
@@ -1546,26 +1637,29 @@ section('every room a sequences or layouts recipe states holds a text exactly th
       ['12 in rows of 4: a label 15, a value 7, a change 16', kpiAt(12, [15, 7, 16])],
       ['a phone, 6 two a row: a label 13, a value 6, a change 15', kpiAt(6, [13, 6, 15], 360)],
     ],
-    panel: [[2, [37, 43]], [3, [23, 27]], [4, [17, 20]]].map(([k, r]) => [`${k} facts: a title ${r[0]}, a line ${r[1]}; the number 6, the statement 45, a value 6, the source 96`, panelAt(k, r)]),
-    labelled: [['5 a side: a name 22, a note 27', { ...SAMPLES.labelled.extreme, points: SAMPLES.labelled.extreme.points.map((p) => ({ ...p, name: chars(22), note: chars(27) })) }]],
+    panel: [
+      ...[[2, [37, 43]], [3, [23, 27]], [4, [17, 20]]].map(([k, r]) => [`${k} facts: a title ${r[0]}, a line ${r[1]}; the number 6, the statement 45, a value 6, the source 96`, panelAt(k, r)]),
+      ['3 facts, the statement on one line of 45', { ...panelAt(3, [23, 27]), say: [chars(45)] }],
+    ],
+    labelled: ['extreme', 'crowded'].map((k) => [`${k === 'crowded' ? 'a crowded side, uncrossed' : '5 a side'}: a name 22, a note 27`, { ...SAMPLES.labelled[k], points: SAMPLES.labelled[k].points.map((pt) => ({ ...pt, name: chars(22), note: chars(27) })) }]),
   };
   for (const [name, list] of Object.entries(ROOMS)) {
     const id = Object.keys(RECIPES).find((k) => RECIPES[k].includes(name));
     const skeleton = recipeOf(textOf(id), name);
-    for (const [what, sample] of list) {
+    for (const [what, sample] of list) for (const theme of ['light', 'dark']) {
       let svg = '';
       let filled = { H: 0 };
       try {
-        filled = FILL[name](PAL.light, sample, 'light');
+        filled = FILL[name](PAL[theme], sample, theme);
         svg = fill(skeleton, filled.top, filled.each);
         if (filled.W && filled.W !== 720) svg = svg.replace('viewBox="0 0 720 ', `viewBox="0 0 ${filled.W} `);
       } catch (err) {
-        check(`${name}, ${what}`, false, err.message);
+        check(`${name}, ${what}, ${theme}`, false, err.message);
         continue;
       }
       const found = [...checkDiagram(svg).issues, ...blindSpots(name, svg)];
-      check(`${name}, ${what} (H ${filled.H})`, filled.H <= 560 && found.length === 0, found.slice(0, 4).join(' | '));
-      shots.push({ name: `rooms-${name}-${what.split(':')[0].replace(/[^a-z0-9]+/gi, '-')}`, svg, theme: 'light' });
+      check(`${name}, ${what}, ${theme} (H ${filled.H})`, filled.H <= 560 && found.length === 0 && checkDiagram(svg).canvas === theme, found.slice(0, 4).join(' | '));
+      shots.push({ name: `rooms-${name}-${what.split(':')[0].replace(/[^a-z0-9]+/gi, '-')}-${what.length}-${theme}`, svg, theme });
     }
   }
 }
@@ -1612,9 +1706,23 @@ section('the fills are judged, not waved through');
   probe('a stage name on its family\'s strong stroke, not its tint, reads too faintly', plain, plain.replace('fill="#DBEAFE" stroke="#2563EB"/>', 'fill="#2563EB" stroke="#2563EB"/>'), 'journey', /reads at/);
   const plan = svgOf('gantt-extreme-light');
   probe('a milestone moved to the plan\'s last line (x 696) runs into the margin', plan, plan.replace(/<polygon points="[^"]+"/, (m) => m.replace(/(\d+(?:\.\d+)?),/g, (n, x) => `${Number(x) + 40},`)), 'gantt', /polygon .* margin/);
-  const page = svgOf('labelled-extreme-light');
-  const ends = [...page.matchAll(/<path d="M224 [\d.]+H240L([\d.]+ [\d.]+)"/g)].map((m) => m[1]);
-  probe('two leaders sent to each other\'s points cross', page, ends.length > 3 ? page.replace(`L${ends[2]}"`, 'L@"').replace(`L${ends[3]}"`, `L${ends[2]}"`).replace('L@"', `L${ends[3]}"`) : '', 'labelled', /cross/);
+  // Fix round 1 (review of Task 4b): today's label anchored the wrong way stays on the canvas, so
+  // the checker is silent; it runs past the plan's left edge early, its right edge on a phone.
+  const early = svgOf('gantt-comfortable-light');
+  probe('today\'s label early in the plan, anchored in the middle, runs past the plan\'s left edge', early, early.replace(/text-anchor="start"( font-size="12.5" font-weight="600" fill="#[0-9A-F]{6}">Hôm nay \(5\/1\)<)/, 'text-anchor="middle"$1'), 'gantt', /runs past the plan/);
+  const phone = svgOf('gantt-narrow-light');
+  probe('today\'s label on a phone, anchored at its start, runs past the plan\'s right edge', phone, phone.replace(/text-anchor="middle"( font-size="12.5" font-weight="600" fill="#[0-9A-F]{6}">Hôm nay \(19\/11\)<)/, 'text-anchor="start"$1'), 'gantt', /runs past the plan/);
+  // A crowded side's labels with straight leaders in order of height, as before the review: they cross.
+  const crowd = svgOf('labelled-crowded-light');
+  const lefts = [...crowd.matchAll(/<path d="M224 ([\d.]+)H[\d.]+L([\d.]+) ([\d.]+)"\/>/g)];
+  const slots = lefts.map((m) => Number(m[1])).sort((a, b) => a - b);
+  const byHeight = lefts.map((m) => [m[2], m[3]]).sort((a, b) => Number(a[1]) - Number(b[1]));
+  let straight = crowd;
+  for (const m of lefts) straight = straight.replace(m[0], '@leader@');
+  for (const [k, y] of slots.entries()) straight = straight.replace('@leader@', `<path d="M224 ${y}H240L${byHeight[k][0]} ${byHeight[k][1]}"/>`);
+  probe('the crowded side with straight leaders in order of height crosses', crowd, lefts.length >= 5 ? straight : '', 'labelled', /cross/);
+  // A point lying 3 px from another label's leader.
+  probe('a point 3 px from another leader is caught', crowd, crowd.replace(/<circle cx="422" cy="76" r="4"/, '<circle cx="300" cy="67" r="4"'), 'labelled', /passes within 6 px/);
 }
 
 // The filled drawings, for a person to look at: `node test/drawing-skills.test.mjs --out <dir>`.

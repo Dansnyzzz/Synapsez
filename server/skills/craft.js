@@ -830,10 +830,10 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 \`\`\`svg
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 {H}" font-family="system-ui, sans-serif" font-size="13" text-anchor="middle" fill="{ink}">
 <!-- each spine -->
-<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{rule}" stroke-width="2"/>
+<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{edge}" stroke-width="2"/>
 <!-- /each -->
 <!-- each card -->
-<line x1="{cx}" y1="{sy}" x2="{cx}" y2="{y}" stroke="{rule}"/>
+<line x1="{cx}" y1="{sy}" x2="{cx}" y2="{y}" stroke="{edge}"/>
 <rect x="{x}" y="{y}" width="{w}" height="80" rx="8" fill="{card}" stroke="{edge}"/>
 <text x="{cx}" y="{ty}" font-size="14" font-weight="600">{title}</text>
 <text x="{cx}" y="{ny1}" fill="{muted}">{note1}</text>
@@ -848,12 +848,12 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 <!-- /each -->
 </svg>
 \`\`\`
-**Place.** One row up to 6; 7 to 12 in two rows of ⌈n/2⌉. Row r: its spine from (24, sy) to (696, sy), sy = 56 + 160r; m a row, s = 672 / m. Item i: cx = 24 + s(i + 0.5); its dot dx = cx, dy = sy; its date tx = cx, ty = sy - 18, anchor middle; its card w = the smaller of 200 and s - 16, x = cx - w/2, y = sy + 24, ty = y + 25, ny1 = y + 47, ny2 = y + 65. H = 24 + 160 × rows. Room: a date s - 16 (12 characters at 6 a row, 19 at 4); a title w - 24 (8, 15, 20 at 6, 4, 3 a row); a note w - 24 at 13 (10, 17, 24), 2 lines.
+**Place.** One row up to 6; 7 to 12 in two rows of ⌈n/2⌉. Row r: its spine from (24, sy) to (696, sy), sy = 56 + 160r; m = the first row's count, s = 672 / m in both rows. Item i: cx = 24 + s(i + 0.5); its dot dx = cx, dy = sy; its date tx = cx, ty = sy - 18, anchor middle; its card w = the smaller of 200 and s - 16, x = cx - w/2, y = sy + 24, ty = y + 25, ny1 = y + 47, ny2 = y + 65. H = 24 + 160 × rows. Room: a date s - 16 (12 characters at 6 a row, 19 at 4); a title w - 24 (8, 15, 20 at 6, 4, 3 a row); a note w - 24 at 13 (10, 17, 24), 2 lines.
 **Many:** 13 to 16 go down one spine, with no cards: from (136, 24) to (136, H - 24); item i: dx = 136, dy = 40 + 32i, the date tx = 120, ty = dy + 4.5, anchor end, the title lx = 156, ty = dy + 5. H = 32n + 48 (560 at 16). Room: a date 12, a title 64. More: a drawing a year or phase.
 **Long text:** a title and two lines a card; the detail in your reply under its date.
 **Narrow:** phone: W 360, the vertical form with its spine at x 104 (tx 88, lx 124): a date 8, a title 25, up to 16.
 **Dark:** swap the palette.
-**Polish:** a done dot filled (\`{dot}\` = \`{stroke}\`), one to come hollow (\`{card}\`); the card for now edged in \`{stroke}\`; every date in one form ("Q1/2027" or "T3/2027").
+**Polish:** spine and stems in \`{edge}\`, 3:1 on either canvas; a done dot filled (\`{dot}\` = \`{stroke}\`), one to come hollow (\`{card}\`); the card for now edged in \`{stroke}\`; every date in one form ("Q1/2027" or "T3/2027").
 **Pitfalls:** slots spaced by elapsed time (keep them even; lengths that matter are a Gantt plan); cards of different heights; a date wider than its slot runs into the next, unseen by the check.
 
 ## Numbered steps
@@ -916,13 +916,13 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 <!-- /each -->
 </svg>
 \`\`\`
-**Place.** u units from x 216 to 696, uw = 480 / u (120, 80, 60, 40 at 4, 6, 8, 12). Unit line j from 0 to u: x = 216 + j × uw, its label at cx = x + uw/2 (none on the last). Row i: cy = 82 + 36i, ty = cy + 4.5, weight 600 for a phase, 400 for a task. A task's bar: x = 216 + start × uw, w = length × uw, y = cy - 12, h 24, rx 6, fill \`{tint}\`; a phase's: y = cy - 4, h 8, rx 4, fill \`{stroke}\`; done, the share of a task's bar from its start. A milestone at x = 216 + at × uw: t = cy - 9, b = cy + 9, l = x - 9, r = x + 9. gy = 64 + 36 × rows. Today: x = 216 + now × uw, ly = gy + 20, anchor middle (end past x 660); H = gy + 48, or gy + 24 without it. Room: a task 24 characters, a phase 22, the head 24; a unit uw - 8 at 12.5 (16, 10, 7, 4).
+**Place.** u units across the plan from x0 = 216 to x1 = 696, uw = 480 / u (120, 80, 60, 40 at 4, 6, 8, 12). Unit line j from 0 to u: x = x0 + j × uw, its label at cx = x + uw/2 (none on the last). Row i: cy = 82 + 36i, ty = cy + 4.5, weight 600 for a phase, 400 for a task. A task's bar: x = x0 + start × uw, w = length × uw, y = cy - 12, h 24, rx 6, fill \`{tint}\`; a phase's: y = cy - 4, h 8, rx 4, fill \`{stroke}\`; done, the share of a task's bar from its start. A milestone at x = x0 + at × uw: t = cy - 9, b = cy + 9, l = x - 9, r = x + 9. gy = 64 + 36 × rows. Today: x = x0 + now × uw, ly = gy + 20, anchor middle, end past x1 - 60, start before x0 + 60, so its label (120 wide at most) stays over the plan; H = gy + 48, or gy + 24 without it. Room: a task 24 characters, a phase 22, the head 24, today's label 16; a unit uw - 8 at 12.5 (16, 10, 7, 4).
 **Many:** 12 rows and 12 units (H 544); more: a drawing a phase, or weeks gathered into months.
 **Long text:** names to their room; owners and notes in your reply, by row.
-**Narrow:** phone: W 360, units from x 24 to 336 (6 at most), each name on its own row above its bar.
+**Narrow:** phone: W 360, x0 = 136, x1 = 336, uw = 200 / u, 6 units at most (a unit 6 characters at 4, 3 at 6); a task, a phase or the head 13; the rest as above.
 **Dark:** swap the palette.
 **Polish:** one family for every bar; a phase thin and semibold above its tasks; done filled, the rest tinted; today the one rose (\`{rose}\`, \`{roseInk}\`: rose's stroke and ink), dashed; milestones solid diamonds.
-**Pitfalls:** bars placed by eye (each end on the unit arithmetic); a name on its bar (names go on the left); arrows between bars (they tangle: say what waits on what in your reply); a milestone past x 687.
+**Pitfalls:** bars placed by eye (each end on the unit arithmetic); a name on its bar (names go on the left); arrows between bars (they tangle: say what waits on what in your reply); a milestone past x1 - 9.
 
 ## Customer journey
 **Use it** for what a customer does, feels and meets at each stage, from first hearing of you to telling a friend: where it hurts, and what to do about it.
@@ -943,7 +943,7 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 <text x="{cx}" y="{ty2}" fill="{text}">{line2}</text>
 <!-- /each -->
 <!-- each curve -->
-<line x1="24" y1="{mid}" x2="{right}" y2="{mid}" stroke="{rule}" stroke-dasharray="4 4"/>
+<line x1="24" y1="{mid}" x2="{right}" y2="{mid}" stroke="{edge}" stroke-dasharray="4 4"/>
 <polyline points="{points}" fill="none" stroke="{line}" stroke-width="2"/>
 <!-- /each -->
 <!-- each feeling -->
@@ -993,10 +993,10 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 <!-- /each -->
 </svg>
 \`\`\`
-**Place.** A table, the points down the left: options from x0 = 200, w = (496 - 16(k - 1)) / k (240, 154.67, 112 at 2, 3, 4). Cards, no points column: x0 = 24, w = (672 - 16(k - 1)) / k (328, 213.33, 156). Option i: x = x0 + i(w + 16), cx = x + w/2, px = x + 6, pw = w - 12. Row r: ty = 120.5 + 40r; in a table, rules between rows at y = 96 + 40r and a value at vx = cx, anchor middle; on a card vx = x + 16, anchor start, no rules. h = 80 + 40 × rows, H = h + 48. Room: a point 20 characters; a name pw - 24, a sub pw - 24 at 12.5, a value w - 24 (on a card w - 32): at 3 options 14, 17, 18 (cards 21, 25, 25), at 4 9, 11, 12 (14, 17, 17).
+**Place.** A table, the points down the left: options from x0 = 200, w = (496 - 16(k - 1)) / k (240, 154.67, 112 at 2, 3, 4). Cards, no points column: x0 = 24, w = (672 - 16(k - 1)) / k (328, 213.33, 156). Option i: x = x0 + i(w + 16), cx = x + w/2, px = x + 6, pw = w - 12. Row r: ty = 120.5 + 40r; in a table, rules between rows at y = 96 + 40r for r from 1, and a value at vx = cx, anchor middle; on a card vx = x + 16, anchor start, no rules, and each value names its point ("Giá: 99.000 đ"). h = 80 + 40 × rows, H = h + 48. Room: a point 20 characters; a name pw - 24, a sub pw - 24 at 12.5, a value w - 24 (on a card w - 32): at 3 options 14, 17, 18 (cards 21, 25, 25), at 4 9, 11, 12 (14, 17, 17).
 **Many:** 4 options, 10 rows (H 528); more: two drawings.
 **Long text:** a value is a number, a yes or a few words; the why in your reply.
-**Narrow:** phone: W 360, two options as cards (w 148), a point a row.
+**Narrow:** phone: W 360, two options as cards, w = (312 - 16) / 2 = 148: a name 13, a sub 16, a value 16.
 **Dark:** swap the palette.
 **Polish:** a family per option, its plate \`{tint}\` with \`{on}\` = \`{inkA}\`; the one you recommend: plate and \`{rim}\` \`{solid}\` at \`{sw}\` 2 (else \`{edge}\`, 1), \`{on}\` = \`{onSolid}\`, and why in your reply; a yes "✓ Có" in green's ink, a no "—" in \`{muted}\`.
 **Pitfalls:** a "best" tag across a card's edge (a rect half out of another is an overlap); points in a different order per option; colour as the only sign of yes or no.
@@ -1083,7 +1083,7 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 **Place.** m a row, up to 4: w = (672 - 16(m - 1)) / m (328, 213.33, 156 at 2, 3, 4). Card in row r, column c: x = 24 + c(w + 16), y = 24 + 152r; dx = x + 20, dy = y + 24; lx = x + 32, ly = y + 28.5; vx = x + 16, vy = y + 72; cy = y + 98. The spark, p values: point j at (x + 16 + j(w - 32) / (p - 1), y + 124 - 16(v - least) / (most - least)), flat at y + 116 when all are equal. H = 152 × rows + 32. Room: a label w - 48 (39, 23, 15 characters); a value w - 32 at 28 semibold (17, 10, 7); a change w - 32 at 12.5 semibold (39, 24, 16).
 **Many:** 12 in three rows (H 488); more: a table.
 **Long text:** a label names what is counted ("Doanh thu T11"); causes in your reply.
-**Narrow:** phone: W 360, two a row (w 148): a label 13, a value 6, a change 15.
+**Narrow:** phone: W 360, two a row (w 148), up to 6 (H 488): a label 13, a value 6, a change 15.
 **Dark:** swap the palette.
 **Polish:** a family a card, for its dot and spark; the change in green's ink when good, rose's when bad, \`{muted}\` when flat, whichever way it points ("▼ 8 % chi phí" is good); one period on every card ("so với T10").
 **Pitfalls:** a value with no unit ("1,2 tỷ đ", "%"); a spark read as exact (it has no scale); values of different precision.
@@ -1096,7 +1096,7 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 400" font-family="system-ui, sans-serif" font-size="13" text-anchor="middle" fill="{ink}">
 <rect x="24" y="24" width="672" height="112" rx="8" fill="{solid}"/>
 <text x="48" y="96" text-anchor="start" font-size="40" font-weight="600" fill="{onSolid}">{big}</text>
-<text x="232" y="74" text-anchor="start" font-size="16" font-weight="600" fill="{onSolid}">{say1}</text>
+<text x="232" y="{sy}" text-anchor="start" font-size="16" font-weight="600" fill="{onSolid}">{say1}</text>
 <text x="232" y="98" text-anchor="start" font-size="16" font-weight="600" fill="{onSolid}">{say2}</text>
 <!-- each fact -->
 <circle cx="{cx}" cy="208" r="40" fill="none" stroke="{ring}" stroke-width="8"/>
@@ -1110,7 +1110,7 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 <text x="24" y="368" text-anchor="start" font-size="12.5" fill="{muted}">{source}</text>
 </svg>
 \`\`\`
-**Place.** k facts, s = 672 / k; fact i: cx = 24 + s(i + 0.5). A share p runs clockwise from the top to a = -90 + 360p degrees: ex = cx + 40 cos a, ey = 208 + 40 sin a, large = 1 past one half; \`{ring}\` = \`{tint}\`. All of it (p = 1): no path, \`{ring}\` = \`{stroke}\`; not a share ("4,8/5"): no path. Room: the big number 6 characters at 40; the statement 45 a line at 16, 2 lines; a ring's value 6; a title s - 24 (37, 23, 17 at 2, 3, 4); a line s - 24 at 13 (43, 27, 20); the source 96.
+**Place.** The statement sy = 74, or 86 on one line. k facts, s = 672 / k; fact i: cx = 24 + s(i + 0.5). A share p runs clockwise from the top to a = -90 + 360p degrees: ex = cx + 40 cos a, ey = 208 + 40 sin a, large = 1 past one half; \`{ring}\` = \`{tint}\`. All of it (p = 1): no path, \`{ring}\` = \`{stroke}\`; not a share ("4,8/5"): no path. Room: the big number 6 characters at 40; the statement 45 a line at 16, 2 lines; a ring's value 6; a title s - 24 (37, 23, 17 at 2, 3, 4); a line s - 24 at 13 (43, 27, 20); the source 96.
 **Many:** 4 facts; more: KPI cards.
 **Long text:** the statement in two lines; a fact's detail in your reply.
 **Narrow:** phone: W 360, the number above the statement in a taller band, facts two a row.
@@ -1142,12 +1142,12 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 <!-- /each -->
 </svg>
 \`\`\`
-**Place.** The figure from rects and circles in x 248 to 472, y 24 to H - 24, each part wholly inside another or clear of it. A named point (px, py) left of 360 is labelled on the left: tx = 216, anchor end, x1 = 224, x2 = 240; else tx = 504, anchor start, x1 = 496, x2 = 480. Down each side, in the order of py: ty = py + 5, or 52 below the label above if that is lower; ny = ty + 18, y1 = ty - 5. H = the lower of the figure's bottom and the last ny + 4, plus 24. Room: a name 22 characters, a note 27 at 12.5.
+**Place.** The figure from rects and circles in x 248 to 472, y 24 to H - 24, each part wholly inside another or clear of it, each named point 6 or more inside that area (its dot is 4 and its ring 1.5). A named point (px, py) left of 360 is labelled on the left: tx = 216, anchor end, x1 = 224, x2 = 240; else tx = 504, anchor start, x1 = 496, x2 = 480. Down each side, in the order of py: ty = py + 5, at least 36, or 52 below the label above if that is lower; ny = ty + 18, y1 = ty - 5. Two leaders on a side cross when, at the nearer point's x, the lower label's leader is above the upper one's: swap their points (and names); each swap shortens the pair, so a few leave none crossing. A leader still within 6 px of another point: numbered dots (Many). H = the lower of the figure's bottom and the last ny + 4, plus 24. Room: a name 22 characters, a note 27 at 12.5.
 **Many:** 5 a side; more: numbered dots on the figure, the names in your reply.
 **Long text:** a name and one note; the rest in your reply.
 **Narrow:** phone: W 360, numbered dots on the figure, the names in your reply.
 **Dark:** swap the palette; the dot's \`{card}\` ring parts it from the part.
 **Polish:** one family for the figure (tints, strokes for rims), \`{card}\` for a screen or glass; names say what a part is, notes what it does.
-**Pitfalls:** leaders crossing (keep each side in the order of its points; two that still cross swap labels); a label over the figure; detail drawn by eye.`,
+**Pitfalls:** crossed leaders on a crowded side (swap the two points); a label over the figure; detail drawn by eye.`,
   },
 ];
