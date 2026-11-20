@@ -46,7 +46,7 @@ const two = (x) => x.toFixed(2);
 // layouts, six of them, to 13,616, its skeletons alone 5,695. The brief's "about 12,000" would
 // cost the arithmetic, so the overrun is reported with a proposed split instead. Fix round 1 of
 // that review added today's label, the phone's Gantt and comparison, and crowded leaders: 11,117 and
-// 14,117.
+// 14,117. The final review's numbered dot brought layouts to 14,282.
 const BUDGET = { 'builtin:drawing': 8000, 'builtin:svg-flows': 10750, 'builtin:svg-structures': 12000, 'builtin:svg-sequences': 11350, 'builtin:svg-layouts': 14400 };
 const DESCRIPTION = 145;
 const RECIPES = {
@@ -1723,6 +1723,28 @@ section('the fills are judged, not waved through');
   probe('the crowded side with straight leaders in order of height crosses', crowd, lefts.length >= 5 ? straight : '', 'labelled', /cross/);
   // A point lying 3 px from another label's leader.
   probe('a point 3 px from another leader is caught', crowd, crowd.replace(/<circle cx="422" cy="76" r="4"/, '<circle cx="300" cy="67" r="4"'), 'labelled', /passes within 6 px/);
+}
+
+// Final review, M1: "numbered dots" said nothing of their look, and a white number on a filled
+// circle is judged against the canvas (1.0:1 on paper), so the drawing was held back. The recipe
+// now says what one is; each way it gives is drawn on a figure here, and the way it rules out.
+section('a numbered dot drawn as the labelled recipe says passes the check, in light and dark');
+{
+  check('the recipe says what a numbered dot is: the steps badge, or a tint circle in its family\'s ink', /A numbered dot is the steps badge, a square rect with rx half its side in `\{solid\}`, its number `\{onSolid\}`; or a `\{tint\}` circle, its number the family's `\{inkA\}`\./.test(textOf('builtin:svg-layouts')));
+  for (const theme of ['light', 'dark']) {
+    const P = PAL[theme];
+    const f = P.fam[0];
+    // With names beside it in ink, as the recipe's are, so the canvas is read as the theme's.
+    const names = ['Thông báo', 'Màn hình', 'Thanh vuốt'].map((name, i) => `<text x="216" y="${84 + 48 * i}" text-anchor="end" font-size="14" font-weight="600">${i + 1}. ${name}</text>`).join('');
+    const figure = (dots) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 248" font-family="system-ui, sans-serif" font-size="13" text-anchor="middle" fill="${P.ink}"><rect x="300" y="24" width="120" height="200" rx="20" fill="${f.tint}" stroke="${f.stroke}" stroke-width="1.5"/><rect x="308" y="48" width="104" height="152" rx="4" fill="${P.card}" stroke="${P.edge}" stroke-width="1.5"/>${names}${dots}</svg>`;
+    const badge = (n, x, y) => `<rect x="${x - 12}" y="${y - 12}" width="24" height="24" rx="12" fill="${P.solid}"/><text x="${x}" y="${y + 4.5}" font-size="13" font-weight="600" fill="${P.onSolid}">${n}</text>`;
+    const tinted = (n, x, y) => `<circle cx="${x}" cy="${y}" r="12" fill="${f.tint}" stroke="${f.stroke}" stroke-width="1.5"/><text x="${x}" y="${y + 4.5}" font-size="13" font-weight="600" fill="${f.inkA}">${n}</text>`;
+    const filled = (n, x, y) => `<circle cx="${x}" cy="${y}" r="12" fill="${P.solid}"/><text x="${x}" y="${y + 4.5}" font-size="13" font-weight="600" fill="${P.onSolid}">${n}</text>`;
+    const good = checkDiagram(figure(badge(1, 340, 80) + badge(2, 380, 120) + tinted(3, 340, 170)));
+    check(`  ${theme}: two badges and a tint circle on the figure, nothing for the check to find`, good.issues.length === 0 && good.canvas === theme, good.issues.join(' | ') || good.canvas);
+    const bad = checkDiagram(figure(filled(1, 340, 80)));
+    check(`  ${theme}: the number on a filled circle instead is found too faint`, bad.issues.some((s) => /hard to read/.test(s)), bad.issues.join(' | ') || 'nothing found');
+  }
 }
 
 // The filled drawings, for a person to look at: `node test/drawing-skills.test.mjs --out <dir>`.

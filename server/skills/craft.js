@@ -1143,7 +1143,7 @@ Read "Drawing diagrams and pictures" first: its palette, type, marker and checks
 </svg>
 \`\`\`
 **Place.** The figure from rects and circles in x 248 to 472, y 24 to H - 24, each part wholly inside another or clear of it, each named point 6 or more inside that area (its dot is 4 and its ring 1.5). A named point (px, py) left of 360 is labelled on the left: tx = 216, anchor end, x1 = 224, x2 = 240; else tx = 504, anchor start, x1 = 496, x2 = 480. Down each side, in the order of py: ty = py + 5, at least 36, or 52 below the label above if that is lower; ny = ty + 18, y1 = ty - 5. Two leaders on a side cross when, at the nearer point's x, the lower label's leader is above the upper one's: swap their points (and names); each swap shortens the pair, so a few leave none crossing. A leader still within 6 px of another point: numbered dots (Many). H = the lower of the figure's bottom and the last ny + 4, plus 24. Room: a name 22 characters, a note 27 at 12.5.
-**Many:** 5 a side; more: numbered dots on the figure, the names in your reply.
+**Many:** 5 a side; more: numbered dots on the figure, the names in your reply. A numbered dot is the steps badge, a square rect with rx half its side in \`{solid}\`, its number \`{onSolid}\`; or a \`{tint}\` circle, its number the family's \`{inkA}\`.
 **Long text:** a name and one note; the rest in your reply.
 **Narrow:** phone: W 360, numbered dots on the figure, the names in your reply.
 **Dark:** swap the palette; the dot's \`{card}\` ring parts it from the part.
