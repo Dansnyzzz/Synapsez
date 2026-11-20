@@ -1092,7 +1092,7 @@ export const TOOLS = [
     secondary: true,
     description:
       'List the pages of a website (op "map": addresses and titles, the ones matching `search` first) or read several of its pages at once (op "crawl", up to 10). ' +
-      'Map to find the right page, then web_fetch it; crawl only when several pages of one site are needed. Each uses the deployment\'s small monthly allowance.',
+      'Map to find the right page, then web_fetch it; crawl only when several pages of one site are needed.',
     parameters: {
       type: 'object',
       properties: {
@@ -1113,8 +1113,8 @@ export const TOOLS = [
     needsHost: 'firecrawl',
     secondary: true,
     description:
-      'Search about 43 million research paper abstracts (PubMed, bioRxiv, medRxiv, arXiv), read the passages of a paper that answer a question, find papers like it, citing it or cited by it — or search US statutes, regulations and court opinions. ' +
-      'Free. Cite the links it gives.',
+      'Search research paper abstracts (PubMed, bioRxiv, medRxiv, arXiv), read the passages of a paper that answer a question, find papers like it, citing it or cited by it — or search US statutes, regulations and court opinions. ' +
+      'Cite the links it gives.',
     parameters: {
       type: 'object',
       properties: {
@@ -1181,8 +1181,8 @@ export const TOOLS = [
     // run's worth of calls. Top-level only.
     noSubagent: true,
     description:
-      'Research a hard question thoroughly: search several angles, cross-check sources, and answer through an internal ' +
-      'proposer–critic–arbiter debate. Returns conclusions each labelled with a confidence (HIGH/MEDIUM/LOW/CONFLICTING) ' +
+      'Research a hard question thoroughly: search several angles, cross-check sources, and weigh what they say ' +
+      'before answering. Returns conclusions each labelled with a confidence (HIGH/MEDIUM/LOW/CONFLICTING) ' +
       'and a cited source list. Use for questions where being right matters more than being fast — a claim that needs ' +
       'verifying, conflicting reports, a decision resting on facts. Overkill for a quick lookup; use web_search for that.',
     parameters: {
@@ -1470,7 +1470,7 @@ export const TOOLS = [
     readOnly: true,
     description:
       'Find pictures of something and show them in the conversation as a gallery. ' +
-      'Openly licensed images (Openverse, Wikimedia Commons) with their source and licence — good for places, animals, ' +
+      'Openly licensed images (such as Wikimedia Commons) with their source and licence — good for places, animals, ' +
       'objects, artworks and famous people; not for products or today\'s news, which web_search finds better.',
     parameters: {
       type: 'object',
@@ -1772,7 +1772,7 @@ export const TOOLS = [
     description:
       'Places and routes, drawn on a map for the user — op find (one place or address), nearby (what is around a place, or around the user when `near` is left out) or distance (how far and how long between two). ' +
       'nearby finds restaurants, cafés, a dish (phở), ATMs, hospitals, hotels…; "near me" uses the user\'s approximate city. distance goes by car, on foot or by bicycle. ' +
-      'From OpenStreetMap: no ratings or reviews — web_search those.',
+      'It has no ratings or reviews — web_search those.',
     parameters: {
       type: 'object',
       properties: {
@@ -2165,7 +2165,7 @@ export const TOOLS = [
     // task list for multi-step work" left the judgement entirely open, and a
     // one-step plan is the result.
     description:
-      'Show the user a live checklist, for work that genuinely has three or more steps of different kinds. Not for a question, a lookup or a single edit — a checklist above a short answer is noise, and short work is finished faster than it is planned. Resend the whole list on every update, with exactly one item in_progress. ' +
+      'Show the user a live checklist, for work that genuinely has three or more steps of different kinds. Not for a question, a lookup or a single edit — a checklist above a short answer is noise, and short work is finished faster than it is planned. Send the whole list again on every update, with exactly one item in_progress. ' +
       'Keep it true as you go: mark a step done the moment it is finished and start the next in the same call; when new work turns up or the user asks for more mid-way, add it as a step (with a detail) where it belongs, reorder or drop steps that changed. Before your final answer every step you did must be done.',
     parameters: {
       type: 'object',

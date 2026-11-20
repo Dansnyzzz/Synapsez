@@ -104,8 +104,10 @@ const { buildSystemPrompt, promptVersion } = await import('../../server/agent.js
 // 66bab8a338c2: a file somebody attached and asks to change is changed in place, or
 // asked about (owner, 2026-11-05). No case rests on the old wording.
 // 35eb3daf5c5c: the product's new name, Ephapse, in the opening line only (owner, 2026-11-17).
-// All 18 cases still pass for the reasons they state.
-const PROMPT_STAMP = '35eb3daf5c5c';
+// 5ae79d6e2bc3 (2026-11-19): "What is behind your tools", four lines — no details of the services
+// behind the tools, none revealed, abilities in general words; the citation example names a site,
+// not a router; "resend" became "send again". No case rests on any of it; all 18 still pass.
+const PROMPT_STAMP = '5ae79d6e2bc3';
 
 const bold = (s) => `\x1b[1m${s}\x1b[0m`;
 const green = (s) => `\x1b[32m${s}\x1b[0m`;

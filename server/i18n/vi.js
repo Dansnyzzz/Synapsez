@@ -179,10 +179,10 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Tài khoản này đã dùng hết {0} lượt máy tính đám mây của hôm nay; khoảng {1} giờ nữa sẽ mở lại. Hãy nói rõ với người dùng và đề xuất cách làm không cần nó.',
   "The cloud computers are at today's limit for the whole app; they open again in about {0}h. Tell the user plainly, and offer what can be done without it.":
     'Máy tính đám mây đã chạm giới hạn hôm nay của toàn ứng dụng; khoảng {0} giờ nữa sẽ mở lại. Hãy nói rõ với người dùng và đề xuất cách làm không cần nó.',
-  'Every cloud computer this app may run at once is in use by other people right now. Try again in a few minutes; tell the user it is busy, not broken.':
-    'Tất cả máy tính đám mây mà ứng dụng được chạy cùng lúc đang được người khác dùng. Hãy thử lại sau vài phút; nói với người dùng là đang bận, không phải bị hỏng.',
-  "The cloud computers have used this month's free allotment, so none can start until it resets. Tell the user plainly, and offer what can be done without it.":
-    'Máy tính đám mây đã dùng hết hạn mức miễn phí của tháng này, nên không máy nào khởi động được cho tới khi hạn mức được làm mới. Hãy nói rõ với người dùng và đề xuất cách làm không cần nó.',
+  "The cloud computer is busy right now. Try again in a few minutes; tell the user it is busy, not broken.":
+    "Máy tính đám mây đang bận. Hãy thử lại sau vài phút; nói với người dùng là đang bận, không phải bị hỏng.",
+  "The cloud computer is not available again until next month. Tell the user plainly, and offer what can be done without it.":
+    "Máy tính đám mây không dùng được cho đến tháng sau. Hãy nói rõ với người dùng, và đề xuất những gì làm được mà không cần nó.",
   'A project needs a name.': 'Dự án cần có tên.',
   'No such project.': 'Không có dự án này.',
   'This server is not connected, so there is no list to approve yet. Open a conversation that uses it, then try again.':
@@ -419,8 +419,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   '"{0}" is not an email address.': '"{0}" không phải địa chỉ email.',
   'An email with no subject line reads as spam. Give it one.': 'Email không có tiêu đề trông như thư rác. Hãy thêm tiêu đề.',
   'There is nothing to send — give a body.': 'Không có gì để gửi — hãy viết nội dung.',
-  'No mail provider is configured on this deployment, so nothing can actually be sent — it would only be printed to the server log. Tell the user plainly that the email was NOT sent, and that the deployment needs GMAIL_USER and GMAIL_APP_PASSWORD (or RESEND_API_KEY, or SMTP_HOST) set for this tool to work. Do not claim to have sent it.':
-    'Bản triển khai này chưa cấu hình dịch vụ gửi thư, nên không gửi được gì — nội dung chỉ được in ra log máy chủ. Email CHƯA được gửi; cần đặt GMAIL_USER và GMAIL_APP_PASSWORD (hoặc RESEND_API_KEY, hoặc SMTP_HOST) để công cụ này hoạt động.',
+  "Sending email is not set up on this deployment, so nothing can actually be sent. Tell the user plainly that the email was NOT sent, and that the owner of this app has to set up email first. Do not claim to have sent it.":
+    "Bản triển khai này chưa thiết lập gửi email, nên không gửi được gì. Hãy nói rõ với người dùng rằng email CHƯA được gửi, và chủ ứng dụng cần thiết lập email trước. Đừng nói là đã gửi.",
   'Give the address to send to — this account has no email of its own on record.':
     'Hãy cho biết địa chỉ cần gửi tới — tài khoản này không có email riêng được lưu.',
   'That is {0} recipients; {1} is the limit for one email.': 'Đó là {0} người nhận; mỗi email tối đa {1} người.',
@@ -432,8 +432,10 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     '"{0}" không nằm trong các công cụ tài khoản này được cung cấp từ máy chủ đó — có thể nó đang chờ duyệt trong Cài đặt → Tiện ích mở rộng.',
   'A stored credential needs to know whose it is and what it is for — part of that was missing, so it was not saved.':
     'Thông tin đăng nhập được lưu cần biết nó thuộc về ai và dùng vào việc gì — thiếu một phần, nên chưa được lưu.',
-  'The email was NOT sent: the mail provider refused it ({0}). Say so plainly.':
-    'Email CHƯA được gửi: dịch vụ gửi thư đã từ chối ({0}).',
+  "The email was NOT sent: the mail service refused it. Say so plainly; the user can try again later or send it from their own mail.":
+    "Email CHƯA được gửi: dịch vụ gửi thư đã từ chối. Hãy nói rõ; người dùng có thể thử lại sau hoặc gửi từ hộp thư của mình.",
+  "The email was NOT sent: the mail server refused the address. Say so plainly, and ask the user to check that it is right.":
+    "Email CHƯA được gửi: máy chủ thư đã từ chối địa chỉ nhận. Hãy nói rõ, và nhờ người dùng kiểm tra lại địa chỉ.",
   'The email was NOT sent: this account has written to {0} people by email today, the daily limit. Tell the user it can go tomorrow, or they can send it from their own mail.':
     'Email CHƯA được gửi: hôm nay tài khoản này đã gửi email tới {0} người, mức tối đa mỗi ngày. Có thể gửi vào ngày mai, hoặc gửi từ hộp thư của chính bạn.',
   "The email was NOT sent: the app has sent as much email today as it may — its mailbox also sends everyone's sign-in codes. Tell the user it can go tomorrow, or they can send it from their own mail.":
@@ -657,8 +659,17 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'DuckDuckGo returned HTTP {0}': 'DuckDuckGo trả về HTTP {0}',
   'DuckDuckGo served a rate-limit page rather than results.': 'DuckDuckGo trả về trang giới hạn tần suất thay vì kết quả.',
   'Nothing could be parsed out of the DuckDuckGo page.': 'Không đọc được gì từ trang DuckDuckGo.',
-  'No search engine is configured. Set EXA_API_KEY or TAVILY_API_KEY, or leave DuckDuckGo enabled — it needs no key.':
-    'Chưa cấu hình công cụ tìm kiếm. Đặt EXA_API_KEY hoặc TAVILY_API_KEY, hoặc để DuckDuckGo bật — nó không cần key.',
+  "Web search is not set up on this server. Tell the user search is unavailable, and answer from what you know, saying so.":
+    "Máy chủ này chưa thiết lập tìm kiếm web. Hãy nói với người dùng là chưa tìm kiếm được, và trả lời theo những gì bạn biết, nói rõ điều đó.",
+  // A service behind a tool failing, said plainly (server/tools/plainFailure.js).
+  "{0} did not answer in time. Try once more{1}.":
+    "{0} không phản hồi kịp. Hãy thử thêm một lần{1}.",
+  "{0} is busy right now. Try again in a minute{1}.":
+    "{0} đang bận. Hãy thử lại sau một phút{1}.",
+  "{0} has used its allowance for this period. Try again later{1}.":
+    "{0} đã dùng hết hạn mức của kỳ này. Hãy thử lại sau{1}.",
+  "{0} did not work just now. Try again in a moment{1}; if it fails again, tell the user it is unavailable right now.":
+    "{0} vừa không thành công. Hãy thử lại sau giây lát{1}; nếu vẫn lỗi, hãy nói với người dùng là hiện chưa dùng được.",
   'no results': 'không có kết quả',
   'Give a question to research.': 'Hãy đưa ra câu hỏi cần nghiên cứu.',
   'That research run belongs to another account.': 'Lượt nghiên cứu đó thuộc về tài khoản khác.',
@@ -756,8 +767,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'Describe the image you want.': 'Hãy mô tả hình bạn muốn.',
   'Ephapse does not make sexual, nude or intimate images of anyone, so this picture was not made. Tell the user plainly that Ephapse does not make sexual or nude images, under its Usage Policy, and do not try again with other words.':
     'Ephapse không tạo ảnh tình dục, khoả thân hay riêng tư của bất kỳ ai, nên ảnh này không được tạo. Hãy nói rõ với người dùng rằng Ephapse không tạo ảnh tình dục hay khoả thân, theo Chính sách sử dụng của Ephapse, và đừng thử lại bằng cách diễn đạt khác.',
-  'Making pictures needs a Google API key, and this account has none. Tell the user to add one in Settings → Providers → Google Gemini. Their OpenRouter key cannot do this — image models are not part of that catalogue here.':
-    'Tạo hình cần Google API key, mà tài khoản này chưa có. Hãy thêm key trong Cài đặt → Nhà cung cấp → Google Gemini. Key OpenRouter không làm được việc này — model tạo hình không nằm trong danh mục đó ở đây.',
+  "Making pictures needs a Google API key, and this account has none. Tell the user to add one in Settings → Providers → Google Gemini.":
+    "Tạo hình cần Google API key, mà tài khoản này chưa có. Hãy thêm key trong Cài đặt → Nhà cung cấp → Google Gemini.",
   'Give the `url` of the page to read.': 'Hãy cung cấp `url` của trang cần đọc.',
   'Say what to extract, in `what` — for example "the plans and their prices".':
     'Hãy nói cần trích xuất gì, trong `what` — ví dụ "các gói và giá của chúng".',
@@ -861,10 +872,10 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     ' ngay lập tức',
 
   /* ── MCP, tệp, nhà cung cấp, cơ sở dữ liệu ── */
-  "stdio MCP servers run on each account's cloud computer, and this deployment has none: the Vercel Sandbox is switched off (SANDBOX_DISABLED). Use an http server, or switch the sandbox back on.":
-    'Máy chủ MCP stdio chạy trên máy tính đám mây của từng tài khoản, nhưng bản triển khai này không có: Vercel Sandbox đang bị tắt (SANDBOX_DISABLED). Hãy dùng máy chủ http, hoặc bật lại sandbox.',
-  'stdio MCP servers need either the cloud computer (VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID) or ALLOW_MCP_STDIO=1 on a machine you trust. Or use an http server.':
-    'Máy chủ MCP stdio cần máy tính đám mây (VERCEL_TOKEN, VERCEL_TEAM_ID và VERCEL_PROJECT_ID) hoặc ALLOW_MCP_STDIO=1 trên máy bạn tin tưởng. Hoặc dùng máy chủ http.',
+  "stdio MCP servers run on each account's cloud computer, and it is switched off on this deployment. Use an http server, or ask the owner to switch the cloud computer back on.":
+    "Máy chủ MCP stdio chạy trên máy tính đám mây của từng tài khoản, mà bản triển khai này đang tắt nó. Hãy dùng máy chủ http, hoặc nhờ chủ ứng dụng bật lại máy tính đám mây.",
+  "stdio MCP servers need the cloud computer, which this deployment does not have, or ALLOW_MCP_STDIO=1 on a machine you trust. Or use an http server.":
+    "Máy chủ MCP stdio cần máy tính đám mây, mà bản triển khai này không có, hoặc ALLOW_MCP_STDIO=1 trên máy bạn tin tưởng. Hoặc dùng máy chủ http.",
   'stdio servers need either the cloud computer (the Vercel Sandbox) or ALLOW_MCP_STDIO on a machine you trust, and this deployment has neither. An http server works everywhere.':
     'Máy chủ stdio cần máy tính đám mây (Vercel Sandbox) hoặc ALLOW_MCP_STDIO trên máy bạn tin tưởng, mà bản triển khai này không có cái nào. Máy chủ http thì chạy ở đâu cũng được.',
   'This conversation has read something from outside — a page, a search result, a server. A note saved now is read at the start of every later conversation, so check it carries nothing that came from there.':
@@ -961,10 +972,10 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     'Không có tác vụ theo giờ nào với id "{0}". Gọi list_tasks để xem danh sách.',
   'There is nothing scheduled on this account to cancel.':
     'Tài khoản này không có tác vụ theo giờ nào để huỷ.',
-  'Google declined to make that image: {0}':
-    'Google từ chối tạo hình đó: {0}',
-  'Google returned no image and gave no reason. Try describing it differently.':
-    'Google không trả về hình nào và không nêu lý do. Hãy thử mô tả theo cách khác.',
+  "The image model declined to make that picture. Tell the user, and offer to describe it differently — without what it may have objected to.":
+    "Mô hình tạo ảnh đã từ chối tạo ảnh đó. Hãy nói với người dùng, và đề nghị mô tả theo cách khác — bỏ đi phần có thể đã bị phản đối.",
+  "No picture came back, and no reason was given. Try describing it differently.":
+    "Không có ảnh nào được trả về, và không có lý do. Hãy thử mô tả theo cách khác.",
   "{0}: this conversation ({1} tokens) no longer fits this model's {2}-token window. Compact it, start a new one, or pick a model with a larger window.":
     '{0}: cuộc trò chuyện này ({1} token) không còn vừa cửa sổ {2} token của model. Hãy thu gọn nó, mở cuộc mới, hoặc chọn model có cửa sổ lớn hơn.',
   '{0} has no stored source to add to. Pass the complete content instead.':
@@ -1011,22 +1022,20 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "kind là crypto hoặc stock.",
   "Name the place — e.g. \"Chợ Bến Thành\" or \"136 Lê Thánh Tôn, Quận 1, TP.HCM\".":
     "Hãy nêu địa điểm — ví dụ \"Chợ Bến Thành\" hoặc \"136 Lê Thánh Tôn, Quận 1, TP.HCM\".",
-  "No place called \"{0}\" was found on OpenStreetMap. Try its street address, or a bigger landmark near it.":
-    "Không tìm thấy địa điểm \"{0}\" trên OpenStreetMap. Thử địa chỉ đường phố của nó, hoặc một địa danh lớn hơn ở gần đó.",
-  "OpenStreetMap's place search did not answer ({0}). Try again in a moment.":
-    "Dịch vụ tìm địa điểm của OpenStreetMap không phản hồi ({0}). Hãy thử lại sau giây lát.",
-  "OpenStreetMap's place search did not answer ({0}), so \"{1}\" could not be checked. Try again in a moment.":
-    "Dịch vụ tìm địa điểm của OpenStreetMap không phản hồi ({0}), nên chưa kiểm tra được \"{1}\". Hãy thử lại sau giây lát.",
-  "OpenStreetMap's place search did not answer (it failed a moment ago and is being rested). Try again in a moment.":
-    'Dịch vụ tìm địa điểm của OpenStreetMap không phản hồi (vừa lỗi cách đây ít phút nên đang được cho nghỉ). Hãy thử lại sau giây lát.',
+  "No place called \"{0}\" was found on the map. Try its street address, or a bigger landmark near it.":
+    "Không tìm thấy địa điểm \"{0}\" trên bản đồ. Thử địa chỉ đường phố của nó, hoặc một địa danh lớn hơn ở gần đó.",
+  "The map's place search did not answer. Try again in a moment.":
+    "Dịch vụ tìm địa điểm của bản đồ không phản hồi. Hãy thử lại sau giây lát.",
+  "The map's place search did not answer, so \"{0}\" could not be checked. Try again in a moment.":
+    "Dịch vụ tìm địa điểm của bản đồ không phản hồi, nên chưa kiểm tra được \"{0}\". Hãy thử lại sau giây lát.",
   'it failed a moment ago and is being rested':
     'vừa lỗi cách đây ít phút nên đang được cho nghỉ',
-  "OpenStreetMap's place search did not answer{0}, and neither did its address search ({1}). Try again in a moment, or web_search for the places.":
-    'Dịch vụ tìm địa điểm của OpenStreetMap không phản hồi{0}, dịch vụ tìm địa chỉ của nó cũng vậy ({1}). Hãy thử lại sau giây lát, hoặc dùng web_search để tìm các địa điểm.',
+  "The map's place search did not answer. Try again in a moment, or web_search for the places.":
+    "Dịch vụ tìm địa điểm của bản đồ không phản hồi. Hãy thử lại sau giây lát, hoặc dùng web_search để tìm các địa điểm.",
   "Say what to look for — \"quán ăn\", \"cà phê\", \"phở\", \"ATM\", \"bệnh viện\"…":
     "Hãy nói cần tìm gì — \"quán ăn\", \"cà phê\", \"phở\", \"ATM\", \"bệnh viện\"…",
-  "OpenStreetMap took too long to answer, so this was stopped. Try again in a moment, or a smaller area.":
-    "OpenStreetMap phản hồi quá lâu nên đã dừng. Hãy thử lại sau giây lát, hoặc với một khu vực nhỏ hơn.",
+  "The map took too long to answer, so this was stopped. Try again in a moment, or a smaller area.":
+    "Bản đồ phản hồi quá lâu nên đã dừng. Hãy thử lại sau giây lát, hoặc với một khu vực nhỏ hơn.",
   "Where should I look? Name a place or an address in `near` — the person's location is not known here.":
     "Tìm ở đâu? Hãy nêu một địa điểm hoặc địa chỉ trong `near` — ở đây không biết vị trí của người dùng.",
   "op is find, nearby or distance.":
@@ -1128,8 +1137,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
     "không dùng khi có dữ liệu Google",
   "Searching the indexed folders goes through a Google Gemini key, and this conversation holds data from the person's Google account, which is not sent there. Read the files with read_file instead, or search in a new conversation.":
     "Tìm trong các thư mục đã lập chỉ mục phải đi qua key Google Gemini, mà cuộc trò chuyện này có dữ liệu từ tài khoản Google của người dùng, thứ không được gửi tới đó. Hãy đọc tệp bằng read_file, hoặc tìm trong một cuộc trò chuyện mới.",
-  "Pictures are made through a Google Gemini key, and this conversation holds data from the person's Google account, which is not sent there. Tell the user; a picture can be made in a new conversation.":
-    "Ảnh được tạo qua key Google Gemini, mà cuộc trò chuyện này có dữ liệu từ tài khoản Google của người dùng, thứ không được gửi tới đó. Hãy báo người dùng; có thể tạo ảnh trong một cuộc trò chuyện mới.",
+  "Pictures cannot be made in a conversation that holds data from the person's Google account. Tell the user; a picture can be made in a new conversation.":
+    "Không thể tạo ảnh trong cuộc trò chuyện có dữ liệu từ tài khoản Google của người dùng. Hãy nói với người dùng; có thể tạo ảnh trong một cuộc trò chuyện mới.",
   "Google (Gemini grounding) returned HTTP {0}":
     "Google (Gemini grounding) trả về HTTP {0}",
   "Ephapse can only send mail: Google's free review allows no reading, searching, drafting or changing of mail. Tell the user plainly that this cannot be done here; they can paste an email into the conversation to have it read.":
@@ -1193,18 +1202,16 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'Write at most {0} files per call.': 'Mỗi lần ghi tối đa {0} tệp.',
   '{0} is over 2MB; write it in parts or generate it inside the machine.':
     '{0} lớn hơn 2MB; hãy ghi từng phần hoặc tạo nó ngay trong máy.',
-  'The cloud computer could not be started: {0}. On Vercel this needs OIDC enabled for the project; elsewhere VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID.':
-    'Không khởi động được máy tính đám mây: {0}. Trên Vercel cần bật OIDC cho dự án; nơi khác cần VERCEL_TOKEN, VERCEL_TEAM_ID và VERCEL_PROJECT_ID.',
-  // The Vercel stand-in's own monthly ceiling (server/sandbox.js `takeStandIn`).
-  "The cloud computer is unavailable until the 1st: this month's free stand-in time is used.":
-    'Máy tính đám mây không dùng được đến ngày 1: thời gian máy dự phòng miễn phí của tháng này đã hết.',
-  // The cloud computer on E2B, with nothing to stand in (server/sandbox.js `unavailableError`).
-  "The cloud computer could not be started: E2B did not accept this deployment's key (E2B_API_KEY). Tell the user plainly; the owner has to check the key.":
-    'Không khởi động được máy tính đám mây: E2B không chấp nhận khoá của bản triển khai này (E2B_API_KEY). Hãy nói rõ với người dùng; chủ bản triển khai cần kiểm tra lại khoá.',
-  "The cloud computer could not be started: this server could not load its E2B library. Tell the user plainly; the owner has to check the deployment's logs.":
-    'Không khởi động được máy tính đám mây: máy chủ này không nạp được thư viện E2B. Hãy nói rõ với người dùng; chủ bản triển khai cần xem log của bản triển khai.',
-  'The cloud computer could not be started: E2B is not answering right now. Try again in a few minutes; tell the user it is busy, not broken.':
-    'Không khởi động được máy tính đám mây: E2B hiện không phản hồi. Hãy thử lại sau vài phút; nói với người dùng là dịch vụ đang bận, không phải bị hỏng.',
+  "The cloud computer could not be started just now. Try again in a few minutes; if it still will not start, tell the user it is unavailable right now.":
+    "Chưa khởi động được máy tính đám mây lúc này. Hãy thử lại sau vài phút; nếu vẫn không được, hãy nói với người dùng là hiện chưa dùng được.",
+  // The stand-in's own monthly ceiling (server/sandbox.js `takeStandIn`).
+  "The cloud computer is unavailable until the 1st of next month. Tell the user plainly, and offer what can be done without it.":
+    "Máy tính đám mây không dùng được đến ngày 1 tháng sau. Hãy nói rõ với người dùng, và đề xuất những gì làm được mà không cần nó.",
+  // With nothing to stand in (server/sandbox.js `unavailableError`): what the owner must fix is in the log.
+  "The cloud computer could not be started. Tell the user plainly that it is unavailable right now; the app's owner has to fix it.":
+    "Không khởi động được máy tính đám mây. Hãy nói rõ với người dùng là hiện chưa dùng được; chủ ứng dụng cần khắc phục.",
+  "The cloud computer is not answering right now. Try again in a few minutes; tell the user it is busy, not broken.":
+    "Máy tính đám mây hiện không phản hồi. Hãy thử lại sau vài phút; nói với người dùng là dịch vụ đang bận, không phải bị hỏng.",
   '{0} does not exist in the machine — check the path with `ls`.': '{0} không có trong máy — kiểm tra đường dẫn bằng `ls`.',
   '{0} is over 10MB, too large to hand over.': '{0} lớn hơn 10MB, quá lớn để gửi.',
   '{0} is not a kind of file the conversation can show (PDF, image, Office, text, CSV, JSON). Convert it first.':

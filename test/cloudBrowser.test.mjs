@@ -554,11 +554,12 @@ section('a person\'s gestures are checked before they reach the machine');
 
 section('the platform\'s refusals read as what they are');
 {
-  check('all machines busy', /in use by other people/.test(machineStartError({ message: 'Too many concurrent sandboxes' }).message));
-  check('a 429 is the same', /in use by other people/.test(machineStartError({ message: 'x', response: { status: 429 } }).message));
-  check('the month\'s allotment spent', /free allotment/.test(machineStartError({ message: 'Usage quota exceeded' }).message));
-  check('a timeout is not mistaken for a spent allotment', !/allotment/.test(machineStartError(new Error('Request timeout exceeded')).message));
-  check('anything else keeps its message and the setup hint', /could not be started: boom.*OIDC/s.test(machineStartError(new Error('boom')).message));
+  check('all machines busy', /is busy right now/.test(machineStartError({ message: 'Too many concurrent sandboxes' }).message));
+  check('a 429 is the same', /is busy right now/.test(machineStartError({ message: 'x', response: { status: 429 } }).message));
+  check('the month\'s allotment spent', /until next month/.test(machineStartError({ message: 'Usage quota exceeded' }).message));
+  check('a timeout is not mistaken for a spent allotment', !/until next month/.test(machineStartError(new Error('Request timeout exceeded')).message));
+  // Its own words and the setup hint go to the log; the model reads neither (owner, 2026-11-19).
+  check('anything else is said plainly: not its message, nor the platform\'s setup hint', /could not be started just now/.test(machineStartError(new Error('boom')).message) && !/boom|OIDC|VERCEL/.test(machineStartError(new Error('boom')).message));
 }
 
 section('the daily budgets are per account and for the whole app');

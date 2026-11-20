@@ -100,7 +100,7 @@ export class E2BOutOfCredit extends Error {
 export class E2BSdkError extends Error {
   /** @param {unknown} cause */
   constructor(cause) {
-    super('The E2B library could not be loaded on this server.', { cause });
+    super("The cloud computer's library could not be loaded on this server.", { cause });
     this.name = 'E2BSdkError';
   }
 }

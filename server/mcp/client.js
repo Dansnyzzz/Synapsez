@@ -396,8 +396,8 @@ export async function connectMcp(config) {
     } else {
       throw new Error(
         process.env.VERCEL
-          ? 'stdio MCP servers run on each account\'s cloud computer, and this deployment has none: the Vercel Sandbox is switched off (SANDBOX_DISABLED). Use an http server, or switch the sandbox back on.'
-          : 'stdio MCP servers need either the cloud computer (VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID) or ALLOW_MCP_STDIO=1 on a machine you trust. Or use an http server.',
+          ? 'stdio MCP servers run on each account\'s cloud computer, and it is switched off on this deployment. Use an http server, or ask the owner to switch the cloud computer back on.'
+          : 'stdio MCP servers need the cloud computer, which this deployment does not have, or ALLOW_MCP_STDIO=1 on a machine you trust. Or use an http server.',
       );
     }
   }

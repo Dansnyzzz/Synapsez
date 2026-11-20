@@ -119,7 +119,8 @@ section('the first engine answers');
   check('and nothing it was not asked to hold to', !('includeDomains' in sent) && !('startPublishedDate' in sent), JSON.stringify(sent));
 
   const text = formatResults('giá vàng', outcome);
-  check('the answer says who found it', /results from Exa/.test(text), text.split('\n')[0]);
+  // Which engine answered is the log's, never the model's (owner, 2026-11-19; test/confidential.test.mjs).
+  check('the answer says how many, and names no engine', /^1 result for "giá vàng"\./.test(text) && !/\bExa\b/.test(text.split('\n')[0]), text.split('\n')[0]);
 }
 
 // ── the whole point ─────────────────────────────────────────────────
@@ -149,7 +150,7 @@ section('falling through to the next engine');
   );
 
   const text = formatResults('anything', outcome);
-  check('and the failover is said out loud', /after Exa, DuckDuckGo failed/.test(text), text.split('\n')[0]);
+  check('and the failover is not said to the model, only recorded for the log', outcome.attempts.length === 2 && !/Exa|DuckDuckGo|failed/.test(text.split('\n')[0]), text.split('\n')[0]);
   // Exa's 402 set its one key aside as spent until the month ends (keyPool.js).
   await heal();
 }
@@ -166,8 +167,8 @@ section('every engine refusing is an answer too');
   const outcome = await search('anything');
   check('no results rather than a thrown error', outcome.results.length === 0 && outcome.engine === null);
   const text = formatResults('anything', outcome);
-  check('and the reply names every engine tried', /Exa.*DuckDuckGo.*Tavily.*Brave/s.test(text), text);
-  check('with the reason for each', /subscription token is invalid/.test(text), text.slice(0, 200));
+  check('every engine tried is recorded, with its reason, for the log', outcome.attempts.length === 4 && /subscription token is invalid/.test(JSON.stringify(outcome.attempts)), JSON.stringify(outcome.attempts.map((a) => a.engine)));
+  check('while the reply says only that the search could not look, and what to do', /^No results for "anything"\. Tried: web search \((?!no results)[^)]*try again/.test(text) && !/Exa|DuckDuckGo|Tavily|Brave|subscription token/.test(text), text.slice(0, 200));
   await heal();
 }
 
@@ -253,8 +254,8 @@ section('Extra high and Max: two engines side by side, merged');
   check('both engines answered, in chain order', JSON.stringify(outcome.engines) === '["Exa","DuckDuckGo"]', JSON.stringify(outcome.engines));
   check('the page both found comes first — one entry, the fuller snippet, both names', outcome.results[0].title === 'Shared' && outcome.results[0].engines.length === 2 && /longer of the two/.test(outcome.results[0].snippet) && outcome.results.length === 3, JSON.stringify(outcome.results));
   const text = formatResults('gold this week', outcome);
-  check('the model is told they were merged, and which page both found', /from Exa \+ DuckDuckGo, merged/.test(text) && /found by Exa and DuckDuckGo/.test(text), text.split('\n')[0]);
-  check("Exa's own summary comes after the sources, inside the envelope, named for what it is", /Exa's own summary[\s\S]*Gold rose 1%[\s\S]*<\/untrusted>/.test(text) && text.indexOf('Gold rose') > text.indexOf('Exa only'), text.slice(-300));
+  check('the model is told neither the engines nor that they were merged — the order says it', /^3 results for "gold this week"\./.test(text) && !/merged|found by/.test(text) && !/Exa|DuckDuckGo/.test(text.split('\n')[0]) && /source="web search results"/.test(text) && text.indexOf('Shared') < text.indexOf('Exa only'), text.split('\n')[0]);
+  check("the deep search's own summary comes after the sources, inside the envelope, named for what it is", /A summary written from these results[\s\S]*Gold rose 1%[\s\S]*<\/untrusted>/.test(text) && text.indexOf('Gold rose') > text.indexOf('Exa only'), text.slice(-300));
 
   const one = fuseResults([{ label: 'Exa', results: [{ url: 'https://a.com' }, { url: 'https://b.com' }] }], 1);
   check('one engine is its own list, cut to the count', one.length === 1 && one[0].url === 'https://a.com' && !('engines' in one[0]));
@@ -349,7 +350,7 @@ section('DuckDuckGo has a second page to ask');
   const { searchFailure, parseResults } = await import('../public/js/rail.js');
   const { formatResults } = await import('../server/search.js');
   const failed = formatResults('q', { results: [], attempts: [{ engine: 'DuckDuckGo', error: 'DuckDuckGo served a rate-limit page rather than results.' }] });
-  check('a search no engine could run is told from a real zero', /rate-limit page/.test(searchFailure(failed) || ''), searchFailure(failed));
+  check('a search no engine could run is told from a real zero, in plain words', /busy right now/.test(searchFailure(failed) || '') && !/DuckDuckGo|rate-limit page/.test(failed), searchFailure(failed));
   check('  every engine finding nothing is a real zero', searchFailure(formatResults('q', { results: [], attempts: [{ engine: 'Exa', error: 'no results' }, { engine: 'DuckDuckGo', error: 'no results' }] })) === null);
   check('  one failing beside one finding nothing is not', searchFailure(formatResults('q', { results: [], attempts: [{ engine: 'Exa', error: 'HTTP 402' }, { engine: 'DuckDuckGo', error: 'no results' }] })) !== null);
   check('  no engine able to run at all is not', searchFailure(formatResults('q', { results: [], attempts: [] })) === 'nothing');
@@ -368,7 +369,7 @@ section('nothing configured at all');
   let error = null;
   await search('x').catch((err) => (error = err));
   check('says so rather than failing obscurely', error?.code === 'no_search_engine', error?.message);
-  check('and names what to set', /EXA_API_KEY/.test(error?.message || ''), error?.message);
+  check("and tells the model what to do, naming no setting or engine — those are the log's", /not set up/.test(error?.message || '') && !/EXA_API_KEY|DuckDuckGo/.test(error?.message || ''), error?.message);
 
   process.env.EXA_API_KEY = saved.EXA_API_KEY;
   process.env.TAVILY_API_KEY = saved.TAVILY_API_KEY;

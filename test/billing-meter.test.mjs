@@ -838,7 +838,7 @@ section('Firecrawl, end to end: charged by the pages read');
     'firecrawl.dev/v2/scrape': () => json({ success: true, data: { markdown: 'A long PDF. '.repeat(40), metadata: { statusCode: 200, totalPages: 300, numPages: 300, creditsUsed: 6 } } }),
   });
   const page = await CLOUD_IMPLEMENTATIONS.web_fetch({ url: refusedUrl }, { userId: admin.id });
-  check('web_fetch of it through Firecrawl settles 2 units (5 pages read), not 100', /read through Firecrawl/.test(page) && (await counter(bucket)) - before === 2, `${page.slice(0, 60)} / ${(await counter(bucket)) - before}`);
+  check('web_fetch of it through Firecrawl settles 2 units (5 pages read), not 100', /read another way/.test(page) && /A long PDF\./.test(page) && (await counter(bucket)) - before === 2, `${page.slice(0, 60)} / ${(await counter(bucket)) - before}`);
   delete process.env.FIRECRAWL_API_KEY;
   await pool2.warmPools();
 }
@@ -914,7 +914,7 @@ section('end to end: a share-paid call counts, and a dry free pool is the balanc
   search.clearSearchCache();
   stubWeb(scrapeStub);
   const viaShare = await CLOUD_IMPLEMENTATIONS.web_fetch({ url: refusedUrl }, { userId: pager.id });
-  check('a Firecrawl read paid from the share: 1 unit counted against it, the other of its 2 units on the balance', /read through Firecrawl/.test(viaShare) && (await shareOf(pager)) === 1 && (await balanceOf(pager)) === 10_000 - price, `${viaShare.slice(0, 50)} ${await shareOf(pager)} ${await balanceOf(pager)}`);
+  check('a Firecrawl read paid from the share: 1 unit counted against it, the other of its 2 units on the balance', /read another way/.test(viaShare) && /A long PDF/.test(viaShare) && (await shareOf(pager)) === 1 && (await balanceOf(pager)) === 10_000 - price, `${viaShare.slice(0, 50)} ${await shareOf(pager)} ${await balanceOf(pager)}`);
   // Every free key's credits spent: a charged read goes on the owner's paid key (a spent share alone would not open it: keyPool.js).
   await tiers.exhaust('firecrawl');
   meter.forgetFreePools();
@@ -923,7 +923,7 @@ section('end to end: a share-paid call counts, and a dry free pool is the balanc
   search.clearSearchCache();
   stubWeb(scrapeStub);
   const viaBalance = await CLOUD_IMPLEMENTATIONS.web_fetch({ url: refusedUrl }, { userId: spent.id });
-  check('  the free credits used up: the read is charged to the balance, and read', /read through Firecrawl/.test(viaBalance) && (await shareOf(spent)) === 0 && (await balanceOf(spent)) === 10_000 - 2 * price, `${viaBalance.slice(0, 50)} ${await shareOf(spent)} ${await balanceOf(spent)}`);
+  check('  the free credits used up: the read is charged to the balance, and read', /read another way/.test(viaBalance) && /A long PDF/.test(viaBalance) && (await shareOf(spent)) === 0 && (await balanceOf(spent)) === 10_000 - 2 * price, `${viaBalance.slice(0, 50)} ${await shareOf(spent)} ${await balanceOf(spent)}`);
   await pool4.setPaidKey('firecrawl', null);
   await query("DELETE FROM rate_limits WHERE bucket LIKE 'free:firecrawl%' OR bucket LIKE 'paid:firecrawl%'");
   delete process.env.FIRECRAWL_API_KEY;
@@ -1030,7 +1030,7 @@ section('a share search the free engines answer is held again on the balance (fi
   stubWeb({ 'api.tavily.com': () => json({ results: [{ title: 'Tavily', url: 'https://example.com/tv', content: 'x' }] }) });
   const free = await fresh();
   const viaPaid = await CLOUD_IMPLEMENTATIONS.web_search({ query: 'dry free engines one', depth: 'quick' }, { userId: free.id });
-  check('Exa and Firecrawl dry, Tavily with room: web_search is charged to the balance and served by Exa on the paid key', hasKeys.left > 0 && /from Exa/.test(viaPaid) && (await balanceOf(free)) === 10_000 - price && (await counter(`paid:exa@env:${thisMonth}`)) > 0, `${viaPaid.slice(0, 40)} ${await balanceOf(free)} ${await counter(`paid:exa@env:${thisMonth}`)}`);
+  check('Exa and Firecrawl dry, Tavily with room: web_search is charged to the balance and served by Exa on the paid key', hasKeys.left > 0 && viaPaid.includes(refusedUrl) && (await balanceOf(free)) === 10_000 - price && (await counter(`paid:exa@env:${thisMonth}`)) > 0, `${viaPaid.slice(0, 40)} ${await balanceOf(free)} ${await counter(`paid:exa@env:${thisMonth}`)}`);
   check('  never by Google or DuckDuckGo, and nothing was counted against the share', !asked.some((u) => u.includes('duckduckgo') || u.includes('google')) && (await shareOf(free)) === 0, asked.join(' '));
   await reset();
 
@@ -1041,7 +1041,7 @@ section('a share search the free engines answer is held again on the balance (fi
   const stale = await fresh();
   stubWeb();
   const again = await CLOUD_IMPLEMENTATIONS.web_search({ query: 'a stale figure one', depth: 'quick' }, { userId: stale.id });
-  check('a stale figure: the share hold sees a free engine answer, is released, and the search is held again on the balance and served by Exa', /from Exa/.test(again) && (await balanceOf(stale)) === 10_000 - price && (await shareOf(stale)) === 0 && asked.some((u) => u.includes('duckduckgo')), `${again.slice(0, 40)} ${await balanceOf(stale)} ${await shareOf(stale)}`);
+  check('a stale figure: the share hold sees a free engine answer, is released, and the search is held again on the balance and served by Exa', again.includes(refusedUrl) && (await balanceOf(stale)) === 10_000 - price && (await shareOf(stale)) === 0 && asked.some((u) => u.includes('duckduckgo')), `${again.slice(0, 40)} ${await balanceOf(stale)} ${await shareOf(stale)}`);
   await reset();
 
   await meter.holdSearch((await fresh()).id, { service: 'search' }).then((h) => h.release());
@@ -1060,7 +1060,7 @@ section('a share search the free engines answer is held again on the balance (fi
   const reader = await fresh();
   stubWeb();
   const page = await CLOUD_IMPLEMENTATIONS.web_fetch({ url: refusedUrl }, { userId: reader.id });
-  check('an Exa read with the free allowance spent is read on the paid key and charged once', /read through Exa/.test(page) && (await balanceOf(reader)) === 10_000 - price && (await counter(`paid:exa@env:${thisMonth}`)) > 0, `${page.slice(0, 40)} ${await balanceOf(reader)} ${await counter(`paid:exa@env:${thisMonth}`)}`);
+  check('an Exa read with the free allowance spent is read on the paid key and charged once', /read another way/.test(page) && /Exa read this page/.test(page) && (await balanceOf(reader)) === 10_000 - price && (await counter(`paid:exa@env:${thisMonth}`)) > 0, `${page.slice(0, 40)} ${await balanceOf(reader)} ${await counter(`paid:exa@env:${thisMonth}`)}`);
   await reset();
 
   // A5: Firecrawl's pages share is spent, the key still has credits: a charged read goes on the paid key, not nowhere.
@@ -1075,7 +1075,7 @@ section('a share search the free engines answer is held again on the balance (fi
   const holder = await fresh();
   stubWeb({ 'api.exa.ai': () => json({}, 500), 'firecrawl.dev/v2/scrape': () => json({ success: true, data: { markdown: 'A long page. '.repeat(40), metadata: { statusCode: 200, creditsUsed: 1 } } }) });
   const whole = await CLOUD_IMPLEMENTATIONS.web_fetch({ url: refusedUrl }, { userId: holder.id });
-  check('  end to end, the read is charged to the balance, not refused', /read through Firecrawl/.test(whole) && (await balanceOf(holder)) < 10_000 && (await shareOf(holder)) === 0, `${whole.slice(0, 40)} ${await balanceOf(holder)}`);
+  check('  end to end, the read is charged to the balance, not refused', /read another way/.test(whole) && /A long page/.test(whole) && (await balanceOf(holder)) < 10_000 && (await shareOf(holder)) === 0, `${whole.slice(0, 40)} ${await balanceOf(holder)}`);
   await reset();
 
   // Final review N1: Google has no paid key, so a charged search past its daily free quota must not ask it — the deployment's

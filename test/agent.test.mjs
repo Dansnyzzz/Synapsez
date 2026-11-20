@@ -1238,7 +1238,7 @@ section('the model is told both when to plan and when not to');
   check('and, just as explicitly, when not to', /\*\*Do not plan when/.test(agentSrc));
   check('with a countable threshold rather than an adjective', /three or more steps/.test(agentSrc));
   check('it asks for one in_progress at a time', /one step `in_progress`/.test(agentSrc));
-  check('and for the plan to be revised when reality differs', /resend the list/i.test(agentSrc));
+  check('and for the plan to be revised when reality differs', /send the list again/i.test(agentSrc));
 
   // On a model under 40k only the first sentence of a description survives, so
   // the threshold has to sit inside it rather than trailing after.

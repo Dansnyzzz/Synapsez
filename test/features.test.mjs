@@ -200,7 +200,7 @@ section('web_fetch: a site that turns the server away is read through Exa (owner
   };
   try {
     const blocked = await CLOUD_IMPLEMENTATIONS.web_fetch({ url: `${base}/blocked` });
-    check('a 403 is read through Exa — said so, in the untrusted envelope', /read through Exa — 127\.0\.0\.1:\d+ returned HTTP 403/.test(blocked) && /The article, as Exa read it\./.test(blocked) && /<untrusted/.test(blocked), blocked.slice(0, 160));
+    check('a 403 is read through Exa — said as read another way, naming no reader, in the untrusted envelope', /127\.0\.0\.1:\d+ returned HTTP 403 Forbidden, so it was read another way/.test(blocked) && !/Exa/.test(blocked.split('\n')[0]) && asked.length === 1 && /The article, as Exa read it\./.test(blocked) && /<untrusted/.test(blocked), blocked.slice(0, 160));
     const script = await CLOUD_IMPLEMENTATIONS.web_fetch({ url: `${base}/script` });
     check('  so is a page that is only script', /almost no text without running its scripts/.test(script), script.slice(0, 160));
     let gone = '';

@@ -214,7 +214,8 @@ try {
     try {
       const read = await CLOUD_IMPLEMENTATIONS.web_fetch({ url: `${base}/blocked` }, {});
       const sent = callsTo('/v2/scrape').at(-1);
-      check('a 403 is read through Firecrawl — said so, in the untrusted envelope', /read through Firecrawl — 127\.0\.0\.1:\d+ returned HTTP 403/.test(read) && /Words a browser could read/.test(read) && /<untrusted/.test(read), read.slice(0, 160));
+      // Read through Firecrawl (its stub's words are there), and said as read another way, naming no reader (owner, 2026-11-19).
+      check('a 403 is read through Firecrawl — said as read another way, in the untrusted envelope', /127\.0\.0\.1:\d+ returned HTTP 403 Forbidden, so it was read another way/.test(read) && !/Firecrawl|Exa/.test(read.split('\n')[0]) && /Words a browser could read/.test(read) && /<untrusted/.test(read), read.slice(0, 160));
       check('  as markdown, a PDF held to 5 pages, the proxy left to Firecrawl', sent.body.formats[0] === 'markdown' && sent.body.parsers[0].maxPages === 5 && sent.body.proxy === 'auto', JSON.stringify(sent.body));
       check('  one credit, of the pages share', (await used('firecrawl_scrape')) === 1 && (await used('firecrawl')) === 1);
       let gone = '';
@@ -291,7 +292,7 @@ try {
     const { codeContextTool } = await import('../server/tools/codeContext.js');
     const quiet = async () => new Response(JSON.stringify({ items: [], quota_remaining: 100 }), { status: 200 });
     const out = await codeContextTool({ query: 'parse strict mode' }, { fetchImpl: quiet });
-    check("issues and pull requests come back, said as Firecrawl's", /Firecrawl · issue/.test(out.content) && /parse\(x, \{ strict: true \}\)/.test(out.content), out.content.slice(0, 200));
+    check('issues and pull requests come back, said as the site and the kind, never the index that found them', /github\.com · issue/.test(out.content) && !/Firecrawl/.test(out.content) && /parse\(x, \{ strict: true \}\)/.test(out.content), out.content.slice(0, 200));
     check('  2 credits of the "more" share', (await used('firecrawl_more')) === 2);
     await resetCounts();
   }

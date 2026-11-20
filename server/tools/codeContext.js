@@ -105,7 +105,8 @@ async function fromExa(query, count, plan, { fetchImpl, signal, paid = false, on
   return (body.results || [])
     .filter((r) => r?.url && (r.highlights?.length || r.text))
     .map((r) => ({
-      source: 'Exa',
+      // The site it is from, never the service that found it (owner, 2026-11-19).
+      source: siteOf(r.url),
       title: String(r.title || r.url),
       url: String(r.url),
       // Line breaks kept: they are code.
@@ -123,8 +124,17 @@ async function fromFirecrawl(query, count, { signal, paid = false }) {
   const rows = await developerSearch(query, { k: count, signal, paid });
   return rows
     .filter((r) => r.text)
-    .map((r) => ({ source: `Firecrawl · ${DEVELOPER_KIND[r.kind] || 'developer index'}`, title: r.title, url: r.url, text: clip(r.text) }));
+    .map((r) => ({ source: `${siteOf(r.url)} · ${DEVELOPER_KIND[r.kind] || 'code'}`, title: r.title, url: r.url, text: clip(r.text) }));
 }
+
+/** A result's site, as the source line names it: "github.com", not the service that found it. */
+const siteOf = (url) => {
+  try {
+    return new URL(String(url)).hostname.replace(/^www\./, '') || 'Web';
+  } catch {
+    return 'Web';
+  }
+};
 
 /**
  * Stack Overflow's matching questions and the best answer to each, through the

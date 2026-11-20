@@ -48,6 +48,7 @@ import { mayMeter, countMetered, periodOf } from '../freeTier.js';
 import { holdSearch, heldSearch, forgetFreePool, NOT_BILLED as NO_OWN_HOLD } from '../billing/meter.js';
 import { unitsForPages } from '../billing/plans.js';
 import { untrusted } from './untrusted.js';
+import { plainFailure, fromAService } from './plainFailure.js';
 import { searchProject } from '../projects.js';
 import { normaliseQuestions, answerText } from './askOptions.js';
 import {
@@ -386,7 +387,7 @@ const GONE = new Set([404, 410]);
 const THIN_PAGE_CHARS = 200;
 
 /**
- * The page through Exa, said as such — for a site that turned this server away
+ * The page through Exa, said only as read another way — for a site that turned this server away
  * or sent only script (`readThroughExa`, owner 2026-11-02). Null when Exa has
  * no key or could not read it either, and the caller says what went wrong.
  */
@@ -416,11 +417,15 @@ async function fetchedThroughExa(url, maxChars, why, { moreThan = 0, userId = nu
   }
   // Only when it read more than this server did: a short page may simply be short.
   if (!read || read.text.trim().length <= moreThan) return null;
-  return `# ${url} (read through Exa — ${why})\n\n${untrusted(url, read.text.slice(0, limit))}`;
+  return `# ${url} (${readAnotherWay(why)})\n\n${untrusted(url, read.text.slice(0, limit))}`;
 }
 
+// Why the page came another way, and nothing about which way (owner, 2026-11-19): the two
+// readers behind web_fetch used to be named here, and the model named them to the person.
+const readAnotherWay = (why) => `${why}, so it was read another way`;
+
 /**
- * The page through Firecrawl's browser, said as such — when Exa could not read it either
+ * The page through Firecrawl's browser, said only as read another way — when Exa could not read it either
  * (server/firecrawl.js, owner 2026-11-11). A credit of the deployment's free month, and one
  * of this account's metered calls this month (freeTier.js), or a held unit for a billable account (billing/meter.js). Null when there is no Firecrawl, no
  * room left, or it read nothing better; the caller then says what went wrong.
@@ -466,7 +471,7 @@ async function fetchedThroughFirecrawl(url, maxChars, why, { moreThan = 0, userI
   }
 }
 
-/** What Firecrawl read, as the tool says it; null when it is an error page or no better than what was had. */
+/** What Firecrawl read, as the tool says it (not naming Firecrawl); null when it is an error page or no better than what was had. */
 function firecrawlPage(read, url, maxChars, why, moreThan) {
   const body = read.text.trim();
   // An error page in a browser's clothes is not the page.
@@ -475,7 +480,7 @@ function firecrawlPage(read, url, maxChars, why, moreThan) {
   const notes = [];
   if (body.length > limit) notes.push(`truncated — ${body.length - limit} more characters. Call web_fetch again with a larger max_chars to read the rest.`);
   if (read.pages > 5) notes.push(`a PDF of ${read.pages} pages — only its first 5 were read this way.`);
-  return `# ${url} (read through Firecrawl — ${why})\n\n${untrusted(url, body.slice(0, limit))}${notes.map((line) => `\n\n[${line}]`).join('')}`;
+  return `# ${url} (${readAnotherWay(why)})\n\n${untrusted(url, body.slice(0, limit))}${notes.map((line) => `\n\n[${line}]`).join('')}`;
 }
 
 /**
@@ -2855,10 +2860,12 @@ async function sendEmailTool({ to, subject, body, html, kind, resend }, { user, 
   }
 
   if (emailBackend() === 'console') {
+    // The settings are the operator's to read, in the log; the model is not told which mail
+    // services or mailboxes this app can send through (owner, 2026-11-19).
+    log.warn('send_email: no mail provider — set GMAIL_USER and GMAIL_APP_PASSWORD, or RESEND_API_KEY, or SMTP_HOST');
     throw new Error(
-      'No mail provider is configured on this deployment, so nothing can actually be sent — it would only be ' +
-        'printed to the server log. Tell the user plainly that the email was NOT sent, and that the deployment needs ' +
-        'GMAIL_USER and GMAIL_APP_PASSWORD (or RESEND_API_KEY, or SMTP_HOST) set for this tool to work. Do not claim to have sent it.',
+      'Sending email is not set up on this deployment, so nothing can actually be sent. ' +
+        'Tell the user plainly that the email was NOT sent, and that the owner of this app has to set up email first. Do not claim to have sent it.',
     );
   }
 
@@ -2914,23 +2921,22 @@ async function sendEmailTool({ to, subject, body, html, kind, resend }, { user, 
   // `sendEmail` never throws — a failed password-reset mail must not break the
   // request — so a refusal from the provider arrives here as `ok: false`, and
   // reporting it as sent would be exactly the lie this tool exists not to tell.
+  // The provider's own words, its Message-ID and its server's reply name the service and the mailbox
+  // behind it, so they are the log's (email.js already writes them there), never the model's.
   if (!result?.ok) {
     await releaseRecipients(owner, recipients.length);
-    throw new Error(`The email was NOT sent: the mail provider refused it (${result?.error || 'no reason given'}). Say so plainly.`);
+    // An address the mail server said does not exist is worth saying, in plain words.
+    if (/every recipient was refused|no such user|user unknown|mailbox unavailable|\b5\.1\.\d\b/i.test(String(result?.error || ''))) {
+      throw new Error('The email was NOT sent: the mail server refused the address. Say so plainly, and ask the user to check that it is right.');
+    }
+    throw new Error('The email was NOT sent: the mail service refused it. Say so plainly; the user can try again later or send it from their own mail.');
   }
   const accepted = result.accepted?.length ? result.accepted : recipients;
   const refused = result.rejected || [];
-  const evidence = [
-    result.messageId ? `Message-ID ${result.messageId}` : '',
-    result.response ? `server reply: ${String(result.response).slice(0, 160)}` : '',
-  ]
-    .filter(Boolean)
-    .join('; ');
   return (
     `The mail server accepted an email${composed ? ` (laid out as: ${composed.kind.replace('_', ' ')})` : ''} to ${accepted.join(', ')} with the subject "${line}"` +
     `; replies come back to ${process.env.EMAIL_REPLY_TO || `the ${senderName()} mailbox`}.` +
-    `${refused.length ? ` It REFUSED ${refused.join(', ')} — say that those did not get it.` : ''}` +
-    `${evidence ? ` (${evidence})` : ''} ` +
+    `${refused.length ? ` It REFUSED ${refused.join(', ')} — say that those did not get it.` : ''} ` +
     'Accepted is not the same as delivered: if it does not arrive, it is in Spam, Promotions or All Mail, or a bounce ' +
     "is waiting in the sending mailbox. Say that it was accepted by the mail server, and that it cannot be recalled."
   );
@@ -3047,18 +3053,19 @@ async function generateImageTool({ prompt, name, aspect_ratio: aspectRatio, coun
   if (sexualImageRequest(text)) throw sexualImageRefusal();
   // Pictures are made through a Gemini key, which may train on the prompt, and a
   // prompt written here may carry what was read from Google (googleData.js).
+  // Which service makes the picture, and on whose key, is not the model's to repeat (owner, 2026-11-19).
   if (googleDataInScope()) {
     throw new Error(
-      'Pictures are made through a Google Gemini key, and this conversation holds data from the person\'s Google account, which is not sent there. Tell the user; a picture can be made in a new conversation.',
+      'Pictures cannot be made in a conversation that holds data from the person\'s Google account. Tell the user; a picture can be made in a new conversation.',
     );
   }
 
   const key = await getApiKey(userId, 'google');
   if (!key) {
+    // The setting the person adds is named, because they are the one who must add it.
     throw new Error(
       'Making pictures needs a Google API key, and this account has none. Tell the user to add one in ' +
-        'Settings → Providers → Google Gemini. Their OpenRouter key cannot do this — image models are not part of ' +
-        'that catalogue here.',
+        'Settings → Providers → Google Gemini.',
     );
   }
 
@@ -3067,7 +3074,11 @@ async function generateImageTool({ prompt, name, aspect_ratio: aspectRatio, coun
   const ai = new GoogleGenAI({ apiKey: key });
   const model = process.env.IMAGE_MODEL || IMAGE_MODEL;
 
-  const { images, usage, refusal } = await requestImages(ai, { model, prompt: text, count: wanted, aspectRatio });
+  // The image service's own error (its status, its words, its address) goes to the log; the
+  // model is told plainly (plainFailure.js). The Usage Policy refusal is this app's own sentence.
+  const { images, usage, refusal } = await requestImages(ai, { model, prompt: text, count: wanted, aspectRatio }).catch((err) => {
+    throw fromAService(err) ? plainFailure(err, { what: 'Making the picture', tool: 'generate_image' }) : err;
+  });
 
   /*
    * Booked, which it never was (CODE-024). One call makes up to four pictures on
@@ -3087,11 +3098,13 @@ async function generateImageTool({ prompt, name, aspect_ratio: aspectRatio, coun
 
   if (!images.length) {
     // A refusal is not an empty result, and reporting it as one would have the
-    // model try again with the same prompt.
+    // model try again with the same prompt. The image model's own words are not passed on, nor
+    // logged: they may quote the prompt, which is the person's.
+    if (refusal) log.info('generate_image: the image model declined', { chars: String(refusal).length });
     throw new Error(
       refusal
-        ? `Google declined to make that image: ${refusal}`
-        : 'Google returned no image and gave no reason. Try describing it differently.',
+        ? 'The image model declined to make that picture. Tell the user, and offer to describe it differently — without what it may have objected to.'
+        : 'No picture came back, and no reason was given. Try describing it differently.',
     );
   }
 
@@ -3473,8 +3486,21 @@ function paperLine(paper, i) {
   ].filter(Boolean).join('\n');
 }
 
-/** A standing-aside from server/firecrawl.js, said as what to do instead. */
-const firecrawlAside = (err, instead) => (err?.skip ? `Firecrawl is not available for this right now (${String(err.message).replace(/^firecrawl: /, '')}). ${instead}` : null);
+/**
+ * A standing-aside from server/firecrawl.js, said as what to do instead. Which service stood aside,
+ * and the share it keeps, stay in the log (owner, 2026-11-19); the model hears that this is not
+ * available, and when it is the allowance, that it can be tried again later.
+ */
+const firecrawlAside = (err, instead) => {
+  if (!err?.skip) return null;
+  log.info('firecrawl: stood aside', { reason: String(err.message).slice(0, 160) });
+  return /allowance|credit|share/i.test(String(err.message))
+    ? `This is not available right now: its allowance for this period is used, so try again later. ${instead}`
+    : `This is not available right now. ${instead}`;
+};
+
+/** A failure from the indexes or the site reader, said plainly (plainFailure.js); this app's own sentences pass as they are. */
+const indexFailure = (err, what, instead) => (fromAService(err) ? plainFailure(err, { what, instead, tool: 'firecrawl' }) : err);
 
 /**
  * research_index — Firecrawl's free indexes: about 43 million research paper abstracts
@@ -3495,7 +3521,7 @@ async function researchIndexTool({ op = 'papers', query, id, k, from, to, sort, 
       if (!asked) needs('a query');
       const rows = await researchPapers(asked, { k, from, to, sort, signal });
       if (!rows.length) return `No papers matched "${asked}". Try other words or a wider date range, or web_search.`;
-      return `Research papers for "${asked}" — ${rows.length} from Firecrawl's index of about 43 million abstracts:\n${untrusted('research paper abstracts', rows.map(paperLine).join('\n\n'))}\nRead one with op "read" and its id (with a question, to get the passages that answer it). Cite the links you use.`;
+      return `Research papers for "${asked}" — ${rows.length} found:\n${untrusted('research paper abstracts', rows.map(paperLine).join('\n\n'))}\nRead one with op "read" and its id (with a question, to get the passages that answer it). Cite the links you use.`;
     }
     if (op === 'read') {
       if (!paperId) needs('the id of a paper (from op "papers")');
@@ -3516,12 +3542,12 @@ async function researchIndexTool({ op = 'papers', query, id, k, from, to, sort, 
       const rows = await lawSearch(asked, { k, jurisdiction, signal });
       if (!rows.length) return `No US law matched "${asked}".`;
       const lines = rows.map((r, i) => `${i + 1}. ${clipText(r.title, 200)}\n   ${r.url}\n   ${clipText(r.description, 500)}`).join('\n\n');
-      return `US law for "${asked}" — ${rows.length} from Firecrawl's Government Index:\n${untrusted('statutes, regulations and court opinions', lines)}\nCheck the issuer, the jurisdiction and whether it is in force before relying on it; cite the links.`;
+      return `US law for "${asked}" — ${rows.length} found:\n${untrusted('statutes, regulations and court opinions', lines)}\nCheck the issuer, the jurisdiction and whether it is in force before relying on it; cite the links.`;
     }
   } catch (err) {
     const aside = firecrawlAside(err, 'Use web_search with category "research paper" instead.');
     if (aside) return aside;
-    throw err;
+    throw indexFailure(err, 'Searching research papers and law', 'use web_search with category "research paper" instead');
   }
   throw new Error('op is one of "papers", "read", "related" or "law".');
 }
@@ -3545,7 +3571,7 @@ async function sitePagesTool({ op = 'map', url, search: term, limit, include_pat
     throw new Error(`"${url}" is not a valid URL — give the site's address, e.g. https://example.com.`);
   }
   await assertPublic(parsed);
-  if (!firecrawlReady()) return 'Listing and crawling a site needs Firecrawl, which this deployment does not have. Use web_fetch on the pages instead.';
+  if (!firecrawlReady()) return 'Listing and crawling a site is not available on this server. Use web_fetch on the pages instead.';
   let hold = await holdSearch(userId, { service: 'firecrawl_more' });
   let billed = hold.billed && !hold.refused && hold.source !== 'none';
   if (hold.refused || (!billed && !(await mayMeter(userId)))) {
@@ -3601,7 +3627,7 @@ async function sitePagesTool({ op = 'map', url, search: term, limit, include_pat
   } catch (err) {
     const aside = firecrawlAside(err, 'Use web_fetch on the pages instead.');
     if (aside) return aside;
-    throw err;
+    throw indexFailure(err, "Listing and reading a site's pages", 'use web_fetch on the pages instead');
   } finally {
     await hold.settle(units);
   }
