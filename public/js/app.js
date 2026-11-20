@@ -20,6 +20,7 @@ import {
   markdownOf,
   fillBubble,
   sentFiles,
+  settleHeldDrawings,
 } from './render.js';
 import { pastedExcerpt, showStoredPasted } from './pasted.js';
 import { newestOnly } from './serial.js';
@@ -2254,10 +2255,12 @@ function resultsOf(messages) {
  *
  * @param live  the conversation is still answering: a call in its newest turn
  *   without a result is still running, not lost.
+ * @param open  its last turn is not over — answering, or waiting on an approval
+ *   or a question — so a drawing held back in it for its redraw stays held.
  * @returns the newest assistant turn drawn, with the id of its message — for a
  *   run of this tab that is still in it (`openChat`).
  */
-function drawTranscript(host, messages, { live = false } = {}) {
+function drawTranscript(host, messages, { live = false, open = live } = {}) {
   host.innerHTML = '';
   // The calls of a still-running turn that have no result yet — see `stream`.
   state.waitingCalls = new Map();
@@ -2293,6 +2296,8 @@ function drawTranscript(host, messages, { live = false } = {}) {
       if (i === newest) newestTurn = { turn, id: m.id };
     }
   });
+  // A drawing held back for a redraw that never came is shown, in every turn that is over.
+  settleHeldDrawings(host, { lastOpen: open });
   return newestTurn;
 }
 
@@ -2354,6 +2359,8 @@ function followBackground(id, seen) {
       followingChat = null;
       paintJump();
       setStatus(null);
+      // The run is over: a drawing it held back for a redraw that never came is shown.
+      settleHeldDrawings($('messages'));
       refreshChats({ background: true }).catch(() => {});
     }
   };
@@ -2583,7 +2590,7 @@ async function openChat(id, { restoring = false, inBot = false } = {}) {
    * than narrating the construction.
    */
   host.setAttribute('aria-busy', 'true');
-  const newestTurn = drawTranscript(host, messages, { live: !!running || !!background });
+  const newestTurn = drawTranscript(host, messages, { live: !!running || !!background, open: !!running || !!background || !!pendingApproval?.length || !!pendingQuestion });
   // A card suggesting connectors says where they stand now, not when it was drawn.
   refreshConnectorCards();
 
@@ -4351,6 +4358,14 @@ async function stream(decision, answers, { rejoin = null, chatId: target = null,
         }
       }
       for (const handle of run.toolHandles.values()) handle?.complete?.({ content: t('chat.cutOff'), isError: true });
+      /*
+       * The turn is over — done, stopped, failed or cut off past its reconnects — so a drawing
+       * held back for a redraw that never came is shown (render.js `settleHeldDrawings`). Over the
+       * whole transcript on screen, since a turn that waited on a question spans two runs; off
+       * screen, `openChat` draws it from the database and settles it there. Not another tab's
+       * run, which may still be going after the watch gave up.
+       */
+      if (!run.following) settleHeldDrawings(onScreen(run) ? $('messages') : run.stage);
     }
     run.toolHandles.clear();
     // The assistant has stopped touching the screen, so stop shipping frames of

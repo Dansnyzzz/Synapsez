@@ -1181,6 +1181,9 @@ export const en = {
   'step.show_widget.checking': 'Checking the drawing…',
   'step.show_widget.checked': 'Checked the drawing',
   'step.show_widget.redrawing': 'Checked the drawing — redrawing',
+  // Once its turn is over: a drawing came after it, or none did and it is shown as it was.
+  'step.show_widget.redrawn': 'Checked the drawing — drawn again',
+  'step.show_widget.shownAsDrawn': 'Checked the drawing — shown as drawn',
   'step.chart': 'Drew a chart',
   'step.calculate': 'Calculated',
   'step.world_facts': 'Looked up',

@@ -11,7 +11,7 @@
  * opened there. The owner of the conversation is simply taken to it.
  */
 import { t, applyI18n, currentLanguage } from './i18n.js';
-import { userMessage, assistantMessage } from './render.js';
+import { userMessage, assistantMessage, settleHeldDrawings } from './render.js';
 import { showStoredPasted } from './pasted.js';
 
 const $ = (id) => document.getElementById(id);
@@ -90,6 +90,8 @@ async function show() {
       turn.hydrate(m, results);
     }
   }
+  // A shared copy is finished: a drawing held back for a redraw that never came is shown.
+  settleHeldDrawings(thread);
   // Reading only: the copy and edit controls belong to the owner's app.
   for (const node of thread.querySelectorAll('.msg__action[data-act="edit"], .filecard__btn[data-no-open]')) node.remove();
   thread.setAttribute('aria-busy', 'false');

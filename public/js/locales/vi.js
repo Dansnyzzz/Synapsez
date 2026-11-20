@@ -599,6 +599,9 @@ export const vi = {
   'step.show_widget.checking': 'Đang kiểm tra hình vẽ…',
   'step.show_widget.checked': 'Đã kiểm tra hình vẽ',
   'step.show_widget.redrawing': 'Đã kiểm tra hình vẽ — vẽ lại',
+  // Khi lượt đã xong: có hình vẽ sau nó, hoặc không có và nó được hiện như đã vẽ.
+  'step.show_widget.redrawn': 'Đã kiểm tra hình vẽ — đã vẽ lại',
+  'step.show_widget.shownAsDrawn': 'Đã kiểm tra hình vẽ — hiện như đã vẽ',
   'step.chart': 'Vẽ biểu đồ',
   'step.calculate': 'Tính toán',
   'step.world_facts': 'Tra cứu thực tế',

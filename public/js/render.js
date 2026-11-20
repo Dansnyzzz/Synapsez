@@ -796,15 +796,70 @@ export function failedVerb(name) {
 
 // A hand-drawn picture's step says what is done to it (1.34.0, fix round 1): it is checked
 // before it is shown, and a first try with mistakes is held back while it is drawn again. While
-// it runs, "Checking the drawing…"; done, "Checked the drawing", or "… — redrawing" when it came
-// back with no picture, which only a held-back try does (server/tools/cloud.js). Null for a
-// `diagram`, `html` or a failure, which keep their own words. The same on a reload: a saved
-// turn's steps are drawn through the same start and complete.
-export function drawingStep(input, result) {
+// it runs, "Checking the drawing…"; done, "Checked the drawing", or "… — redrawing" for a try
+// held back (server/tools/cloud.js) until its turn settles it (final review, I2): "… — drawn
+// again" when a drawing was shown after it, "… — shown as drawn" when none was and it is shown
+// itself. Null for a `diagram`, `html` or a failure, which keep their own words. The same on a
+// reload: a saved turn's steps are drawn through the same start and complete.
+export function drawingStep(input, result, verdict = null) {
   if (typeof input?.svg !== 'string' || !input.svg.trim()) return null;
   if (!result) return 'step.show_widget.checking';
   if (result.isError) return null;
-  return result.widget ? 'step.show_widget.checked' : 'step.show_widget.redrawing';
+  if (result.widget && !result.widget.held) return 'step.show_widget.checked';
+  if (verdict === 'redrawn') return 'step.show_widget.redrawn';
+  if (verdict === 'shown') return 'step.show_widget.shownAsDrawn';
+  return 'step.show_widget.redrawing';
+}
+
+/*
+ * What becomes of each drawing held back for its redraw (final review, I2). `marks` is a page in
+ * order: 'user' for a message of the person's, which ends the turn before it; 'held' for a
+ * held-back drawing; 'shown' for one show_widget showed. A held drawing is 'redrawn' once a
+ * drawing is shown after it in its turn, and 'shown' itself when its turn ends with none; while
+ * the last turn is still going (`lastOpen`), its held drawings with none after them wait (null).
+ * A turn here is the person's: a carry-on, a reconnect or an answered question go on with it.
+ */
+export function heldVerdicts(marks, { lastOpen = false } = {}) {
+  const verdicts = marks.map(() => null);
+  let waiting = [];
+  const settle = (verdict) => {
+    for (const i of waiting) verdicts[i] = verdict;
+    waiting = [];
+  };
+  marks.forEach((mark, i) => {
+    if (mark === 'user') settle('shown');
+    else if (mark === 'held') waiting.push(i);
+    else if (mark === 'shown') settle('redrawn');
+  });
+  settle(lastOpen ? null : 'shown');
+  return verdicts;
+}
+
+// A held-back drawing's place on the page, and what its step does once its turn settles it.
+const HELD = new WeakMap();
+export function holdUntilSettled(node, settle) {
+  node.dataset.drawing = 'held';
+  HELD.set(node, settle);
+  return node;
+}
+
+/*
+ * Settle the held-back drawings under `root` whose turn is over: shown in their place, or gone
+ * behind the drawing that replaced them, the step saying which either way. Called when a turn ends
+ * by any road — done, stopped, failed, cut off (app.js `stream`), a background run finishing — and
+ * after a transcript is drawn, saved or shared, with `lastOpen` while its last turn still runs.
+ * Settling twice changes nothing.
+ */
+export function settleHeldDrawings(root, { lastOpen = false } = {}) {
+  const marks = [...(root?.querySelectorAll?.('.msg--user, [data-drawing]') || [])];
+  const verdicts = heldVerdicts(marks.map((node) => node.dataset?.drawing || 'user'), { lastOpen });
+  marks.forEach((node, i) => {
+    const settle = verdicts[i] ? HELD.get(node) : null;
+    if (!settle) return;
+    HELD.delete(node);
+    delete node.dataset.drawing;
+    settle(verdicts[i]);
+  });
 }
 
 export function describeStep(name, input = {}) {
@@ -1705,7 +1760,8 @@ export function widgetNode(widget, toolName = null) {
  * no markup — it is drawn from its data — so `markup` alone is not the test.
  */
 const drawable = (widget) =>
-  !!(widget && (widget.markup || ['map', 'images', 'card', 'connectors'].includes(widget.kind) || (widget.kind === 'market' && Array.isArray(widget.rows) && widget.rows.length > 0)));
+  // A drawing held back for its redraw waits for its turn to end (settleHeldDrawings).
+  !!(widget && !widget.held && (widget.markup || ['map', 'images', 'card', 'connectors'].includes(widget.kind) || (widget.kind === 'market' && Array.isArray(widget.rows) && widget.rows.length > 0)));
 
 /**
  * When a scheduled run fires next, in the zone it was set in.
@@ -3829,10 +3885,8 @@ export function assistantMessage() {
           else if (call.name === 'show_widget' && drawingStep(call.input, result)) verb = t(drawingStep(call.input, result));
           // A call on a file made before this page was opened: its result knows the name.
           if (call.input?.file_id && !call.input?.question && result.file?.name) detail = clip(result.file.name);
-          paintHead(
-            doneMark(call.name, !!result.isError),
-            result.ms != null ? `<span class="tool__time">${ms(result.ms)}</span>` : '',
-          );
+          const took = result.ms != null ? `<span class="tool__time">${ms(result.ms)}</span>` : '';
+          paintHead(doneMark(call.name, !!result.isError), took);
           // A question's answer is read here, and nowhere beside it: the bubble this
           // used to draw said the same thing a second time (owner, 2026-11-04).
           output.textContent = forDisplay(result.content) || t('chat.noOutput');
@@ -3877,7 +3931,25 @@ export function assistantMessage() {
            * something to open — it is already open, which is what makes it the
            * right shape for "here is what I found" rather than "here is a report".
            */
-          if (drawable(result.widget)) body.append(widgetNode(result.widget, result.name));
+          if (drawable(result.widget)) {
+            const drawn = widgetNode(result.widget, result.name);
+            // A drawing shown settles one held back before it in the turn (settleHeldDrawings).
+            if (call.name === 'show_widget') drawn.dataset.drawing = 'shown';
+            body.append(drawn);
+          } else if (call.name === 'show_widget' && !result.isError && result.widget?.held && result.widget.markup) {
+            // Held back for its redraw: kept here, out of sight, until its turn is over.
+            const place = el('div', 'widget-held');
+            place.hidden = true;
+            body.append(
+              holdUntilSettled(place, (verdict) => {
+                if (verdict === 'shown') place.replaceWith(widgetNode(result.widget, result.name));
+                else place.remove();
+                const said = drawingStep(call.input, result, verdict);
+                if (said) verb = t(said);
+                paintHead(doneMark(call.name, false), took);
+              }),
+            );
+          }
 
           /**
            * A schedule set up — or found already there — by this call.

@@ -1272,9 +1272,15 @@ async function showWidgetTool({ title, svg, html, diagram }, { userId = null, ch
   const caption = String(title || '').trim();
   if (!caption) throw new Error('Give the picture a short title, so it is labelled.');
 
-  const given = [diagram, svg, html].filter((v) => v !== undefined && v !== null && v !== '');
+  const present = (v) => v !== undefined && v !== null && v !== '';
+  // A `diagram` with no nodes beside an `svg` or `html` is an empty argument filled in, not a
+  // second picture: refusing it cost a step for nothing (final review, M3). Alone, it is still
+  // refused by validate.js, which says it needs nodes.
+  const boxes = Array.isArray(diagram?.nodes) && diagram.nodes.length > 0;
+  const plan = present(diagram) && (boxes || !(present(svg) || present(html))) ? diagram : undefined;
+  const given = [plan, svg, html].filter(present);
   if (given.length > 1) throw new Error('Give one of `diagram`, `svg` or `html`, not two: each is a different picture.');
-  if (diagram !== undefined && diagram !== null && diagram !== '') return showDiagram(caption, diagram, { userId, chatId });
+  if (present(plan)) return showDiagram(caption, plan, { userId, chatId });
 
   let markup = String(svg || html || '').trim();
   if (!markup) throw new Error('Give `diagram`, `svg` or `html` to draw.');
@@ -1336,6 +1342,13 @@ async function showWidgetTool({ title, svg, html, diagram }, { userId = null, ch
    * later try in that turn is shown and kept whatever the check says, whatever it is titled, so
    * nobody waits on a third; a later turn's drawing gets a check of its own. With no conversation
    * to count in — an automation, a bot's run — or no count to keep, it is shown at once, as before.
+   *
+   * The held try still travels on the step's widget, marked `held` (final review, I2): a model
+   * that never draws again — ignoring the ask, stopped, out of steps or time — left nothing on
+   * screen, worse than the flawed drawing this replaced. The page shows it once the person's
+   * turn is over with no drawing shown after it (`settleHeldDrawings` in render.js), live, on a
+   * reload and on a shared page alike. Never in `content`: the model does not pay for markup it
+   * is told to replace.
    */
   const tries = chatId ? await redrawTry(chatId, turnId) : 0;
   if (tries === 1) {
@@ -1345,6 +1358,7 @@ async function showWidgetTool({ title, svg, html, diagram }, { userId = null, ch
         ...listed,
         `Draw it again now with show_widget, fixed: ${REDRAW_FIXES} If it is boxes joined by arrows, send \`diagram\` instead of \`svg\`: Ephapse lays it out, so every arrow starts and ends on its box. The next try is shown whatever a check finds.`,
       ].join('\n'),
+      widget: { ...widget, held: true },
     };
   }
   if (tries > 1) {
@@ -1453,7 +1467,9 @@ async function showDiagram(caption, diagram, { userId, chatId }) {
     throw new Error(`This diagram comes to ${Math.round(markup.length / 1024)}KB drawn, over the ${MAX_WIDGET_BYTES / 1024}KB a picture in the conversation may be: shorten the lines in its boxes, or split it into two drawings.`);
   }
 
-  const check = checkDiagram(markup);
+  // Through the same guard as a hand drawing (final review, M2): should the check ever throw,
+  // a correct diagram is still shown rather than failing with a raw error.
+  const check = checkedDrawing(markup);
   if (check.issues.length) {
     log.warn('show_widget: a diagram Ephapse laid out has drawing problems', { problems: checkKinds(check.issues), direction: layout.direction, nodes: layout.nodes.length, edges: layout.edges.length });
   }

@@ -485,7 +485,10 @@ section('show_widget says what is wrong, and keeps a clean diagram as a file');
     const kept = async () => (await store.listGeneratedFiles(user.id, chat2)).length;
     const [turn1, turn2, turn3] = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
     const first = await show({ title: 'Đường đi của một câu hỏi', svg: OWNER_FLAWED }, turn1);
-    check('a flawed first svg in a turn comes back with no widget', first.widget === undefined && !('widget' in first), Object.keys(first).join(','));
+    // Final review, I2: the held try travels on the step, marked held, for the page to show if no
+    // drawing follows it in the turn; it was dropped, and a turn that never redrew showed nothing.
+    check('a flawed first svg in a turn comes back held: its widget marked so, for the page alone', first.widget?.held === true && first.widget.kind === 'svg' && first.widget.markup === OWNER_FLAWED.trim() && first.widget.title === 'Đường đi của một câu hỏi', JSON.stringify({ ...first.widget, markup: undefined }));
+    check('  its markup is never in what the model reads', !first.content.includes('<svg') && !first.content.includes('M480 130L530 130'), first.content.slice(0, 120));
     check('  and nothing kept', (await kept()) === 0);
     check('  the model is told what is wrong, that the user has not seen it, and to draw it again', /has not seen it/.test(first.content) && /points at nothing/.test(first.content) && /runs through the box "Tầng 1 — Ứng dụng"/.test(first.content) && /Draw it again now with show_widget, fixed/.test(first.content) && /next try is shown whatever/.test(first.content), first.content);
     check('  and pointed to `diagram` for boxes and arrows', /`diagram`/.test(first.content) && /instead of `svg`/.test(first.content), first.content);
@@ -494,18 +497,33 @@ section('show_widget says what is wrong, and keeps a clean diagram as a file');
     check('a `diagram` is never held back, and counts nothing', laidOut.widget?.kind === 'svg' && (await store.readCounter(counter(turn1))) === 1, laidOut.content);
     const before = await kept();
     const second = await show({ title: 'Một tên khác hẳn', svg: OWNER_FLAWED.replace('M480 130L530 130', 'M480 130L558 130') }, turn1);
-    check('the redraw is shown, though it was given another title', second.widget?.kind === 'svg' && second.widget.markup.includes('M480 130L558 130'), Object.keys(second).join(','));
+    check('the redraw is shown, though it was given another title', second.widget?.kind === 'svg' && second.widget.markup.includes('M480 130L558 130') && !second.widget.held, Object.keys(second).join(','));
     check('  and kept, whatever the check still finds', (await kept()) === before + 1 && /kept it as a file/.test(second.content));
     // Fix round 3: worded to be true of the redraw and of a different drawing later in the turn.
     check('  its content lists what is still wrong, and asks for no third try', /This drawing is shown as it is; a check finds these problems/.test(second.content) && !/redraw|still/.test(second.content) && /points at nothing/.test(second.content) && !/530, 130/.test(second.content) && /Do not draw it again/.test(second.content), second.content);
     const third = await show({ title: 'Một hình khác nữa', svg: OWNER_FLAWED }, turn1);
     check('  only one try a turn is ever held back: a third flawed drawing in it is shown, and the words fit it too', third.widget?.kind === 'svg' && /This drawing is shown as it is; a check finds these problems/.test(third.content) && !/redraw|still/.test(third.content));
     const nextTurn = await show({ title: 'Đường đi của một câu hỏi', svg: OWNER_FLAWED }, turn2);
-    check('a later turn\'s flawed drawing gets its own check, under any title', nextTurn.widget === undefined && (await store.readCounter(counter(turn2))) === 1);
+    check('a later turn\'s flawed drawing gets its own check, under any title', nextTurn.widget?.held === true && (await store.readCounter(counter(turn2))) === 1);
     const cleanFirst = await show({ title: 'Sạch', svg: CLEAN_DRAWN }, turn3);
-    check('a clean first svg is shown and kept at once, and counts nothing', cleanFirst.widget?.kind === 'svg' && /kept it as a file/.test(cleanFirst.content) && (await store.readCounter(counter(turn3))) === 0);
+    check('a clean first svg is shown and kept at once, and counts nothing', cleanFirst.widget?.kind === 'svg' && !cleanFirst.widget.held && /kept it as a file/.test(cleanFirst.content) && (await store.readCounter(counter(turn3))) === 0);
     const noTurn = await show({ title: 'Không lượt', svg: OWNER_FLAWED });
-    check('  with no turn to name, the conversation alone is counted', noTurn.widget === undefined && (await store.readCounter(counter(null))) === 1);
+    check('  with no turn to name, the conversation alone is counted', noTurn.widget?.held === true && (await store.readCounter(counter(null))) === 1);
+    // Only a hand drawing that failed its first check is ever marked held.
+    check('  nothing shown at once is marked held: not a diagram, not a redraw, not a drawing with no conversation', [laidOut, second, third, cleanFirst, bad, flawedAway].every((r) => r.widget && !('held' in r.widget)));
+
+    // Through the agent's own road (execute.js), the held mark reaches the step's result, which the
+    // transcript stores and a share publishes, and the model's text stays without the markup.
+    const { executeTool } = await import('../server/tools/execute.js');
+    const viaTurn = crypto.randomUUID();
+    const heldVia = await executeTool({ user, name: 'show_widget', input: { title: 'Qua công cụ', svg: OWNER_FLAWED }, chatId: chat2, turnId: viaTurn });
+    check('through executeTool the held drawing is on the result, marked, and not in its content', heldVia.isError === false && heldVia.widget?.held === true && heldVia.widget.markup === OWNER_FLAWED.trim() && !heldVia.content.includes('<svg'), JSON.stringify({ isError: heldVia.isError, held: heldVia.widget?.held }));
+    const { publicTranscript } = await import('../server/routes/chatShare.js');
+    const shared = publicTranscript([
+      { id: 'a1', role: 'assistant', text: '', toolCalls: [{ id: 'c1', name: 'show_widget', input: { title: 'x', svg: OWNER_FLAWED } }] },
+      { id: 't1', role: 'tool', results: [{ toolCallId: 'c1', name: 'show_widget', content: heldVia.content, isError: false, widget: heldVia.widget }] },
+    ]);
+    check('  and a shared copy of the conversation carries it, held, for the shared page to settle', shared[1]?.results?.[0]?.widget?.held === true && shared[1].results[0].widget.markup === OWNER_FLAWED.trim(), JSON.stringify(shared[1]?.results?.[0] || {}).slice(0, 160));
     // With the count unkept — the store failing — the drawing is shown at once, as before the
     // redraw existed, rather than the call failing; nothing flawed is kept.
     const realAdd = store.addToCounter;
@@ -542,6 +560,56 @@ section('show_widget says what is wrong, and keeps a clean diagram as a file');
         viWords['step.show_widget.checked'] === 'Đã kiểm tra hình vẽ' && enWords['step.show_widget.checked'] === 'Checked the drawing' &&
         viWords['step.show_widget.redrawing'] === 'Đã kiểm tra hình vẽ — vẽ lại' && enWords['step.show_widget.redrawing'] === 'Checked the drawing — redrawing',
     );
+
+    // Final review, I2: a held drawing is shown once its turn ends with no drawing shown after it,
+    // by any road the turn ends, live, reloaded or shared; the step ends in words that are done.
+    const { heldVerdicts, holdUntilSettled, settleHeldDrawings } = await import('../public/js/render.js');
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    check('a held drawing with none shown after it in its turn is shown when the turn is over', same(heldVerdicts(['user', 'held']), [null, 'shown']));
+    check('  one with a drawing shown after it in the turn is the redraw\'s, and stays out of sight', same(heldVerdicts(['user', 'held', 'shown']), [null, 'redrawn', null]));
+    check('  while the last turn still runs, it waits; a drawing shown after it settles it even then', same(heldVerdicts(['user', 'held'], { lastOpen: true }), [null, null]) && same(heldVerdicts(['user', 'held', 'shown'], { lastOpen: true }), [null, 'redrawn', null]));
+    check('  a drawing shown before it, or in the next turn, does not count', same(heldVerdicts(['user', 'shown', 'held', 'user', 'shown']), [null, null, 'shown', null, null]));
+    check('  a turn that ended earlier is settled however the last one stands', same(heldVerdicts(['user', 'held', 'user', 'held'], { lastOpen: true }), [null, 'shown', null, null]));
+    // Two held in one person's turn (a carry-on or a reconnect starts a new count on the server):
+    // neither has a drawing shown after it, so both are shown — nothing the model drew is lost.
+    check('  two held across a carry-on with nothing shown after: both are shown', same(heldVerdicts(['user', 'held', 'held']), [null, 'shown', 'shown']));
+    check('  and a page with no person\'s message yet is one turn', same(heldVerdicts(['held']), ['shown']) && same(heldVerdicts([]), []));
+
+    // The page's half, over stand-ins for its nodes: what a step does when its turn settles it.
+    const node = (drawing) => ({ dataset: drawing ? { drawing } : {} });
+    const settled = [];
+    const heldA = holdUntilSettled(node(), (v) => settled.push(`A:${v}`));
+    const heldB = holdUntilSettled(node(), (v) => settled.push(`B:${v}`));
+    const heldC = holdUntilSettled(node(), (v) => settled.push(`C:${v}`));
+    const page1 = [node(), heldA, node('shown'), node(), heldB, node(), heldC];
+    const root = { querySelectorAll: (sel) => (sel === '.msg--user, [data-drawing]' ? page1 : []) };
+    check('holdUntilSettled marks the place held', heldA.dataset.drawing === 'held');
+    settleHeldDrawings(root, { lastOpen: true });
+    check('  settled over the page: redrawn, shown, and the running turn\'s left waiting', same(settled, ['A:redrawn', 'B:shown']) && heldC.dataset.drawing === 'held' && !('drawing' in heldA.dataset), settled.join(','));
+    settleHeldDrawings(root);
+    settleHeldDrawings(root);
+    check('  when that turn ends too it is shown, and settling again changes nothing', same(settled, ['A:redrawn', 'B:shown', 'C:shown']), settled.join(','));
+    check('  nothing to settle on no page at all', (() => { try { settleHeldDrawings(null); settleHeldDrawings({}); return true; } catch { return false; } })());
+
+    const heldResult = { content: first.content, widget: first.widget };
+    check(
+      'the held step\'s words: redrawing while it waits, then drawn again or shown as drawn',
+      drawingStep(svgIn, heldResult) === 'step.show_widget.redrawing' && drawingStep(svgIn, heldResult, 'redrawn') === 'step.show_widget.redrawn' && drawingStep(svgIn, heldResult, 'shown') === 'step.show_widget.shownAsDrawn' && drawingStep(svgIn, second, 'shown') === 'step.show_widget.checked',
+    );
+    check(
+      '  in both languages',
+      viWords['step.show_widget.redrawn'] === 'Đã kiểm tra hình vẽ — đã vẽ lại' && enWords['step.show_widget.redrawn'] === 'Checked the drawing — drawn again' &&
+        viWords['step.show_widget.shownAsDrawn'] === 'Đã kiểm tra hình vẽ — hiện như đã vẽ' && enWords['step.show_widget.shownAsDrawn'] === 'Checked the drawing — shown as drawn',
+    );
+    // Where the page code does it, read from the code: nothing else draws a held widget, the step
+    // keeps its place, and every road a turn ends by settles it.
+    const app = fsMod.readFileSync(new URL('../public/js/app.js', import.meta.url), 'utf8');
+    const shareView = fsMod.readFileSync(new URL('../public/js/share-view.js', import.meta.url), 'utf8');
+    check('  a held widget is never drawable at once, wherever a result is drawn', /const drawable = \(widget\) =>[^;]*!widget\.held/.test(page));
+    check('  the step keeps it in place, held, and a drawing show_widget shows is marked as shown', /holdUntilSettled\(place, \(verdict\) =>/.test(page) && /if \(call\.name === 'show_widget'\) drawn\.dataset\.drawing = 'shown';/.test(page) && /result\.widget\?\.held && result\.widget\.markup/.test(page));
+    check('  settled when a turn ends by any road (done, stopped, failed, cut off), not while it waits on the person', /if \(ended !== 'waiting'\) \{[\s\S]*?if \(!run\.following\) settleHeldDrawings\(onScreen\(run\) \? \$\('messages'\) : run\.stage\);\s*\}/.test(app));
+    check('  on a reload, with the last turn left waiting while it runs or waits on an approval or a question', /settleHeldDrawings\(host, \{ lastOpen: open \}\);\s*return newestTurn;/.test(app) && /open: !!running \|\| !!background \|\| !!pendingApproval\?\.length \|\| !!pendingQuestion/.test(app));
+    check('  when a background run is seen to end, and on a shared page', /refreshChats\(\{ background: true \}\)/.test(app) && /\/\/ The run is over: a drawing it held back[^\n]*\n\s*settleHeldDrawings\(\$\('messages'\)\);/.test(app) && /settleHeldDrawings\(thread\);/.test(shareView));
   }
   const good = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Luồng: đặt / giao', svg: '<svg viewBox="0 0 200 100"><rect x="10" y="10" width="180" height="40" fill="#e8f0fe"/><text x="100" y="35" text-anchor="middle" font-size="14" fill="#1d2733">Đặt hàng</text></svg>' }, { userId: user.id, chatId });
   const files = await store.listGeneratedFiles(user.id, chatId);
@@ -576,6 +644,12 @@ section('show_widget says what is wrong, and keeps a clean diagram as a file');
   check('  and the model is told which way it was laid out, not to redraw it', /laid out (left to right|top to bottom)/.test(drawn.content) && !/draw it again|problems/i.test(drawn.content), drawn.content);
   const dark = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Tối', diagram: { ...pipeline, theme: 'dark' } }, { userId: user.id, chatId });
   check('a dark diagram is for a dark canvas, and the check reads it so', dark.widget.canvas === 'dark' && checkDiagram(dark.widget.markup).canvas === 'dark' && checkDiagram(dark.widget.markup).issues.length === 0);
+  // Final review, M2: the check on a diagram goes through the guard a hand drawing's does, so a
+  // fault in it shows the diagram unchecked rather than failing the call. The check is written
+  // never to throw, so no input here can make it; the code is read instead.
+  const cloudCode = (await import('node:fs')).readFileSync(new URL('../server/tools/cloud.js', import.meta.url), 'utf8');
+  const diagramCode = cloudCode.slice(cloudCode.indexOf('async function showDiagram'), cloudCode.indexOf('\n}\n', cloudCode.indexOf('async function showDiagram')));
+  check('  a diagram\'s check goes through checkedDrawing, which logs a fault and shows it unchecked', /const check = checkedDrawing\(markup\);/.test(diagramCode) && !/checkDiagram\(/.test(diagramCode) && /function checkedDrawing\(markup\) \{\s*try \{\s*return checkDiagram\(markup\);\s*\} catch/.test(cloudCode));
   const unsaved = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Không lưu', diagram: pipeline }, {});
   check('with no account it is drawn and not kept', unsaved.widget?.markup?.startsWith('<svg') && !/kept it as a file/.test(unsaved.content));
 
@@ -586,6 +660,19 @@ section('show_widget says what is wrong, and keeps a clean diagram as a file');
   check('  and nothing is kept', (await store.listGeneratedFiles(user.id, chatId)).length === before + 2);
   const two = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Hai', diagram: pipeline, svg: '<svg></svg>' }, {}).then(() => null, (err) => err.message);
   check('a diagram with an svg as well is refused: one picture at a time', /one of `diagram`, `svg` or `html`/.test(two || ''), two);
+  // Final review, M3: an empty `diagram` filled in beside the drawing is not a second picture.
+  const cleanSvg = '<svg viewBox="0 0 200 100"><rect x="10" y="10" width="180" height="40" fill="#e8f0fe"/><text x="100" y="35" text-anchor="middle" font-size="14" fill="#1d2733">Đặt hàng</text></svg>';
+  const emptyBeside = [];
+  for (const empty of [{}, { nodes: [] }, { direction: 'auto', edges: [] }, 'x', 0, []]) {
+    const out = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Một hình', diagram: empty, svg: cleanSvg }, {}).then((r) => r, (err) => ({ failed: err.message }));
+    if (out.widget?.markup !== cleanSvg) emptyBeside.push(`${JSON.stringify(empty)}: ${out.failed || 'not drawn'}`);
+  }
+  const htmlBeside = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Một bảng', diagram: {}, html: '<p>Bảng</p>' }, {}).then((r) => r.widget?.kind, (err) => err.message);
+  check('  a diagram with no nodes beside an svg or html is no diagram: the drawing is drawn', emptyBeside.length === 0 && htmlBeside === 'html', [...emptyBeside, htmlBeside].join(' | '));
+  const emptyAlone = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Trống', diagram: {} }, {}).then(() => null, (err) => err.message);
+  check('  alone, an empty diagram is still refused for having no nodes', /needs nodes/.test(emptyAlone || ''), emptyAlone);
+  const realBeside = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Hai', diagram: { nodes: [{ id: 'a', title: 'A' }] }, svg: cleanSvg }, {}).then(() => null, (err) => err.message);
+  check('  one with nodes beside an svg is still two pictures', /one of `diagram`, `svg` or `html`/.test(realBeside || ''), realBeside);
   const none = await CLOUD_IMPLEMENTATIONS.show_widget({ title: 'Trống' }, {}).then(() => null, (err) => err.message);
   check('  and nothing at all names all three', /`diagram`, `svg` or `html`/.test(none || ''), none);
   const wall = 'Định tuyến mô hình theo chi phí và độ trễ cho từng yêu cầu của người dùng cuối nhé'.slice(0, 80);
