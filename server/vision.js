@@ -282,15 +282,17 @@ export async function see({ userId, chatId = null, images = [], pdf = null, ques
    */
   if (ocrText) {
     return {
+      // Only the words, and said so — not which engine read them, nor that a model was tried first (fix round 1, I2).
       text:
-        'Text found in it by OCR (words only — layout, pictures and charts were not described' +
-        `${failures.length ? '; no vision model could be reached' : ''}` +
+        'Only the words in it could be read (layout, pictures and charts are not described' +
         `${lowConfidence ? '; parts were hard to read, so treat unusual words and figures with care' : ''}):\n\n${ocrText}`,
       model: 'Tesseract OCR',
     };
   }
   failures.push(ocrError ? `OCR: ${ocrError}` : 'OCR: no text in it');
-  throw new Error(`None of the models that can see could read it — ${failures.join('; ')}`);
+  // Which models were borrowed, and what each provider said, are the log's (fix round 1, I2).
+  log.warn('vision: nothing could read it', { failures: failures.join('; ').slice(0, 600) });
+  throw new Error('The picture could not be read just now. Try again in a moment, or ask the user what it shows.');
 }
 
 /**
@@ -327,9 +329,9 @@ export async function ocrPages(pages, { ocr = ocrImage, signal } = {}) {
  * cannot see the file rather than being told nothing.
  *
  * @param {{ userId: string, chatId?: string|null, loaded: Map<string, any>, vision: boolean,
- *   documents: boolean, signal?: AbortSignal, onLooking?: (row: any) => void }} input
+ *   documents: boolean, signal?: AbortSignal, onLooking?: (row: any) => void, look?: typeof see }} input
  */
-export async function lendEyes({ userId, chatId = null, loaded, vision, documents, signal, onLooking = () => {} }) {
+export async function lendEyes({ userId, chatId = null, loaded, vision, documents, signal, onLooking = () => {}, look = see }) {
   if (vision && documents) return;
   for (const row of loaded.values()) {
     const blindImage = row.kind === 'image' && !vision;
@@ -347,7 +349,7 @@ export async function lendEyes({ userId, chatId = null, loaded, vision, document
           onLooking(row);
           const words = await ocrPages(row.pageImages, { signal }).catch(() => '');
           if (words) {
-            row.vision_text = `[read by Tesseract OCR — words only, check against the pages]\n${words}`;
+            row.vision_text = `[the words on the pages, read automatically — check them against the pages]\n${words}`;
             await getStore().setAttachmentVisionText(userId, row.id, row.vision_text).catch(() => {});
           }
         }
@@ -359,14 +361,17 @@ export async function lendEyes({ userId, chatId = null, loaded, vision, document
 
     onLooking(row);
     try {
-      const { text, model } = await see({
+      // `look`: the suite's eyes in place of see(), as readPicture and look_at take theirs.
+      const { text, model } = await look({
         userId,
         chatId,
         images: blindImage ? [{ mime: row.mime, data: row.data, name: row.name }] : [],
         pdf: blindImage ? null : { data: row.data, name: row.name },
         signal,
       });
-      row.vision_text = `[read by ${model}]\n${text}`;
+      // Not which model read it: one the person did not pick may have (fix round 1, I2).
+      log.info('vision: read for a model that cannot see', { model });
+      row.vision_text = `[read from the picture — the text may contain mistakes]\n${text}`;
       await getStore().setAttachmentVisionText(userId, row.id, row.vision_text).catch(() => {});
     } catch (err) {
       if (signal?.aborted) throw err;

@@ -27,6 +27,7 @@ import { sourceLabel } from '../finance/http.js';
  */
 
 import { REFERENCE_SOURCES } from './references.js';
+import { log } from '../util/trace.js';
 
 const UA = 'Ephapse/1.0 (+https://www.ephapse.net)';
 
@@ -294,7 +295,9 @@ async function convertUnitsTool({ value, from, to }, context = {}) {
     const amount = Number(value);
     if (!Number.isFinite(amount)) throw new Error('Give the value as a number.');
     const money = await convertMoney(amount, a, b, { signal: context.signal || null }).catch((err) => {
-      throw new Error(`There is no rate from ${a} to ${b} today: ${err?.message || err}`);
+      // Which rate sources were asked, and what each said, is the log's (fix round 1, I1).
+      log.info('convert_units: no rate', { from: a, to: b, error: String(err?.message || err).slice(0, 300) });
+      throw new Error(`There is no rate from ${a} to ${b} right now. Try again later, or say the rate could not be fetched.`);
     });
     return (
       `${fmt(amount)} ${a} = ${fmt(Number(money.value.toPrecision(12)))} ${b} ` +
@@ -456,11 +459,12 @@ async function geocode(name, signal) {
     }
   }
   if (failure) {
-    // Overpass's own refusal already says "did not answer"; its reason is what goes in the brackets.
-    const why = (failure.cause instanceof Error ? failure.cause.message : failure.message).replace(/\.$/, '');
-    throw new Error(`OpenStreetMap's place search did not answer (${why}), so "${text}" could not be checked. Try again in a moment.`);
+    // The map service's own reason is the operator's, in the log; the model hears that the search
+    // did not answer, which is all it can act on (owner, 2026-11-19).
+    log.warn('place_lookup: the map service did not answer', { error: String(failure.cause instanceof Error ? failure.cause.message : failure.message).slice(0, 200) });
+    throw new Error(`The map's place search did not answer, so "${text}" could not be checked. Try again in a moment.`);
   }
-  throw new Error(`No place called "${text}" was found on OpenStreetMap. Try its street address, or a bigger landmark near it.`);
+  throw new Error(`No place called "${text}" was found on the map. Try its street address, or a bigger landmark near it.`);
 }
 
 /**
@@ -616,7 +620,7 @@ export const __places = {
 async function overpass(query, signal) {
   if (Date.now() < overpassRestsUntil) {
     // The reason is the cause, so a message built around this one does not say "did not answer" twice.
-    throw new Error("OpenStreetMap's place search did not answer (it failed a moment ago and is being rested). Try again in a moment.", {
+    throw new Error("The map's place search did not answer. Try again in a moment.", {
       cause: new Error('it failed a moment ago and is being rested'),
     });
   }
@@ -691,7 +695,7 @@ async function overpass(query, signal) {
      * send everybody else's searches to the fallback for three minutes.
      */
     if (overloaded) overpassRestsUntil = Date.now() + (down ? timing.rest : timing.slowRest);
-    throw new Error(`OpenStreetMap's place search did not answer (${last?.message || 'no reply'}). Try again in a moment.`, { cause: last });
+    throw new Error("The map's place search did not answer. Try again in a moment.", { cause: last });
   } finally {
     // The slower server is not left working on an answer nobody will read.
     for (const own of asking) own.abort();
@@ -795,7 +799,8 @@ async function placesAround(center, want, radius, limit, signal, state) {
   } catch (err) {
     if (signal?.aborted) throw err;
     const why = (state.overpassFailed?.cause instanceof Error ? state.overpassFailed.cause.message : state.overpassFailed?.message || '').replace(/\.$/, '');
-    throw new Error(`OpenStreetMap's place search did not answer${why ? ` (${why})` : ''}, and neither did its address search (${String(err?.message || err).replace(/\.$/, '')}). Try again in a moment, or web_search for the places.`);
+    log.warn('place_lookup: neither map search answered', { places: why.slice(0, 160), addresses: String(err?.message || err).slice(0, 160) });
+    throw new Error("The map's place search did not answer. Try again in a moment, or web_search for the places.");
   }
 }
 
@@ -930,7 +935,7 @@ async function nearbyTool({ what, near, radius, limit }, { whereabouts = null, s
     // and the model told both, so it does not report "near the city hall" when it was asked about a district.
     const asked = shortName(near) || shortName(p.name);
     center = { lat: p.lat, lon: p.lon, label: asked };
-    where = shortName(p.name).toLowerCase() === asked.toLowerCase() ? `around ${p.name}` : `around ${asked} (OpenStreetMap places it at ${p.name})`;
+    where = shortName(p.name).toLowerCase() === asked.toLowerCase() ? `around ${p.name}` : `around ${asked} (the map places it at ${p.name})`;
   } else {
     throw new Error('Where should I look? Name a place or an address in `near` — the person\'s location is not known here.');
   }
@@ -976,13 +981,14 @@ async function nearbyTool({ what, near, radius, limit }, { whereabouts = null, s
   } else {
     found = await search({ tags: tags || [], name: free || undefined });
   }
-  // Said by the app, after the envelope: where these came from when Overpass did not answer.
-  const source = state.fallback
-    ? "Source: OpenStreetMap, through its address search (Nominatim) — its place search (Overpass) did not answer, and the address search knows fewer small shops, so some may be missing. "
-    : 'Source: OpenStreetMap. ';
+  // Said by the app, after the envelope: that some may be missing when Overpass did not answer. Which
+  // map services were asked is the log's, not the model's (owner, 2026-11-19); the map on screen
+  // still credits its data, as its licence asks.
+  if (state.fallback) log.info('place_lookup: places from the address search', { error: String(state.overpassFailed?.message || '').slice(0, 160) });
+  const source = state.fallback ? 'Some small shops may be missing from this list. ' : '';
   const label = kind?.label || (dish ? `places for ${dish[1]}` : `places named like "${free}"`);
   if (!found.length) {
-    return `No ${label} are listed on OpenStreetMap within ${metres(span)} ${where}. OpenStreetMap is thinner on small shops in some cities${state.fallback ? ', and its place search did not answer, so only its address search was asked' : ''} — web_search can find more.`;
+    return `No ${label} are listed on the map within ${metres(span)} ${where}. The map is thinner on small shops in some cities — web_search can find more.`;
   }
 
   const lines = found.map(
@@ -991,11 +997,11 @@ async function nearbyTool({ what, near, radius, limit }, { whereabouts = null, s
       `${p.address ? `; ${p.address}` : ''}${p.hours ? `; hours ${p.hours}` : ''}${p.phone ? `; ${p.phone}` : ''}${p.website ? `; ${p.website}` : ''}`,
   );
   return {
-    // What OpenStreetMap said — anyone's to edit, so enveloped (EXTERNAL_OUTPUT).
+    // What the map's data said — anyone's to edit, so enveloped (EXTERNAL_OUTPUT).
     content: `${note}${found.length} ${label} within ${metres(span)} ${where}, nearest first:\n${lines.join('\n')}`,
     // What this app says about it — outside the envelope, where it is not read as the page's (execute.js).
     note:
-      `${source}A map with these places numbered is shown to the user. OpenStreetMap lists places, not ratings or reviews — ` +
+      `${source}A map with these places numbered is shown to the user. The map lists places, not ratings or reviews — ` +
       'if they want the best-rated, web_search the names. Do not repeat the whole list; pick out what answers them.',
     widget: {
       kind: 'map',
@@ -1057,8 +1063,8 @@ async function placeLookupTool({ op, place, from, to, mode, what, near, radius, 
       if (isKindOfPlace(place)) return await nearbyTool({ what: place }, ctx);
       const p = await geocode(place, signal);
       return {
-        content: `${p.name} (${p.kind}) — lat ${round(p.lat, 5)}, lon ${round(p.lon, 5)}. Map: https://www.openstreetmap.org/?mlat=${p.lat}&mlon=${p.lon}#map=14/${p.lat}/${p.lon}`,
-        note: 'Source: OpenStreetMap. A map is shown to the user.',
+        content: `${p.name} (${p.kind}) — lat ${round(p.lat, 5)}, lon ${round(p.lon, 5)}.`,
+        note: 'A map is shown to the user.',
         widget: { kind: 'map', title: shortName(p.name), points: [{ lat: p.lat, lon: p.lon, label: shortName(p.name), detail: p.name }] },
       };
     }
@@ -1083,7 +1089,7 @@ async function placeLookupTool({ op, place, from, to, mode, what, near, radius, 
       }
       return {
         content: `${a.name} → ${b.name}: ${fmt(round(straight, 1))} km in a straight line.${road}`,
-        note: 'Source: OpenStreetMap / OSRM. A map with the route is shown to the user.',
+        note: 'A map with the route is shown to the user.',
         widget: {
           kind: 'map',
           title: `${shortName(a.name)} → ${shortName(b.name)}`,
@@ -1099,7 +1105,7 @@ async function placeLookupTool({ op, place, from, to, mode, what, near, radius, 
   } catch (err) {
     // The request's own budget ran out — not the person's Stop, which ends the turn anyway.
     if (signal.aborted && !context.signal?.aborted) {
-      throw new Error('OpenStreetMap took too long to answer, so this was stopped. Try again in a moment, or a smaller area.');
+      throw new Error('The map took too long to answer, so this was stopped. Try again in a moment, or a smaller area.');
     }
     throw err;
   }

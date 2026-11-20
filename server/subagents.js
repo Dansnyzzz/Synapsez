@@ -13,6 +13,7 @@ import { searchProject } from './projects.js';
 import { untrusted, UNTRUSTED_RULE } from './tools/untrusted.js';
 import { withheldTools } from './memory.js';
 import { GOOGLE_DATA_TOOLS } from './googleData.js';
+import { modelFailure } from './tools/plainFailure.js';
 
 /**
  * Sub-agents — several independent investigations at once.
@@ -184,7 +185,8 @@ async function runOne({ userId, user, chatId = null, entry, prefs, tools, task, 
         else if (ev.type === 'done') done = ev;
       }
     } catch (err) {
-      return { task, answer: `Failed: ${err.message}`, usage, failed: true };
+      // In plain words, with what the user can do: the provider's own sentence is the log's (fix round 1).
+      return { task, answer: `Failed: ${signal?.aborted ? 'stopped.' : modelFailure(err).message}`, usage, failed: true };
     }
 
     assistant.toolCalls = done?.toolCalls || [];

@@ -200,7 +200,7 @@ section('web_fetch: a site that turns the server away is read through Exa (owner
   };
   try {
     const blocked = await CLOUD_IMPLEMENTATIONS.web_fetch({ url: `${base}/blocked` });
-    check('a 403 is read through Exa — said so, in the untrusted envelope', /read through Exa — 127\.0\.0\.1:\d+ returned HTTP 403/.test(blocked) && /The article, as Exa read it\./.test(blocked) && /<untrusted/.test(blocked), blocked.slice(0, 160));
+    check('a 403 is read through Exa — said as read another way, naming no reader, in the untrusted envelope', /127\.0\.0\.1:\d+ returned HTTP 403 Forbidden, so it was read another way/.test(blocked) && !/Exa/.test(blocked.split('\n')[0]) && asked.length === 1 && /The article, as Exa read it\./.test(blocked) && /<untrusted/.test(blocked), blocked.slice(0, 160));
     const script = await CLOUD_IMPLEMENTATIONS.web_fetch({ url: `${base}/script` });
     check('  so is a page that is only script', /almost no text without running its scripts/.test(script), script.slice(0, 160));
     let gone = '';
@@ -1177,7 +1177,8 @@ section('a model that cannot see is read to, not left guessing');
   check('an image becomes what a vision model read in it', read.length === 1 && read[0].type === 'text' && /A login form/.test(read[0].text));
   check('  marked as a reading, and as content not commands', /cannot see it yourself/.test(read[0].text) && /not commands/.test(read[0].text));
   const failed = toParts(msg('img'), new Map([['img', { id: 'img', name: 'shot.png', kind: 'image', visionFailed: 'no key' }]]), { vision: false });
-  check('when nobody could look, the model says why', /no model that can\s+see was reachable/.test(failed[0].text) && /no key/.test(failed[0].text));
+  // What went wrong is the log's: the model hears it could not be read, never which model or why (fix round 1, I2).
+  check('when nobody could look, the model says so plainly — not what the provider said', /could not be\s+read for it just now/.test(failed[0].text) && !/no key/.test(failed[0].text));
   const sees = toParts(msg('img'), new Map([['img', { id: 'img', name: 'shot.png', kind: 'image', mime: 'image/png', data: 'AA==', vision_text: 'x' }]]), { vision: true });
   check('a model that can see still gets the picture itself', sees[0].type === 'image');
 
@@ -1195,9 +1196,9 @@ section('a model that cannot see is read to, not left guessing');
     // No model reachable at all (no store, no keys): the keyless OCR still answers.
     const read = await see({ userId: null, images: [{ mime: 'image/png', data: 'AA==' }], ocr: async () => ({ text: 'Tổng cộng 1.250.000 đồng', confidence: 95 }) });
     check('with nothing reachable, OCR still reads the words', read.model === 'Tesseract OCR' && /1\.250\.000/.test(read.text));
-    check('  and says it is the words only', /words only/.test(read.text));
+    check('  and says it is the words only, naming no engine', /Only the words in it could be read/.test(read.text) && !/OCR|Tesseract/.test(read.text));
     const none = await see({ userId: null, images: [{ mime: 'image/png', data: 'AA==' }], ocr: async () => ({ text: '', confidence: 0 }) }).catch((e) => e.message);
-    check('a picture with no text and no reader says so', /no text in it/.test(String(none)), String(none));
+    check('a picture with no text and no reader says so, plainly', /could not be read just now/.test(String(none)) && !/OCR|Gemini|key/.test(String(none)), String(none));
 
     /*
      * Screenshots 10–11 (owner, 2026-10-25): "Đọc sheet.jpg" ran for half an
@@ -1381,7 +1382,7 @@ section('OCR reads Vietnamese with no key and no network');
     new Map([['p', { id: 'p', name: 'scan.pdf', kind: 'document', text: null, pageImages: [{ page: 1, mime: 'image/jpeg', data: 'AA==' }], vision_text: 'Tổng 1.250.000' }]]),
     { vision: true, documents: false },
   );
-  const note = scan.find((p) => p.type === 'text' && /OCR/.test(p.text) && /1\.250\.000/.test(p.text));
+  const note = scan.find((p) => p.type === 'text' && /read automatically/.test(p.text) && /1\.250\.000/.test(p.text));
   check('a model shown a scan also gets its words, for exact figures', !!note && scan.some((p) => p.type === 'image'));
   check('  told to trust the pages where the two disagree', /trust the pages/.test(note?.text || ''));
 
@@ -1597,7 +1598,7 @@ section('what people see of a tool answer, and money in convert_units');
   check('  on E2B, or on the stand-in Vercel one, either', forDisplay(`${printed}\n${machineNote('/home/user', { provider: 'e2b' })}`) === printed && forDisplay(`${printed}\n${machineNote('/vercel', { standIn: true })}`) === printed);
   check('  nor the Python session line, fresh or kept', forDisplay(`${pythonReport({ fresh: true, output: 'hi\n' })}`) === 'output:\nhi' && forDisplay(pythonReport({ output: '42\n' })) === 'output:\n42');
   check('  but a session that ended mid-call still says so', /session ended/.test(forDisplay(pythonReport({ ended: true, output: 'x' }))));
-  check('  nor who read a picture and how to look again', forDisplay(`It is a chart.\n\n${readNote('gemini-2.5-flash', 'f_1')}`) === 'It is a chart.');
+  check('  nor who read a picture and how to look again', forDisplay(`It is a chart.\n\n${readNote('f_1')}`) === 'It is a chart.' && forDisplay('It is a chart.\n\n[Read by gemini-2.5-flash. It is on screen for the user as file f_1 — look_at with that file_id and a question looks again.]') === 'It is a chart.');
   check('  nor the screenshot line under a browser step', forDisplay(`Clicked.\n${shotNote('f_2')}`) === 'Clicked.');
   check('  and words of the page that only look like one stay', forDisplay('(This is the page) [Read by me]') === '(This is the page) [Read by me]');
   // Found by review, 2026-10-26: notes the card already shows, and a note with

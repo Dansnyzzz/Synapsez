@@ -745,9 +745,12 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
   const chain = cooledChain(searchChain());
 
   if (!chain.length) {
+    // The settings that would fix it are the operator's to read, in the log; the model is told
+    // only what it can act on, and nothing of which services search here (owner, 2026-11-19).
+    log.warn('search: no engine can run — set EXA_API_KEY or TAVILY_API_KEY, or leave DuckDuckGo in SEARCH_ORDER');
     throw Object.assign(
       new Error(
-        'No search engine is configured. Set EXA_API_KEY or TAVILY_API_KEY, or leave DuckDuckGo enabled — it needs no key.',
+        'Web search is not set up on this server. Tell the user search is unavailable, and answer from what you know, saying so.',
       ),
       { code: 'no_search_engine' },
     );
@@ -813,7 +816,9 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
         }
         noteEngine(chain[at], err);
         // A key its service said is spent was counted spent for its period on the way (keyCall.js).
-        attempts.push({ at, engine: engine.label, error: err.message });
+        // Its own words are the operator's, in the log; the model reads only `failedBecause`.
+        log.warn('search: an engine failed', { engine: engine.label, status: err.status || null, error: String(err.message).slice(0, 200) });
+        attempts.push({ at, engine: engine.label, error: err.message, status: err.status || null, timedOut: err.name === 'TimeoutError' || err.name === 'AbortError' });
       }
     }
   };
@@ -822,7 +827,7 @@ export async function search(query, { count, userId = null, plan = SEARCH_LEVELS
   // In chain order, whichever finished first.
   answered.sort((a, b) => a.at - b.at);
   attempts.sort((a, b) => a.at - b.at);
-  const tried = attempts.map(({ engine, error }) => ({ engine, error }));
+  const tried = attempts.map(({ engine, error, status, timedOut }) => ({ engine, error, ...(status ? { status } : {}), ...(timedOut ? { timedOut } : {}) }));
 
   if (!answered.length) return { engine: null, engines: [], results: [], attempts: tried, answer: null, metered: false, aside: ask.aside };
   const engines = answered.map((a) => a.label);
@@ -884,37 +889,62 @@ function remember(key, value) {
 /** Forget every remembered search — for tests, which change the web under it. */
 export const clearSearchCache = () => cache.clear();
 
-/** How much of Exa's own summary is passed on — the sources below it are the evidence. */
+/** How much of a deep search's own summary is passed on — the sources below it are the evidence. */
 const ANSWER_CHARS = 1500;
 
-/** The search result as the model reads it. */
-export function formatResults(query, { engine, engines = [], results, attempts, answer = null }) {
+/**
+ * Why one search found nothing, in words the model can act on: never which service was
+ * asked or what it said — that is the operator's, in the log (owner, 2026-11-19).
+ *
+ * @param {{ error?: string, status?: number|null, timedOut?: boolean }} attempt
+ */
+export function failedBecause(attempt) {
+  const said = String(attempt?.error || '');
+  if (said === 'no results') return 'no results';
+  const status = Number(attempt?.status) || Number(/\bHTTP (\d{3})\b/.exec(said)?.[1]) || 0;
+  if (attempt?.timedOut || /timed? ?out|aborted/i.test(said)) return 'it did not answer in time';
+  if (status === 429 || /rate.?limit|too many requests|unusual traffic/i.test(said)) return 'busy right now';
+  return 'unavailable right now';
+}
+
+/**
+ * The search result as the model reads it.
+ *
+ * Which services answered, which failed, and that two lists were merged are left out (owner,
+ * 2026-11-19): the assistant told a user "web_search calls Exa and Firecrawl in parallel and
+ * merges them" because this header said so. The log still says it, for the operator. A search
+ * that found nothing keeps the "Tried: …" shape the transcript reads (rail.js `searchFailure`):
+ * "web search (no results)" is a real zero; any other reason is a search that could not look.
+ */
+export function formatResults(query, { results, attempts = [], answer = null, aside = false }) {
   if (!results.length) {
-    const tried = attempts.map((a) => `${a.engine} (${a.error})`).join(', ');
-    return `No results for "${query}". Tried: ${tried || 'nothing'}.`;
+    if (!attempts.length) {
+      const why = aside ? "this period's search allowance is used" : 'it is not available right now';
+      return `No results for "${query}". Search could not run: ${why}. Try again later, or answer from what you know and say you could not search. Tried: nothing.`;
+    }
+    const failed = attempts.map(failedBecause).filter((reason) => reason !== 'no results');
+    // What to do goes before "Tried:", which the transcript shows the person as the reason alone (fix round 1, M2).
+    return failed.length
+      ? `No results for "${query}". The search could not look just now: try again in a minute, and if it fails again, say you could not search. Tried: web search (${failed[0]}).`
+      : `No results for "${query}". Tried: web search (no results).`;
   }
 
   const lines = results.map((result, i) => {
     const parts = [`${i + 1}. ${result.title}`, `   ${result.url}`];
     if (result.snippet) parts.push(`   ${result.snippet}`);
     if (result.published) parts.push(`   published ${String(result.published).slice(0, 10)}`);
-    if (result.engines?.length > 1) parts.push(`   found by ${result.engines.join(' and ')}`);
     return parts.join('\n');
   });
-  // Exa's deep search says what it found. Written by a model from the pages
-  // above, so it goes in the same envelope, after them, and is named for what it is.
+  // A deep search says what it found. Written by a model from the pages above,
+  // so it goes in the same envelope, after them, and is named for what it is.
   const summary = answer
-    ? `\n\nExa's own summary of what it found — check it against the sources above:\n${answer.length > ANSWER_CHARS ? `${answer.slice(0, ANSWER_CHARS)}…` : answer}`
+    ? `\n\nA summary written from these results — check it against the sources above:\n${answer.length > ANSWER_CHARS ? `${answer.slice(0, ANSWER_CHARS)}…` : answer}`
     : '';
 
-  // Named, because which engine answered changes how much weight a result
-  // deserves — and because a silent failover looks like a quality regression.
-  const merged = engines.length > 1 ? ', merged — a page more than one engine found ranks higher' : '';
-  const failed = attempts.length ? ` after ${attempts.map((a) => a.engine).join(', ')} failed` : '';
   // Titles and snippets are written by whoever owns the page, so they are data
   // like any other fetched text — and a search result is a cheap thing for an
   // attacker to get in front of a model. See server/tools/untrusted.js.
-  return `${results.length} results from ${engine}${merged}${failed}.\n\n${untrusted(`${engine} search results`, lines.join('\n\n') + summary)}`;
+  return `${results.length} result${results.length === 1 ? '' : 's'} for "${query}".\n\n${untrusted('web search results', lines.join('\n\n') + summary)}`;
 }
 
 /**

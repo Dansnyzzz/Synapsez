@@ -236,7 +236,7 @@ section('the services are read the way they answer (stubbed)');
     check('distance in a straight line and by road', /km in a straight line/.test(road.content) && /107\.6 km, roughly 1 h 22 min/.test(road.content), road.content);
     check('and a map with both ends and a line between them', road.widget?.kind === 'map' && road.widget.points.length === 2 && road.widget.line.length >= 2);
     const spot = await L.place_lookup({ op: 'find', place: 'Hà Nội' });
-    check('a place found is pinned on a map', spot.widget?.kind === 'map' && spot.widget.points.length === 1 && /openstreetmap\.org/.test(spot.content));
+    check('a place found is pinned on a map, and the model is not handed a link to the map service', spot.widget?.kind === 'map' && spot.widget.points.length === 1 && !/openstreetmap/i.test(spot.content));
     const days = await L.date_calc({ op: 'holidays', country: 'VN', year: 2027 });
     check('holidays include the lunar ones the service leaves out', /2027-02-06.*Tết Nguyên Đán, day 1/.test(days) && /Giỗ Tổ Hùng Vương/.test(days) && /Quốc khánh/.test(days), days.split('\n').slice(0, 4).join(' | '));
     const wiki = await L.encyclopedia({ query: 'Hà Nội' });
@@ -308,7 +308,7 @@ section('places: the calls in the owner\'s screenshots, and nearby searches (stu
      */
     const { executeTool } = await import('../server/tools/execute.js');
     const told = await executeTool({ user: { id: 'u-places' }, name: 'place_lookup', input: { op: 'find', place: 'Hà Nội' } });
-    check('the model gets the OSM text enveloped, and the app\'s note after the envelope', /^<untrusted source=/.test(told.content) && /<\/untrusted>\n\nSource: OpenStreetMap\. A map is shown to the user\.$/.test(told.content) && !('note' in told), told.content?.slice(-120));
+    check('the model gets the map data enveloped, and the app\'s note after the envelope, naming no map service', /^<untrusted source=/.test(told.content) && /<\/untrusted>\n\nA map is shown to the user\.$/.test(told.content) && !/OpenStreetMap/i.test(told.content) && !('note' in told), told.content?.slice(-120));
     check('  and the map still reaches the interface', told.widget?.kind === 'map' && told.widget.points.length === 1);
 
     // Images 6–7: `op: "search"` with a query naming a kind of place and a district.
@@ -317,7 +317,7 @@ section('places: the calls in the owner\'s screenshots, and nearby searches (stu
     check('"search" for a kind of place is a nearby search', six.widget?.list === true, six.content?.slice(0, 80));
     check('  centred on the district the request names, not the whole city', geocoded.some((q) => /^Quận 1/.test(q)), geocoded.join(' | '));
     const placedElsewhere = await run({ op: 'nearby', what: 'cà phê', near: 'Nhà hàng Bếp Mẹ Ỉn' });
-    check('  where OpenStreetMap puts a named spot on something else, the answer names both', /around Nhà hàng Bếp Mẹ Ỉn \(OpenStreetMap places it at Bếp Mẹ Ỉn, 136\/9/.test(placedElsewhere.content) && placedElsewhere.widget.center.label === 'Nhà hàng Bếp Mẹ Ỉn', placedElsewhere.content?.split('\n')[0]);
+    check('  where the map puts a named spot on something else, the answer names both', /around Nhà hàng Bếp Mẹ Ỉn \(the map places it at Bếp Mẹ Ỉn, 136\/9/.test(placedElsewhere.content) && placedElsewhere.widget.center.label === 'Nhà hàng Bếp Mẹ Ỉn', placedElsewhere.content?.split('\n')[0]);
 
     // Images 8–9: a restaurant's name with an abbreviated district and city.
     const eight = await run({ op: 'find', query: 'Bếp Mẹ Ỉn', location: 'Quận 1, TP.HCM' });
@@ -344,9 +344,9 @@ section('places: the calls in the owner\'s screenshots, and nearby searches (stu
     const missing = await fails(() => run({ op: 'find', place: 'Nhà hàng Xyz, Quận 3' }));
     check('a place OpenStreetMap does not have is "not found"', /^No place called "Nhà hàng Xyz, Quận 3" was found/.test(missing), missing);
     const busy = await fails(() => run({ op: 'find', place: 'Busy Tower' }));
-    check('  but a service that refused is said to be that — the place may well exist', /did not answer \(nominatim\.openstreetmap\.org returned HTTP 429\), so "Busy Tower" could not be checked/.test(busy) && !/No place called/.test(busy), busy);
+    check('  but a service that refused is said to be that — the place may well exist — without the service\'s name or words', /did not answer, so "Busy Tower" could not be checked/.test(busy) && !/No place called|nominatim|openstreetmap|HTTP 429/i.test(busy), busy);
     const busyOverpass = await fails(() => run({ op: 'find', place: 'Quán Busy, Quận 3' }));
-    check('  and a refusal from the name search is not wrapped in a second one', /did not answer \(HTTP 504\), so "Quán Busy, Quận 3"/.test(busyOverpass) && !/answer \(OpenStreetMap/.test(busyOverpass), busyOverpass);
+    check('  and a refusal from the name search is not wrapped in a second one', /did not answer, so "Quán Busy, Quận 3"/.test(busyOverpass) && (busyOverpass.match(/did not answer/g) || []).length === 1 && !/HTTP 504/.test(busyOverpass), busyOverpass);
 
     const nowhere = await run({ op: 'nearby', what: 'cà phê' }, {}).catch((err) => err.message);
     check('near me with no location known asks for a place, instead of guessing one', /Where should I look\?/.test(String(nowhere)));
@@ -410,7 +410,7 @@ section('places: when Overpass does not answer, Nominatim does');
     check('Overpass down, the phở places still come back, from Nominatim', /Quán Phở 1954/.test(pho.content) && /Phở Hùng/.test(pho.content) && pho.widget?.points?.length === 2, pho.content?.slice(0, 200));
     check('  not the school whose name folds like "phở", nor a place outside the circle', !/phổ thông|Far Away/.test(pho.content), pho.content);
     check('  with its address and hours where known', /12 Nguyễn Trãi/.test(pho.content) && /06:00-22:00/.test(pho.content));
-    check('  and the app says where they came from, outside the data', /Nominatim/.test(pho.note || '') && !/Nominatim/.test(pho.content), pho.note);
+    check('  and the app says some may be missing, outside the data, naming neither map service', /some small shops may be missing/i.test(pho.note || '') && !/Nominatim|Overpass|OpenStreetMap/i.test(`${pho.note} ${pho.content}`), pho.note);
     check('  quickly, not after a long wait', Date.now() - started < 5000, `${Date.now() - started} ms`);
     const overpassCalls = asked.filter((u) => u.includes('overpass')).length;
     await L.place_lookup({ op: 'nearby', near: '10.7673, 106.6848', what: 'phở', radius: 600 });
@@ -466,7 +466,7 @@ section('places: when Overpass does not answer, Nominatim does');
       both = String(err?.message || err);
     }
     check('  while one that said it was overloaded (429) is still resting', overpassAsked() === busyBefore, `${busyBefore} → ${overpassAsked()}`);
-    check('  and resting, with the address search down too, the message is not nested', /being rested/.test(both) && (both.match(/did not answer/g) || []).length === 1, both);
+    check('  and resting, with the address search down too, the message is not nested, and says no more than what to do', (both.match(/did not answer/g) || []).length === 1 && !/being rested|address search|HTTP/.test(both), both);
     globalThis.fetch = realStub;
   } finally {
     globalThis.fetch = real;

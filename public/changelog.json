@@ -23,6 +23,28 @@
       }
     },
     {
+      "version": "1.33.4",
+      "date": "2026-11-20",
+      "improved": {
+        "vi": [
+          "Trợ lý không còn nêu tên các dịch vụ chạy công cụ của nó — tìm kiếm, đọc trang, máy tính đám mây, gửi thư, bản đồ, đọc ảnh — hay kể công cụ hoạt động bên trong ra sao. Khi được hỏi nó làm được gì, nó mô tả khả năng bằng lời chung; khi được hỏi dùng dịch vụ nào, nó nói không có thông tin đó và chỉ tới chính sách quyền riêng tư, nơi liệt kê các bên xử lý dữ liệu của bạn. Các nguồn nó trích dẫn, và các dịch vụ bạn tự kết nối, vẫn được nêu tên.",
+          "Khi một công cụ gặp lỗi, trợ lý giờ nói bằng lời dễ hiểu điều gì đã xảy ra và nên làm gì — thử lại sau, kiểm tra lại yêu cầu, hoặc kiểm tra key của bạn trong Cài đặt → Nhà cung cấp — thay vì lặp lại nguyên văn thông báo lỗi của một dịch vụ."
+        ],
+        "en": [
+          "The assistant no longer names the services that run its tools — search, page reading, the cloud computer, mail, maps, reading pictures — or says how its tools work inside. Asked what it can do, it describes its abilities in plain words; asked which services it uses, it says it does not have those details and points to the privacy policy, which lists who processes your data. The sources it cites, and the services you connect yourself, are still named.",
+          "When a tool fails, the assistant now says in plain words what happened and what to do — try again later, check what was asked, or check your own key in Settings → Providers — instead of repeating a service's own error message."
+        ]
+      },
+      "fixed": {
+        "vi": [
+          "Phản hồi lỗi không còn kèm mã lỗi nội bộ: nếu cơ sở dữ liệu trục trặc khi bạn đăng nhập hoặc đăng ký, bạn chỉ thấy \"Máy chủ gặp lỗi. Thử lại sau ít phút.\" và không có gì cho biết máy chủ chạy phần mềm nào."
+        ],
+        "en": [
+          "Error answers no longer carry internal error codes: if the database has trouble while you sign in or sign up, you see \"Something went wrong on the server. Try again in a moment.\" and nothing that says what software the server runs."
+        ]
+      }
+    },
+    {
       "version": "1.33.3",
       "date": "2026-11-19",
       "fixed": {

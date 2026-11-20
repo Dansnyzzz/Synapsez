@@ -379,7 +379,7 @@ section('E2B first, Vercel standing in when it cannot');
   state.createError = named('RateLimitError', 'Rate limit exceeded', { statusCode: 429 });
   const busy = await sandbox.machineForUser('u-e2b');
   check('all twenty E2B machines running: Vercel stands in, and says it is a stand-in', busy.standIn === true && vercelStarts === 1);
-  check('  the model is told what that means', /A stand-in cloud computer for this account: its usual one is unavailable right now/.test(sandbox.machineNote('', { standIn: busy.standIn })));
+  check('  the model is told what that means, not that it stands in', /A temporary cloud computer for this account: what was saved or installed on its usual one is not here/.test(sandbox.machineNote('', { standIn: busy.standIn })) && !/stand-in/.test(sandbox.machineNote('', { standIn: busy.standIn })));
 
   state.createError = named('SandboxError', '403: Your team has run out of credits', { statusCode: 403 });
   await sandbox.machineForUser('u-e2b');
@@ -410,19 +410,19 @@ section('E2B first, Vercel standing in when it cannot');
   for (const name of ['VERCEL_TOKEN', 'VERCEL_TEAM_ID', 'VERCEL_PROJECT_ID']) delete process.env[name];
   state.createError = named('RateLimitError', 'Rate limit exceeded', { statusCode: 429 });
   const alone = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
-  check('with no Vercel to stand in, busy reads as busy', /in use by other people right now/.test(alone), alone);
+  check('with no Vercel to stand in, busy reads as busy', /is busy right now/.test(alone) && !/E2B|Vercel/.test(alone), alone);
   state.createError = named('AuthenticationError', 'Unauthorized, please check your credentials.');
   const badKey = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
-  check('  and a key E2B refuses says whose key to check', /did not accept this deployment's key \(E2B_API_KEY\)/.test(badKey), badKey);
+  check("  and a key E2B refuses says the owner must fix it, naming neither the platform nor its setting (that is the log's)", /the app's owner has to fix it/.test(badKey) && !/E2B|E2B_API_KEY/.test(badKey), badKey);
   state.createError = null;
   state.calls.length = 0;
   const aside = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
-  check('  E2B is then set aside for a while rather than asked again at once', /E2B_API_KEY/.test(aside) && !state.calls.some((c) => c.kind === 'create'));
+  check('  E2B is then set aside for a while rather than asked again at once', /the app's owner has to fix it/.test(aside) && !state.calls.some((c) => c.kind === 'create'));
 
   sandbox.__testing.clearE2bAside();
   state.createError = loadFailure();
   const broken = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
-  check('with no Vercel, a library that will not load says the owner must read the logs — not the raw loader text', /could not load its E2B library/.test(broken) && !/var\/task|require\(\)/.test(broken), broken);
+  check('with no Vercel, a library that will not load says the owner must fix it — not the raw loader text, nor the platform', /the app's owner has to fix it/.test(broken) && !/var\/task|require\(\)|E2B/.test(broken), broken);
   state.createError = null;
   sandbox.__testing.clearE2bAside();
 
@@ -478,7 +478,7 @@ section('the Vercel stand-in stops at the free Hobby hours, so it can never bill
   await reset();
   failNext = true;
   const failed = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
-  check('a start that fails gives its time back', /boom/.test(failed) && (await store.readCounter(bucket)) === 0, failed);
+  check('a start that fails gives its time back, and says so without the platform\'s words', /could not be started just now/.test(failed) && !/boom/.test(failed) && (await store.readCounter(bucket)) === 0, failed);
   failNext = false;
   await sandbox.machineForUser('u-e2b');
   check('  and the window is free to be counted by the next try', (await store.readCounter(bucket)) === 2400);
@@ -560,7 +560,7 @@ section('the Vercel stand-in stops at the free Hobby hours, so it can never bill
   await store.addToCounter(bucket, 16_200 - 100, new Date(Date.UTC(2100, 0, 1)));
   starts = 0;
   const refused = await sandbox.machineForUser('u-e2b').then(() => '', (e) => e.message);
-  check('at the ceiling a new stand-in is refused, saying so', refused === "The cloud computer is unavailable until the 1st: this month's free stand-in time is used.", refused);
+  check('at the ceiling a new stand-in is refused, saying so — without saying it was a stand-in', refused === 'The cloud computer is unavailable until the 1st of next month. Tell the user plainly, and offer what can be done without it.', refused);
   check('  and Vercel is not called', starts === 0);
   check('  nor a scratch machine', creates === 1 && (await sandbox.scratchMachine().then(() => 'made', (e) => e.message)) !== 'made' && creates === 1);
   check('  and what was refused is not counted', (await store.readCounter(bucket)) === 16_100);

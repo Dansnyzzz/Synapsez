@@ -194,7 +194,8 @@ section('a failing sub-agent is reported as failed');
   const { stream } = scriptedProvider([{ throws: 'the provider fell over' }]);
   const output = await runParallel({ user, chatId: null, tasks: ['anything'], stream });
 
-  check('the failure is surfaced', /Failed: the provider fell over/.test(output), output.slice(0, 90));
+  // Said plainly; the provider's own sentence is the log's (fix round 1, modelFailure).
+  check('the failure is surfaced, in plain words', /Failed: The model did not answer just now/.test(output) && !/the provider fell over/.test(output), output.slice(0, 160));
   check(
     'and the summary says so rather than implying success',
     /1 of them failed/.test(output),

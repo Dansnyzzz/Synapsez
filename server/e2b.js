@@ -87,7 +87,8 @@ const NETWORK = { allowPublicTraffic: true };
 /** The month's E2B allowance cannot pay for the time a machine would be awake. */
 export class E2BOutOfCredit extends Error {
   constructor() {
-    super('The cloud computer has used this month\'s share of its credit.');
+    // Said as the model may pass it on: not the credit, not its share (fix round 1, M3).
+    super('The cloud computer is not available again until next month.');
     this.name = 'E2BOutOfCredit';
   }
 }
@@ -100,7 +101,7 @@ export class E2BOutOfCredit extends Error {
 export class E2BSdkError extends Error {
   /** @param {unknown} cause */
   constructor(cause) {
-    super('The E2B library could not be loaded on this server.', { cause });
+    super("The cloud computer's library could not be loaded on this server.", { cause });
     this.name = 'E2BSdkError';
   }
 }

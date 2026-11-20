@@ -77,7 +77,7 @@ export async function worldBank(country, indicator, n = 6, ctx = {}) {
 /** FRED: the latest `n` observations of one series. Needs `FRED_API_KEY`. */
 export async function fred(indicator, n = 12, ctx = {}) {
   const key = String(process.env.FRED_API_KEY || '').trim();
-  if (!key) throw new SourceError('fred', 'FRED needs FRED_API_KEY (free, from fred.stlouisfed.org) set on the deployment.');
+  if (!key) throw new SourceError('fred', 'FRED needs FRED_API_KEY (free, from fred.stlouisfed.org) set on the deployment.', { infra: true });
   const found = indicatorFor('fred', indicator);
   if (!found) throw new SourceError('fred', `FRED has no series called "${indicator}".`);
   const params = { series_id: found.id, api_key: key, file_type: 'json', sort_order: 'desc', limit: String(Math.min(60, Math.max(1, n))), ...(found.units ? { units: found.units } : {}) };

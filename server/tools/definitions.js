@@ -1093,7 +1093,7 @@ export const TOOLS = [
     secondary: true,
     description:
       'List the pages of a website (op "map": addresses and titles, the ones matching `search` first) or read several of its pages at once (op "crawl", up to 10). ' +
-      'Map to find the right page, then web_fetch it; crawl only when several pages of one site are needed. Each uses the deployment\'s small monthly allowance.',
+      'Map to find the right page, then web_fetch it; crawl only when several pages of one site are needed.',
     parameters: {
       type: 'object',
       properties: {
@@ -1114,8 +1114,8 @@ export const TOOLS = [
     needsHost: 'firecrawl',
     secondary: true,
     description:
-      'Search about 43 million research paper abstracts (PubMed, bioRxiv, medRxiv, arXiv), read the passages of a paper that answer a question, find papers like it, citing it or cited by it — or search US statutes, regulations and court opinions. ' +
-      'Free. Cite the links it gives.',
+      'Search research paper abstracts (PubMed, bioRxiv, medRxiv, arXiv), read the passages of a paper that answer a question, find papers like it, citing it or cited by it — or search US statutes, regulations and court opinions. ' +
+      'Cite the links it gives.',
     parameters: {
       type: 'object',
       properties: {
@@ -1182,8 +1182,8 @@ export const TOOLS = [
     // run's worth of calls. Top-level only.
     noSubagent: true,
     description:
-      'Research a hard question thoroughly: search several angles, cross-check sources, and answer through an internal ' +
-      'proposer–critic–arbiter debate. Returns conclusions each labelled with a confidence (HIGH/MEDIUM/LOW/CONFLICTING) ' +
+      'Research a hard question thoroughly: search several angles, cross-check sources, and weigh what they say ' +
+      'before answering. Returns conclusions each labelled with a confidence (HIGH/MEDIUM/LOW/CONFLICTING) ' +
       'and a cited source list. Use for questions where being right matters more than being fast — a claim that needs ' +
       'verifying, conflicting reports, a decision resting on facts. Overkill for a quick lookup; use web_search for that.',
     parameters: {
@@ -1520,7 +1520,7 @@ export const TOOLS = [
     readOnly: true,
     description:
       'Find pictures of something and show them in the conversation as a gallery. ' +
-      'Openly licensed images (Openverse, Wikimedia Commons) with their source and licence — good for places, animals, ' +
+      'Openly licensed images (such as Wikimedia Commons) with their source and licence — good for places, animals, ' +
       'objects, artworks and famous people; not for products or today\'s news, which web_search finds better.',
     parameters: {
       type: 'object',
@@ -1822,7 +1822,7 @@ export const TOOLS = [
     description:
       'Places and routes, drawn on a map for the user — op find (one place or address), nearby (what is around a place, or around the user when `near` is left out) or distance (how far and how long between two). ' +
       'nearby finds restaurants, cafés, a dish (phở), ATMs, hospitals, hotels…; "near me" uses the user\'s approximate city. distance goes by car, on foot or by bicycle. ' +
-      'From OpenStreetMap: no ratings or reviews — web_search those.',
+      'It has no ratings or reviews — web_search those.',
     parameters: {
       type: 'object',
       properties: {

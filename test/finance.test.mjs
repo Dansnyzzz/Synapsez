@@ -855,13 +855,14 @@ section('index.js: a chain falls through, and says so');
   const fetchImpl = everything([['stock_prices', { status: 503, body: 'down' }]]);
   const r = await marketData({ kind: 'quote', market: 'vn', symbols: ['SHS'] }, { now: NOW, fetchImpl });
   check('VNDirect down: KBS answers an HNX code (never Yahoo)', /^SHS · HNX · 18\.200 ₫/.test(r.content) && /nguồn KBS/.test(r.content) && !fetchImpl.calls.some((c) => c.url.includes('yahoo')), r.content.split('\n')[0]);
-  check('  and the text names both: who failed, who answered', /VNDIRECT/.test(r.content) && /503/.test(r.content), r.content);
+  // Which source failed on the way is the log's; the one that answered is cited (fix round 1, I1).
+  check('  and the text cites who answered, not who failed or how', !/VNDIRECT/.test(r.content) && !/503/.test(r.content), r.content);
   await fresh();
   const dead = serve([['', { status: 503, body: 'down' }]]);
   const batch = await marketData({ requests: [{ kind: 'quote', market: 'vn', symbols: ['FPT'] }, { kind: 'crypto', symbols: ['btc'] }] }, { now: NOW, fetchImpl: everything([['stock_prices', { status: 503, body: 'x' }], ['kbsec', { status: 503, body: 'x' }], ['yahoo', { status: 503, body: 'x' }]]) });
   check('a whole chain failing is one "temporarily unavailable" line; the batch still answers the rest', /FPT: tạm thời không lấy được/.test(batch.content) && /BTC/.test(batch.content) && /74,779/.test(batch.content), batch.content.slice(0, 300));
   const alone = await marketData({ kind: 'quote', market: 'us', symbols: ['AAPL'] }, { now: NOW, fetchImpl: dead });
-  check('  alone, it is still an answer that says what failed, not an error', /temporarily unavailable/.test(alone.content) && /Yahoo Finance/.test(alone.content), alone.content);
+  check('  alone, it is still an answer that says what to do, not an error, and not which source failed how', /temporarily unavailable/.test(alone.content) && /try again/.test(alone.content) && !/Yahoo Finance|503/.test(alone.content), alone.content);
 }
 
 section('index.js: history, statements, the legacy call, and attribution');
@@ -879,7 +880,7 @@ section('index.js: history, statements, the legacy call, and attribution');
   check('statements: at most 4 periods, the unit and period said', header.split(',').length === 5 && /tỷ ₫/.test(st.content) && /năm/.test(st.content), header);
   await fresh(); // the statement above is in the shared cache, as it should be — start again to make Vietcap fail
   const kbsSt = await marketData({ kind: 'statements', market: 'vn', symbols: ['FPT'], statement: 'income' }, { now: NOW, fetchImpl: everything([['financial-statement', { status: 503, body: 'x' }]]) });
-  check('  from KBS: audited and consolidated said, and that Vietcap failed', /kiểm toán/i.test(kbsSt.content) && /hợp nhất/i.test(kbsSt.content) && /Vietcap/.test(kbsSt.content), kbsSt.content.split('\n').slice(0, 3).join(' | '));
+  check('  from KBS: audited and consolidated said, and not that Vietcap failed (the log has it)', /kiểm toán/i.test(kbsSt.content) && /hợp nhất/i.test(kbsSt.content) && !/Vietcap/.test(kbsSt.content), kbsSt.content.split('\n').slice(0, 3).join(' | '));
   const coin = await marketData({ kind: 'crypto', symbols: ['btc'] }, { now: NOW, fetchImpl });
   check('the legacy { kind: "crypto" } still works', /BTC/.test(coin.content) && /74,779/.test(coin.content), coin.content.split('\n')[0]);
   check('  and CoinGecko is credited in the text and the card', /Powered by CoinGecko/.test(coin.content) && coin.widget?.attribution?.includes('Powered by CoinGecko'));

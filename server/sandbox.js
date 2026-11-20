@@ -175,28 +175,34 @@ export async function chargeCloudCheck(userId) {
  * Starting a machine fails for reasons nobody in the conversation caused —
  * the team's ten are all running, the month's allotment is spent — and the raw
  * API error says so in a way that reads like a bug. Anything unrecognised
- * keeps its own message, with the setup hint that is usually the cause.
+ * goes to the log with the setup hint that is usually the cause.
+ *
+ * None of these names the platform, its limits or its settings (owner, 2026-11-19): the model
+ * passes on what it reads, and which service runs the cloud computer is not the person's to learn
+ * from it. The operator reads the platform's own words in the log.
  */
 export function machineStartError(err) {
   const raw = String(err?.message || err || '');
   const status = Number(err?.response?.status || err?.status || 0);
-  if (status === 429 || /concurren|too many|rate.?limit/i.test(raw)) {
-    return new Error(
-      'Every cloud computer this app may run at once is in use by other people right now. ' +
-        'Try again in a few minutes; tell the user it is busy, not broken.',
-    );
-  }
+  if (status === 429 || /concurren|too many|rate.?limit/i.test(raw)) return machineBusy();
   if (status === 402 || /quota|allotment|usage limit|limit exceeded|payment|billing/i.test(raw)) {
-    return new Error(
-      'The cloud computers have used this month\'s free allotment, so none can start until it resets. ' +
-        'Tell the user plainly, and offer what can be done without it.',
-    );
+    return new Error("The cloud computer is not available again until next month. Tell the user plainly, and offer what can be done without it.");
   }
-  return new Error(
-    `The cloud computer could not be started: ${raw}. ` +
-      'On Vercel this needs OIDC enabled for the project; elsewhere VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID.',
-  );
+  log.warn('cloud computer: could not start', {
+    error: raw.slice(0, 300),
+    fix: 'On Vercel this needs OIDC enabled for the project; elsewhere VERCEL_TOKEN, VERCEL_TEAM_ID and VERCEL_PROJECT_ID.',
+  });
+  return machineDown();
 }
+
+// An error a platform's library made (its own class, or an HTTP status), as against one of this app's sentences.
+const fromThePlatform = (err) => Number.isInteger(err?.status) || Number.isInteger(err?.statusCode) || (/Error$/.test(String(err?.name || '')) && err?.name !== 'Error');
+
+/** All of them busy: said as busy, not broken. */
+const machineBusy = () => new Error('The cloud computer is busy right now. Try again in a few minutes; tell the user it is busy, not broken.');
+/** Anything else that keeps it from starting: the reason is in the log. */
+const machineDown = () =>
+  new Error('The cloud computer could not be started just now. Try again in a few minutes; if it still will not start, tell the user it is unavailable right now.');
 
 /**
  * Whether there is anything to start a sandbox with: an E2B key, or Vercel —
@@ -276,7 +282,7 @@ const clipOutput = (text) => {
  */
 const STAND_IN_VCPUS = 2;
 const SCRATCH_MS = 6 * 60 * 1000;
-const STAND_IN_SPENT = "The cloud computer is unavailable until the 1st: this month's free stand-in time is used.";
+const STAND_IN_SPENT = 'The cloud computer is unavailable until the 1st of next month. Tell the user plainly, and offer what can be done without it.';
 export const standInCpuSeconds = (ms, vcpus = STAND_IN_VCPUS) => Math.ceil(ms / 1000) * vcpus;
 
 /**
@@ -543,6 +549,12 @@ const e2bReady = () => e2bConfigured() && Date.now() >= e2bAsideUntil;
  */
 async function setE2bAside(err) {
   const declined = e2bUnavailable(err);
+  // Not a reason to move, but the platform's own words all the same (a SandboxError, a TemplateError…):
+  // the log's, never the model's. This app's own sentences (a plain Error) pass as they are.
+  if (!declined && fromThePlatform(err)) {
+    log.warn('cloud computer: the platform refused', { name: err.name, error: String(err?.message || err).slice(0, 300) });
+    throw machineDown();
+  }
   if (!declined) throw err;
   // The cause is what the owner needs to read (a library that would not load says why only there).
   const said = err?.cause instanceof Error ? err.cause.message : err?.message || err;
@@ -567,13 +579,12 @@ function unavailableError(declinedNow) {
   const declined = declinedNow || e2bAsideFor;
   if (declined === 'busy') return machineStartError({ status: 429 });
   if (declined === 'credit') return machineStartError({ status: 402 });
-  if (declined === 'auth') {
-    return new Error("The cloud computer could not be started: E2B did not accept this deployment's key (E2B_API_KEY). Tell the user plainly; the owner has to check the key.");
+  // What the owner must fix is in the log setE2bAside wrote; the model only hears that it cannot start (owner, 2026-11-19).
+  if (declined === 'auth' || declined === 'broken') {
+    log.warn('cloud computer: cannot start', { reason: declined, fix: declined === 'auth' ? 'check E2B_API_KEY' : "read the deployment's logs: the E2B library did not load" });
+    return new Error("The cloud computer could not be started. Tell the user plainly that it is unavailable right now; the app's owner has to fix it.");
   }
-  if (declined === 'broken') {
-    return new Error("The cloud computer could not be started: this server could not load its E2B library. Tell the user plainly; the owner has to check the deployment's logs.");
-  }
-  return new Error('The cloud computer could not be started: E2B is not answering right now. Try again in a few minutes; tell the user it is busy, not broken.');
+  return new Error('The cloud computer is not answering right now. Try again in a few minutes; tell the user it is busy, not broken.');
 }
 
 /**
@@ -777,7 +788,7 @@ export function pythonReport(cell, ran = true) {
  */
 export function machineNote(home, { standIn = false, provider = '', memMb = 0, cpu = 0 } = {}) {
   const opening = standIn
-    ? "(A stand-in cloud computer for this account: its usual one is unavailable right now, so what was saved or installed there is not here, and what is made here may not be there later"
+    ? "(A temporary cloud computer for this account: what was saved or installed on its usual one is not here, and what is made here may not be there later"
     : "(This account's own cloud computer: it keeps its files and installs between conversations";
   const size = memMb ? `${cpu ? `${cpu} vCPU, ` : ''}${memMb >= 1024 ? `${Math.round(memMb / 102.4) / 10} GiB` : `${memMb} MiB`} of memory. ` : '';
   return (

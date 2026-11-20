@@ -240,7 +240,8 @@ section('stdio runs a real command, so it is off unless switched on');
   } catch (err) {
     refused = err.message;
   }
-  check('a stdio server is refused when nobody opted in', /ALLOW_MCP_STDIO/.test(refused), refused);
+  // Refused in plain words; the setting that would allow it is the operator's, in the log (1.33.4 fix round 1, M4).
+  check('a stdio server is refused when nobody opted in, naming no setting', /stdio MCP servers need the cloud computer/.test(refused) && !/ALLOW_MCP_STDIO/.test(refused), refused);
   process.env.ALLOW_MCP_STDIO = saved;
 
   // Shared infrastructure never runs an arbitrary command beside the server,

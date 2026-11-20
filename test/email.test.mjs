@@ -58,7 +58,7 @@ section('with no provider, nothing is claimed');
 {
   const r = await attempt({ subject: 'Hi', body: 'Hello' });
   check('the tool refuses rather than pretending', !r.ok && /NOT sent/.test(r.error), r.error);
-  check('and names the Gmail settings to add', /GMAIL_USER/.test(r.error) && /GMAIL_APP_PASSWORD/.test(r.error));
+  check("and says the owner must set it up, naming no mail service or setting — those are the log's", /not set up/.test(r.error) && !/GMAIL|RESEND|SMTP|Gmail|Resend/.test(r.error), r.error);
 }
 
 section('Gmail is two variables');
@@ -302,7 +302,7 @@ section('a refusal from the provider is reported as a refusal');
   refuse = 'Invalid login: 535-5.7.8 Username and Password not accepted';
   const r = await attempt({ subject: 'S', body: 'B' });
   check('the tool fails', !r.ok, r.result);
-  check('saying it was NOT sent, with the reason', /NOT sent/.test(r.error || '') && /535/.test(r.error || ''), r.error);
+  check("saying it was NOT sent, plainly — the provider's own words are the log's", /NOT sent/.test(r.error || '') && !/535|Username/.test(r.error || ''), r.error);
   refuse = null;
 }
 
@@ -318,8 +318,8 @@ section('what the mail server said is kept, and a refused recipient is not "sent
 
   email.__testing.useTransport(saying({ messageId: '<abc@gmail.com>', accepted: ['a@example.com'], rejected: [], response: '250 2.0.0 OK 1726 - gsmtp' }));
   const ok = await attempt({ to: 'a@example.com', subject: 'S', body: 'B' });
-  check('the Message-ID is in the result, to find it in Sent', /<abc@gmail\.com>/.test(ok.result || ''), ok.result);
-  check("and the server's own reply", /250 2\.0\.0 OK/.test(ok.result || ''));
+  check('the Message-ID is not in the result: it names the mailbox (email.js logs it, to find it in Sent)', /accepted an email/.test(ok.result || '') && !/<abc@gmail\.com>/.test(ok.result || ''), ok.result);
+  check("nor the server's own reply, which names the service", !/250 2\.0\.0 OK|gsmtp/.test(ok.result || ''), ok.result);
   check('and it says accepted, not delivered', /accepted/.test(ok.result || '') && /Spam/.test(ok.result || ''));
 
   email.__testing.useTransport(saying({ messageId: '<m@x>', accepted: ['a@example.com'], rejected: ['typo@exmaple.con'], response: '250 OK' }));
@@ -328,7 +328,7 @@ section('what the mail server said is kept, and a refused recipient is not "sent
 
   email.__testing.useTransport(saying({ messageId: '<m@x>', accepted: [], rejected: ['nobody@exmaple.con'], response: '550 5.1.1 no such user' }));
   const none = await attempt({ to: 'nobody@exmaple.con', subject: 'S', body: 'B' });
-  check('every recipient refused is NOT sent', !none.ok && /NOT sent/.test(none.error) && /550/.test(none.error), none.error);
+  check('every recipient refused is NOT sent, and says to check the address — not the server\'s words', !none.ok && /NOT sent/.test(none.error) && /refused the address/.test(none.error) && !/550/.test(none.error), none.error);
 
   email.__testing.useTransport(fakeTransport);
 }

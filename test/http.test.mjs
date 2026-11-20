@@ -1830,6 +1830,50 @@ section("a body the parser refuses is the request's fault, not the server's (COD
   check('JSON that does not parse is a 400 that says so, not a 500 that says try again', broken.status === 400 && said.error === 'That request could not be read.', `${broken.status} ${said.error}`);
 }
 
+// Security review of 1.33.3 (2026-11-19): /api/login answered a database failure with its own code —
+// "57P01", "ECONNREFUSED" — which told anybody the server runs Postgres and how it failed. A route
+// passes on only the codes its page acts on (clientCode in server/util/clientError.js).
+section("a database's own error code never reaches the browser");
+{
+  const { SERVER_TROUBLE } = await import('../server/util/clientError.js');
+  const failures = [
+    ['a Postgres shutdown', () => Object.assign(new Error('terminating connection due to administrator command'), { code: '57P01', severity: 'FATAL' })],
+    ['a refused connection', () => Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:5432'), { code: 'ECONNREFUSED', errno: -111, syscall: 'connect' })],
+  ];
+  // The sections above spent this address's sign-in attempts; the limiter is not what is tested here.
+  const saved = { byEmail: store.getUserByEmail, count: store.countUsers, limit: store.hitRateLimit };
+  store.hitRateLimit = async () => ({ allowed: true, retryAfterMs: 0 });
+  for (const [what, failure] of failures) {
+    store.getUserByEmail = async () => {
+      throw failure();
+    };
+    store.countUsers = async () => {
+      throw failure();
+    };
+    try {
+      for (const [route, body] of [
+        ['/api/login', { email: 'nobody-db@example.com', password: 'whatever-it-is' }],
+        ['/api/register', { email: 'new-db@example.com', password: 'a long enough password', name: 'N', agree: true }],
+      ]) {
+        const res = await fetch(`${base}${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const raw = await res.text();
+        const said = JSON.parse(raw || '{}');
+        check(`${route}, ${what}: no code of the database's in the answer`, said.code === undefined && !/57P01|ECONNREFUSED|5432|10\.0\.0\.5|postgres/i.test(raw), raw.slice(0, 160));
+        check(`${route}, ${what}:   and the person reads the plain sentence`, said.error === SERVER_TROUBLE, said.error);
+      }
+    } finally {
+      store.getUserByEmail = saved.byEmail;
+      store.countUsers = saved.count;
+    }
+  }
+  store.hitRateLimit = saved.limit;
+  // The codes the page acts on still arrive: a second factor asked for is a step, not a failure.
+  const { clientCode } = await import('../server/util/clientError.js');
+  const LOGIN = ['totp_required', 'email_unconfirmed', 'rate_limited'];
+  check('a code the page acts on passes', clientCode({ code: 'totp_required' }, LOGIN) === 'totp_required' && clientCode({ code: 'rate_limited' }, LOGIN) === 'rate_limited');
+  check('  one it does not, or one that is not a string, does not', clientCode({ code: '57P01' }, LOGIN) === undefined && clientCode({ code: 'ECONNREFUSED' }, LOGIN) === undefined && clientCode({ code: 401 }, LOGIN) === undefined && clientCode(null, LOGIN) === undefined);
+}
+
 // Last, because it takes the owner's account away from every section above.
 section('a deployment keeps an owner when its owner leaves');
 {
