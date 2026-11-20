@@ -3324,5 +3324,27 @@ section('a page that cannot start says so, never a black screen (1.33.2)');
   check('  and so does the domain guide', /Browser Cache TTL/.test(domain) && /Respect Existing Headers/.test(domain) && /Purge Everything/.test(domain) && /boot-watch\.js/.test(domain));
 }
 
+section('diagrams that come out right (1.34.0)');
+{
+  const root = new URL('../', import.meta.url);
+  const read = (p) => fs.readFileSync(new URL(p, root), 'utf8');
+  // The numbers are read from the code that enforces them, never written here by hand.
+  const { LIMITS } = await import('../server/diagram/validate.js');
+  const { CRAFT_SKILLS } = await import('../server/skills/craft.js');
+  const widget = read('server/tools/cloud.js');
+  const ids = CRAFT_SKILLS.map((s) => s.id);
+  const drawing = ['builtin:drawing', 'builtin:svg-flows', 'builtin:svg-structures', 'builtin:svg-sequences', 'builtin:svg-layouts'];
+  check('the five drawing skills exist', drawing.every((id) => ids.includes(id)), ids.filter((id) => /draw|svg/.test(id)).join(', '));
+  check('the diagram limits are all positive whole numbers (nodes, edges, groups, id, title, lines)', ['nodes', 'edges', 'groups', 'id', 'title', 'lines'].every((k) => Number.isInteger(LIMITS[k]) && LIMITS[k] > 0));
+  const toolText = widget.slice(widget.indexOf('async function showWidgetTool'), widget.indexOf('async function showDiagram'));
+  check('a diagram is drawn before any check and so is never held back; the redraw count is kept 30 minutes under widget:redraw:', toolText.indexOf('showDiagram(') > 0 && toolText.indexOf('showDiagram(') < toolText.indexOf('redrawTry(') && /widget:redraw:\$\{chatId\}/.test(widget) && /30 \* 60 \* 1000/.test(widget.slice(widget.indexOf('async function redrawTry'))));
+  check('  with no conversation the drawing is shown at once, and only the first flawed try is held back', /chatId \? await redrawTry\(chatId, turnId\) : 0/.test(widget) && /if \(tries === 1\)/.test(widget));
+  const log = JSON.parse(read('public/changelog.json')).entries.find((e) => e.version === '1.34.0');
+  const all = (lang) => ['new', 'improved', 'fixed'].flatMap((s) => log?.[s]?.[lang] || []);
+  check('1.34.0 is released first, in both languages, with arrays of the same length', JSON.parse(read('public/changelog.json')).entries[0].version === '1.34.0' && !!log && all('en').length > 0 && all('vi').length === all('en').length && ['new', 'improved', 'fixed'].every((s) => (log[s]?.vi?.length || 0) === (log[s]?.en?.length || 0)));
+  check('  and package.json and CHANGELOG.md carry it', JSON.parse(read('package.json')).version === '1.34.0' && read('CHANGELOG.md').includes('(1.34.0)'));
+  check('  and the README says what can be drawn', /diagram/i.test(read('README.md')));
+}
+
 console.log(failures === 0 ? '\n\x1b[32mAll feature checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

@@ -1,6 +1,30 @@
 {
   "entries": [
     {
+      "version": "1.34.0",
+      "date": "2026-11-20",
+      "new": {
+        "vi": [
+          "Sơ đồ giờ ra gọn và dễ đọc: luồng công việc, cấu trúc, trình tự, mốc thời gian và bố cục đều được xếp sẵn, mỗi hộp một chỗ, không chồng lên nhau."
+        ],
+        "en": [
+          "Diagrams now come out tidy and readable: flows, structures, sequences, timelines and layouts are arranged for you, each box in its own place, nothing piled on top of anything else."
+        ]
+      },
+      "improved": {
+        "vi": [
+          "Các đường nối bắt đầu và kết thúc đúng trên hộp của chúng, không còn mũi tên chỉ vào khoảng trống hay cắt ngang qua chữ.",
+          "Trợ lý tự kiểm tra hình mình vẽ. Nếu có đường nối trượt khỏi hộp, nó vẽ lại một lần trước khi cho bạn xem, nên bạn thường nhận ngay bản đã sửa.",
+          "Sơ đồ đọc được trên điện thoại và ở chế độ tối: chữ đủ lớn, màu đủ tương phản trên cả nền sáng lẫn nền tối."
+        ],
+        "en": [
+          "Lines start and end on their boxes, with no more arrows pointing at empty space or cutting across text.",
+          "The assistant checks its own drawing. If a line misses its box, it draws the diagram again once before showing it to you, so you usually get the corrected one straight away.",
+          "Diagrams read well on a phone and in dark mode: the text is large enough and the colours stand out on both light and dark backgrounds."
+        ]
+      }
+    },
+    {
       "version": "1.33.3",
       "date": "2026-11-19",
       "fixed": {
