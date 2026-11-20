@@ -1,6 +1,34 @@
 {
   "entries": [
     {
+      "version": "1.33.3",
+      "date": "2026-11-19",
+      "fixed": {
+        "vi": [
+          "Mã xác nhận và các thư khác lại được gửi đi khi người gửi được ghi dạng \"Tên <địa chỉ>\" ở bất kỳ thiết lập nào. Một thiết lập người gửi không phải là địa chỉ dùng được thì bị bỏ qua, kèm một cảnh báo trong nhật ký máy chủ, thay vì làm mọi thư đều không gửi được.",
+          "Đăng ký lại bằng một địa chỉ email còn đang chờ mã xác nhận giờ dẫn bạn tới ô nhập mã (nếu dùng đúng mật khẩu đã chọn) hoặc tới Quên mật khẩu, thay vì chỉ báo email đã được đăng ký. Nếu dùng mật khẩu khác, trang cho biết địa chỉ này vẫn đang chờ xác nhận, nên người gõ địa chỉ đó biết nó vừa được đăng ký trong vòng một ngày qua.",
+          "Đăng nhập vào tài khoản còn chờ mã xác nhận chỉ gửi tối đa năm mã mới mỗi giờ từ một nơi, và hai mươi mã tính chung. Quá mức đó, ô nhập mã vẫn mở và cho biết chưa gửi mã mới."
+        ],
+        "en": [
+          "Confirmation codes and other mail send again when the sender is written as \"Name <address>\" in any setting. A sender setting that is not a usable address is skipped, with a warning in the server log, instead of making every mail fail.",
+          "Signing up again with an address still waiting for its code now leads to the code (with the password you chose) or to Forgot password, instead of a dead end saying the email is already registered. With another password the page says the address is still waiting to be confirmed, so whoever typed it can tell it was signed up within the last day.",
+          "Signing in to an account still waiting for its code sends at most five new codes an hour from one place, and twenty in all. Past that the code box still opens and says no new code was sent."
+        ]
+      }
+    },
+    {
+      "version": "1.33.2",
+      "date": "2026-11-18",
+      "fixed": {
+        "vi": [
+          "Sau một bản cập nhật, trình duyệt còn giữ một phần bản cũ không còn để lại màn hình đen: trang báo \"Ephapse vừa được cập nhật\" kèm nút \"Tải bản mới\", nút này tải lại mọi tệp của trang từ máy chủ rồi mở lại trang. Trang không bao giờ tự tải lại. Nếu bấm rồi mà vẫn chưa mở được, trang nhắc nhấn Ctrl+Shift+R (Mac: ⌘+Shift+R)."
+        ],
+        "en": [
+          "After an update, a browser still holding part of the old version no longer leaves a black screen: the page says \"Ephapse was just updated\" and offers \"Load the new version\", which fetches every file of the page again from the server and reloads. It never reloads by itself. If the page still cannot start after that, it says to press Ctrl+Shift+R (Mac: ⌘+Shift+R)."
+        ]
+      }
+    },
+    {
       "version": "1.33.1",
       "date": "2026-11-18",
       "new": {

@@ -164,12 +164,15 @@ key — someone using their own is never limited, because it is not your money.
 
 ### Email
 
-**There is no confirmation step.** Sign up and you are in. An address that does not exist is a
-problem for whoever typed it, not something to hold a working account hostage over — and a
-deployment with no mail provider could never have released the hostage anyway.
+**A new account confirms its email with a code.** Since 2026-11-09, wherever mail can be sent, signing
+up sends a 6-digit code to the address and the account is not used until it is entered (`EMAIL_CONFIRMATION`
+turns this `on` or `off`; unset, it is on whenever a mail provider is set up). With no provider there is no
+code, since nobody could receive one. An address never confirmed is held for a day, then released. Signing in,
+or signing up again with the password chosen, sends a fresh code; codes count against the same limit as
+"Send a new code" (five an hour per address and account, twenty for the account).
 
-Email is used for two things: letting somebody who forgot their password get back in, and the
-assistant's `send_email` tool. Pick one backend, or none:
+Email is used for three things: those confirmation codes, letting somebody who forgot their password get
+back in, and the assistant's `send_email` tool. Pick one backend, or none:
 
 | Backend | Set | Notes |
 |---|---|---|
@@ -177,6 +180,10 @@ assistant's `send_email` tool. Pick one backend, or none:
 | **Resend** | `RESEND_API_KEY` | Plain HTTPS. Sends only from a domain you have verified with Resend, so not from a gmail.com address. |
 | **SMTP** | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | Any other provider. Wins over the Gmail variables when both are set. |
 | **Console** | nothing | Mail is printed to the server log. Fine locally for a reset code — and `send_email` refuses, saying the email was **not** sent, rather than pretending. |
+
+**The sender is a full address on a real domain** (`EMAIL_FROM`, else the SMTP login): `addr@example.com` or
+`Name <addr@example.com>`. A value that is not one, a local `@localhost` sender included, is skipped with a warning
+in the log, and mail goes from the next setting, or Resend's test sender `onboarding@resend.dev` (1.33.3).
 
 **`send_email` writes as the business, from the deployment's mailbox.** Every account shares the one
 sending mailbox — a provider will not send as an address it has not verified. The From line carries the
@@ -2111,7 +2118,7 @@ step, with the optional certificate and how to bring data over from another data
 | `GOOGLE_PICKER_API_KEY` + `GOOGLE_PROJECT_NUMBER` | optional | The Google Picker, where a person chooses the Drive files Ephapse may open (Drive is `drive.file` since 1.33.1): a browser API key, public by design and restricted to this site and the Picker API, and the Cloud project number, the Picker's app id. Without them, picking from Drive says it is not set up. See [docs/google.md](docs/google.md). |
 | `GEMINI_API_KEY` | optional | Real Google results in web search (Gemini grounding). An account's own Google key works too. |
 | `EMAIL_CONFIRMATION` | optional | Whether a new account confirms its email with a 6-digit code before it is used: `on` or `off`. Unset, it is on whenever mail can be sent (Gmail, SMTP or Resend) and off when it cannot, since a code nobody can receive would lock every new account out. Accounts made before 2026-11-09 were marked confirmed and stay so. |
-| `EMAIL_FROM` | optional | The From name and address, e.g. `Elite Business <you@gmail.com>`. The name also heads every email. Defaults to the Gmail/SMTP login. |
+| `EMAIL_FROM` | optional | The From name and address, e.g. `Elite Business <you@gmail.com>`. The name also heads every email. Defaults to the Gmail/SMTP login, then to Resend's test sender `onboarding@resend.dev`. This and the login (`GMAIL_USER`, `SMTP_USER`) are read the same way: a bare address, `Name <address>` or `"Name" <address>`, quotes around the whole allowed; a login written with a name logs in with its bare address, and one that is a user name (such as `apikey`) is only a login. A value that is not one usable address is skipped for the next, with a warning in the log that names the variable (1.33.3). On Vercel, set it for **Production** too. |
 | `EMAIL_REPLY_TO` | optional | Where replies to the assistant's emails go, e.g. `support@yourcompany.com`. Unset, they come back to the sending mailbox. |
 | `ALLOW_SIGNUP` | optional | Open by default. `false` closes registration; the first account is always allowed. |
 | `DESKTOP_ACCESS` | optional, worker | `true` lets the assistant drive real applications on that machine. Off by default; see the platform table under "Desktop control". |

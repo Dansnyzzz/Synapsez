@@ -30,10 +30,10 @@ esac
 
 command -v curl >/dev/null || fail "curl is not installed."
 command -v git  >/dev/null || fail "git is not installed."
-command -v node >/dev/null || fail "Node.js is not installed. Get version 20 or newer from nodejs.org."
+command -v node >/dev/null || fail "Node.js is not installed. Get version 22 or newer from nodejs.org."
 
 major="$(node -v | sed 's/^v//' | cut -d. -f1)"
-[ "$major" -ge 20 ] || fail "This needs Node 20 or newer. You have $(node -v)."
+[ "$major" -ge 22 ] || fail "This needs Node 22 or newer. You have $(node -v)."
 
 # ── who is this computer about to answer to? ──────────────────────────
 #

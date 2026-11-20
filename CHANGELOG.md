@@ -1,5 +1,73 @@
 # Changelog
 
+## 2026-11-19 — Mail sends when the sender is written as `Name <address>` in any setting, and signing up again leads back to the code (1.33.3)
+
+**What happened.** Confirmation codes stopped arriving on www.ephapse.net. Resend refused every message with a 422 `validation_error`, "Invalid `from` field", because the request's sender was `"Ephapse" <Ephapse <support@ephapse.net>>`. `GMAIL_USER` held `Ephapse <support@ephapse.net>`, `EMAIL_FROM` was not set for Production, and only `EMAIL_FROM` was read as `Name <address>`. The login fallback was taken as a bare address and wrapped a second time.
+
+**The fix.** `server/email.js` now reads every source of the sender with one parser, `parseMailbox`. The sources are tried in order: `EMAIL_FROM`, then the SMTP login (`SMTP_USER` with `SMTP_HOST`, otherwise `GMAIL_USER`), then Resend's test sender `onboarding@resend.dev`. Each may be written as `addr@x`, `Name <addr@x>` or `"Name" <addr@x>`, with spaces around it or quotes around the whole value. The parser returns a bare address that has passed a check: one `@`, no spaces, brackets, quotes or line breaks, a dot in the domain, at most 254 characters.
+
+- A value that is not one usable address is skipped for the next source. The log gets one warning per instance that names the variable, never its value. Mail goes out from the next source instead of every message failing.
+- The From line is always `"Name" <bare address>`, so one address can no longer sit inside another.
+- When `GMAIL_USER` carries a name, Gmail's login uses the bare address. An SMTP login that is a user name (SendGrid's `apikey`) is kept as the login and never used as the sender.
+- The address check also sees the bare address: Settings → System → Address safety, and `npm run domain:check`. The CLI used to read `EMAIL_FROM` raw, so `Name <you@example.com>` would have checked the domain `example.com>`.
+
+**Owner step (Vercel, a few minutes).** Go to Settings → Environment Variables. Set `EMAIL_FROM` = `Ephapse <support@ephapse.net>` for **Production**, not only Preview or Development. If mail goes through Resend, remove `GMAIL_USER` and `GMAIL_APP_PASSWORD`. While both are set, the event-theme mail still goes through Gmail (`smtp.gmail.com`), which works only if `support@ephapse.net` is a real Google mailbox with that App Password. Then redeploy, because a changed variable reaches only the deployments built after it. Until the owner does this step, this release reads `support@ephapse.net` out of `GMAIL_USER`, so Resend is sent a valid sender.
+
+**Node 22, and one install script fewer.** `engines.node` is now `22.x` instead of `>=20`. Vercel's build warned that `>=20` would move to the next major on its own. 22 is what `.nvmrc`, CI and the tests run on. The lockfile's root entry says the same, and the computer installers (`public/setup.sh`, `public/setup.ps1`) now ask for Node 22 or newer instead of 20. `tesseract.js` joins `allowScripts` as denied, because its only install script is `opencollective-postinstall || true`, a donation message.
+
+**Two build warnings that are not ours.**
+
+- `npm warn deprecated node-domexception` comes from Google's SDK: `@google/genai` → `google-auth-library` → `gaxios` 7 → `node-fetch` 3 → `fetch-blob` → `node-domexception`. It goes away when Google's packages move off `node-fetch`.
+- The `cache-dir` npm config warning comes from Vercel's build machine. Nothing in this repository sets it: there is no `.npmrc`.
+
+**Tests.** `test/email.test.mjs` replays the incident end to end through Resend with `fetch` stubbed. It checks every accepted way of writing `EMAIL_FROM`, `GMAIL_USER` with a name and the login it gives, and `SMTP_USER` both with a name and as a user name. It checks that eight broken values fall back with exactly one warning that never prints the value, and that the domain check reads `ephapse.net`. A hundred hostile combinations of both settings never give a header with one address inside another. `test/deploy.test.mjs` pins `engines.node` to `.nvmrc`'s major and the denied `tesseract.js` script.
+
+**Signing up again with an address waiting for its code.** The owner hit this live: the confirmation mail never came because of the sender bug above, they left the code screen, and signing up again with the same email said only "That email is already registered." That was a dead end for 24 hours, until the unconfirmed address is released.
+
+- **With the password chosen the first time**, signing up again now works exactly like signing in to that account. A fresh code goes out and the page shows the code box for that email at once, with the same `email_unconfirmed` answer sign-in gives. Nothing new is made, and the stored password, name and username stay as they were.
+- **With another password**, the answer is `email_pending`: "That email is waiting to be confirmed. Sign in with the password you chose to get a new code, or use Forgot password." Below it are two buttons. **Sign in** switches to signing in with the email filled in and the password box emptied. **Forgot password** opens the reset with the email filled in. Both are reachable by keyboard, in Vietnamese and English. The pending account's credentials are never replaced, because that would let anyone take over a sign-up that is waiting for its code.
+- **What this answer reveals.** "Already registered" told anyone who typed an address that it had an account. `email_pending` also tells them that the account has not confirmed its email, so it was signed up within the last day and is still waiting for its code. It says nothing about the name, the username or the password. A wrong password here is written to the account's security record as a failed sign-in, as `/api/login` writes one.
+- A confirmed account still gets "That email is already registered.", whichever password is typed. An address unconfirmed for over a day is released as before.
+- **Limits:** this path checks the password and can send a code. It therefore counts against the same limits as signing in and as asking for a new code, in the same buckets `/api/login` and `/api/register/resend` use, on top of sign-up's own limit. Ten wrong sign-ins from an address stop that address's sign-up guesses at the account with a 429.
+- **Every confirmation code is now counted.** Signing in to an account still waiting for its code has always sent a fresh one, and nothing limited how often. That code, and the one signing up again sends, now count against the "Send a new code" limit: five an hour per address and account, twenty an hour for the account from everywhere. Past it, the code box still opens, but no code is sent and the page says so ("No new code was sent, because too many were asked for: enter the last code we sent, or ask for a new one later."), instead of also saying a code was sent.
+- The functions behind signing in and signing up refuse to run without a rate-limit meter, so a new caller cannot send codes or check passwords unmetered by leaving it out.
+
+Tests: `test/http.test.mjs` covers:
+
+- all three cases, and that nothing changes;
+- the Vietnamese messages;
+- the failed-sign-in record;
+- the sign-in and the account-wide code ceilings;
+- a suspended account waiting for its code (refused as suspended, no code, no cookie);
+- the missing meter.
+
+`test/ui.test.mjs` drives the page:
+
+- the message and its two buttons, Tab order and focus;
+- each button's destination with the email carried over;
+- the code box from signing up again;
+- the code box past the code limit, with no "we sent a code";
+- Vietnamese on a 360px phone, and contrast in light and dark.
+
+`test/domain-check.test.mjs` runs `npm run domain:check` offline. It now reads the sender through the app's own `senderMailbox()`, in the app's own order (`SMTP_USER` with `SMTP_HOST`, `GMAIL_USER` only with `GMAIL_APP_PASSWORD`), and names a setting it skipped as unusable without printing its value. `npm start`'s launcher asks for Node 22 too (`scripts/launch.js`).
+
+**Not verified live:** a real send through Resend from `support@ephapse.net`, which needs the domain verified at Resend, and the next Vercel build's warnings.
+
+## 2026-11-18 — A page that cannot start says so, never a black screen (1.33.2)
+
+**What happened.** After the 1.33.1 deploy the owner's browser ran the new page with the old `app.js`, which looked for the removed "What is Ephapse?" button, threw, and left both the sign-in screen and the app hidden: a black screen, until a hard reload. Measured live the same day: `www.ephapse.net` goes through Cloudflare, whose Browser Cache TTL answers `/js/*` and `/css/*` with `public, max-age=14400, must-revalidate`, overriding the `max-age=0` Vercel sends, while the HTML is not cached. So for four hours after any deploy a returning browser can pair the new page with old scripts. There is no build step and no hashed file names to make that impossible.
+
+**The safety net.** `public/js/boot-watch.js`, a small classic script loaded right after `lang-boot.js` and before the app module. If no screen has appeared 1.5 seconds after an uncaught error from one of the site's own scripts, or 12 seconds after the page was parsed (that clock starts once the module graph has loaded, so a slow phone connection is not counted), it shows a notice in the page's language: "Ephapse was just updated", why, and a "Load the new version" button with focus on it. The button fetches again, past the browser's cache, every script and stylesheet the page loaded, the whole module graph included, waits at most 8 seconds, then reloads once. It never reloads by itself. Pressed and failing again within a minute, the notice says "Still not working — press Ctrl+Shift+R (Mac: ⌘+Shift+R)." and still offers the button. If the app starts late after all, the notice takes itself away.
+
+- "Started" is read from the page alone: the sign-in screen (`#gate`: signed out, a first run's setup, a reset or confirmation link, sign-up with its consent tick) or the app (`#app`: signed in, the documents banner included) becoming visible. So a working app of any version, older or newer, never sees the notice. The app's own failure page, the red message `boot().catch` puts in place of the page, also counts: the watchdog does not talk over a message that names the real error.
+- The notice styles itself through element style properties, so a stale or missing `app.css` cannot break it, and carries its own Vietnamese and English words, because `i18n.js` may be one of the stale files. No inline script, no change to the Content-Security-Policy. One `console.warn` names the error, never an address's query string.
+
+**Owner step (free, a minute).** In the Cloudflare dashboard for ephapse.net: Caching → Configuration → Browser Cache TTL → "Respect Existing Headers", then Caching → Configuration → Purge Everything. Or set the site's DNS records to "DNS only" (grey cloud), as `docs/domain-security.md` already advised. Either way browsers go back to asking each time (`max-age=0` with an ETag, a cheap 304), and the notice should never be needed. Check with `curl -sI https://www.ephapse.net/js/app.js`: `cache-control` should no longer say `max-age=14400`. `docs/domain-security.md` has the same steps.
+
+**Tests.** `test/ui.test.mjs` replays the incident through a local front that tells the browser to keep `/js/*` and `/css/*` for four hours: a plain reload stays broken, the button asks for every file again with `cache-control: no-cache`, and the page starts. It also checks that no notice appears on a normal start, on a signed-in start, on the app's own failure page or for a slow `app.js`, and the late start, the second failure, the Vietnamese words, the alertdialog and its focus, contrast in light and dark, a 360px phone, and a hostile stylesheet.
+
+**Not verified live:** the notice on `www.ephapse.net` behind Cloudflare, and Safari and Firefox (the tests drive Chrome).
+
 ## 2026-11-18 — Google on free review: Gmail sends, Drive opens the files you pick (1.33.1)
 
 **Gmail can now only send.** The assistant sends an email from your Gmail when you ask (shown to you first by default), and can no longer search, read, draft, label or delete mail; asking for any of those gets a sentence saying it can only send. Ephapse asks Google for `gmail.send` instead of `gmail.modify`.

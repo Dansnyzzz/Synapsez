@@ -52,7 +52,7 @@ function smtpSettings() {
     return {
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT) || 587,
-      user: process.env.SMTP_USER || '',
+      user: loginName(process.env.SMTP_USER),
       pass: process.env.SMTP_PASS || '',
     };
   }
@@ -60,7 +60,7 @@ function smtpSettings() {
     return {
       host: 'smtp.gmail.com',
       port: 465,
-      user: process.env.GMAIL_USER.trim(),
+      user: loginName(process.env.GMAIL_USER),
       // Google shows the App Password in groups of four with spaces.
       pass: process.env.GMAIL_APP_PASSWORD.replace(/\s+/g, ''),
     };
@@ -68,18 +68,96 @@ function smtpSettings() {
   return null;
 }
 
+// The variable the SMTP login came from, to name it in a warning.
+const loginVariable = () => (process.env.SMTP_HOST ? 'SMTP_USER' : 'GMAIL_USER');
+
+// A login written as a mailbox ("Ephapse <support@ephapse.net>") logs in as its bare address.
+// Anything else (a user name such as "apikey", or a broken value) is passed on as typed,
+// so the provider's own refusal says what is wrong with it.
+function loginName(value) {
+  const typed = String(value || '').trim();
+  return parseMailbox(typed)?.address || typed;
+}
+
+// A bare address a provider will accept on a From line: one @, nothing that could close or
+// open a header or a second address, a dot in the domain, and the lengths RFC 5321 allows.
+function bareAddress(value) {
+  const address = String(value || '');
+  if (address.length < 6 || address.length > 254 || /[\s<>"(),;:\\[\]]/.test(address)) return '';
+  const [local, domain, extra] = address.split('@');
+  if (extra !== undefined || !local || local.length > 64 || !domain) return '';
+  if (!/^[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?(?:\.[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?)+$/u.test(domain)) return '';
+  return address;
+}
+
+/**
+ * One mailbox as people write it in a setting, read the same way whichever setting it is in:
+ * `addr@x`, `Name <addr@x>` or `"Name" <addr@x>`, with spaces or quotes around the whole.
+ *
+ * Returns `{ name, address }` with `address` bare, or null when the value is not one usable
+ * mailbox: a line break anywhere, a bracket left open, a second address, a space in the address.
+ * Before 1.33.3 only EMAIL_FROM was read this way, and a GMAIL_USER of
+ * `Ephapse <support@ephapse.net>` went out as `"Ephapse" <Ephapse <support@ephapse.net>>`,
+ * which Resend refused, so no confirmation code was sent.
+ *
+ * @param {unknown} value
+ * @returns {{ name: string, address: string } | null}
+ */
+export function parseMailbox(value) {
+  let text = String(value ?? '').trim();
+  // Quotes around the whole value, as a dashboard paste or a .env line can leave.
+  while (text.length >= 2 && /^(["']).*\1$/s.test(text)) text = text.slice(1, -1).trim();
+  if (!text || /[\r\n\p{Zl}\p{Zp}]/u.test(text)) return null;
+  const angled = /^(.*?)<([^<>]*)>$/s.exec(text);
+  if (!angled) {
+    const address = bareAddress(text);
+    return address ? { name: '', address } : null;
+  }
+  const name = angled[1].trim().replace(/^"(.*)"$/s, '$1').trim();
+  const address = bareAddress(angled[2].trim());
+  if (!address || /[<>]/.test(name)) return null;
+  return { name, address };
+}
+
+// Each unusable setting is said once per instance, not on every mail; its value never is.
+const warned = new Set();
+function warnUnusable(variable, value) {
+  const key = `${variable}\u0000${value}`;
+  if (warned.has(key)) return;
+  warned.add(key);
+  log.warn(`email sender setting ${variable} is not one usable address (written as addr@domain or Name <addr@domain>); it is skipped for the next one`, { variable });
+}
+
 /** The address mail is sent from, for the address-safety check (server/domainCheck.js). */
 export const senderAddress = () => senderMailbox().address;
 
-/** The mailbox mail is sent from: EMAIL_FROM, else the SMTP login, else Resend's test sender. */
-function senderMailbox() {
-  const configured = process.env.EMAIL_FROM || '';
-  const inAngles = configured.match(/<([^>]+)>/);
-  if (inAngles) return { name: configured.slice(0, configured.indexOf('<')).trim().replace(/^"|"$/g, ''), address: inAngles[1].trim() };
-  if (configured.includes('@')) return { name: 'Ephapse', address: configured.trim() };
-  const login = smtpSettings()?.user;
-  if (login && login.includes('@')) return { name: 'Ephapse', address: login };
-  return { name: 'Ephapse', address: 'onboarding@resend.dev' };
+/**
+ * The mailbox mail is sent from: EMAIL_FROM, else the SMTP login, else Resend's test sender.
+ * Every source goes through parseMailbox, so the address is always bare. Also says which
+ * setting it came from (`source`: the variable, or `default`) and which configured settings
+ * were skipped as unusable, by name only, for `npm run domain:check`.
+ *
+ * @returns {{ name: string, address: string, source: string, unusable: string[] }}
+ */
+export function senderMailbox() {
+  const unusable = [];
+  const configured = String(process.env.EMAIL_FROM || '').trim();
+  if (configured) {
+    const mailbox = parseMailbox(configured);
+    if (mailbox) return { name: mailbox.name || 'Ephapse', address: mailbox.address, source: 'EMAIL_FROM', unusable };
+    warnUnusable('EMAIL_FROM', configured);
+    unusable.push('EMAIL_FROM');
+  }
+  const variable = loginVariable();
+  const login = smtpSettings() ? String(process.env[variable] || '').trim() : '';
+  // A login with neither @ nor < is a user name (SendGrid's "apikey"), never meant as a sender.
+  if (/[@<]/.test(login)) {
+    const mailbox = parseMailbox(login);
+    if (mailbox) return { name: mailbox.name || 'Ephapse', address: mailbox.address, source: variable, unusable };
+    warnUnusable(variable, login);
+    unusable.push(variable);
+  }
+  return { name: 'Ephapse', address: 'onboarding@resend.dev', source: 'default', unusable };
 }
 
 /**

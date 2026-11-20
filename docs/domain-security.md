@@ -59,3 +59,28 @@ check against it; for full DNS authentication, work through these steps for that
    MTA-STS and TLS-RPT are the next step.
 
 Run the check again after each step: every line should read *Good*.
+
+## Cloudflare in front: the browser cache (since 1.33.2)
+
+If the site's DNS records are proxied through Cloudflare (orange cloud) rather than "DNS
+only" as step 2 above advises, Cloudflare's **Browser Cache TTL** rewrites the cache header
+of the scripts and stylesheets. Measured on 2026-11-18: `/js/*` and `/css/*` came back
+`public, max-age=14400, must-revalidate` where Vercel sends `max-age=0`, while the HTML was
+not cached. There is no build step and no hashed file names here, so for four hours after a
+deploy a returning browser can run the new page with the old `app.js`. After the 1.33.1
+deploy that was a black screen until a hard reload.
+
+The fix is one setting, free:
+
+1. Cloudflare dashboard → ephapse.net → **Caching → Configuration → Browser Cache TTL** →
+   **Respect Existing Headers**.
+2. Same page → **Purge Everything**, so nothing cached under the old rule is served again.
+3. Or instead set the site's DNS records to **DNS only** (grey cloud), as step 2 above says.
+
+Check it: `curl -sI https://www.ephapse.net/js/app.js` should show `cache-control` with
+`max-age=0`, not `max-age=14400`.
+
+Meanwhile, and after every deploy, `public/js/boot-watch.js` is the safety net: a page that
+has not shown the sign-in screen or the app in time says "Ephapse was just updated" and
+offers a button that fetches every script and stylesheet again past the cache, then reloads.
+It never reloads by itself.

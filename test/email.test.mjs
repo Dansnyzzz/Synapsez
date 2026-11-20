@@ -140,6 +140,163 @@ section('a name cannot write its own headers');
   check('and its link escaped into the button', reset.html.includes('href="https://app.example/reset?t=abc&amp;x=1"'));
 }
 
+// Production, 2026-11-19: GMAIL_USER held `Ephapse <support@ephapse.net>`, EMAIL_FROM had not
+// reached Production, the login was used as a bare address, and Resend refused
+// `"Ephapse" <Ephapse <support@ephapse.net>>` with a 422, so no confirmation code went out.
+section('a sender written as "Name <address>" works from any setting, and a broken one is skipped (1.33.3)');
+{
+  const saved = { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD };
+  const want = '"Ephapse" <support@ephapse.net>';
+  const headers = [];
+  const header = () => {
+    const h = email.__testing.fromHeader();
+    headers.push(h);
+    return h;
+  };
+  // Every warning the logger prints, to check it names the setting and never its value.
+  const printed = [];
+  const quiet = { warn: console.warn, log: console.log, info: console.info, error: console.error };
+  const listen = () => Object.assign(console, { warn: (...a) => printed.push(a.map(String).join(' ')), log: (...a) => printed.push(a.map(String).join(' ')), info: (...a) => printed.push(a.map(String).join(' ')), error: (...a) => printed.push(a.map(String).join(' ')) });
+  const stopListening = () => Object.assign(console, quiet);
+
+  try {
+    delete process.env.GMAIL_USER;
+    delete process.env.GMAIL_APP_PASSWORD;
+    for (const form of [
+      'support@ephapse.net',
+      'Ephapse <support@ephapse.net>',
+      '"Ephapse" <support@ephapse.net>',
+      '  Ephapse <support@ephapse.net>  \n',
+      '\t"Ephapse"   <support@ephapse.net> ',
+      '"Ephapse <support@ephapse.net>"',
+      "'Ephapse <support@ephapse.net>'",
+      '"support@ephapse.net"',
+      '<support@ephapse.net>',
+    ]) {
+      process.env.EMAIL_FROM = form;
+      check(`EMAIL_FROM ${JSON.stringify(form)} gives ${want}`, header() === want, headers.at(-1));
+    }
+    check('  and the address check is given the bare address', email.senderAddress() === 'support@ephapse.net', email.senderAddress());
+    check('  and the footer names Ephapse', email.senderName() === 'Ephapse', email.senderName());
+    delete process.env.EMAIL_FROM;
+
+    process.env.GMAIL_USER = 'Ephapse <support@ephapse.net>';
+    process.env.GMAIL_APP_PASSWORD = 'abcd efgh ijkl mnop';
+    check('GMAIL_USER written as "Ephapse <support@ephapse.net>", with no EMAIL_FROM, gives the same header', header() === want, headers.at(-1));
+    check('  and Gmail is logged in to with the bare address', email.__testing.smtpSettings().user === 'support@ephapse.net', email.__testing.smtpSettings().user);
+    check('  and the address check is given the bare address', email.senderAddress() === 'support@ephapse.net', email.senderAddress());
+
+    // The incident itself, replayed: Resend chosen, the sender from GMAIL_USER.
+    process.env.RESEND_API_KEY = 're_test_not_a_key';
+    const realFetch = globalThis.fetch;
+    let asked = null;
+    globalThis.fetch = async (url, init) => {
+      asked = { url: String(url), body: JSON.parse(init.body) };
+      return new Response(JSON.stringify({ id: 'r-1' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    listen();
+    let sentToResend;
+    try {
+      sentToResend = await email.sendEmail({ to: 'lan@example.com', subject: 'Mã xác nhận', text: '123456' });
+    } finally {
+      stopListening();
+      globalThis.fetch = realFetch;
+      delete process.env.RESEND_API_KEY;
+    }
+    check('the confirmation mail goes to Resend with the from it accepts', sentToResend.ok && asked?.body?.from === want, `${asked?.body?.from} ${sentToResend.error || ''}`);
+    headers.push(asked?.body?.from || '');
+
+    const { checkDomain } = await import('../server/domainCheck.js');
+    const names = [];
+    const dns = async (url) => {
+      const u = new URL(String(url));
+      if (u.searchParams.get('name')) names.push(u.searchParams.get('name'));
+      return { ok: true, status: 200, headers: new Headers(), json: async () => ({ Status: 0, Answer: [] }) };
+    };
+    const seen = await checkDomain({ url: 'https://app.example', mailFrom: email.senderAddress(), fetchImpl: dns });
+    const mailCheck = seen.checks.find((c) => c.id === 'mail');
+    check('the domain check reads the sender domain as ephapse.net', mailCheck?.facts?.domain === 'ephapse.net' && names.includes('_dmarc.ephapse.net') && !names.some((n) => /[<>"\s]/.test(n)), JSON.stringify({ facts: mailCheck?.facts, names }));
+
+    // An unusable EMAIL_FROM is skipped for the next source, with one warning that names the setting only.
+    process.env.GMAIL_USER = 'Ephapse <mailbox@ephapse.net>';
+    for (const bad of ['Ephapse <support@ephapse.net', 'Ephapse', 'a b@c.d', 'Ephapse\n<support@ephapse.net>', 'support@ephapse.net\r\nBcc: victim@example.com', 'Ephapse <Ephapse <support@ephapse.net>>', 'support@localhost', 'two@at@ephapse.net']) {
+      process.env.EMAIL_FROM = bad;
+      printed.length = 0;
+      listen();
+      let h;
+      try {
+        h = header();
+        // Asked again, as every mail asks several times: still one warning.
+        email.senderName();
+        email.__testing.fromHeader();
+      } finally {
+        stopListening();
+      }
+      const said = printed.join('\n');
+      check(`an unusable EMAIL_FROM ${JSON.stringify(bad)} falls back to GMAIL_USER`, h === '"Ephapse" <mailbox@ephapse.net>', h);
+      check('  with one warning naming EMAIL_FROM', printed.length === 1 && /EMAIL_FROM/.test(said), said);
+      const pieces = [bad, ...bad.split(/[\s<>"]+/).filter((p) => p.length > 2)];
+      check('  that never prints the value or a piece of it', !pieces.some((p) => said.includes(p)), said);
+    }
+    delete process.env.EMAIL_FROM;
+
+    // The same for an unusable login: the last fallback, Resend's test sender.
+    process.env.GMAIL_USER = 'Ephapse <mailbox@ephapse.net';
+    printed.length = 0;
+    listen();
+    let fallback;
+    try {
+      fallback = header();
+    } finally {
+      stopListening();
+    }
+    check('an unusable GMAIL_USER falls back to Resend\'s test sender', fallback === '"Ephapse" <onboarding@resend.dev>', fallback);
+    check('  with one warning naming GMAIL_USER and not its value', printed.length === 1 && /GMAIL_USER/.test(printed.join('')) && !/mailbox@ephapse\.net|Ephapse </.test(printed.join('')), printed.join(' | '));
+
+    // An SMTP login that is a user name, not an address, is a login only: no sender, no warning.
+    delete process.env.GMAIL_USER;
+    delete process.env.GMAIL_APP_PASSWORD;
+    Object.assign(process.env, { SMTP_HOST: 'smtp.example.org', SMTP_USER: 'apikey', SMTP_PASS: 'x' });
+    printed.length = 0;
+    listen();
+    let apikey;
+    try {
+      apikey = header();
+    } finally {
+      stopListening();
+    }
+    check('an SMTP login that is a user name is kept for the login and not used as the sender', apikey === '"Ephapse" <onboarding@resend.dev>' && email.__testing.smtpSettings().user === 'apikey' && printed.length === 0, `${apikey} ${printed.join(' | ')}`);
+    process.env.SMTP_USER = '"Acme Mail" <hello@acme.example>';
+    check('an SMTP_USER written with a name is read the same way, for the sender and the login', header() === '"Acme Mail" <hello@acme.example>' && email.__testing.smtpSettings().user === 'hello@acme.example', `${headers.at(-1)} ${email.__testing.smtpSettings().user}`);
+    for (const key of ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASS']) delete process.env[key];
+
+    // Whatever the settings hold, the header is one name and one bare address.
+    const hostile = ['Ephapse <Ephapse <support@ephapse.net>>', '<<a@b.co>>', 'A <a@b.co> <c@d.co>', '"><script>@x.co', 'x@y.co>', '<x@y.co', 'N "<a@b.co>"', '', '   ', `a@b.co${String.fromCharCode(0x2028)}Bcc: c@d.co`];
+    for (const from of hostile) {
+      for (const user of hostile) {
+        process.env.EMAIL_FROM = from;
+        Object.assign(process.env, { GMAIL_USER: user || 'x', GMAIL_APP_PASSWORD: 'p' });
+        listen();
+        try {
+          header();
+        } finally {
+          stopListening();
+        }
+      }
+    }
+    const nested = headers.filter((h) => /<[^>]*</.test(h));
+    check(`no header ever nests one address inside another (${headers.length} headers)`, nested.length === 0, nested.slice(0, 3).join(' | '));
+    const shaped = headers.filter((h) => !/^"[^"<>\r\n]+" <[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+>$/.test(h));
+    check('  every one is "Name" <one bare address>', shaped.length === 0, shaped.slice(0, 3).join(' | '));
+  } finally {
+    stopListening();
+    delete process.env.EMAIL_FROM;
+    for (const key of ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASS', 'RESEND_API_KEY']) delete process.env[key];
+    Object.assign(process.env, { GMAIL_USER: saved.user, GMAIL_APP_PASSWORD: saved.pass });
+    email.__testing.useTransport(fakeTransport);
+  }
+}
+
 section('a refusal from the provider is reported as a refusal');
 {
   refuse = 'Invalid login: 535-5.7.8 Username and Password not accepted';

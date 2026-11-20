@@ -163,6 +163,250 @@ const SCROLLERS = (selector = 'body') => {
 await page.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
 await page.waitForTimeout(600);
 
+/*
+ * 1.33.2: after the 1.33.1 deploy the owner saw a black screen. Cloudflare had the
+ * browser keep /js/* and /css/* for four hours while index.html was always fresh, so
+ * the new page ran the old app.js, which threw and left both screens hidden.
+ * public/js/boot-watch.js says so instead, and its button fetches the new files.
+ * Each page here is a context of its own; `data-wait` shortens the time limit.
+ */
+section('a page that cannot start says so, and fetches the new files (1.33.2)');
+{
+  const http = await import('node:http');
+  const ORIGIN = `http://127.0.0.1:${PORT}`;
+  // The incident's shape: an app.js that throws as it loads, after its imports have loaded.
+  const OLD_APP = "throw new Error('an older app.js, looking for a button this page no longer has');\n";
+  const WORDS = {
+    vi: { title: 'Ephapse vừa được cập nhật', text: 'Trình duyệt của bạn còn giữ một phần bản cũ, nên trang chưa mở được.', button: 'Tải bản mới', hint: 'Hoặc nhấn Ctrl+Shift+R (Mac: ⌘+Shift+R).', again: 'Vẫn chưa được — hãy nhấn Ctrl+Shift+R (Mac: ⌘+Shift+R).' },
+    en: { title: 'Ephapse was just updated', text: 'Your browser still holds part of the old version, so the page could not start.', button: 'Load the new version', hint: 'Or press Ctrl+Shift+R (Mac: ⌘+Shift+R).', again: 'Still not working — press Ctrl+Shift+R (Mac: ⌘+Shift+R).' },
+  };
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const oldApp = async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, body: OLD_APP + (await response.text()) });
+  };
+  const standIn = (body) => (route) => route.fulfill({ status: 200, contentType: 'text/javascript', body });
+  const open = async ({ limit, locale = 'en-US', app, session, css } = {}) => {
+    const context = await browser.newContext({ locale, viewport: { width: 1280, height: 860 } });
+    if (limit) {
+      await context.route((url) => url.pathname === '/', async (route) => {
+        const response = await route.fetch();
+        const html = (await response.text()).replace('<script src="/js/boot-watch.js"></script>', `<script src="/js/boot-watch.js" data-wait="${limit}"></script>`);
+        await route.fulfill({ response, body: html });
+      });
+    }
+    if (app) await context.route('**/js/app.js', app);
+    if (session) await context.route('**/api/session', session);
+    if (css) await context.route('**/css/app.css', css);
+    const p = await context.newPage();
+    const warned = [];
+    p.on('console', (m) => { if (m.type() === 'warning') warned.push(m.text()); });
+    await p.goto(`${ORIGIN}/`, { waitUntil: 'domcontentloaded' });
+    return { context, p, warned };
+  };
+  const appears = (p, ms = 6000) => p.waitForSelector('#boot-watch', { timeout: ms }).then(() => true, () => false);
+  const notice = (p) => p.evaluate(() => {
+    const box = document.getElementById('boot-watch');
+    const say = (id) => document.getElementById(id)?.textContent.trim() || '';
+    const refs = (attr) => (box?.getAttribute(attr) || '').split(/\s+/).filter(Boolean).map(say).join(' ');
+    const middle = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+    return {
+      there: !!box,
+      gate: !!document.getElementById('gate') && !document.getElementById('gate').hidden,
+      app: !!document.getElementById('app') && !document.getElementById('app').hidden,
+      role: box?.getAttribute('role'),
+      modal: box?.getAttribute('aria-modal'),
+      lang: box?.getAttribute('lang'),
+      named: refs('aria-labelledby'),
+      described: refs('aria-describedby'),
+      title: say('boot-watch-title'),
+      text: say('boot-watch-text'),
+      hint: say('boot-watch-hint'),
+      button: say('boot-watch-reload'),
+      focused: document.activeElement?.id === 'boot-watch-reload',
+      covers: !!box && !!middle && box.contains(middle),
+      opaque: !!box && /^rgb\(/.test(getComputedStyle(box).backgroundColor),
+    };
+  });
+
+  {
+    const { context, p } = await open({ limit: 800 });
+    await p.waitForTimeout(1500);
+    const seen = await notice(p);
+    check('a page that starts shows no notice: the sign-in screen, nothing over it', !seen.there && seen.gate, JSON.stringify(seen));
+    await context.close();
+  }
+  {
+    // Any app.js that works is a start, newer ones included: started is read from the page alone.
+    const { context, p } = await open({ limit: 500, app: standIn("setTimeout(() => { document.getElementById('app').hidden = false; }, 250);") });
+    await p.waitForTimeout(1300);
+    const seen = await notice(p);
+    check('  so is one that shows the app, as a signed-in start does', !seen.there && seen.app, JSON.stringify(seen));
+    await context.close();
+  }
+  {
+    // app.js's boot().catch puts its own failure in place of the page; it names what went wrong.
+    const { context, p } = await open({ limit: 500, app: standIn("setTimeout(() => { const pre = document.createElement('pre'); pre.textContent = 'Failed to fetch'; document.body.replaceChildren(pre); }, 150);") });
+    await p.waitForTimeout(1300);
+    const seen = await notice(p);
+    check("  and so is the app's own failure page: the watchdog does not talk over it", !seen.there && (await p.textContent('body')) === 'Failed to fetch', JSON.stringify(seen));
+    await context.close();
+  }
+  {
+    const { context, p } = await open({ limit: 500, session: async (route) => { await wait(1500); await route.continue(); } });
+    const early = await appears(p, 4000);
+    await p.waitForSelector('#gate:not([hidden])', { timeout: 8000 }).catch(() => null);
+    await p.waitForTimeout(100);
+    const seen = await notice(p);
+    check('a start later than the limit: the notice shows, then takes itself away when the sign-in screen comes', early && !seen.there && seen.gate, JSON.stringify({ early, ...seen }));
+    await context.close();
+  }
+  {
+    // DOMContentLoaded waits for the module graph, so a slow app.js only delays the clock.
+    const { context, p } = await open({ limit: 800, app: async (route) => { await wait(1200); await route.continue(); } });
+    await p.waitForTimeout(1500);
+    const seen = await notice(p);
+    check('  an app.js slow to arrive is not late: the time limit counts from DOMContentLoaded', !seen.there && seen.gate, JSON.stringify(seen));
+    await context.close();
+  }
+  {
+    // The limit set as long as it goes: only the error path can bring the notice this soon.
+    const { context, p, warned } = await open({ limit: 60000, locale: 'vi-VN', app: oldApp });
+    const from = Date.now();
+    const came = await appears(p);
+    const took = Date.now() - from;
+    const seen = await notice(p);
+    const vi = WORDS.vi;
+    check('an app.js that throws as it loads: the notice comes within seconds, not at the time limit', came && took < 5000, `${took} ms`);
+    check("  in the page's language, Vietnamese here, in the ruled words", seen.lang === 'vi' && seen.title === vi.title && seen.text === vi.text && seen.button === vi.button && seen.hint === vi.hint, JSON.stringify(seen));
+    check('  an alertdialog, named by its title and described by its words, with focus on its button', seen.role === 'alertdialog' && seen.modal === 'true' && seen.named === vi.title && seen.described === `${vi.text} ${vi.hint}` && seen.focused, JSON.stringify(seen));
+    check('  never a black screen: it covers the page, opaque, while both screens stay hidden', seen.covers && seen.opaque && !seen.gate && !seen.app, JSON.stringify(seen));
+    check('  the console says why, once, with no address in it', warned.length === 1 && /older app\.js/.test(warned[0]) && !/https?:/.test(warned[0]), JSON.stringify(warned));
+
+    const asked = [];
+    p.on('request', (r) => { if (r.resourceType() === 'fetch') asked.push(new URL(r.url()).pathname); });
+    const back = p.waitForEvent('load', { timeout: 15000 }).then(() => true, () => false);
+    await p.keyboard.press('Enter');
+    const reloaded = await back;
+    const how = await p.evaluate(() => /** @type {PerformanceNavigationTiming | undefined} */ (performance.getEntriesByType('navigation')[0])?.type);
+    const wanted = ['/js/lang-boot.js', '/js/boot-watch.js', '/js/app.js', '/js/i18n.js', '/js/api.js', '/js/account-menu.js', '/js/plus-menu.js', '/css/app.css'];
+    check('  Enter on it asks again for the scripts and stylesheets, the whole module graph too, then reloads', reloaded && how === 'reload' && wanted.every((f) => asked.includes(f)), `${how} ${wanted.filter((f) => !asked.includes(f)).join(',')} of ${asked.length}`);
+
+    const again = (await appears(p)) && (await notice(p));
+    check('a second failure within a minute says "Still not working", and still offers the button', !!again && again.hint === vi.again && again.button === vi.button && again.focused, JSON.stringify(again));
+
+    // Readable in both themes and on a phone. The notice repaints when the scheme changes.
+    const measure = () => p.evaluate(() => {
+      if (!document.getElementById('boot-watch')) return null;
+      const channel = (v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+      const lum = (c) => { const [r, g, b] = (c.match(/[\d.]+/g) || []).slice(0, 3).map((n) => channel(Number(n) / 255)); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+      const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100; };
+      const style = (id) => getComputedStyle(/** @type {HTMLElement} */ (document.getElementById(id)));
+      const card = getComputedStyle(/** @type {HTMLElement} */ (document.getElementById('boot-watch-title').parentElement)).backgroundColor;
+      const button = document.getElementById('boot-watch-reload').getBoundingClientRect();
+      return {
+        card,
+        title: ratio(style('boot-watch-title').color, card),
+        text: ratio(style('boot-watch-text').color, card),
+        hint: ratio(style('boot-watch-hint').color, card),
+        button: ratio(style('boot-watch-reload').color, style('boot-watch-reload').backgroundColor),
+        tall: Math.round(button.height),
+        sideways: document.documentElement.scrollWidth - innerWidth,
+      };
+    });
+    await p.setViewportSize({ width: 360, height: 740 });
+    await p.emulateMedia({ colorScheme: 'light' });
+    await p.waitForTimeout(150);
+    const light = await measure();
+    await p.emulateMedia({ colorScheme: 'dark' });
+    await p.waitForTimeout(150);
+    const dark = await measure();
+    const readable = (m) => !!m && m.title >= 4.5 && m.text >= 4.5 && m.hint >= 4.5 && m.button >= 4.5;
+    check('  contrast of 4.5:1 or more for every line and the button, in light and in dark', readable(light) && readable(dark) && light.card !== dark.card, JSON.stringify({ light, dark }));
+    check('  and at 360px it fits, its button 44px tall or more', !!light && !!dark && light.tall >= 44 && light.sideways <= 0 && dark.sideways <= 0, JSON.stringify({ light, dark }));
+    await context.close();
+  }
+  {
+    // app.css may be the stale file too. Ordinary rules that would hide or wreck a div, a
+    // heading or a button all lose to the notice's own element styles.
+    const sheet = '* { color: #f00; background: #ff0; font-size: 40px; margin: 30px; visibility: hidden; opacity: 0.2; } div, h1, p, button { display: none; } #boot-watch, [role="alertdialog"] { position: static; }';
+    const { context, p } = await open({ limit: 60000, app: oldApp, css: (route) => route.fulfill({ status: 200, contentType: 'text/css', body: sheet }) });
+    const came = await appears(p);
+    const looks = came && (await p.evaluate(() => {
+      const style = (id) => getComputedStyle(/** @type {HTMLElement} */ (document.getElementById(id)));
+      return {
+        position: style('boot-watch').position,
+        opacity: style('boot-watch').opacity,
+        visibility: style('boot-watch-title').visibility,
+        size: style('boot-watch-title').fontSize,
+        colour: style('boot-watch-title').color,
+        button: style('boot-watch-reload').display,
+        tall: Math.round(document.getElementById('boot-watch-reload').getBoundingClientRect().height),
+      };
+    }));
+    check('  and a stale app.css cannot reach it: rules that would hide or recolour it do not apply', !!looks && looks.position === 'fixed' && looks.opacity === '1' && looks.visibility === 'visible' && looks.size === '20px' && looks.colour !== 'rgb(255, 0, 0)' && looks.button === 'block' && looks.tall >= 44, JSON.stringify(looks));
+    await context.close();
+  }
+  {
+    // The incident itself, with no routes, so the browser's own cache is on trial: a front
+    // that tells the browser to keep /js/* and /css/* for four hours, as Cloudflare's
+    // Browser Cache TTL did, and serves the old app.js until the deploy lands.
+    let stale = true;
+    const front = http.createServer((req, res) => {
+      const headers = { ...req.headers };
+      delete headers['accept-encoding'];
+      const upstream = http.request({ host: '127.0.0.1', port: PORT, path: req.url, method: req.method, headers }, (answer) => {
+        const out = { ...answer.headers };
+        if (/^\/(js|css)\//.test(req.url || '')) out['cache-control'] = 'public, max-age=14400, must-revalidate';
+        if (!(stale && req.url === '/js/app.js' && answer.statusCode === 200)) {
+          res.writeHead(answer.statusCode || 502, out);
+          answer.pipe(res);
+          return;
+        }
+        const parts = [];
+        answer.on('data', (part) => parts.push(part));
+        answer.on('end', () => {
+          const body = Buffer.concat([Buffer.from(OLD_APP), ...parts]);
+          delete out.etag;
+          out['content-length'] = String(body.length);
+          res.writeHead(200, out);
+          res.end(body);
+        });
+      });
+      req.pipe(upstream);
+    });
+    await new Promise((resolve) => front.listen(0, '127.0.0.1', () => resolve(undefined)));
+    const FRONT = `http://127.0.0.1:${/** @type {import('node:net').AddressInfo} */ (front.address()).port}`;
+    const context = await browser.newContext({ locale: 'en-US' });
+    const p = await context.newPage();
+    await p.goto(`${FRONT}/`, { waitUntil: 'domcontentloaded' });
+    const first = await appears(p);
+    stale = false; // the deploy is live: the server has the new app.js, this browser still the old one
+    await p.reload({ waitUntil: 'domcontentloaded' });
+    const stuck = await appears(p);
+    const before = await notice(p);
+    check('the incident replayed: the old app.js kept for four hours, a plain reload still cannot start, and it says so', first && stuck && !before.gate && before.title === WORDS.en.title && before.button === WORDS.en.button, JSON.stringify(before));
+
+    const asked = [];
+    p.on('request', async (r) => {
+      if (r.resourceType() === 'fetch') asked.push({ path: new URL(r.url()).pathname, cache: (await r.allHeaders())['cache-control'] || '' });
+    });
+    const back = p.waitForEvent('load', { timeout: 15000 }).then(() => true, () => false);
+    await p.click('#boot-watch-reload', { timeout: 3000 }).catch(() => null);
+    const reloaded = await back;
+    await p.waitForSelector('#gate:not([hidden])', { timeout: 8000 }).catch(() => null);
+    await p.waitForTimeout(200);
+    const after = await notice(p);
+    const fresh = asked.filter((a) => /no-cache/.test(a.cache)).map((a) => a.path);
+    const graph = ['/js/app.js', '/js/i18n.js', '/js/api.js', '/js/account-menu.js', '/css/app.css'];
+    check('  the button asks for each file again with cache-control: no-cache, the module graph included', graph.every((f) => fresh.includes(f)), `${graph.filter((f) => !fresh.includes(f)).join(',')} — ${JSON.stringify(asked.slice(0, 6))}`);
+    check('  then reloads, and the page starts: the sign-in screen, no notice', reloaded && after.gate && !after.there, JSON.stringify(after));
+    check('  and the note that it was pressed is gone once the page has started', (await p.evaluate(() => sessionStorage.getItem('ephapse:boot-reload'))) === null);
+    await context.close();
+    front.close();
+  }
+}
+
 section('signing in');
 // Signing up asks for a username too (owner, 2026-10-20).
 check('signing up asks for a username', await page.isVisible('#gate-username'));
@@ -11284,6 +11528,167 @@ section('a row of tabs or radios is one Tab stop, walked with the arrows (UI-013
     usageTabs: [...document.querySelectorAll('.usage__seg [role="tab"]')].every((b) => b.hasAttribute('tabindex')),
   }));
   check('a screen-reader-only announcer is on the page (UI-008)', marks.announcer === 'polite', JSON.stringify(marks));
+}
+
+/*
+ * 1.33.3, the owner live: the confirmation mail never came, they left the code screen, and
+ * signing up again said only "That email is already registered." Now the password chosen
+ * brings back the code box, and another password says how to get back, with "Sign in" and
+ * "Forgot password" beside the message, the address carried over. Each page here has an
+ * address of its own (x-real-ip), so the suite's other sign-ups do not share its limit.
+ */
+section('signing up again with an address waiting for its code leads back to it (1.33.3)');
+{
+  process.env.EMAIL_CONFIRMATION = 'on';
+  const pageErrors = [];
+  const first = 'the-first-long-password';
+  const other = 'a-different-long-password';
+  const visit = async (options) => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 860 }, ...options });
+    const guest = await context.newPage();
+    guest.on('pageerror', (err) => pageErrors.push(err.message));
+    await guest.goto(`http://127.0.0.1:${PORT}/`, { waitUntil: 'domcontentloaded' });
+    await guest.waitForSelector('#gate-switch:not([hidden])');
+    return { context, guest };
+  };
+  // To the sign-up form from wherever the gate is, as a person would: the switch below the card.
+  const toSignUp = async (guest) => {
+    for (let i = 0; i < 3 && (await guest.isHidden('#gate-username')); i += 1) await guest.click('#gate-switch');
+  };
+  const signUp = async (guest, username, password, email = 'waiting@test.local') => {
+    await toSignUp(guest);
+    await guest.fill('#gate-username', username);
+    await guest.fill('#gate-email', email);
+    await guest.fill('#gate-password', password);
+    await guest.check('#gate-consent');
+    await guest.click('#gate-submit');
+    await guest.waitForFunction(() => !document.getElementById('gate-error').hidden || !document.getElementById('gate-confirm').hidden, null, { timeout: 10_000 }).catch(() => {});
+  };
+  const look = (guest) =>
+    guest.evaluate(() => {
+      const box = (id) => /** @type {HTMLInputElement} */ (document.getElementById(id));
+      const group = document.getElementById('gate-pending');
+      return {
+        error: box('gate-error').hidden ? '' : box('gate-error').textContent,
+        ways: !!group && !group.hidden && group.getClientRects().length > 0,
+        labelledBy: group?.getAttribute('aria-labelledby') || '',
+        role: group?.getAttribute('role') || '',
+        signin: box('gate-pending-signin')?.textContent.trim() || '',
+        forgot: box('gate-pending-forgot')?.textContent.trim() || '',
+        code: !box('gate-confirm').hidden,
+        note: box('gate-note').hidden ? '' : box('gate-note').textContent,
+        signupForm: !box('gate-username').hidden,
+        passwordShown: !box('gate-password-field').hidden,
+        email: box('gate-email').value,
+        password: box('gate-password').value,
+        sub: box('gate-sub').textContent,
+        focused: document.activeElement?.id || '',
+        app: !document.getElementById('app').hidden,
+        wide: document.documentElement.scrollWidth,
+      };
+    });
+
+  const { context, guest } = await visit({ extraHTTPHeaders: { 'x-real-ip': '10.77.0.1' } });
+  try {
+    // An account waiting for its code: the mail never came, and the person left the code screen.
+    await signUp(guest, 'waiting.one', first);
+    const made = await look(guest);
+    check('the first sign-up asks for the code', made.code && !made.app, JSON.stringify(made));
+    await guest.evaluate(() => localStorage.removeItem('ephapse:gate-draft'));
+    await guest.reload({ waitUntil: 'domcontentloaded' });
+    await guest.waitForSelector('#gate-switch:not([hidden])');
+
+    // Another password: the message, and the two ways back, the first one focused.
+    await signUp(guest, 'waiting.two', other, 'Waiting@test.local');
+    const pending = await look(guest);
+    check('another password says the address waits for its code, and how to get back', /waiting to be confirmed/.test(pending.error) && /Forgot password/.test(pending.error) && !/already registered/.test(pending.error) && !pending.code && !pending.app, JSON.stringify(pending));
+    check('  with "Sign in" and "Forgot password" beside it, a group the message names, focus on the first', pending.ways && pending.role === 'group' && pending.labelledBy === 'gate-error' && pending.signin === 'Sign in' && pending.forgot === 'Forgot password' && pending.focused === 'gate-pending-signin', JSON.stringify(pending));
+    await guest.keyboard.press('Tab');
+    check('  both reached by Tab, in order', (await guest.evaluate(() => document.activeElement?.id)) === 'gate-pending-forgot');
+    await guest.keyboard.press('Shift+Tab');
+
+    // "Sign in", pressed from the keyboard: the sign-in form with the address, the other password gone.
+    await guest.keyboard.press('Enter');
+    const signin = await look(guest);
+    check('"Sign in" opens signing in with the address filled in, the password box empty and focused', /Sign in to continue/.test(signin.sub) && !signin.signupForm && signin.passwordShown && signin.email === 'Waiting@test.local' && signin.password === '' && signin.focused === 'gate-password' && !signin.ways && !signin.error, JSON.stringify(signin));
+    await guest.fill('#gate-password', first);
+    await guest.click('#gate-submit');
+    await guest.waitForSelector('#gate-confirm:not([hidden])', { timeout: 10_000 }).catch(() => {});
+    const viaSignin = await look(guest);
+    check('  and signing in there with the password chosen brings the code box', viaSignin.code && /waiting@test\.local/i.test(viaSignin.note) && viaSignin.focused === 'gate-confirmcode', JSON.stringify(viaSignin));
+
+    // "Forgot password", from the keyboard: the reset form with the address.
+    await signUp(guest, 'waiting.two', other);
+    await guest.keyboard.press('Tab');
+    await guest.keyboard.press('Enter');
+    const forgot = await look(guest);
+    check('"Forgot password" opens the reset with the address filled in, the button to send focused', /send you a reset code/.test(forgot.sub) && !forgot.signupForm && !forgot.passwordShown && forgot.email === 'waiting@test.local' && forgot.focused === 'gate-submit' && !forgot.ways, JSON.stringify(forgot));
+
+    // The password chosen, at sign-up: the code box at once, as signing in gives.
+    await signUp(guest, 'waiting.three', first);
+    const again = await look(guest);
+    check('signing up again with the password chosen shows the code box at once, saying where the code went', again.code && !again.ways && /Confirm your email first/.test(again.error) && /waiting@test\.local/.test(again.note) && again.focused === 'gate-confirmcode' && !again.app, JSON.stringify(again));
+    const { getStore } = await import('../server/store/index.js');
+    const held = await getStore().getUserByEmail('waiting@test.local');
+    check('  and nothing was made or renamed: one account, its first username', held?.username === 'waiting.one' && (await getStore().getUserByUsername('waiting.two')) === null && (await getStore().getUserByUsername('waiting.three')) === null, held?.username);
+
+    // Review round 1: every code is counted, five an hour from one address. Two went out above;
+    // three more sign-ins send three, and the fourth still opens the box but sends none.
+    let last = null;
+    for (let i = 0; i < 4; i += 1) {
+      await guest.click('#gate-switch');
+      await guest.fill('#gate-email', 'waiting@test.local');
+      await guest.fill('#gate-password', first);
+      await guest.click('#gate-submit');
+      await guest.waitForSelector('#gate-confirm:not([hidden])', { timeout: 10_000 }).catch(() => {});
+      last = await look(guest);
+    }
+    check('past the resend limit, signing in still opens the code box, says no new code was sent, and not that one was', last.code && /No new code was sent/.test(last.error) && !last.note && last.focused === 'gate-confirmcode', JSON.stringify(last));
+  } finally {
+    await context.close();
+  }
+
+  // In Vietnamese, on a phone.
+  const vi = await visit({ viewport: { width: 360, height: 740 }, locale: 'vi-VN', extraHTTPHeaders: { 'x-real-ip': '10.77.0.2' } });
+  try {
+    await signUp(vi.guest, 'waiting.vi', other);
+    const said = await look(vi.guest);
+    check('in Vietnamese: the message and both ways back, inside a 360px phone', /chờ xác nhận/.test(said.error) && said.ways && said.signin === 'Đăng nhập' && said.forgot === 'Quên mật khẩu' && said.wide <= 360, JSON.stringify(said));
+    // Readable in both themes: each button's words against what is behind it, and big enough to press.
+    const measure = () =>
+      vi.guest.evaluate(() => {
+        const channel = (v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+        const rgb = (c) => (c.match(/[\d.]+/g) || []).map(Number);
+        const lum = (c) => { const [r, g, b] = rgb(c).slice(0, 3).map((n) => channel(n / 255)); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+        const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return Math.round(((hi + 0.05) / (lo + 0.05)) * 100) / 100; };
+        // The nearest solid colour behind an element: a ghost button is see-through.
+        const behind = (el) => {
+          for (let at = el; at; at = at.parentElement) {
+            const c = getComputedStyle(at).backgroundColor;
+            const alpha = rgb(c)[3];
+            if (c && c !== 'transparent' && (alpha === undefined || alpha >= 0.95)) return c;
+          }
+          return 'rgb(255, 255, 255)';
+        };
+        return ['gate-pending-signin', 'gate-pending-forgot'].map((id) => {
+          const button = /** @type {HTMLElement} */ (document.getElementById(id));
+          if (!button) return { id, ratio: 0, tall: 0 };
+          const box = button.getBoundingClientRect();
+          return { id, ratio: ratio(getComputedStyle(button).color, behind(button)), tall: Math.round(box.height) };
+        });
+      });
+    await vi.guest.emulateMedia({ colorScheme: 'light' });
+    await vi.guest.waitForTimeout(150);
+    const light = await measure();
+    await vi.guest.emulateMedia({ colorScheme: 'dark' });
+    await vi.guest.waitForTimeout(150);
+    const dark = await measure();
+    check('  each button readable (4.5:1 or more) in light and dark, and at least 36px tall', [...light, ...dark].every((m) => m.ratio >= 4.5 && m.tall >= 36), JSON.stringify({ light, dark }));
+  } finally {
+    await vi.context.close();
+  }
+  check('no script error on any of it', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
+  delete process.env.EMAIL_CONFIRMATION;
 }
 
 await browser.close();

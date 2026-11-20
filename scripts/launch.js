@@ -120,7 +120,8 @@ const wantWorker = args.wantWorker;
 //
 // Fail on the things that produce a confusing error three seconds later.
 
-const MIN_NODE = 20;
+// 22: what .nvmrc, CI and the tests run on, and package.json's engines (1.33.3).
+const MIN_NODE = 22;
 const nodeMajor = Number(process.versions.node.split('.')[0]);
 if (nodeMajor < MIN_NODE) {
   console.error(`\n  Ephapse needs Node ${MIN_NODE} or newer. This is Node ${process.versions.node}.`);

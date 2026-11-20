@@ -295,6 +295,10 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'Use a password of at least 10 characters.': 'Hãy dùng mật khẩu ít nhất 10 ký tự.',
   'Confirm your email first: enter the 6-digit code we sent to it.':
     'Hãy xác nhận email trước: nhập mã 6 số chúng tôi đã gửi tới email đó.',
+  'Confirm your email first. No new code was sent, because too many were asked for: enter the last code we sent, or ask for a new one later.':
+    'Hãy xác nhận email trước. Chưa gửi mã mới vì đã yêu cầu quá nhiều lần: hãy nhập mã gần nhất chúng tôi đã gửi, hoặc yêu cầu mã mới sau.',
+  'Signing up or in was called without a rate-limit meter.':
+    'Đăng ký hoặc đăng nhập được gọi mà không có bộ đếm giới hạn tần suất.',
   'That code is not right, or it has expired. Ask for a new one.':
     'Mã không đúng hoặc đã hết hạn. Hãy yêu cầu mã mới.',
   'resolvers unreachable':
@@ -326,6 +330,8 @@ Hãy gọi read_feed với bản tin bạn muốn.`,
   'That feedback was not found.': 'Không tìm thấy góp ý đó.',
   'Those are not the current documents. Reload the page to read them.':'Đó không phải bản hiện hành của các văn bản. Hãy tải lại trang để đọc chúng.',
   'That email is already registered.': 'Email này đã được đăng ký.',
+  'That email is waiting to be confirmed. Sign in with the password you chose to get a new code, or use Forgot password.':
+    'Email này đang chờ xác nhận. Hãy đăng nhập bằng mật khẩu bạn đã chọn để nhận mã mới, hoặc dùng Quên mật khẩu.',
   'This account has been suspended.': 'Tài khoản này đã bị tạm khoá.',
   'Enter the code from your authenticator app.': 'Nhập mã từ ứng dụng xác thực của bạn.',
   'That code is not right. Try the next one.': 'Mã không đúng. Hãy thử mã tiếp theo.',

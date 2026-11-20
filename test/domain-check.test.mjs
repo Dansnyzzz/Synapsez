@@ -97,5 +97,34 @@ section('what falls short is said, not hidden');
   check('nothing reachable: unknown, never a pass and never a throw', unknown.checks.every((c) => c.verdict === 'unknown' || c.verdict === 'fail') && !unknown.checks.some((c) => c.verdict === 'ok'), JSON.stringify(verdicts(unknown)));
 }
 
+/*
+ * `npm run domain:check` reads the sender the way the app does (1.33.3 review): the same settings
+ * in the same order, and a setting that is unusable is named as such, never printed. A site
+ * address that does not parse ends the check before any lookup, so nothing here leaves the machine.
+ */
+section('npm run domain:check names the sender the app sends from, and what it skipped');
+{
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const script = fileURLToPath(new URL('../scripts/domain-check.mjs', import.meta.url));
+  const MAIL = ['EMAIL_FROM', 'GMAIL_USER', 'GMAIL_APP_PASSWORD', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'RESEND_API_KEY', 'PUBLIC_URL', 'VERCEL', 'LOG_FORMAT'];
+  const run = (env, ...args) => {
+    const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !MAIL.includes(k)));
+    const out = spawnSync(process.execPath, [script, 'not-a-site-address', ...args], { env: { ...base, ...env }, encoding: 'utf8', timeout: 30_000 });
+    return `${out.stdout}\n${out.stderr}`;
+  };
+  const broken = run({ EMAIL_FROM: 'Ephapse <support@ephapse.net', GMAIL_USER: 'Ephapse <mailbox@ephapse.net>', GMAIL_APP_PASSWORD: 'abcd efgh ijkl mnop' });
+  check('an unusable EMAIL_FROM is named as unusable, and the app\'s next sender is the one checked', /EMAIL_FROM is set but is not one usable address/.test(broken) && /sender\s+mailbox@ephapse\.net \(from GMAIL_USER\)/.test(broken), broken.trim().slice(0, 400));
+  check('  its value is never printed', !broken.includes('support@ephapse.net') && !broken.includes('Ephapse <support'), broken.trim().slice(0, 400));
+  const noPassword = run({ GMAIL_USER: 'mailbox@ephapse.net', RESEND_API_KEY: 're_test_not_a_key' });
+  check('GMAIL_USER without its App Password is not the sender, as in the app', /sender\s+onboarding@resend\.dev \(from Resend's test sender/.test(noPassword) && !noPassword.includes('mailbox@ephapse.net'), noPassword.trim().slice(0, 300));
+  const smtp = run({ SMTP_HOST: 'smtp.example.org', SMTP_USER: 'Acme <hello@acme.example>', SMTP_PASS: 'x', GMAIL_USER: 'mailbox@ephapse.net', GMAIL_APP_PASSWORD: 'x' });
+  check('SMTP_USER, with SMTP_HOST, comes before GMAIL_USER, as in the app', /sender\s+hello@acme\.example \(from SMTP_USER\)/.test(smtp), smtp.trim().slice(0, 300));
+  const none = run({ EMAIL_FROM: 'support@ephapse.net' });
+  check('with no mail provider set up, it says there is no sender to check', /no mail provider is set up/.test(none), none.trim().slice(0, 300));
+  const typedBad = run({}, 'Ephapse <x');
+  check('a sender given on the command line that is unusable is said to be unusable', /the one given is not one usable address/.test(typedBad), typedBad.trim().slice(0, 300));
+}
+
 console.log(failures === 0 ? '\n\x1b[32mThe address check says what is true.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

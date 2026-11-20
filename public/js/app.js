@@ -728,6 +728,7 @@ function renderGateMode() {
 function setGateMode(mode) {
   gateMode = mode;
   $('gate-error').hidden = true;
+  $('gate-pending').hidden = true;
   $('gate-note').hidden = true;
   renderGateMode();
   saveGateDraft();
@@ -791,12 +792,37 @@ $('gate-switch').addEventListener('click', async () => {
 
 $('gate-forgot').addEventListener('click', () => setGateMode('forgot'));
 
-/** The code box, with what was sent and where. @param {string} [email] */
-function askForConfirmation(email) {
+// Signing up with an address still waiting for its code (1.33.3): the server's message, and
+// the two ways back, the address carried over in the one box every mode shares.
+function offerWaysBack(message) {
+  fail(message);
+  $('gate-pending').hidden = false;
+  $('gate-pending-signin').focus();
+}
+// Either way the password typed at sign-up is emptied: it is not the one the account has.
+$('gate-pending-signin').addEventListener('click', () => {
+  setGateMode('signin');
+  /** @type {HTMLInputElement} */ ($('gate-password')).value = '';
+  $('gate-password').focus();
+});
+$('gate-pending-forgot').addEventListener('click', () => {
+  setGateMode('forgot');
+  /** @type {HTMLInputElement} */ ($('gate-password')).value = '';
+  $('gate-submit').focus();
+});
+
+/**
+ * The code box, with what was sent and where. With `sent` false no new code went out (the
+ * resend limit, 1.33.3): the box is for the last one, and the server's words say so, so
+ * "we sent a code" is not said beside them.
+ *
+ * @param {string} [email] @param {boolean} [sent]
+ */
+function askForConfirmation(email, sent = true) {
   if (email) /** @type {HTMLInputElement} */ ($('gate-email')).value = email;
   /** @type {HTMLInputElement} */ ($('gate-confirmcode')).value = '';
   setGateMode('confirm');
-  note(t('gate.note.confirmSent', { email: /** @type {HTMLInputElement} */ ($('gate-email')).value.trim() }));
+  if (sent) note(t('gate.note.confirmSent', { email: /** @type {HTMLInputElement} */ ($('gate-email')).value.trim() }));
   $('gate-confirmcode').focus();
 }
 
@@ -818,6 +844,7 @@ $('gate-resend').addEventListener('click', async () => {
 $('gate-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   $('gate-error').hidden = true;
+  $('gate-pending').hidden = true;
   $('gate-note').hidden = true;
   const submit = $('gate-submit');
   submit.disabled = true;
@@ -900,10 +927,15 @@ $('gate-form').addEventListener('submit', async (event) => {
     await start();
   } catch (err) {
     // An account whose email is not confirmed yet: a fresh code went out, so ask for it.
+    // Signing up again with the password chosen answers the same (1.33.3).
     if (err.code === 'email_unconfirmed') {
       needsTotp = false;
-      askForConfirmation(err.email);
+      askForConfirmation(err.email, err.sent !== false);
       fail(err.message);
+    } else if (err.code === 'email_pending') {
+      needsTotp = false;
+      renderGateMode();
+      offerWaysBack(err.message);
     } else if (err.code === 'totp_required') {
       needsTotp = true;
       renderGateMode();

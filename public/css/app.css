@@ -520,6 +520,15 @@ textarea {
   gap: 6px;
   margin-top: 16px;
 }
+/* The two ways back to an address waiting for its code (1.33.3), side by side under the message. */
+.gate__pending {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.gate__pending[hidden] { display: none; }
 .gate__switch {
   border: 0;
   background: none;

@@ -110,10 +110,10 @@ if ($answer -ne 'YES') { Fail "Stopped. Nothing was installed and nothing was gi
 
 $node = Get-Command node -ErrorAction SilentlyContinue
 if (-not $node) {
-  Fail "Node.js is not installed. Get it from nodejs.org (version 20 or newer), then run this again."
+  Fail "Node.js is not installed. Get it from nodejs.org (version 22 or newer), then run this again."
 }
 $major = [int]((node -v).TrimStart('v').Split('.')[0])
-if ($major -lt 20) { Fail "This needs Node 20 or newer. You have $(node -v)." }
+if ($major -lt 22) { Fail "This needs Node 22 or newer. You have $(node -v)." }
 
 $git = Get-Command git -ErrorAction SilentlyContinue
 if (-not $git) {

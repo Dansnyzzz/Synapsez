@@ -490,6 +490,10 @@ export function createApp() {
     return account ? `user:${account.id}` : named;
   };
 
+  // What signing in and signing up count their password checks and codes in (1.33.3): the same
+  // buckets /api/login and /api/register/resend fill, keyed by the account as above.
+  const meterFor = (req) => async (action) => consumeLimit(req, action, await accountKey(req.body?.email));
+
   // Throttled three ways at once (ratelimit.js `LIMITS.login`): the caller's address,
   // that address on this account, and the account from everywhere at a looser ceiling
   // — so a stranger's guesses lock out only the stranger's address, and a botnet spread
@@ -499,7 +503,7 @@ export function createApp() {
     rateLimit('login', (req) => accountKey(req.body?.email)),
     wrap(async (req, res) => {
       try {
-        const user = await loginUser(body(req), req, res);
+        const user = await loginUser(body(req), req, res, { meter: meterFor(req) });
         if (!user) {
           /*
            * Written to the account that was tried, when there is one, so its
@@ -521,7 +525,8 @@ export function createApp() {
         await audit(req, user.id, 'sign_in');
         res.json({ user: publicUser(user) });
       } catch (err) {
-        res.status(err.status || 400).json({ error: clientError(err), code: err.code, ...(err.code === 'email_unconfirmed' ? { email: err.email } : {}) });
+        // `sent`: whether a new code went out, or the resend limit held it back (1.33.3 review).
+        res.status(err.status || 400).json({ error: clientError(err), code: err.code, ...(err.code === 'email_unconfirmed' ? { email: err.email, sent: err.sent !== false } : {}) });
       }
     }),
   );
@@ -691,7 +696,9 @@ export function createApp() {
     rateLimit('register'),
     wrap(async (req, res) => {
       try {
-        const { user, confirm } = await registerUser(body(req), req, res);
+        // An address waiting for its code answers like a sign-in (1.33.3), so it is counted like
+        // one: the password in the sign-in buckets, a fresh code in the resend buckets.
+        const { user, confirm } = await registerUser(body(req), req, res, { meter: meterFor(req) });
         // What the person ticked — the privacy notice, and since 2026-10-26 the
         // terms and the usage policy — by version, in their security record
         // (LAW-001): consent has to be shown, not assumed. The form insists on
@@ -705,7 +712,13 @@ export function createApp() {
       } catch (err) {
         // A closed deployment is a 403, not a bad request — the client can tell
         // "you may not" from "you got that wrong" and say something useful.
-        res.status(err.status || 400).json({ error: clientError(err) });
+        // Only the codes the page acts on are passed on, never a database's own.
+        const code = ['email_unconfirmed', 'email_pending', 'rate_limited'].includes(err.code) ? err.code : undefined;
+        // A wrong password for an address waiting for its code is a guess at that account,
+        // written to its record as /api/login writes one, and not awaited for the same reason.
+        if (code === 'email_pending' && err.accountId) waitUntil(audit(req, err.accountId, 'sign_in_failed').catch(() => {}));
+        if (err.retryAfterSec) res.set('Retry-After', String(err.retryAfterSec));
+        res.status(err.status || 400).json({ error: clientError(err), code, ...(code === 'email_unconfirmed' ? { email: err.email, sent: err.sent !== false } : {}) });
       }
     }),
   );

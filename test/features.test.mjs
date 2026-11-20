@@ -3288,5 +3288,41 @@ section("1.33.1's last fixes: the owner's checklist, the support mailbox, and wh
   check('the Drive tool says its search reaches only picked files for a connection made or renewed since 1.33.1, in its first sentence', /for a Google connection made or renewed since 1\.33\.1/.test(first) && !/never the rest of their Drive/.test(drive), first);
 }
 
+section('a page that cannot start says so, never a black screen (1.33.2)');
+{
+  const root = new URL('../', import.meta.url);
+  const read = (p) => fs.readFileSync(new URL(p, root), 'utf8');
+  const html = read('public/index.html');
+  const tags = [...html.matchAll(/<script\b[^>]*>/g)].map((m) => m[0]);
+  const at = (src) => tags.findIndex((tag) => tag.includes(`src="${src}"`));
+  check('index.html loads /js/boot-watch.js as a plain blocking script, right after lang-boot.js and before app.js', tags[at('/js/boot-watch.js')] === '<script src="/js/boot-watch.js">' && at('/js/boot-watch.js') === at('/js/lang-boot.js') + 1 && at('/js/boot-watch.js') < at('/js/app.js'), tags.join(' '));
+  const watchFile = new URL('public/js/boot-watch.js', root);
+  const watch = fs.existsSync(watchFile) ? fs.readFileSync(watchFile, 'utf8') : '';
+  check('  the watchdog is there', watch.length > 0);
+  const code = watch.replace(/^\s*\/\/.*$/gm, '');
+  check('  it writes no markup and runs no strings: no eval, Function, innerHTML, outerHTML, insertAdjacentHTML or document.write', !/\beval\s*\(|\bnew Function\b|\binnerHTML\b|\bouterHTML\b|\binsertAdjacentHTML\b|document\.write/.test(code));
+  check('  no inline style sheet either: the notice styles itself through element style properties', !/createElement\(\s*['"]style['"]\s*\)|setAttribute\(\s*['"]style['"]/.test(code) && /\.style\b/.test(code));
+  check('  it reloads only from the button, once, after fetching with cache: reload', (code.match(/location\.reload\(\)/g) || []).length === 1 && /cache: 'reload'/.test(code) && /credentials: 'same-origin'/.test(code));
+  check('  its language is the one lang-boot.js set on <html>', /document\.documentElement\.lang/.test(code));
+  // The words the plan rules, in both languages, kept whole in the file (it cannot use i18n.js:
+  // the module graph is what may be stale).
+  const ruled = [
+    'Ephapse vừa được cập nhật', 'Trình duyệt của bạn còn giữ một phần bản cũ, nên trang chưa mở được.', 'Tải bản mới', 'Hoặc nhấn Ctrl+Shift+R (Mac: ⌘+Shift+R).', 'Vẫn chưa được — hãy nhấn Ctrl+Shift+R (Mac: ⌘+Shift+R).',
+    'Ephapse was just updated', 'Your browser still holds part of the old version, so the page could not start.', 'Load the new version', 'Or press Ctrl+Shift+R (Mac: ⌘+Shift+R).', 'Still not working — press Ctrl+Shift+R (Mac: ⌘+Shift+R).',
+  ];
+  const missing = ruled.filter((s) => !watch.includes(`'${s}'`));
+  check('  in the ruled words, Vietnamese and English', missing.length === 0, missing.join(' | '));
+
+  const log = JSON.parse(read('public/changelog.json')).entries.find((e) => e.version === '1.33.2');
+  const words = (lang) => ['new', 'improved', 'fixed'].flatMap((s) => log?.[s]?.[lang] || []).join(' ');
+  check('1.33.2 says so in both languages', !!log && /Load the new version/.test(words('en')) && /Tải bản mới/.test(words('vi')), String(JSON.stringify(log)).slice(0, 200));
+  const changelog = read('CHANGELOG.md');
+  const notes = changelog.slice(changelog.indexOf('(1.33.2)'), changelog.indexOf('(1.33.1)'));
+  const cloudflare = /Browser Cache TTL/.test(notes) && /Respect Existing Headers/.test(notes) && /Purge Everything/.test(notes) && /DNS only/.test(notes);
+  check("  CHANGELOG.md's 1.33.2 section gives the owner the Cloudflare step", changelog.indexOf('(1.33.2)') > 0 && cloudflare, notes.slice(0, 80).replace(/\s+/g, ' '));
+  const domain = read('docs/domain-security.md');
+  check('  and so does the domain guide', /Browser Cache TTL/.test(domain) && /Respect Existing Headers/.test(domain) && /Purge Everything/.test(domain) && /boot-watch\.js/.test(domain));
+}
+
 console.log(failures === 0 ? '\n\x1b[32mAll feature checks passed.\x1b[0m\n' : `\n\x1b[31m${failures} check(s) failed.\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);
