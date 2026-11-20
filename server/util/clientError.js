@@ -40,3 +40,16 @@ export function clientError(err) {
   }
   return redactSecrets(String(err?.message || err || 'That did not work.')).text;
 }
+
+/**
+ * The error code a route may pass to the browser: only one the page acts on, from the
+ * route's own list. Anything else an error carries — a database's SQLSTATE ("57P01"), a
+ * socket's "ECONNREFUSED" — tells a stranger what the server runs on and how it failed,
+ * and stays in the log (security review of 1.33.3, 2026-11-19).
+ *
+ * @param {any} err @param {readonly string[]} allowed @returns {string | undefined}
+ */
+export function clientCode(err, allowed) {
+  const code = err?.code;
+  return typeof code === 'string' && allowed.includes(code) ? code : undefined;
+}

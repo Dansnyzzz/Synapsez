@@ -83,7 +83,7 @@ import { resumeCutOffTurns } from './resume.js';
 import { continueGroup, resumeGroupRounds } from './bots/continue.js';
 import { abortHere, holdRun, settledAfterStop, watchLease } from './liveRuns.js';
 import { redactSecrets } from './redact.js';
-import { clientError, fromTheDatabase, SERVER_TROUBLE } from './util/clientError.js';
+import { clientError, clientCode, fromTheDatabase, SERVER_TROUBLE } from './util/clientError.js';
 import { audit, networkOf, agentOf } from './audit.js';
 import { LEGAL, agreement, agreedToCurrent } from './legal.js';
 import { usageReport } from './usageReport.js';
@@ -280,6 +280,11 @@ export function readableFailure(error) {
 // `public/` is also what Vercel serves straight from its CDN in a zero-config
 // project, so on a deployment these static routes are only a local fallback.
 const WEB_DIR = path.resolve(here, '../public');
+
+// The codes the sign-in and sign-up pages act on (public/js/app.js), and the only ones those
+// routes pass on: never a database's or a socket's own (clientCode, security review of 1.33.3).
+const LOGIN_CODES = Object.freeze(['totp_required', 'email_unconfirmed', 'rate_limited']);
+const REGISTER_CODES = Object.freeze(['email_unconfirmed', 'email_pending', 'rate_limited']);
 
 // What the body parser refused, in words for a person (CODE-078). Translated in server/i18n/vi.js.
 const BODY_REFUSED = {
@@ -525,8 +530,11 @@ export function createApp() {
         await audit(req, user.id, 'sign_in');
         res.json({ user: publicUser(user) });
       } catch (err) {
-        // `sent`: whether a new code went out, or the resend limit held it back (1.33.3 review).
-        res.status(err.status || 400).json({ error: clientError(err), code: err.code, ...(err.code === 'email_unconfirmed' ? { email: err.email, sent: err.sent !== false } : {}) });
+        // Only the codes the page acts on (clientCode): a database's own ("57P01", "ECONNREFUSED") said
+        // what the server runs on (security review of 1.33.3). `sent`: whether a new code went out, or
+        // the resend limit held it back (1.33.3 review).
+        const code = clientCode(err, LOGIN_CODES);
+        res.status(err.status || 400).json({ error: clientError(err), code, ...(code === 'email_unconfirmed' ? { email: err.email, sent: err.sent !== false } : {}) });
       }
     }),
   );
@@ -713,7 +721,7 @@ export function createApp() {
         // A closed deployment is a 403, not a bad request — the client can tell
         // "you may not" from "you got that wrong" and say something useful.
         // Only the codes the page acts on are passed on, never a database's own.
-        const code = ['email_unconfirmed', 'email_pending', 'rate_limited'].includes(err.code) ? err.code : undefined;
+        const code = clientCode(err, REGISTER_CODES);
         // A wrong password for an address waiting for its code is a guess at that account,
         // written to its record as /api/login writes one, and not awaited for the same reason.
         if (code === 'email_pending' && err.accountId) waitUntil(audit(req, err.accountId, 'sign_in_failed').catch(() => {}));
