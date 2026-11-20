@@ -2,12 +2,11 @@
 
 ## 2026-11-20 — Diagrams that come out right (1.34.0)
 
-**What changed for people.** A diagram the assistant draws (a flow, a structure, a sequence, a timeline or a layout) now comes out tidy and readable. Each box has its own place and nothing sits on top of anything else. Lines start and end on their boxes, so no arrow points at empty space or cuts across a word.
+**What changed for people.** A diagram the assistant draws (a flow, a structure, a sequence, a timeline or a layout) now comes out tidy and readable. Each box has its own place and nothing sits on top of anything else. In a diagram that Ephapse arranges, lines start and end on their boxes.
 
-- **The assistant checks its own drawing.** If a line misses its box, it draws the diagram again once before showing it, so you usually get the corrected one straight away. A diagram laid out for it is never held back, and a drawing made with no conversation to show it in (an automation, a bot's run) is shown at once.
-- **Phone and dark mode.** The text stays large enough to read on a small screen, and the colours stand out on light and dark backgrounds alike.
-- **Guidance for the assistant.** It now has a short guide for each kind of drawing (flows, structures, sequences and timelines, layouts), so a diagram of any of those kinds starts from a tested recipe.
-- **Limits.** A diagram has a fixed ceiling on boxes, lines, groups and text length, kept in one place in the code (`server/diagram/validate.js`). Past it, the assistant is told which limit it hit and splits the drawing in two.
+- **Ephapse checks the drawing.** Before you see it, Ephapse checks that lines meet their boxes and that boxes do not overlap. If one misses, the drawing is made again once, so you usually get the corrected one straight away. A diagram that Ephapse arranges is never held back. A picture drawn by hand that fails the check is held back once; the second try is shown whatever it looks like. A drawing made with no conversation to show it in (an automation, a bot's run) is shown at once.
+- **Dark mode and small sizes.** Diagrams are checked in dark mode and at small sizes, so the text stays readable and the colours stand out on light and dark backgrounds alike.
+- **Limits.** A diagram has a fixed ceiling on boxes, lines, groups and text length. Past it, the assistant is told which limit it hit and splits the drawing in two.
 
 ## 2026-11-19 — Mail sends when the sender is written as `Name <address>` in any setting, and signing up again leads back to the code (1.33.3)
 

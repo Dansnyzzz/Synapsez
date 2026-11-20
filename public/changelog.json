@@ -13,14 +13,14 @@
       },
       "improved": {
         "vi": [
-          "Các đường nối bắt đầu và kết thúc đúng trên hộp của chúng, không còn mũi tên chỉ vào khoảng trống hay cắt ngang qua chữ.",
-          "Trợ lý tự kiểm tra hình mình vẽ. Nếu có đường nối trượt khỏi hộp, nó vẽ lại một lần trước khi cho bạn xem, nên bạn thường nhận ngay bản đã sửa.",
-          "Sơ đồ đọc được trên điện thoại và ở chế độ tối: chữ đủ lớn, màu đủ tương phản trên cả nền sáng lẫn nền tối."
+          "Với sơ đồ do Ephapse xếp, các đường nối bắt đầu và kết thúc đúng trên hộp của chúng. Các hình vẽ khác được kiểm tra, và nếu có đường nối trượt khỏi hộp thì được vẽ lại một lần.",
+          "Ephapse kiểm tra hình vẽ trước khi bạn xem: nếu một đường nối trượt khỏi hộp hoặc các hộp chồng lên nhau, hình được vẽ lại một lần, nên bạn thường nhận ngay bản đã sửa.",
+          "Sơ đồ được kiểm tra ở chế độ tối và ở cỡ nhỏ: chữ vẫn đọc được, màu đủ tương phản trên cả nền sáng lẫn nền tối."
         ],
         "en": [
-          "Lines start and end on their boxes, with no more arrows pointing at empty space or cutting across text.",
-          "The assistant checks its own drawing. If a line misses its box, it draws the diagram again once before showing it to you, so you usually get the corrected one straight away.",
-          "Diagrams read well on a phone and in dark mode: the text is large enough and the colours stand out on both light and dark backgrounds."
+          "In diagrams that Ephapse arranges, lines start and end on their boxes. Other drawings are checked, and drawn again once if a line misses its box.",
+          "Ephapse checks the drawing before you see it: if a line misses its box or boxes sit on top of each other, the drawing is made again once, so you usually get the corrected one straight away.",
+          "Diagrams are checked in dark mode and at small sizes: the text stays readable and the colours stand out on both light and dark backgrounds."
         ]
       }
     },
